@@ -64,6 +64,11 @@
 - [x] repository-facing documentation policy switched to English
 - [x] CI project audit validates version consistency, English fallback, and English-only repository documentation/workflow text
 - [x] localization architecture and migration policy documented in `docs/LOCALIZATION.md`
+- [x] public Node CLI and operational scripts migrated to English-only output
+- [x] project audit now enforces English-only Node CLI, PowerShell scripts, and batch launchers
+- [x] Node prints periodic uptime and connected-peer telemetry for public test operations
+- [x] Node warns on obviously non-public IP literals passed through `--public-host`
+- [x] DNS bootstrap generation uses generic `/dns/...` multiaddresses for IPv4/IPv6-friendly resolution
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test

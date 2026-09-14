@@ -34,6 +34,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Project consistency and localization audit
+        run: npm run audit
+
       - name: TypeScript + Vite build
         run: npm run build
 
@@ -113,7 +116,7 @@ jobs:
           $repo = $env:GITHUB_REPOSITORY
           gh release view $tag --repo $repo *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag już istnieje — pomijam ponowną publikację."
+            Write-Host "Release $tag already exists - skipping duplicate publication."
             exit 0
           }
           gh release create $tag `

@@ -20,36 +20,105 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Rebuild and verify Konofix Chat 0.4.1 archive
+      - name: Rebuild, diagnose and verify Konofix Chat archive
+        id: rebuild
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
+          DIAG=.bootstrap/hydrate-diagnostic.txt
+          : > "$DIAG"
+          echo "Konofix Chat hydration diagnostic" >> "$DIAG"
+          echo "UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$DIAG"
+          echo >> "$DIAG"
 
           mapfile -t parts < <(find .bootstrap -maxdepth 1 -type f -name 'part_[0-9][0-9]' -print | sort)
+          echo "part_count=${#parts[@]}" >> "$DIAG"
+          for p in "${parts[@]}"; do
+            bytes=$(wc -c < "$p")
+            chars=$(tr -d '\r\n' < "$p" | wc -c)
+            sha=$(sha256sum "$p" | awk '{print $1}')
+            tailchars=$(tr -d '\r\n' < "$p" | tail -c 24)
+            echo "$p bytes=$bytes normalized_chars=$chars sha256=$sha tail=$tailchars" >> "$DIAG"
+          done
+
           if [ "${#parts[@]}" -eq 0 ]; then
-            echo "No bootstrap parts found"
-            exit 1
+            echo "ERROR: no bootstrap parts" >> "$DIAG"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-          echo "Found ${#parts[@]} bootstrap parts:"
-          printf ' - %s\n' "${parts[@]}"
-
           cat "${parts[@]}" | tr -d '\r\n' > /tmp/konofix-source.b64
-          echo "Base64 characters: $(wc -c < /tmp/konofix-source.b64)"
+          total=$(wc -c < /tmp/konofix-source.b64)
+          echo "base64_chars=$total" >> "$DIAG"
+          echo "base64_mod4=$((total % 4))" >> "$DIAG"
+          echo "base64_head=$(head -c 32 /tmp/konofix-source.b64)" >> "$DIAG"
+          echo "base64_tail=$(tail -c 64 /tmp/konofix-source.b64)" >> "$DIAG"
 
-          base64 --decode /tmp/konofix-source.b64 > /tmp/konofix-source.zip
-          echo "ZIP bytes: $(wc -c < /tmp/konofix-source.zip)"
+          base64 --decode /tmp/konofix-source.b64 > /tmp/konofix-source.zip 2>/tmp/base64.err
+          decode_status=$?
+          echo "base64_status=$decode_status" >> "$DIAG"
+          if [ -s /tmp/base64.err ]; then
+            echo "base64_error:" >> "$DIAG"
+            cat /tmp/base64.err >> "$DIAG"
+          fi
+          echo "decoded_bytes=$(wc -c < /tmp/konofix-source.zip)" >> "$DIAG"
+          echo "decoded_sha256=$(sha256sum /tmp/konofix-source.zip | awk '{print $1}')" >> "$DIAG"
 
-          unzip -t /tmp/konofix-source.zip
+          if [ "$decode_status" -ne 0 ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          unzip -t /tmp/konofix-source.zip >/tmp/unzip-test.log 2>&1
+          unzip_status=$?
+          echo "unzip_status=$unzip_status" >> "$DIAG"
+          echo "unzip_test:" >> "$DIAG"
+          cat /tmp/unzip-test.log >> "$DIAG"
+
+          if [ "$unzip_status" -ne 0 ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           rm -rf /tmp/konofix-source
           mkdir -p /tmp/konofix-source
           unzip -q /tmp/konofix-source.zip -d /tmp/konofix-source
 
-          test -f /tmp/konofix-source/src-tauri/Cargo.toml
-          test -f /tmp/konofix-source/src/main.ts
-          test -f /tmp/konofix-source/ROADMAP.md
+          missing=0
+          for required in src-tauri/Cargo.toml src/main.ts ROADMAP.md; do
+            if [ ! -f "/tmp/konofix-source/$required" ]; then
+              echo "ERROR: missing $required" >> "$DIAG"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "OK: archive decoded and verified" >> "$DIAG"
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit diagnostic on failure
+        if: steps.rebuild.outputs.ok != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .bootstrap/hydrate-diagnostic.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Add Konofix source hydration diagnostic"
+            git push origin HEAD:main
+          fi
+
+      - name: Stop after diagnostic failure
+        if: steps.rebuild.outputs.ok != 'true'
+        shell: bash
+        run: exit 1
 
       - name: Replace bootstrap files with project source
+        if: steps.rebuild.outputs.ok == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -61,6 +130,7 @@ jobs:
           rm -f .github/workflows/hydrate-source.yml
 
       - name: Commit hydrated project
+        if: steps.rebuild.outputs.ok == 'true'
         shell: bash
         run: |
           set -euo pipefail

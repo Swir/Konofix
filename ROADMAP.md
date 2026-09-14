@@ -56,13 +56,14 @@
 - [x] gotowa macierz testu kraj ↔ kraj / TCP / QUIC / relay / DCUtR / CGNAT
 - [x] release gate: spójna wersja, wymagane pliki, ikona i dokumentacja
 - [x] ZIP test-release + SHA-256
-- [x] przygotowany automatyczny pre-release `v0.4.2-test1` po pełnym sukcesie produkcyjnego buildu
+- [x] automatyczny pre-release `v0.4.2-test1` po pełnym sukcesie produkcyjnego buildu
+- [x] pierwszy GitHub pre-release do testów między krajami opublikowany
+- [x] CI weryfikuje po spakowaniu SHA-256, wymagane pliki, Node i obecność instalatora Windows przed etapem publikacji
 - [ ] pierwszy stabilny publiczny/community Konofix Node
 - [ ] dwa komputery w różnych sieciach i krajach
 - [ ] test CGNAT ↔ publiczny Node ↔ CGNAT
 - [ ] test TCP, QUIC, relay i DCUtR
 - [ ] poprawki po realnych testach
-- [ ] pierwszy GitHub Release do testów między krajami
 
 ### Gate pierwszego test-release
 
@@ -74,6 +75,7 @@ Release testowy może powstać tylko, gdy:
 - artefakt testowy zawiera aplikację, Node i instrukcje,
 - release gate potwierdza spójność wersji,
 - ZIP ma SHA-256,
+- zawartość gotowego ZIP-a przechodzi `scripts/verify-release.ps1`,
 - istnieje realny sposób uruchomienia publicznie osiągalnego bootstrapu.
 
 ## 0.5.0 — Rooms 2.0

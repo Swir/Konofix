@@ -1,73 +1,83 @@
 # Konofix Chat 0.4.2
 
-**Konofix Chat** to efemeryczny komunikator peer-to-peer dla Windows tworzony przez **Swir**. Użytkownik uruchamia aplikację, wybiera nick, trafia do globalnego `#WORLD`, może tworzyć tymczasowe pokoje i wysyłać pliki bezpośrednio do innych użytkowników. Po wyłączeniu aplikacji użytkownik znika z sieci.
+**Konofix Chat** is an ephemeral peer-to-peer messenger for Windows created by **Swir**. Start the app, choose a nickname, join the global `#WORLD` room, create temporary rooms, and transfer files directly to other peers. When the app closes, the user disappears from the active network.
 
 GitHub: https://github.com/Swir/Konofix
 
-## Główne zasady
+## Core principles
 
-- brak klasycznego konta, e-maila i numeru telefonu,
-- jeden aktywny nick w sieci; `SWIR` i `swir` są traktowane jako ten sam nick,
-- globalny pokój `#WORLD`,
-- pokoje tworzone przez użytkowników są tymczasowe,
-- wiadomości nie są archiwizowane przez Konofix Chat,
-- transfer plików P2P wymaga akceptacji odbiorcy,
-- pliki lecą porcjami 256 KiB i są weryfikowane SHA-256,
-- aplikacja preferuje bezpośrednie P2P, a Circuit Relay jest ścieżką awaryjną,
-- poznane adresy peerów są cache'owane lokalnie,
-- zamknięcie aplikacji usuwa obecność użytkownika z aktywnej sieci.
+- no traditional account, email address, or phone number,
+- one active nickname per network; `SWIR` and `swir` are treated as the same nickname,
+- global `#WORLD` room,
+- user-created rooms are temporary,
+- Konofix Chat does not archive message history on a central server,
+- P2P file transfers require recipient approval,
+- files are transferred in 256 KiB chunks and verified with SHA-256,
+- direct P2P is preferred; Circuit Relay is a fallback path,
+- discovered peer addresses are cached locally,
+- closing the app removes the user's active network presence.
 
-## 0.4.2 — Internet Test Ready
+## 0.4.2 — Real Internet Test
 
-Ta wersja porządkuje repo i upraszcza uruchomienie pierwszego publicznego Konofix Node. Node potrafi teraz sam wygenerować gotowe multiaddr z Peer ID dla TCP i QUIC.
+This version prepares the project for real cross-network and cross-country tests. `Konofix Node` can generate ready-to-use TCP and QUIC bootstrap multiaddresses containing its Peer ID.
 
 ```powershell
 konofix-node.exe --port 45555 --public-host 203.0.113.10
 ```
 
-Wynik zawiera m.in.:
+Example output:
 
 ```text
 BOOTSTRAP TCP : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
 BOOTSTRAP QUIC: /ip4/203.0.113.10/udp/45555/quic-v1/p2p/12D3KooW...
-REKOMENDOWANY : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
+RECOMMENDED   : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
 ```
 
-Adres `REKOMENDOWANY` wklejamy w **Ustawienia sieci → Bootstrap**. Bootstrap służy tylko do wejścia do DHT/relay — nie jest serwerem historii wiadomości ani magazynem plików.
+Paste the recommended address into **Network settings → Bootstrap**. A bootstrap helps peers discover the DHT/relay network; it is not a message-history server or file store.
 
-## Architektura
+## Localization
+
+Konofix Chat detects the operating-system language automatically. The current UI localization layer supports **English, Polish, Norwegian, German, French, Spanish, and Ukrainian**. Unsupported system languages fall back to **English**.
+
+Repository documentation, release notes, CI text, and development-facing content are maintained in English.
+
+## Architecture
 
 Frontend: **Tauri 2 + TypeScript**  
 Core: **Rust + Tokio + rust-libp2p**
 
-Sieć klienta obejmuje TCP, QUIC, Noise/Yamux, GossipSub, mDNS, Kademlia DHT, Identify, Ping, AutoNAT, Circuit Relay client/server, DCUtR, UPnP i request-response CBOR dla transferu plików.
+The client network stack includes TCP, QUIC, Noise/Yamux, GossipSub, mDNS, Kademlia DHT, Identify, Ping, AutoNAT, Circuit Relay client/server, DCUtR, UPnP, and CBOR request-response for file transfer.
 
-## Uruchomienie developerskie
+## Development
 
-Wymagane: Windows 11, Node.js 20+ oraz Rust MSVC.
+Requirements: Windows 11, Node.js 20+, and Rust MSVC.
 
 ```powershell
 npm install
 npm run tauri dev
 ```
 
-lub `run-dev.bat`.
+Or use `run-dev.bat`.
 
-## Kontrola projektu
+Project checks:
 
 ```powershell
 .\scripts\check.ps1
 ```
 
-GitHub wykonuje dodatkowo kontrolę na `windows-latest`: TypeScript/Vite, aplikacja Rust i `konofix-node`.
+GitHub Actions additionally validates TypeScript/Vite, the Rust application, `konofix-node`, and the production Windows bundle.
 
-## Build Windows
+## Windows build
 
 ```powershell
 .\scripts\build-windows.ps1
 ```
 
-Aplikacja trafia do `src-tauri\target\release\bundle`.
+The application bundle is written to:
+
+```text
+src-tauri\target\release\bundle
+```
 
 ### Konofix Node
 
@@ -75,35 +85,35 @@ Aplikacja trafia do `src-tauri\target\release\bundle`.
 build-node.bat
 ```
 
-Wynik:
+Output:
 
 ```text
 src-tauri\target\release\konofix-node.exe
 ```
 
-Node uruchamiamy na publicznie osiągalnym komputerze/VPS:
+Run the Node on a publicly reachable computer or VPS:
 
 ```powershell
-konofix-node.exe --port 45555 --public-host TWOJ_PUBLICZNY_IP
+konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP
 ```
 
-Otwórz TCP 45555 oraz UDP 45555. Szczegóły są w `docs/NODE.md`.
+Open TCP 45555 and UDP 45555. See `docs/NODE.md` for operator details.
 
-Przed testem klienta:
+Before a client test:
 
 ```powershell
 .\scripts\internet-test.ps1 -Bootstrap "/ip4/203.0.113.10/tcp/45555/p2p/12D3KooW..."
 ```
 
-## Dane lokalne
+## Local data
 
-- cache peerów: `%LOCALAPPDATA%\Konofix Chat\peer-cache.json`
-- tożsamość Node: `%LOCALAPPDATA%\Konofix Chat\node-identity.key`
-- pobrane pliki: `Pobrane\Konofix Chat`
+- peer cache: `%LOCALAPPDATA%\Konofix Chat\peer-cache.json`
+- Node identity: `%LOCALAPPDATA%\Konofix Chat\node-identity.key`
+- downloaded files: `Downloads\Konofix Chat`
 
-## Status
+## Project status
 
-`0.4.2` jest etapem **Real Internet Test**. Kod globalnej warstwy P2P jest gotowy do testu, ale nie oznaczamy jeszcze połączenia Polska ↔ USA / CGNAT ↔ relay jako potwierdzonego, dopóki nie przejdzie rzeczywistego testu na dwóch niezależnych sieciach i stałym publicznym Konofix Node. Po zamknięciu tego etapu przechodzimy do **0.5.0 Rooms 2.0**.
+`0.4.2` is the **Real Internet Test** stage. The global P2P layer is ready for controlled testing, but cross-country connectivity and CGNAT ↔ relay scenarios remain unverified until they pass tests on independent networks through a stable public Konofix Node. After this stage closes, development moves to **0.5.0 Rooms 2.0**.
 
 ---
 

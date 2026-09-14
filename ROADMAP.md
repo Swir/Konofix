@@ -62,6 +62,8 @@
 - [x] system-language detection with English fallback
 - [x] first localization layer: English, Polish, Norwegian, German, French, Spanish, Ukrainian
 - [x] repository-facing documentation policy switched to English
+- [x] CI project audit validates version consistency, English fallback, and English-only repository documentation/workflow text
+- [x] localization architecture and migration policy documented in `docs/LOCALIZATION.md`
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test
@@ -78,6 +80,7 @@ A test release may be published only when:
 - `konofix-node.exe` is created in CI,
 - the test artifact contains the application, Node, and instructions,
 - the release gate confirms version consistency,
+- the project audit passes,
 - the ZIP has a SHA-256 checksum,
 - the finished ZIP passes `scripts/verify-release.ps1`,
 - there is a real way to run a publicly reachable bootstrap Node.

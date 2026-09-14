@@ -1,0 +1,7 @@
+Konofix bootstrap recovery did not produce one unique valid archive.
+head_chars=56000
+broken_chars=2575
+tail_chars=2584
+parseable_candidates=0
+crc_checked_candidates=0
+valid_candidates=0

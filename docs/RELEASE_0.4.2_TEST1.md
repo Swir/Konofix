@@ -1,68 +1,68 @@
 # Konofix Chat 0.4.2 Test 1 — Cross-country P2P Preview
 
-To jest **pierwsze testowe wydanie Konofix Chat** przeznaczone do sprawdzania komunikacji P2P przez Internet pomiędzy różnymi sieciami i krajami.
+This is the **first Konofix Chat test release** intended for validating P2P communication over the Internet between independent networks and different countries.
 
-## Co zawiera
+## Included
 
-- Konofix Chat dla Windows,
+- Konofix Chat for Windows,
 - `konofix-node.exe` — bootstrap / Kademlia DHT / Circuit Relay,
 - TCP + QUIC,
 - AutoNAT + DCUtR,
-- globalny `#WORLD`,
-- tymczasowe pokoje,
-- rozproszoną rezerwację nicków,
-- transfer plików P2P z akceptacją, chunkami 256 KiB i SHA-256,
-- lokalny cache poznanych peerów,
-- instrukcję testu kraj ↔ kraj.
+- global `#WORLD`,
+- temporary rooms,
+- distributed nickname reservation,
+- P2P file transfer with recipient approval, 256 KiB chunks, and SHA-256 verification,
+- local cache of discovered peers,
+- cross-country testing instructions.
 
-## Najprostszy test Internetu
+## Simplest Internet test
 
-1. Uruchom `konofix-node.exe` na komputerze/VPS z publicznym IP.
-2. Otwórz TCP i UDP `45555`.
-3. Uruchom:
+1. Run `konofix-node.exe` on a computer/VPS with a public IP.
+2. Open TCP and UDP `45555`.
+3. Start:
 
 ```powershell
-konofix-node.exe --port 45555 --public-host TWOJ_PUBLICZNY_IP_LUB_DNS
+konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP_OR_DNS
 ```
 
-4. Skopiuj wypisany `BOOTSTRAP TCP`.
-5. Na dwóch komputerach w różnych sieciach/krajach dodaj ten sam bootstrap w **Ustawienia sieci → Bootstrap**.
-6. Sprawdź `#WORLD`, pokój tymczasowy i transfer pliku w obie strony.
+4. Copy the printed `BOOTSTRAP TCP` address.
+5. On two computers in different networks/countries, add the same bootstrap in **Network settings → Bootstrap**.
+6. Test `#WORLD`, a temporary room, and file transfer in both directions.
 
-Pełna macierz testów znajduje się w `TESTING.md` / `docs/TESTING.md`.
+The full matrix is documented in `docs/TESTING.md`.
 
-## Ważne ograniczenia tego test-release
+## Important limitations
 
-- To jest **pre-release**, nie finalna wersja publiczna.
-- Nie ma jeszcze wbudowanej puli publicznych community bootstrapów — testujący może uruchomić własny Konofix Node.
-- `#WORLD` jest publicznym kanałem rozproszonym. Transport libp2p jest szyfrowany, ale publiczny kanał nie jest prywatnym czatem E2E.
-- Prywatne rozmowy P2P/E2E są zaplanowane na późniejszy etap roadmapy.
-- Build Windows może wyświetlić ostrzeżenie SmartScreen, ponieważ wydanie testowe nie jest jeszcze podpisane komercyjnym certyfikatem.
+- This is a **pre-release**, not the final public version.
+- There is no built-in public community-bootstrap pool yet; testers may run their own Konofix Node.
+- `#WORLD` is a public distributed channel. libp2p transport is encrypted, but the public room is not a private E2E conversation.
+- Private P2P/E2E conversations are planned for a later roadmap stage.
+- Windows may show a SmartScreen warning because this test build is not yet signed with a commercial code-signing certificate.
 
-## Co chcemy potwierdzić
+## What we want to confirm
 
-Najważniejszy scenariusz:
+Primary scenario:
 
-**klient za NAT/CGNAT w kraju A ↔ publiczny Konofix Node ↔ klient za innym NAT/CGNAT w kraju B**
+**client behind NAT/CGNAT in country A ↔ public Konofix Node ↔ client behind a different NAT/CGNAT in country B**
 
-Testujemy:
+We test:
 
 - TCP,
 - QUIC,
 - DHT discovery,
 - Circuit Relay,
 - DCUtR / hole punching,
-- reconnect/cache peerów,
-- rezerwację nicku,
-- czat,
-- pokoje,
-- transfer plików i SHA-256.
+- peer reconnect/cache,
+- nickname reservation,
+- chat,
+- rooms,
+- file transfer and SHA-256 verification.
 
-## Zgłaszając błąd
+## Reporting a bug
 
-Podaj wersję, kraj/typ sieci obu klientów, użyty bootstrap, wynik czatu/pokoju/transferu/reconnect oraz moment wystąpienia problemu.
+Include the version, country/network type of both clients, bootstrap used, chat/room/file/reconnect result, and when the failure happened.
 
-Nie publikuj prywatnego pliku `node-identity.key` ani innych sekretów.
+Never publish the private `node-identity.key` file or any other secret.
 
 ---
 

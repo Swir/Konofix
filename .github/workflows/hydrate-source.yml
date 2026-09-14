@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - '.bootstrap/source.zip'
+      - '.bootstrap/part_*'
       - '.github/workflows/hydrate-source.yml'
 
 permissions:
@@ -19,13 +19,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract Konofix Chat 0.4.1 source
+      - name: Rebuild and verify Konofix Chat 0.4.1 archive
         shell: bash
         run: |
           set -euo pipefail
+          cat .bootstrap/part_* | base64 -d > /tmp/konofix-source.zip
+          unzip -t /tmp/konofix-source.zip
           rm -rf /tmp/konofix-source
           mkdir -p /tmp/konofix-source
-          unzip -q .bootstrap/source.zip -d /tmp/konofix-source
+          unzip -q /tmp/konofix-source.zip -d /tmp/konofix-source
 
       - name: Replace bootstrap files with project source
         shell: bash
@@ -49,7 +51,5 @@ jobs:
             echo "Nothing to commit"
             exit 0
           fi
-          git commit -m "Import Konofix Chat 0.4.1 source"
+          git commit -m "Import full Konofix Chat 0.4.1 source"
           git push origin HEAD:main
-
-# bootstrap trigger 2

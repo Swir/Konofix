@@ -15,8 +15,9 @@
 - rozszerzono plan testów o macierz kraj ↔ kraj, TCP, QUIC, relay, DCUtR i CGNAT ↔ Node ↔ CGNAT,
 - dodano `scripts/release-gate.ps1`, który blokuje wydanie przy niespójnej wersji lub brakujących plikach,
 - CI tworzy ZIP test-release oraz plik kontrolny SHA-256,
-- przygotowano automatyczną publikację pre-release `v0.4.2-test1`, uruchamianą dopiero po pełnym sukcesie produkcyjnego buildu,
-- zdefiniowano jawny warunek pierwszego GitHub Release przeznaczonego do testów między krajami,
+- opublikowano pierwszy pre-release `v0.4.2-test1` z gotowym pakietem Windows, sumą SHA-256 i `konofix-node.exe`,
+- dodano `scripts/verify-release.ps1`, który przed publikacją ponownie sprawdza SHA-256, integralność ZIP-a, wymagane pliki, rozmiar Node oraz obecność prawidłowego instalatora Windows,
+- etap publikacji jest teraz wykonywany dopiero po pozytywnej weryfikacji gotowego artefaktu release,
 - zaktualizowano dokumentację oraz roadmapę pod pierwszy realny test Internet ↔ Node ↔ Internet.
 
 ## 0.4.1

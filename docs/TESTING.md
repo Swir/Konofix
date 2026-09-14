@@ -1,176 +1,176 @@
-# Konofix Chat 0.4.2 — plan testów
+# Konofix Chat 0.4.2 — Test Plan
 
-Ten dokument opisuje minimalny zestaw testów wymagany przed pierwszym wydaniem testowym przeznaczonym do połączeń między różnymi krajami i niezależnymi sieciami.
+This document defines the minimum test set required before closing the first release stage intended for communication between different countries and independent networks.
 
-## 1. Kontrola lokalna
+## 1. Local validation
 
-Na Windows 11:
+On Windows 11:
 
 ```powershell
 .\scripts\check.ps1
 ```
 
-Kontrola musi przejść bez błędów dla:
+The validation must pass without errors for:
 
 - TypeScript/Vite,
-- aplikacji Rust/Tauri,
+- the Rust/Tauri application,
 - `konofix-node`.
 
-GitHub Actions wykonuje ten sam podstawowy zestaw na `windows-latest`.
+GitHub Actions runs the same core validation on `windows-latest`.
 
-## 2. Test LAN — baseline
+## 2. LAN baseline
 
-Przed Internetem sprawdź dwa komputery w jednym LAN:
+Before Internet testing, validate two computers on the same LAN:
 
-1. Uruchom Konofix Chat na obu komputerach.
-2. Użyj różnych nicków.
-3. Oba komputery powinny znaleźć się przez mDNS.
-4. Wyślij wiadomości w `#WORLD` w obie strony.
-5. Utwórz pokój tymczasowy.
-6. Wyślij mały plik oraz plik co najmniej 100 MB.
-7. Anuluj jeden transfer w trakcie.
-8. Zamknij hosta pokoju — pokój powinien zniknąć u drugiego klienta.
+1. Start Konofix Chat on both computers.
+2. Use different nicknames.
+3. Both clients should discover each other through mDNS.
+4. Send messages both ways in `#WORLD`.
+5. Create a temporary room.
+6. Send a small file and a file of at least 100 MB.
+7. Cancel one transfer while it is active.
+8. Close the room host — the room should disappear on the other client.
 
-Jeżeli LAN nie przechodzi, nie przechodzimy do testu Internetu.
+If the LAN baseline fails, do not proceed to Internet testing.
 
-## 3. Publiczny Konofix Node
+## 3. Public Konofix Node
 
-Najprościej uruchomić:
+The simplest startup path is:
 
 ```text
 run-node.bat
 ```
 
-Skrypt zapyta o publiczny IP lub DNS.
+The script asks for a public IP address or DNS name.
 
-Ręcznie:
+Manual startup:
 
 ```powershell
-konofix-node.exe --port 45555 --public-host TWOJ_PUBLICZNY_IP_LUB_DNS
+konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP_OR_DNS
 ```
 
-Na routerze/firewallu VPS muszą być dostępne:
+The VPS/router firewall must expose:
 
 - TCP 45555,
 - UDP 45555.
 
-Node wypisze gotowe multiaddr TCP i QUIC zakończone `/p2p/<PeerId>`.
+The Node prints ready TCP and QUIC multiaddresses ending in `/p2p/<PeerId>`.
 
-Nie usuwaj `%LOCALAPPDATA%\Konofix Chat\node-identity.key`, jeżeli Peer ID noda ma być stabilny między restartami.
+Do not delete `%LOCALAPPDATA%\Konofix Chat\node-identity.key` if the Node Peer ID must remain stable across restarts.
 
-## 4. Precheck bootstrapu z klienta
+## 4. Bootstrap precheck from each client
 
-Na każdym komputerze testowym:
+On every test computer:
 
 ```powershell
-.\scripts\internet-test.ps1 -Bootstrap "/ip4/ADRES/tcp/45555/p2p/PEER_ID"
+.\scripts\internet-test.ps1 -Bootstrap "/ip4/ADDRESS/tcp/45555/p2p/PEER_ID"
 ```
 
-Dla DNS użyj `/dns4/nazwa...` lub `/dns/nazwa...`.
+For DNS, use `/dns4/name...` or `/dns/name...`.
 
-Precheck TCP musi zakończyć się sukcesem przed właściwym testem aplikacji. UDP/QUIC weryfikujemy z poziomu libp2p podczas testu.
+The TCP precheck must succeed before the application-level Internet test. UDP/QUIC is verified through libp2p during the actual test.
 
-## 5. Test kraj ↔ kraj
+## 5. Cross-country test
 
-Minimalna konfiguracja:
+Minimum topology:
 
-| Rola | Wymaganie |
+| Role | Requirement |
 | --- | --- |
-| Klient A | kraj/sieć A, np. Norwegia / LTE lub światłowód |
-| Klient B | kraj/sieć B, np. Polska / inne ISP |
-| Node | publiczny IP/DNS, najlepiej trzecia niezależna sieć |
+| Client A | country/network A, for example Norway / LTE or fiber |
+| Client B | country/network B, for example Poland / another ISP |
+| Node | public IP/DNS, preferably on a third independent network |
 
-Wykonaj kolejno:
+Run these steps in order:
 
-1. Oba komputery dodają ten sam bootstrap.
-2. Oba uruchamiają Konofix Chat z różnymi nickami.
-3. Sprawdź, czy panel sieci pokazuje połączenie z bootstrapem i rosnącą liczbę peerów DHT.
-4. Wyślij wiadomość A → B i B → A w `#WORLD`.
-5. Utwórz pokój na A i sprawdź jego pojawienie się na B.
-6. Wyślij plik A → B i B → A.
-7. Porównaj rozmiar i SHA-256 pliku źródłowego oraz odebranego.
-8. Zrestartuj oba klienty i sprawdź ponowne discovery/cache peerów.
-9. Zrestartuj publiczny Node i potwierdź, że Peer ID pozostaje taki sam.
-10. Powtórz test po kilku minutach bez ręcznego czyszczenia cache.
+1. Both computers add the same bootstrap.
+2. Start Konofix Chat on both with different nicknames.
+3. Verify that the network panel shows bootstrap connectivity and a growing DHT peer count.
+4. Send A → B and B → A messages in `#WORLD`.
+5. Create a room on A and verify that it appears on B.
+6. Send a file A → B and B → A.
+7. Compare file size and SHA-256 between source and received files.
+8. Restart both clients and verify peer discovery/cache reconnect behavior.
+9. Restart the public Node and confirm that its Peer ID remains unchanged.
+10. Repeat after several minutes without manually clearing the peer cache.
 
-## 6. Test transportów i NAT
+## 6. Transport and NAT matrix
 
-Test wykonujemy w kilku wariantach:
+Run multiple variants:
 
 ### A. TCP bootstrap
 
-Użyj adresu `/tcp/45555/p2p/...` i potwierdź czat, pokój oraz transfer pliku.
+Use `/tcp/45555/p2p/...` and verify chat, room, and file transfer.
 
 ### B. QUIC
 
-Użyj adresu `/udp/45555/quic-v1/p2p/...` i sprawdź połączenie przez UDP/QUIC.
+Use `/udp/45555/quic-v1/p2p/...` and verify connectivity over UDP/QUIC.
 
 ### C. Relay
 
-Przynajmniej jeden klient powinien być za NAT/CGNAT bez przekierowanych portów. Potwierdź, że może wejść do sieci przez Circuit Relay.
+At least one client should be behind NAT/CGNAT with no port forwarding. Confirm that it can enter the network through Circuit Relay.
 
 ### D. DCUtR
 
-Przy połączeniu przez relay obserwuj log/status i sprawdź, czy po możliwym hole-punchingu połączenie może zostać podniesione do bezpośredniego.
+While connected through a relay, inspect logs/status and verify whether a successful hole punch can upgrade the connection to a direct path.
 
 ### E. CGNAT ↔ Node ↔ CGNAT
 
-Najważniejszy wariant przed publicznym test-release:
+Critical scenario before closing the public test stage:
 
-- klient A za CGNAT,
-- klient B za innym CGNAT/NAT,
-- publiczny Konofix Node osiągalny z obu stron.
+- client A behind CGNAT,
+- client B behind a different CGNAT/NAT,
+- public Konofix Node reachable from both sides.
 
-## 7. Test rezerwacji nicku
+## 7. Nickname reservation test
 
-1. Uruchom dwóch klientów z identycznym nickiem.
-2. Powtórz z różną wielkością liter, np. `SWIR` i `swir`.
-3. Po synchronizacji sieci tylko jeden Peer ID powinien utrzymać rezerwację.
-4. Po wyjściu zwycięskiego peera nick powinien po wygaśnięciu dzierżawy znów być możliwy do przejęcia.
+1. Start two clients with the same nickname.
+2. Repeat with different letter case, for example `SWIR` and `swir`.
+3. After network synchronization, only one Peer ID should retain the reservation.
+4. After the winning peer leaves and the lease expires, the nickname should become available again.
 
-## 8. Test odporności
+## 8. Resilience testing
 
-Sprawdź także:
+Also test:
 
-- wyłączenie Wi‑Fi/LTE podczas transferu,
-- zamknięcie aplikacji podczas transferu,
-- restart Node w trakcie działania klientów,
-- błędny bootstrap,
-- nieosiągalny bootstrap,
-- duplikat bootstrapu,
-- plik o niebezpiecznym rozszerzeniu,
-- anulowanie transferu po obu stronach.
+- disabling Wi-Fi/LTE during transfer,
+- closing the app during transfer,
+- restarting the Node while clients remain active,
+- malformed bootstrap,
+- unreachable bootstrap,
+- duplicate bootstrap entry,
+- file with a dangerous executable/script extension,
+- cancellation from both sides.
 
-Aplikacja nie powinna się wywracać ani zostawiać gotowego pliku po transferze z błędnym SHA-256. Niedokończone dane pozostają wyłącznie jako pliki tymczasowe `.konofixpart` i powinny być sprzątane zgodnie z logiką transferu.
+The application must not crash or leave a completed output file after a transfer with an invalid SHA-256. Incomplete data should remain only in `.konofixpart` temporary files and be cleaned according to transfer logic.
 
-## 9. Co zapisać z każdego testu
+## 9. What to record for each test
 
-Zapisz:
+Record:
 
-- wersję Konofix Chat,
-- kraj i typ łącza obu klientów,
-- typ NAT/CGNAT, jeżeli jest znany,
-- użyty bootstrap TCP/QUIC,
-- czy użyto relay,
-- czy pojawił się DCUtR,
-- czat: PASS/FAIL,
-- pokoje: PASS/FAIL,
-- pliki: PASS/FAIL,
+- Konofix Chat version,
+- country and connection type for both clients,
+- NAT/CGNAT type when known,
+- TCP/QUIC bootstrap used,
+- whether relay was used,
+- whether DCUtR appeared,
+- chat: PASS/FAIL,
+- rooms: PASS/FAIL,
+- files: PASS/FAIL,
 - reconnect: PASS/FAIL,
-- nick conflict: PASS/FAIL,
-- opis błędu i moment wystąpienia.
+- nickname conflict: PASS/FAIL,
+- failure description and when it occurred.
 
-Nie publikuj prywatnych kluczy tożsamości ani żadnych sekretów.
+Never publish private identity keys or other secrets.
 
-## 10. Warunek pierwszego test-release
+## 10. Release-stage gate
 
-Pierwszy GitHub Release przeznaczony do testów między krajami robimy, gdy:
+A cross-country GitHub test release is considered build-ready when:
 
-- Windows CI jest zielony,
-- produkcyjny Windows build powstaje w CI,
-- `konofix-node.exe` powstaje w CI,
-- aplikacja i Node mają tę samą wersję dokumentacyjną,
-- instrukcja uruchomienia publicznego noda jest gotowa,
-- mamy co najmniej jeden realistyczny sposób osiągnięcia publicznego bootstrapu.
+- Windows CI is green,
+- a production Windows build is generated in CI,
+- `konofix-node.exe` is generated in CI,
+- application and Node documentation use a consistent version,
+- public Node startup instructions are ready,
+- there is at least one realistic path to a publicly reachable bootstrap.
 
-Pełne zamknięcie etapu 0.4.2 wymaga dodatkowo udanego testu na dwóch niezależnych łączach oraz poprawek znalezionych podczas testu.
+The 0.4.2 stage is fully complete only after a successful test over two independent Internet connections and fixes for issues discovered during those tests.

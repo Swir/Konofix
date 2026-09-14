@@ -30,7 +30,10 @@
 - added `--status-interval` to Konofix Node with periodic uptime and connected-peer telemetry for public-node monitoring,
 - Node now warns when an obviously non-public IP literal is supplied as `--public-host`,
 - DNS bootstrap generation now uses generic `/dns/...` multiaddresses instead of forcing `/dns4/...`, improving dual-stack readiness,
-- documented public-node monitoring, privacy-safe status output, dual-stack DNS behavior, and external reachability checks,
+- added optional `--health-file` output to Konofix Node for metadata-only JSON health monitoring,
+- Node health snapshots include schema version, process state, application version, stable Peer ID, uptime, connected-peer count, and Unix timestamp,
+- health snapshots are written through a temporary file before replacement and switch to `stopped` on a clean Ctrl+C shutdown,
+- documented public-node monitoring, privacy-safe status output, JSON health checks, dual-stack DNS behavior, and external reachability checks,
 - updated the roadmap for real Internet testing and typed localization-key migration.
 
 ## 0.4.1

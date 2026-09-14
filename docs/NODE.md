@@ -1,57 +1,57 @@
 # Konofix Node 0.4.2
 
-`konofix-node` jest lekkim węzłem infrastruktury społecznościowej. Nie jest serwerem kont ani bazą historii czatu.
+`konofix-node` is a lightweight community infrastructure node. It is not an account server and it does not store chat history.
 
-## Funkcje
+## Features
 
 - Kademlia DHT server
 - bootstrap peer
 - AutoNAT peer
 - Circuit Relay v2 server
-- GossipSub router dla `#WORLD`
+- GossipSub router for `#WORLD`
 - TCP + QUIC
-- stały Peer ID pomiędzy restartami
-- automatyczne generowanie gotowych publicznych multiaddr
+- persistent Peer ID across restarts
+- automatic generation of ready-to-use public multiaddresses
 
 ## Windows
 
-Uruchom `build-node.bat`, a następnie:
+Run `build-node.bat`, then start:
 
 ```powershell
-src-tauri\target\release\konofix-node.exe --port 45555 --public-host TWOJ_PUBLICZNY_IP
+src-tauri\target\release\konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP
 ```
 
-Możesz podać też publiczną nazwę DNS:
+A public DNS name is also supported:
 
 ```powershell
 konofix-node.exe --port 45555 --public-host node.example.com
 ```
 
-Otwórz/przekieruj w routerze i firewallu:
+Open/forward these ports in the router and firewall:
 
 - TCP 45555
 - UDP 45555
 
-Nie zmieniaj pliku `%LOCALAPPDATA%\Konofix Chat\node-identity.key`, jeśli adres bootstrap ma pozostać stabilny. Usunięcie go wygeneruje nowy Peer ID.
+Do not replace or delete `%LOCALAPPDATA%\Konofix Chat\node-identity.key` if the bootstrap address should remain stable. Deleting the file generates a new Peer ID.
 
-## Gotowy adres bootstrap
+## Ready bootstrap address
 
-Jeśli podasz `--public-host`, Node wypisze m.in.:
+When `--public-host` is provided, the Node prints entries such as:
 
 ```text
 BOOTSTRAP TCP : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
 BOOTSTRAP QUIC: /ip4/203.0.113.10/udp/45555/quic-v1/p2p/12D3KooW...
-REKOMENDOWANY : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
+RECOMMENDED   : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
 ```
 
-Adres `REKOMENDOWANY` wklejamy w aplikacji: **Ustawienia sieci → Bootstrap**. Klient zapamięta go lokalnie.
+Paste the `RECOMMENDED` address into **Network settings → Bootstrap**. The client stores it locally.
 
-Adresy `0.0.0.0`, `127.0.0.1`, `::` i prywatne `192.168.x.x` nie są globalnymi adresami bootstrap. Potrzebny jest publiczny IP/DNS oraz osiągalny port.
+Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, and private `192.168.x.x` addresses are not global bootstrap addresses. A public IP/DNS name and reachable port are required.
 
 ## VPS
 
-Na VPS wystarczy jeden mały proces Node. Z czasem uruchomimy kilka niezależnych node w różnych krajach/operatorach, aby awaria jednego nie odcinała całej sieci.
+A small VPS only needs one Konofix Node process. The long-term goal is to run several independent nodes across different countries and providers so one outage cannot disconnect the entire network.
 
-## Prywatność
+## Privacy
 
-Node nie zapisuje historii czatu ani plików. Transfer plików używa request/response między peerami i może przejść przez szyfrowany transport relay, jeśli bezpośrednie połączenie jest niemożliwe. `#WORLD` jest publicznym tematem GossipSub.
+The Node does not save chat history or files. File transfer uses request/response between peers and can traverse an encrypted relay transport when direct connectivity is impossible. `#WORLD` is a public GossipSub topic.

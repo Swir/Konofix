@@ -25,6 +25,12 @@
 - Windows CI now runs the project audit before the TypeScript/Vite build,
 - added `docs/LOCALIZATION.md` with localization rules, supported languages, fallback behavior, and the typed-key migration plan,
 - the project audit reports the remaining Polish-specific characters in `src/main.ts` as a runtime localization migration indicator,
+- migrated Konofix Node CLI, Internet precheck, local check script, Windows build script, and Node launcher to English-only operational output,
+- expanded the project audit to reject Polish-specific characters in Node CLI, PowerShell operational scripts, and batch launchers,
+- added `--status-interval` to Konofix Node with periodic uptime and connected-peer telemetry for public-node monitoring,
+- Node now warns when an obviously non-public IP literal is supplied as `--public-host`,
+- DNS bootstrap generation now uses generic `/dns/...` multiaddresses instead of forcing `/dns4/...`, improving dual-stack readiness,
+- documented public-node monitoring, privacy-safe status output, dual-stack DNS behavior, and external reachability checks,
 - updated the roadmap for real Internet testing and typed localization-key migration.
 
 ## 0.4.1

@@ -20,105 +20,98 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Rebuild, diagnose and verify Konofix Chat archive
-        id: rebuild
-        shell: bash
-        run: |
-          set +e
-          DIAG=.bootstrap/hydrate-diagnostic.txt
-          : > "$DIAG"
-          echo "Konofix Chat hydration diagnostic" >> "$DIAG"
-          echo "UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$DIAG"
-          echo >> "$DIAG"
-
-          mapfile -t parts < <(find .bootstrap -maxdepth 1 -type f -name 'part_[0-9][0-9]' -print | sort)
-          echo "part_count=${#parts[@]}" >> "$DIAG"
-          for p in "${parts[@]}"; do
-            bytes=$(wc -c < "$p")
-            chars=$(tr -d '\r\n' < "$p" | wc -c)
-            sha=$(sha256sum "$p" | awk '{print $1}')
-            tailchars=$(tr -d '\r\n' < "$p" | tail -c 24)
-            echo "$p bytes=$bytes normalized_chars=$chars sha256=$sha tail=$tailchars" >> "$DIAG"
-          done
-
-          if [ "${#parts[@]}" -eq 0 ]; then
-            echo "ERROR: no bootstrap parts" >> "$DIAG"
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          cat "${parts[@]}" | tr -d '\r\n' > /tmp/konofix-source.b64
-          total=$(wc -c < /tmp/konofix-source.b64)
-          echo "base64_chars=$total" >> "$DIAG"
-          echo "base64_mod4=$((total % 4))" >> "$DIAG"
-          echo "base64_head=$(head -c 32 /tmp/konofix-source.b64)" >> "$DIAG"
-          echo "base64_tail=$(tail -c 64 /tmp/konofix-source.b64)" >> "$DIAG"
-
-          base64 --decode /tmp/konofix-source.b64 > /tmp/konofix-source.zip 2>/tmp/base64.err
-          decode_status=$?
-          echo "base64_status=$decode_status" >> "$DIAG"
-          if [ -s /tmp/base64.err ]; then
-            echo "base64_error:" >> "$DIAG"
-            cat /tmp/base64.err >> "$DIAG"
-          fi
-          echo "decoded_bytes=$(wc -c < /tmp/konofix-source.zip)" >> "$DIAG"
-          echo "decoded_sha256=$(sha256sum /tmp/konofix-source.zip | awk '{print $1}')" >> "$DIAG"
-
-          if [ "$decode_status" -ne 0 ]; then
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          unzip -t /tmp/konofix-source.zip >/tmp/unzip-test.log 2>&1
-          unzip_status=$?
-          echo "unzip_status=$unzip_status" >> "$DIAG"
-          echo "unzip_test:" >> "$DIAG"
-          cat /tmp/unzip-test.log >> "$DIAG"
-
-          if [ "$unzip_status" -ne 0 ]; then
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          rm -rf /tmp/konofix-source
-          mkdir -p /tmp/konofix-source
-          unzip -q /tmp/konofix-source.zip -d /tmp/konofix-source
-
-          missing=0
-          for required in src-tauri/Cargo.toml src/main.ts ROADMAP.md; do
-            if [ ! -f "/tmp/konofix-source/$required" ]; then
-              echo "ERROR: missing $required" >> "$DIAG"
-              missing=1
-            fi
-          done
-
-          if [ "$missing" -ne 0 ]; then
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "OK: archive decoded and verified" >> "$DIAG"
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Commit diagnostic on failure
-        if: steps.rebuild.outputs.ok != 'true'
+      - name: Rebuild and repair Konofix Chat 0.4.1 archive
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .bootstrap/hydrate-diagnostic.txt
-          if ! git diff --cached --quiet; then
-            git commit -m "Add Konofix source hydration diagnostic"
-            git push origin HEAD:main
-          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+          import io
+          import zipfile
 
-      - name: Stop after diagnostic failure
-        if: steps.rebuild.outputs.ok != 'true'
-        shell: bash
-        run: exit 1
+          root = Path('.bootstrap')
+          parts = [root / f'part_{i:02d}' for i in range(8)]
+          for p in parts:
+              if not p.is_file():
+                  raise SystemExit(f'Missing bootstrap part: {p}')
+
+          text = [p.read_text(encoding='ascii').replace('\r', '').replace('\n', '') for p in parts]
+
+          # The original bootstrap was transported in three Base64 segments:
+          # 1) 56,000 chars, 2) a 2,576-char segment with one lost char,
+          # 3) part_07. Recover only the single lost Base64 character and accept
+          # a candidate exclusively when the resulting ZIP passes full integrity checks.
+          head_b64 = ''.join(text[:6]) + text[6][:8000]
+          middle_broken = text[6][8000:]
+          tail_b64 = text[7]
+
+          print(f'head={len(head_b64)} middle_broken={len(middle_broken)} tail={len(tail_b64)}')
+          if len(head_b64) != 56000:
+              raise SystemExit(f'Unexpected head length: {len(head_b64)}')
+          if len(middle_broken) != 2575:
+              raise SystemExit(f'Unexpected middle length: {len(middle_broken)}')
+          if len(tail_b64) != 2584:
+              raise SystemExit(f'Unexpected tail length: {len(tail_b64)}')
+          if not middle_broken.endswith('g=='):
+              raise SystemExit('Unexpected middle trailer; refusing heuristic repair')
+
+          head = base64.b64decode(head_b64, validate=True)
+          tail = base64.b64decode(tail_b64, validate=True)
+          alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+          required = {
+              'src-tauri/Cargo.toml',
+              'src-tauri/src/lib.rs',
+              'src/main.ts',
+              'ROADMAP.md',
+              'README.md',
+          }
+          successes = []
+
+          # One Base64 character vanished immediately before the final 3 chars
+          # of the middle segment. Brute-force all 64 legal symbols and verify ZIP.
+          insert_at = len(middle_broken) - 3
+          for ch in alphabet:
+              candidate_b64 = middle_broken[:insert_at] + ch + middle_broken[insert_at:]
+              try:
+                  middle = base64.b64decode(candidate_b64, validate=True)
+              except Exception:
+                  continue
+              blob = head + middle + tail
+              try:
+                  with zipfile.ZipFile(io.BytesIO(blob), 'r') as zf:
+                      names = set(zf.namelist())
+                      if not required.issubset(names):
+                          continue
+                      if zf.testzip() is not None:
+                          continue
+              except Exception:
+                  continue
+              successes.append((ch, blob))
+
+          if len(successes) != 1:
+              raise SystemExit(f'Expected exactly one valid repair, got {len(successes)}')
+
+          repaired_char, blob = successes[0]
+          Path('/tmp/konofix-source.zip').write_bytes(blob)
+          (root / 'repair-result.txt').write_text(
+              f'Konofix Chat bootstrap repaired deterministically.\n'
+              f'Inserted Base64 character: {repaired_char}\n'
+              f'Archive bytes: {len(blob)}\n',
+              encoding='utf-8',
+          )
+          print(f'Repaired with Base64 character {repaired_char!r}; archive bytes={len(blob)}')
+          PY
+
+          unzip -t /tmp/konofix-source.zip
+          rm -rf /tmp/konofix-source
+          mkdir -p /tmp/konofix-source
+          unzip -q /tmp/konofix-source.zip -d /tmp/konofix-source
+          test -f /tmp/konofix-source/src-tauri/Cargo.toml
+          test -f /tmp/konofix-source/src/main.ts
+          test -f /tmp/konofix-source/ROADMAP.md
 
       - name: Replace bootstrap files with project source
-        if: steps.rebuild.outputs.ok == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -130,7 +123,6 @@ jobs:
           rm -f .github/workflows/hydrate-source.yml
 
       - name: Commit hydrated project
-        if: steps.rebuild.outputs.ok == 'true'
         shell: bash
         run: |
           set -euo pipefail

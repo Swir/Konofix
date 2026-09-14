@@ -1,8 +1,8 @@
 use std::{
     collections::HashSet,
     net::IpAddr,
-    path::PathBuf,
-    time::{Duration, Instant},
+    path::{Path, PathBuf},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use futures::StreamExt;
@@ -13,6 +13,7 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, PeerId, StreamProtocol, SwarmBuilder,
 };
+use serde::Serialize;
 
 const WORLD_TOPIC: &str = "konofix/world/v3";
 const KAD_PROTOCOL: &str = "/konofix/kad/1.0.0";
@@ -25,6 +26,18 @@ struct NodeArgs {
     port: u16,
     public_host: Option<String>,
     status_interval: u64,
+    health_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Serialize)]
+struct HealthSnapshot<'a> {
+    schema: u8,
+    status: &'a str,
+    version: &'a str,
+    peer_id: String,
+    uptime_seconds: u64,
+    connected_peers: usize,
+    timestamp_unix: u64,
 }
 
 #[derive(NetworkBehaviour)]
@@ -70,23 +83,25 @@ fn print_help() {
     println!("Konofix Node {}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("Usage:");
-    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--status-interval 60]");
+    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--status-interval 60] [--health-file PATH]");
     println!();
     println!("Options:");
     println!("  --port PORT              TCP and UDP/QUIC port (default: 45555)");
     println!("  --public-host HOST       Public IPv4, IPv6, or DNS name of this node");
     println!("  --public-ip IP           Alias for --public-host");
     println!("  --status-interval SEC    Print an operational status line every N seconds (default: 60, minimum: 10)");
+    println!("  --health-file PATH       Atomically update a metadata-only JSON health snapshot");
     println!("  -h, --help               Show this help");
     println!();
     println!("Example:");
-    println!("  konofix-node.exe --port 45555 --public-host 203.0.113.10 --status-interval 60");
+    println!("  konofix-node.exe --port 45555 --public-host 203.0.113.10 --status-interval 60 --health-file konofix-health.json");
 }
 
 fn parse_args() -> Result<Option<NodeArgs>, String> {
     let mut port = DEFAULT_PORT;
     let mut public_host = None;
     let mut status_interval = DEFAULT_STATUS_INTERVAL;
+    let mut health_file = None;
     let mut args = std::env::args().skip(1);
 
     while let Some(arg) = args.next() {
@@ -117,6 +132,14 @@ fn parse_args() -> Result<Option<NodeArgs>, String> {
                     return Err("Status interval must be at least 10 seconds.".into());
                 }
             }
+            "--health-file" => {
+                let raw = args.next().ok_or("Missing value after --health-file")?;
+                let path = PathBuf::from(raw.trim());
+                if raw.trim().is_empty() {
+                    return Err("Health file path cannot be empty.".into());
+                }
+                health_file = Some(path);
+            }
             "-h" | "--help" => {
                 print_help();
                 return Ok(None);
@@ -129,6 +152,7 @@ fn parse_args() -> Result<Option<NodeArgs>, String> {
         port,
         public_host,
         status_interval,
+        health_file,
     }))
 }
 
@@ -167,6 +191,43 @@ fn print_shareable_addresses(host: &str, port: u16, peer: PeerId) {
     println!("Alternatively set the environment variable:");
     println!("  KONOFIX_BOOTSTRAPS={tcp}");
     println!();
+}
+
+fn unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn write_health_snapshot(
+    path: &Path,
+    local_peer: PeerId,
+    started: Instant,
+    connected_peers: usize,
+    status: &str,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let snapshot = HealthSnapshot {
+        schema: 1,
+        status,
+        version: env!("CARGO_PKG_VERSION"),
+        peer_id: local_peer.to_string(),
+        uptime_seconds: started.elapsed().as_secs(),
+        connected_peers,
+        timestamp_unix: unix_timestamp(),
+    };
+    let payload = serde_json::to_vec_pretty(&snapshot).map_err(|e| e.to_string())?;
+    let temp_path = path.with_extension("tmp");
+    std::fs::write(&temp_path, payload).map_err(|e| e.to_string())?;
+    if path.exists() {
+        std::fs::remove_file(path).map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&temp_path, path).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tokio::main]
@@ -256,10 +317,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut status_tick = tokio::time::interval(Duration::from_secs(args.status_interval));
     status_tick.tick().await;
 
+    if let Some(path) = &args.health_file {
+        match write_health_snapshot(path, local_peer, started, connected_peers.len(), "running") {
+            Ok(()) => println!("Health snapshot: {}", path.display()),
+            Err(error) => eprintln!("WARNING: failed to write health snapshot {}: {error}", path.display()),
+        }
+    }
+
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 println!("\nStopping Konofix Node...");
+                if let Some(path) = &args.health_file {
+                    if let Err(error) = write_health_snapshot(path, local_peer, started, connected_peers.len(), "stopped") {
+                        eprintln!("WARNING: failed to write final health snapshot {}: {error}", path.display());
+                    }
+                }
                 break;
             }
             _ = status_tick.tick() => {
@@ -269,6 +342,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     connected_peers.len(),
                     local_peer
                 );
+                if let Some(path) = &args.health_file {
+                    if let Err(error) = write_health_snapshot(path, local_peer, started, connected_peers.len(), "running") {
+                        eprintln!("WARNING: failed to update health snapshot {}: {error}", path.display());
+                    }
+                }
             }
             event = swarm.select_next_some() => {
                 match event {

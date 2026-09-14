@@ -3,14 +3,14 @@ Write-Host '=== Konofix Chat 0.4.2 - CHECK ===' -ForegroundColor Cyan
 
 function Need($cmd, $hint) {
   if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
-    throw "Brak '$cmd'. $hint"
+    throw "Missing '$cmd'. $hint"
   }
 }
 
-Need node 'Zainstaluj Node.js 20+.'
-Need npm 'Zainstaluj Node.js 20+.'
-Need cargo 'Zainstaluj Rust przez rustup (MSVC).'
-Need rustc 'Zainstaluj Rust przez rustup (MSVC).'
+Need node 'Install Node.js 20+.'
+Need npm 'Install Node.js 20+.'
+Need cargo 'Install Rust with rustup (MSVC toolchain).'
+Need rustc 'Install Rust with rustup (MSVC toolchain).'
 
 Write-Host "Node:  $(node --version)"
 Write-Host "npm:   $(npm --version)"
@@ -29,14 +29,14 @@ try {
   Write-Host 'Frontend build...' -ForegroundColor Yellow
   npm run build
 
-  Write-Host 'Rust: aplikacja + Konofix Node...' -ForegroundColor Yellow
+  Write-Host 'Rust: application + Konofix Node...' -ForegroundColor Yellow
   Push-Location src-tauri
   try {
     cargo check
     cargo check --bin konofix-node
   } finally { Pop-Location }
 
-  Write-Host 'OK - frontend, aplikacja Rust i Konofix Node przechodzą kontrolę.' -ForegroundColor Green
+  Write-Host 'OK - frontend, Rust application, and Konofix Node checks passed.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

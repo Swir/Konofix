@@ -21,6 +21,10 @@
 - added automatic operating-system locale detection with English fallback,
 - added the first multilingual UI compatibility layer for English, Polish, Norwegian, German, French, Spanish, and Ukrainian,
 - changed top-level repository documentation to English-only and documented English as the canonical development/release language,
+- added `scripts/project-audit.mjs` and `npm run audit` to verify package/Tauri/Cargo version consistency, English fallback, and English-only repository documentation/workflow text,
+- Windows CI now runs the project audit before the TypeScript/Vite build,
+- added `docs/LOCALIZATION.md` with localization rules, supported languages, fallback behavior, and the typed-key migration plan,
+- the project audit reports the remaining Polish-specific characters in `src/main.ts` as a runtime localization migration indicator,
 - updated the roadmap for real Internet testing and typed localization-key migration.
 
 ## 0.4.1

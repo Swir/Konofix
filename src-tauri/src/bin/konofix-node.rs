@@ -1,4 +1,9 @@
-use std::{net::IpAddr, path::PathBuf, time::Duration};
+use std::{
+    collections::HashSet,
+    net::IpAddr,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use futures::StreamExt;
 use libp2p::{
@@ -13,11 +18,13 @@ const WORLD_TOPIC: &str = "konofix/world/v3";
 const KAD_PROTOCOL: &str = "/konofix/kad/1.0.0";
 const WORLD_PROVIDER_KEY: &str = "/konofix/world/providers/v1";
 const DEFAULT_PORT: u16 = 45555;
+const DEFAULT_STATUS_INTERVAL: u64 = 60;
 
 #[derive(Debug)]
 struct NodeArgs {
     port: u16,
     public_host: Option<String>,
+    status_interval: u64,
 }
 
 #[derive(NetworkBehaviour)]
@@ -62,59 +69,86 @@ fn provider_key() -> kad::RecordKey {
 fn print_help() {
     println!("Konofix Node {}", env!("CARGO_PKG_VERSION"));
     println!();
-    println!("Użycie:");
-    println!("  konofix-node.exe [--port 45555] [--public-host HOST]");
+    println!("Usage:");
+    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--status-interval 60]");
     println!();
-    println!("Opcje:");
-    println!("  --port PORT          Port TCP i UDP/QUIC (domyślnie 45555)");
-    println!("  --public-host HOST   Publiczny IPv4, IPv6 lub DNS noda");
-    println!("  --public-ip IP       Alias dla --public-host");
-    println!("  -h, --help           Pokaż pomoc");
+    println!("Options:");
+    println!("  --port PORT              TCP and UDP/QUIC port (default: 45555)");
+    println!("  --public-host HOST       Public IPv4, IPv6, or DNS name of this node");
+    println!("  --public-ip IP           Alias for --public-host");
+    println!("  --status-interval SEC    Print an operational status line every N seconds (default: 60, minimum: 10)");
+    println!("  -h, --help               Show this help");
     println!();
-    println!("Przykład:");
-    println!("  konofix-node.exe --port 45555 --public-host 203.0.113.10");
+    println!("Example:");
+    println!("  konofix-node.exe --port 45555 --public-host 203.0.113.10 --status-interval 60");
 }
 
 fn parse_args() -> Result<Option<NodeArgs>, String> {
     let mut port = DEFAULT_PORT;
     let mut public_host = None;
+    let mut status_interval = DEFAULT_STATUS_INTERVAL;
     let mut args = std::env::args().skip(1);
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--port" => {
-                let raw = args.next().ok_or("Brak wartości po --port")?;
+                let raw = args.next().ok_or("Missing value after --port")?;
                 port = raw
                     .parse::<u16>()
-                    .map_err(|_| format!("Nieprawidłowy port: {raw}"))?;
+                    .map_err(|_| format!("Invalid port: {raw}"))?;
                 if port == 0 {
-                    return Err("Port musi być większy od 0.".into());
+                    return Err("Port must be greater than 0.".into());
                 }
             }
             "--public-host" | "--public-ip" => {
-                let raw = args.next().ok_or("Brak wartości publicznego hosta")?;
+                let raw = args.next().ok_or("Missing public host value")?;
                 let host = raw.trim().trim_matches(['[', ']']).to_string();
                 if host.is_empty() || host.contains('/') || host.chars().any(char::is_whitespace) {
-                    return Err(format!("Nieprawidłowy publiczny host: {raw}"));
+                    return Err(format!("Invalid public host: {raw}"));
                 }
                 public_host = Some(host);
+            }
+            "--status-interval" => {
+                let raw = args.next().ok_or("Missing value after --status-interval")?;
+                status_interval = raw
+                    .parse::<u64>()
+                    .map_err(|_| format!("Invalid status interval: {raw}"))?;
+                if status_interval < 10 {
+                    return Err("Status interval must be at least 10 seconds.".into());
+                }
             }
             "-h" | "--help" => {
                 print_help();
                 return Ok(None);
             }
-            other => return Err(format!("Nieznany argument: {other}. Użyj --help.")),
+            other => return Err(format!("Unknown argument: {other}. Use --help.")),
         }
     }
 
-    Ok(Some(NodeArgs { port, public_host }))
+    Ok(Some(NodeArgs {
+        port,
+        public_host,
+        status_interval,
+    }))
 }
 
 fn public_prefix(host: &str) -> String {
     match host.parse::<IpAddr>() {
         Ok(IpAddr::V4(ip)) => format!("/ip4/{ip}"),
         Ok(IpAddr::V6(ip)) => format!("/ip6/{ip}"),
-        Err(_) => format!("/dns4/{host}"),
+        Err(_) => format!("/dns/{host}"),
+    }
+}
+
+fn is_non_public_ip(host: &str) -> bool {
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => {
+            ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
+        }
+        Ok(IpAddr::V6(ip)) => {
+            ip.is_loopback() || ip.is_unspecified() || ip.is_unique_local() || ip.is_unicast_link_local()
+        }
+        Err(_) => false,
     }
 }
 
@@ -124,13 +158,13 @@ fn print_shareable_addresses(host: &str, port: u16, peer: PeerId) {
     let quic = format!("{prefix}/udp/{port}/quic-v1/p2p/{peer}");
 
     println!();
-    println!("=== GOTOWE ADRESY KONOFIX ===");
+    println!("=== KONOFIX SHAREABLE ADDRESSES ===");
     println!("BOOTSTRAP TCP : {tcp}");
     println!("BOOTSTRAP QUIC: {quic}");
-    println!("REKOMENDOWANY : {tcp}");
+    println!("RECOMMENDED   : {tcp}");
     println!();
-    println!("Wklej REKOMENDOWANY adres w Konofix Chat -> Ustawienia sieci -> Bootstrap.");
-    println!("Alternatywnie ustaw zmienną środowiskową:");
+    println!("Paste RECOMMENDED into Konofix Chat -> Network settings -> Bootstrap.");
+    println!("Alternatively set the environment variable:");
     println!("  KONOFIX_BOOTSTRAPS={tcp}");
     println!();
 }
@@ -203,22 +237,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Konofix Node {}", env!("CARGO_PKG_VERSION"));
     println!("Peer ID: {local_peer}");
-    println!("Port: {port} TCP/UDP");
-    println!("Bootstrap + Kademlia DHT + Circuit Relay dla Konofix Chat.");
-    println!("Node nie zapisuje historii czatu ani przesylanych plikow.");
+    println!("Transport: TCP + QUIC on port {port}");
+    println!("Services: bootstrap + Kademlia DHT + AutoNAT + Circuit Relay + GossipSub");
+    println!("Privacy: this node does not persist chat history or transferred files.");
 
     if let Some(host) = &args.public_host {
+        if is_non_public_ip(host) {
+            println!("WARNING: --public-host resolves to a non-public IP literal. Cross-network clients may not be able to reach it.");
+        }
         print_shareable_addresses(host, port, local_peer);
     } else {
         println!();
-        println!("TIP: uruchom z --public-host <PUBLICZNY_IP_LUB_DNS>, aby dostać gotowy adres bootstrap.");
+        println!("TIP: start with --public-host <PUBLIC_IP_OR_DNS> to print ready-to-share bootstrap addresses.");
     }
+
+    let started = Instant::now();
+    let mut connected_peers = HashSet::<PeerId>::new();
+    let mut status_tick = tokio::time::interval(Duration::from_secs(args.status_interval));
+    status_tick.tick().await;
 
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
-                println!("\nZatrzymywanie Konofix Node...");
+                println!("\nStopping Konofix Node...");
                 break;
+            }
+            _ = status_tick.tick() => {
+                println!(
+                    "STATUS uptime={}s connected_peers={} peer_id={}",
+                    started.elapsed().as_secs(),
+                    connected_peers.len(),
+                    local_peer
+                );
             }
             event = swarm.select_next_some() => {
                 match event {
@@ -226,9 +276,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("LISTEN LOCAL: {address}/p2p/{local_peer}");
                     }
                     SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                        connected_peers.insert(peer_id);
                         println!("+ peer {peer_id}");
                     }
                     SwarmEvent::ConnectionClosed { peer_id, num_established, .. } if num_established == 0 => {
+                        connected_peers.remove(&peer_id);
                         println!("- peer {peer_id}");
                     }
                     SwarmEvent::Behaviour(NodeBehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {

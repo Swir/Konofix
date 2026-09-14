@@ -9,7 +9,7 @@ on:
 jobs:
   check-windows:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,7 +25,7 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm install --no-audit --no-fund
 
       - name: TypeScript + Vite build
         run: npm run build
@@ -35,3 +35,41 @@ jobs:
 
       - name: Cargo check - Konofix Node
         run: cargo check --manifest-path src-tauri/Cargo.toml --bin konofix-node
+
+      - name: Build production Windows app
+        if: github.event_name == 'push'
+        run: npm run tauri build
+
+      - name: Build production Konofix Node
+        if: github.event_name == 'push'
+        run: cargo build --manifest-path src-tauri/Cargo.toml --release --bin konofix-node
+
+      - name: Stage Windows test bundle
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path artifact | Out-Null
+          Copy-Item 'src-tauri\target\release\konofix-node.exe' 'artifact\konofix-node.exe'
+          if (Test-Path 'src-tauri\target\release\bundle') {
+            Copy-Item 'src-tauri\target\release\bundle' 'artifact\bundle' -Recurse -Force
+          }
+          Copy-Item 'README.md' 'artifact\README.md'
+          Copy-Item 'docs\TESTING.md' 'artifact\TESTING.md'
+          Copy-Item 'docs\NODE.md' 'artifact\NODE.md'
+          if (Test-Path 'package-lock.json') {
+            Copy-Item 'package-lock.json' 'artifact\package-lock.json'
+          }
+          if (Test-Path 'src-tauri\Cargo.lock') {
+            Copy-Item 'src-tauri\Cargo.lock' 'artifact\Cargo.lock'
+          }
+          Get-ChildItem artifact -Recurse | Select-Object FullName, Length
+
+      - name: Upload Windows test bundle
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Konofix-Chat-0.4.2-Windows-${{ github.sha }}
+          path: artifact
+          if-no-files-found: error
+          retention-days: 14

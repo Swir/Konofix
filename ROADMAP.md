@@ -51,11 +51,25 @@
 - [x] `Konofix Node --public-host` generuje gotowe adresy bootstrap TCP/QUIC
 - [x] `run-node.bat` prowadzi użytkownika przez uruchomienie noda
 - [x] walidacja pełnego multiaddr w `internet-test.ps1`
+- [x] CI buduje produkcyjną aplikację Windows i `konofix-node.exe`
+- [x] CI publikuje tymczasowy pakiet testowy jako artefakt GitHub Actions
+- [x] gotowa macierz testu kraj ↔ kraj / TCP / QUIC / relay / DCUtR / CGNAT
 - [ ] pierwszy stabilny publiczny/community Konofix Node
-- [ ] dwa komputery w różnych sieciach
+- [ ] dwa komputery w różnych sieciach i krajach
 - [ ] test CGNAT ↔ publiczny Node ↔ CGNAT
 - [ ] test TCP, QUIC, relay i DCUtR
 - [ ] poprawki po realnych testach
+- [ ] pierwszy GitHub Release do testów między krajami
+
+### Gate pierwszego test-release
+
+Release testowy robimy dopiero, gdy:
+
+- Windows CI jest zielony,
+- produkcyjny bundle aplikacji powstaje w CI,
+- `konofix-node.exe` powstaje w CI,
+- artefakt testowy zawiera aplikację, Node i instrukcje,
+- istnieje realny sposób uruchomienia publicznie osiągalnego bootstrapu.
 
 ## 0.5.0 — Rooms 2.0
 - pełna synchronizacja członków pokoju

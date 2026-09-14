@@ -9,6 +9,11 @@
 - Node generuje gotowe adresy bootstrap TCP i QUIC wraz z Peer ID,
 - `run-node.bat` pyta o publiczny IP/DNS i uruchamia Node bez ręcznego składania komendy,
 - `internet-test.ps1` sprawdza obecność hosta, portu i Peer ID w multiaddr,
+- Windows CI po kontroli buduje produkcyjną aplikację oraz `konofix-node.exe`,
+- CI składa gotowy pakiet testowy Windows i zachowuje go jako artefakt GitHub Actions,
+- pakiet testowy zawiera aplikację/bundle, Node, README oraz instrukcje testu i operatora Node,
+- rozszerzono plan testów o macierz kraj ↔ kraj, TCP, QUIC, relay, DCUtR i CGNAT ↔ Node ↔ CGNAT,
+- zdefiniowano jawny warunek pierwszego GitHub Release przeznaczonego do testów między krajami,
 - zaktualizowano dokumentację oraz roadmapę pod pierwszy realny test Internet ↔ Node ↔ Internet.
 
 ## 0.4.1

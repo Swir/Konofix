@@ -69,6 +69,8 @@
 - [x] Node prints periodic uptime and connected-peer telemetry for public test operations
 - [x] Node warns on obviously non-public IP literals passed through `--public-host`
 - [x] DNS bootstrap generation uses generic `/dns/...` multiaddresses for IPv4/IPv6-friendly resolution
+- [x] optional metadata-only JSON health snapshot for VPS/service monitoring
+- [x] health snapshot records version, stable Peer ID, uptime, peer count, timestamp, and clean shutdown state
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test

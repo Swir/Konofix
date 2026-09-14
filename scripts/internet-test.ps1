@@ -20,7 +20,7 @@ for ($i = 0; $i -lt $parts.Length - 1; $i++) {
 }
 
 if (-not $hostName -or -not $port -or -not $peerId) {
-  throw 'Nie rozpoznano pełnego multiaddr. Przykład: /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...'
+  throw 'Could not parse a complete multiaddr. Example: /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...'
 }
 
 Write-Host "Host: $hostName  Port: $port  Transport: $transport" -ForegroundColor Yellow
@@ -29,14 +29,14 @@ Write-Host "Peer ID: $peerId" -ForegroundColor DarkGray
 if ($transport -eq 'tcp') {
   $r = Test-NetConnection -ComputerName $hostName -Port $port -WarningAction SilentlyContinue
   if ($r.TcpTestSucceeded) {
-    Write-Host 'OK: port TCP bootstrapu jest osiągalny.' -ForegroundColor Green
+    Write-Host 'OK: bootstrap TCP port is reachable.' -ForegroundColor Green
   } else {
-    Write-Host 'FAIL: port TCP nie odpowiada. Sprawdź firewall/NAT/port forwarding.' -ForegroundColor Red
+    Write-Host 'FAIL: TCP port is not reachable. Check firewall, NAT, and port forwarding.' -ForegroundColor Red
     exit 2
   }
 } else {
-  Write-Host 'INFO: Windows Test-NetConnection nie potwierdza handshake QUIC/UDP. Zweryfikuj QUIC z panelu Konofix Chat.' -ForegroundColor DarkYellow
+  Write-Host 'INFO: Windows Test-NetConnection cannot confirm a QUIC/UDP handshake. Verify QUIC from the Konofix Chat network panel.' -ForegroundColor DarkYellow
 }
 
-Write-Host 'OK: multiaddr zawiera Peer ID.' -ForegroundColor Green
-Write-Host 'Następnie dodaj multiaddr w: Ustawienia sieci -> Bootstrap i wykonaj test na dwóch niezależnych łączach.' -ForegroundColor Green
+Write-Host 'OK: multiaddr contains a Peer ID.' -ForegroundColor Green
+Write-Host 'Next: add the multiaddr in Network settings -> Bootstrap and run the test on two independent Internet connections.' -ForegroundColor Green

@@ -51,3 +51,5 @@ jobs:
           fi
           git commit -m "Import Konofix Chat 0.4.1 source"
           git push origin HEAD:main
+
+# bootstrap trigger 2

@@ -2,52 +2,55 @@
 
 ## 0.4.2
 
-- przywrócono poprawny `tsconfig.json` i naprawiono Windows CI,
-- repo zostało oczyszczone z awaryjnego bootstrapu źródeł,
-- dodano właściwą ikonę Windows `src-tauri/icons/icon.ico` wymaganą przez Tauri,
-- `Konofix Node` obsługuje `--public-host` / `--public-ip`,
-- Node generuje gotowe adresy bootstrap TCP i QUIC wraz z Peer ID,
-- `run-node.bat` pyta o publiczny IP/DNS i uruchamia Node bez ręcznego składania komendy,
-- `internet-test.ps1` sprawdza obecność hosta, portu i Peer ID w multiaddr,
-- Windows CI po kontroli buduje produkcyjną aplikację oraz `konofix-node.exe`,
-- CI składa gotowy pakiet testowy Windows i zachowuje go jako artefakt GitHub Actions,
-- pakiet testowy zawiera aplikację/bundle, Node, README oraz instrukcje testu i operatora Node,
-- rozszerzono plan testów o macierz kraj ↔ kraj, TCP, QUIC, relay, DCUtR i CGNAT ↔ Node ↔ CGNAT,
-- dodano `scripts/release-gate.ps1`, który blokuje wydanie przy niespójnej wersji lub brakujących plikach,
-- CI tworzy ZIP test-release oraz plik kontrolny SHA-256,
-- opublikowano pierwszy pre-release `v0.4.2-test1` z gotowym pakietem Windows, sumą SHA-256 i `konofix-node.exe`,
-- dodano `scripts/verify-release.ps1`, który przed publikacją ponownie sprawdza SHA-256, integralność ZIP-a, wymagane pliki, rozmiar Node oraz obecność prawidłowego instalatora Windows,
-- etap publikacji jest teraz wykonywany dopiero po pozytywnej weryfikacji gotowego artefaktu release,
-- zaktualizowano dokumentację oraz roadmapę pod pierwszy realny test Internet ↔ Node ↔ Internet.
+- restored a valid `tsconfig.json` and fixed Windows CI,
+- removed the emergency source-bootstrap path from the repository,
+- added the required Windows icon at `src-tauri/icons/icon.ico` for Tauri packaging,
+- added `Konofix Node --public-host` / `--public-ip`,
+- Node now prints ready-to-use TCP and QUIC bootstrap multiaddresses containing its Peer ID,
+- `run-node.bat` asks for a public IP/DNS name and starts the Node without manual command construction,
+- `internet-test.ps1` validates host, port, and Peer ID presence in a bootstrap multiaddr,
+- Windows CI now builds the production application and `konofix-node.exe`,
+- CI creates a ready Windows test package and stores it as a GitHub Actions artifact,
+- the test package contains the application/bundle, Node, README, testing guide, and Node operator guide,
+- expanded the test plan with cross-country TCP, QUIC, relay, DCUtR, and CGNAT ↔ Node ↔ CGNAT scenarios,
+- added `scripts/release-gate.ps1` to block releases on version mismatch or missing required files,
+- CI creates a test-release ZIP plus SHA-256 checksum,
+- published the first `v0.4.2-test1` pre-release with the Windows bundle, SHA-256 checksum, and `konofix-node.exe`,
+- added `scripts/verify-release.ps1` to verify SHA-256, ZIP integrity, required files, Node binary size, and Windows installer presence before publication,
+- release publication now occurs only after the finished release artifact passes verification,
+- added automatic operating-system locale detection with English fallback,
+- added the first multilingual UI compatibility layer for English, Polish, Norwegian, German, French, Spanish, and Ukrainian,
+- changed top-level repository documentation to English-only and documented English as the canonical development/release language,
+- updated the roadmap for real Internet testing and typed localization-key migration.
 
 ## 0.4.1
 
-- projekt przemianowany na **Konofix Chat**,
-- autor w UI: **by Swir**,
-- dodano aktywny link do `https://github.com/Swir/Konofix`,
-- zmieniono namespace protokołu na `konofix`,
-- zmieniono pliki tymczasowe transferu na `.konofixpart`,
-- dodano Windows CI i `scripts/internet-test.ps1`,
-- przygotowano projekt do realnego testu Internet ↔ Node ↔ Internet.
+- rebranded the project as **Konofix Chat**,
+- added **by Swir** attribution in the UI,
+- added an active link to `https://github.com/Swir/Konofix`,
+- changed the protocol namespace to `konofix`,
+- changed temporary transfer files to `.konofixpart`,
+- added Windows CI and `scripts/internet-test.ps1`,
+- prepared the project for real Internet ↔ Node ↔ Internet testing.
 
 ## 0.4.0
 
-- dodano Circuit Relay server do klienta,
-- dodano automatyczną próbę relay-listener przez bootstrap,
-- dodano trwały cache adresów peerów,
-- przy starcie aplikacja próbuje ponownie znane peery,
-- dodano osobny `konofix-node` z Kademlia DHT, AutoNAT, Circuit Relay i GossipSub,
-- Node zachowuje Peer ID w lokalnym pliku tożsamości,
-- dodano `build-node.bat` i `run-node.bat`,
-- rozszerzono skrypty kontrolne i build Windows,
-- GUI pokazuje stan relay w panelu sieci,
-- zaktualizowano dokumentację i roadmapę.
+- added a Circuit Relay server to the client,
+- added automatic relay-listener attempts through bootstrap peers,
+- added a persistent cache of peer addresses,
+- the application now attempts to reconnect to known peers during startup,
+- added a standalone `konofix-node` with Kademlia DHT, AutoNAT, Circuit Relay, and GossipSub,
+- Node persists its Peer ID in a local identity file,
+- added `build-node.bat` and `run-node.bat`,
+- expanded project checks and the Windows build scripts,
+- the GUI now shows relay state in the network panel,
+- updated architecture and roadmap documentation.
 
 ## 0.3.0
 
 - P2P file transfer,
-- Akceptuj/Odrzuć,
+- Accept / Reject flow,
 - 256 KiB chunks,
-- SHA-256,
-- `.konofixpart`,
-- pasek postępu i anulowanie.
+- SHA-256 verification,
+- `.konofixpart` temporary files,
+- progress indicator and cancellation.

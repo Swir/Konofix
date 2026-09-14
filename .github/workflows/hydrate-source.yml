@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Rebuild and repair Konofix Chat 0.4.1 archive
+      - name: Recover and verify Konofix Chat 0.4.1 archive
         shell: bash
         run: |
           set -euo pipefail
@@ -31,76 +31,94 @@ jobs:
           import zipfile
 
           root = Path('.bootstrap')
-          parts = [root / f'part_{i:02d}' for i in range(8)]
-          for p in parts:
+          text = []
+          for i in range(8):
+              p = root / f'part_{i:02d}'
               if not p.is_file():
                   raise SystemExit(f'Missing bootstrap part: {p}')
+              text.append(p.read_text(encoding='ascii').replace('\r', '').replace('\n', ''))
 
-          text = [p.read_text(encoding='ascii').replace('\r', '').replace('\n', '') for p in parts]
-
-          # The original bootstrap was transported in three Base64 segments:
-          # 1) 56,000 chars, 2) a 2,576-char segment with one lost char,
-          # 3) part_07. Recover only the single lost Base64 character and accept
-          # a candidate exclusively when the resulting ZIP passes full integrity checks.
+          # Known transport layout of this bootstrap:
+          # - first 56,000 Base64 chars decode cleanly,
+          # - the next 2,575-char segment lost exactly one Base64 character,
+          # - part_07 is the final independently decodable Base64 segment.
           head_b64 = ''.join(text[:6]) + text[6][:8000]
-          middle_broken = text[6][8000:]
+          broken = text[6][8000:]
           tail_b64 = text[7]
 
-          print(f'head={len(head_b64)} middle_broken={len(middle_broken)} tail={len(tail_b64)}')
-          if len(head_b64) != 56000:
-              raise SystemExit(f'Unexpected head length: {len(head_b64)}')
-          if len(middle_broken) != 2575:
-              raise SystemExit(f'Unexpected middle length: {len(middle_broken)}')
-          if len(tail_b64) != 2584:
-              raise SystemExit(f'Unexpected tail length: {len(tail_b64)}')
-          if not middle_broken.endswith('g=='):
-              raise SystemExit('Unexpected middle trailer; refusing heuristic repair')
+          if (len(head_b64), len(broken), len(tail_b64)) != (56000, 2575, 2584):
+              raise SystemExit(
+                  f'Unexpected bootstrap layout: head={len(head_b64)} '
+                  f'broken={len(broken)} tail={len(tail_b64)}'
+              )
 
           head = base64.b64decode(head_b64, validate=True)
           tail = base64.b64decode(tail_b64, validate=True)
           alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
           required = {
+              'README.md',
+              'ROADMAP.md',
+              'CHANGELOG.md',
+              'src/main.ts',
               'src-tauri/Cargo.toml',
               'src-tauri/src/lib.rs',
-              'src/main.ts',
-              'ROADMAP.md',
-              'README.md',
+              'src-tauri/src/bin/konofix-node.rs',
           }
+
           successes = []
+          parseable = 0
+          # Search every possible deletion point in the damaged segment.
+          # Wrong candidates are rejected by the ZIP central directory and CRC.
+          for pos in range(len(broken) + 1):
+              left, right = broken[:pos], broken[pos:]
+              for ch in alphabet:
+                  try:
+                      middle = base64.b64decode(left + ch + right, validate=True)
+                  except Exception:
+                      continue
+                  blob = head + middle + tail
+                  if not blob.startswith(b'PK\x03\x04') or b'PK\x05\x06' not in blob[-128:]:
+                      continue
+                  try:
+                      with zipfile.ZipFile(io.BytesIO(blob), 'r') as zf:
+                          names = set(zf.namelist())
+                          if not required.issubset(names):
+                              continue
+                          parseable += 1
+                          bad = zf.testzip()
+                          if bad is not None:
+                              continue
+                  except Exception:
+                      continue
+                  successes.append((pos, ch, blob))
+                  if len(successes) > 1:
+                      break
+              if len(successes) > 1:
+                  break
 
-          # One Base64 character vanished immediately before the final 3 chars
-          # of the middle segment. Brute-force all 64 legal symbols and verify ZIP.
-          insert_at = len(middle_broken) - 3
-          for ch in alphabet:
-              candidate_b64 = middle_broken[:insert_at] + ch + middle_broken[insert_at:]
-              try:
-                  middle = base64.b64decode(candidate_b64, validate=True)
-              except Exception:
-                  continue
-              blob = head + middle + tail
-              try:
-                  with zipfile.ZipFile(io.BytesIO(blob), 'r') as zf:
-                      names = set(zf.namelist())
-                      if not required.issubset(names):
-                          continue
-                      if zf.testzip() is not None:
-                          continue
-              except Exception:
-                  continue
-              successes.append((ch, blob))
-
+          diag = root / 'repair-result.txt'
           if len(successes) != 1:
-              raise SystemExit(f'Expected exactly one valid repair, got {len(successes)}')
+              diag.write_text(
+                  'Konofix bootstrap recovery failed safely.\n'
+                  f'parseable_candidates={parseable}\n'
+                  f'valid_candidates={len(successes)}\n',
+                  encoding='utf-8'
+              )
+              raise SystemExit(
+                  f'Expected exactly one CRC-valid repair; got {len(successes)} '
+                  f'(parseable={parseable})'
+              )
 
-          repaired_char, blob = successes[0]
+          pos, ch, blob = successes[0]
           Path('/tmp/konofix-source.zip').write_bytes(blob)
-          (root / 'repair-result.txt').write_text(
-              f'Konofix Chat bootstrap repaired deterministically.\n'
-              f'Inserted Base64 character: {repaired_char}\n'
-              f'Archive bytes: {len(blob)}\n',
-              encoding='utf-8',
+          diag.write_text(
+              'Konofix Chat bootstrap recovered and CRC-verified.\n'
+              f'insert_position_in_damaged_segment={pos}\n'
+              f'inserted_base64_character={ch}\n'
+              f'archive_bytes={len(blob)}\n',
+              encoding='utf-8'
           )
-          print(f'Repaired with Base64 character {repaired_char!r}; archive bytes={len(blob)}')
+          print(diag.read_text())
           PY
 
           unzip -t /tmp/konofix-source.zip
@@ -111,7 +129,7 @@ jobs:
           test -f /tmp/konofix-source/src/main.ts
           test -f /tmp/konofix-source/ROADMAP.md
 
-      - name: Replace bootstrap files with project source
+      - name: Replace bootstrap with full project source
         shell: bash
         run: |
           set -euo pipefail
@@ -122,7 +140,7 @@ jobs:
           rm -rf .bootstrap
           rm -f .github/workflows/hydrate-source.yml
 
-      - name: Commit hydrated project
+      - name: Commit hydrated Konofix Chat source
         shell: bash
         run: |
           set -euo pipefail

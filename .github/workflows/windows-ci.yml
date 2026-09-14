@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: write
+
 jobs:
   check-windows:
     runs-on: windows-latest
@@ -23,6 +26,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+
+      - name: Release metadata gate
+        shell: pwsh
+        run: .\scripts\release-gate.ps1
 
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
@@ -57,6 +64,7 @@ jobs:
           Copy-Item 'README.md' 'artifact\README.md'
           Copy-Item 'docs\TESTING.md' 'artifact\TESTING.md'
           Copy-Item 'docs\NODE.md' 'artifact\NODE.md'
+          Copy-Item 'docs\RELEASE_0.4.2_TEST1.md' 'artifact\RELEASE_NOTES.md'
           if (Test-Path 'package-lock.json') {
             Copy-Item 'package-lock.json' 'artifact\package-lock.json'
           }
@@ -65,11 +73,51 @@ jobs:
           }
           Get-ChildItem artifact -Recurse | Select-Object FullName, Length
 
+      - name: Create release ZIP and checksum
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = 'Konofix-Chat-0.4.2-test1-Windows.zip'
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path 'artifact\*' -DestinationPath $zip -CompressionLevel Optimal
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Set-Content "$zip.sha256" -Encoding ascii
+          Write-Host "SHA256: $hash"
+
       - name: Upload Windows test bundle
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: Konofix-Chat-0.4.2-Windows-${{ github.sha }}
-          path: artifact
+          path: |
+            artifact
+            Konofix-Chat-0.4.2-test1-Windows.zip
+            Konofix-Chat-0.4.2-test1-Windows.zip.sha256
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish first cross-country test pre-release
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'v0.4.2-test1'
+          $repo = $env:GITHUB_REPOSITORY
+          gh release view $tag --repo $repo *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag już istnieje — pomijam ponowną publikację."
+            exit 0
+          }
+          gh release create $tag `
+            'Konofix-Chat-0.4.2-test1-Windows.zip' `
+            'Konofix-Chat-0.4.2-test1-Windows.zip.sha256' `
+            'artifact\konofix-node.exe' `
+            --repo $repo `
+            --target $env:GITHUB_SHA `
+            --title 'Konofix Chat 0.4.2 Test 1 — Cross-country P2P Preview' `
+            --notes-file 'docs\RELEASE_0.4.2_TEST1.md' `
+            --prerelease
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

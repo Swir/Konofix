@@ -54,6 +54,9 @@
 - [x] CI buduje produkcyjną aplikację Windows i `konofix-node.exe`
 - [x] CI publikuje tymczasowy pakiet testowy jako artefakt GitHub Actions
 - [x] gotowa macierz testu kraj ↔ kraj / TCP / QUIC / relay / DCUtR / CGNAT
+- [x] release gate: spójna wersja, wymagane pliki, ikona i dokumentacja
+- [x] ZIP test-release + SHA-256
+- [x] przygotowany automatyczny pre-release `v0.4.2-test1` po pełnym sukcesie produkcyjnego buildu
 - [ ] pierwszy stabilny publiczny/community Konofix Node
 - [ ] dwa komputery w różnych sieciach i krajach
 - [ ] test CGNAT ↔ publiczny Node ↔ CGNAT
@@ -63,12 +66,14 @@
 
 ### Gate pierwszego test-release
 
-Release testowy robimy dopiero, gdy:
+Release testowy może powstać tylko, gdy:
 
 - Windows CI jest zielony,
 - produkcyjny bundle aplikacji powstaje w CI,
 - `konofix-node.exe` powstaje w CI,
 - artefakt testowy zawiera aplikację, Node i instrukcje,
+- release gate potwierdza spójność wersji,
+- ZIP ma SHA-256,
 - istnieje realny sposób uruchomienia publicznie osiągalnego bootstrapu.
 
 ## 0.5.0 — Rooms 2.0

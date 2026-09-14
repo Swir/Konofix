@@ -13,6 +13,9 @@
 - CI składa gotowy pakiet testowy Windows i zachowuje go jako artefakt GitHub Actions,
 - pakiet testowy zawiera aplikację/bundle, Node, README oraz instrukcje testu i operatora Node,
 - rozszerzono plan testów o macierz kraj ↔ kraj, TCP, QUIC, relay, DCUtR i CGNAT ↔ Node ↔ CGNAT,
+- dodano `scripts/release-gate.ps1`, który blokuje wydanie przy niespójnej wersji lub brakujących plikach,
+- CI tworzy ZIP test-release oraz plik kontrolny SHA-256,
+- przygotowano automatyczną publikację pre-release `v0.4.2-test1`, uruchamianą dopiero po pełnym sukcesie produkcyjnego buildu,
 - zdefiniowano jawny warunek pierwszego GitHub Release przeznaczonego do testów między krajami,
 - zaktualizowano dokumentację oraz roadmapę pod pierwszy realny test Internet ↔ Node ↔ Internet.
 

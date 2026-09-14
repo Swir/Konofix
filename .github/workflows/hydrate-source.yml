@@ -21,6 +21,8 @@ jobs:
           fetch-depth: 0
 
       - name: Recover and verify Konofix Chat 0.4.1 archive
+        id: recover
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -38,37 +40,30 @@ jobs:
                   raise SystemExit(f'Missing bootstrap part: {p}')
               text.append(p.read_text(encoding='ascii').replace('\r', '').replace('\n', ''))
 
-          # Known transport layout of this bootstrap:
-          # - first 56,000 Base64 chars decode cleanly,
-          # - the next 2,575-char segment lost exactly one Base64 character,
-          # - part_07 is the final independently decodable Base64 segment.
           head_b64 = ''.join(text[:6]) + text[6][:8000]
           broken = text[6][8000:]
           tail_b64 = text[7]
+          diag = root / 'repair-result.txt'
 
           if (len(head_b64), len(broken), len(tail_b64)) != (56000, 2575, 2584):
-              raise SystemExit(
-                  f'Unexpected bootstrap layout: head={len(head_b64)} '
-                  f'broken={len(broken)} tail={len(tail_b64)}'
+              diag.write_text(
+                  f'Unexpected layout: head={len(head_b64)} broken={len(broken)} tail={len(tail_b64)}\n',
+                  encoding='utf-8'
               )
+              raise SystemExit(diag.read_text())
 
           head = base64.b64decode(head_b64, validate=True)
           tail = base64.b64decode(tail_b64, validate=True)
           alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
           required = {
-              'README.md',
-              'ROADMAP.md',
-              'CHANGELOG.md',
-              'src/main.ts',
-              'src-tauri/Cargo.toml',
-              'src-tauri/src/lib.rs',
+              'README.md','ROADMAP.md','CHANGELOG.md','src/main.ts',
+              'src-tauri/Cargo.toml','src-tauri/src/lib.rs',
               'src-tauri/src/bin/konofix-node.rs',
           }
 
           successes = []
           parseable = 0
-          # Search every possible deletion point in the damaged segment.
-          # Wrong candidates are rejected by the ZIP central directory and CRC.
+          crc_checked = 0
           for pos in range(len(broken) + 1):
               left, right = broken[:pos], broken[pos:]
               for ch in alphabet:
@@ -82,11 +77,11 @@ jobs:
                   try:
                       with zipfile.ZipFile(io.BytesIO(blob), 'r') as zf:
                           names = set(zf.namelist())
+                          parseable += 1
                           if not required.issubset(names):
                               continue
-                          parseable += 1
-                          bad = zf.testzip()
-                          if bad is not None:
+                          crc_checked += 1
+                          if zf.testzip() is not None:
                               continue
                   except Exception:
                       continue
@@ -96,18 +91,18 @@ jobs:
               if len(successes) > 1:
                   break
 
-          diag = root / 'repair-result.txt'
           if len(successes) != 1:
               diag.write_text(
-                  'Konofix bootstrap recovery failed safely.\n'
+                  'Konofix bootstrap recovery did not produce one unique valid archive.\n'
+                  f'head_chars={len(head_b64)}\n'
+                  f'broken_chars={len(broken)}\n'
+                  f'tail_chars={len(tail_b64)}\n'
                   f'parseable_candidates={parseable}\n'
+                  f'crc_checked_candidates={crc_checked}\n'
                   f'valid_candidates={len(successes)}\n',
                   encoding='utf-8'
               )
-              raise SystemExit(
-                  f'Expected exactly one CRC-valid repair; got {len(successes)} '
-                  f'(parseable={parseable})'
-              )
+              raise SystemExit(diag.read_text())
 
           pos, ch, blob = successes[0]
           Path('/tmp/konofix-source.zip').write_bytes(blob)
@@ -129,7 +124,25 @@ jobs:
           test -f /tmp/konofix-source/src/main.ts
           test -f /tmp/konofix-source/ROADMAP.md
 
+      - name: Commit recovery diagnostic when needed
+        if: steps.recover.outcome == 'failure'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .bootstrap/repair-result.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Record Konofix bootstrap recovery diagnostic"
+            git push origin HEAD:main
+          fi
+
+      - name: Fail safely if recovery failed
+        if: steps.recover.outcome == 'failure'
+        run: exit 1
+
       - name: Replace bootstrap with full project source
+        if: steps.recover.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -141,6 +154,7 @@ jobs:
           rm -f .github/workflows/hydrate-source.yml
 
       - name: Commit hydrated Konofix Chat source
+        if: steps.recover.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail

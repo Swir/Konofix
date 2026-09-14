@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "audit": "node scripts/project-audit.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"

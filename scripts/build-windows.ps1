@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-Write-Host '=== Konofix Chat 0.4.1 - WINDOWS BUILD ===' -ForegroundColor Cyan
+Write-Host '=== Konofix Chat 0.4.2 - WINDOWS BUILD ===' -ForegroundColor Cyan
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
   if (-not (Test-Path node_modules)) { npm install }

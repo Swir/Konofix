@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-Write-Host '=== Konofix Chat 0.4.1 - CHECK ===' -ForegroundColor Cyan
+Write-Host '=== Konofix Chat 0.4.2 - CHECK ===' -ForegroundColor Cyan
 
 function Need($cmd, $hint) {
   if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {

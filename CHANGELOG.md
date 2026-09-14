@@ -4,8 +4,10 @@
 
 - przywrócono poprawny `tsconfig.json` i naprawiono Windows CI,
 - repo zostało oczyszczone z awaryjnego bootstrapu źródeł,
+- dodano właściwą ikonę Windows `src-tauri/icons/icon.ico` wymaganą przez Tauri,
 - `Konofix Node` obsługuje `--public-host` / `--public-ip`,
 - Node generuje gotowe adresy bootstrap TCP i QUIC wraz z Peer ID,
+- `run-node.bat` pyta o publiczny IP/DNS i uruchamia Node bez ręcznego składania komendy,
 - `internet-test.ps1` sprawdza obecność hosta, portu i Peer ID w multiaddr,
 - zaktualizowano dokumentację oraz roadmapę pod pierwszy realny test Internet ↔ Node ↔ Internet.
 

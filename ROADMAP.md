@@ -47,7 +47,9 @@
 
 ## 0.4.2 — Real Internet Test 🚧
 - [x] poprawiony Windows CI i przywrócony `tsconfig.json`
+- [x] dodana wymagana ikona Windows/Tauri i poprawiony pipeline build
 - [x] `Konofix Node --public-host` generuje gotowe adresy bootstrap TCP/QUIC
+- [x] `run-node.bat` prowadzi użytkownika przez uruchomienie noda
 - [x] walidacja pełnego multiaddr w `internet-test.ps1`
 - [ ] pierwszy stabilny publiczny/community Konofix Node
 - [ ] dwa komputery w różnych sieciach

@@ -6,6 +6,7 @@ on:
     paths:
       - '.bootstrap/part_*'
       - '.github/workflows/hydrate-source.yml'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -23,11 +24,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat .bootstrap/part_* | base64 -d > /tmp/konofix-source.zip
+
+          mapfile -t parts < <(find .bootstrap -maxdepth 1 -type f -name 'part_[0-9][0-9]' -print | sort)
+          if [ "${#parts[@]}" -eq 0 ]; then
+            echo "No bootstrap parts found"
+            exit 1
+          fi
+
+          echo "Found ${#parts[@]} bootstrap parts:"
+          printf ' - %s\n' "${parts[@]}"
+
+          cat "${parts[@]}" | tr -d '\r\n' > /tmp/konofix-source.b64
+          echo "Base64 characters: $(wc -c < /tmp/konofix-source.b64)"
+
+          base64 --decode /tmp/konofix-source.b64 > /tmp/konofix-source.zip
+          echo "ZIP bytes: $(wc -c < /tmp/konofix-source.zip)"
+
           unzip -t /tmp/konofix-source.zip
           rm -rf /tmp/konofix-source
           mkdir -p /tmp/konofix-source
           unzip -q /tmp/konofix-source.zip -d /tmp/konofix-source
+
+          test -f /tmp/konofix-source/src-tauri/Cargo.toml
+          test -f /tmp/konofix-source/src/main.ts
+          test -f /tmp/konofix-source/ROADMAP.md
 
       - name: Replace bootstrap files with project source
         shell: bash

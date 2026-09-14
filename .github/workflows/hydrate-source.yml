@@ -1,0 +1,53 @@
+name: Hydrate Konofix source
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.bootstrap/source.zip'
+      - '.github/workflows/hydrate-source.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  hydrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout bootstrap commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract Konofix Chat 0.4.1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/konofix-source
+          mkdir -p /tmp/konofix-source
+          unzip -q .bootstrap/source.zip -d /tmp/konofix-source
+
+      - name: Replace bootstrap files with project source
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s dotglob nullglob
+          for item in /tmp/konofix-source/*; do
+            cp -a "$item" ./
+          done
+          rm -rf .bootstrap
+          rm -f .github/workflows/hydrate-source.yml
+
+      - name: Commit hydrated project
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git commit -m "Import Konofix Chat 0.4.1 source"
+          git push origin HEAD:main

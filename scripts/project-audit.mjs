@@ -38,6 +38,23 @@ for (const file of docs) {
   if (polishChars.test(text)) fail(`${file} contains Polish-specific characters; repository documentation must remain English.`);
 }
 
+const englishOnlyOperationalFiles = ['src-tauri/src/bin/konofix-node.rs'];
+for (const name of fs.readdirSync(root)) {
+  if (/\.bat$/i.test(name)) englishOnlyOperationalFiles.push(name);
+}
+const scriptsDir = path.join(root, 'scripts');
+if (fs.existsSync(scriptsDir)) {
+  for (const name of fs.readdirSync(scriptsDir)) {
+    if (/\.(ps1|bat)$/i.test(name)) englishOnlyOperationalFiles.push(`scripts/${name}`);
+  }
+}
+
+for (const file of englishOnlyOperationalFiles) {
+  if (polishChars.test(read(file))) {
+    fail(`${file} contains Polish-specific characters; operational tooling and Node CLI must remain English.`);
+  }
+}
+
 const workflowDir = path.join(root, '.github', 'workflows');
 if (fs.existsSync(workflowDir)) {
   for (const name of fs.readdirSync(workflowDir)) {

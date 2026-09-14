@@ -1,16 +1,24 @@
-use std::{path::PathBuf, time::Duration};
+use std::{net::IpAddr, path::PathBuf, time::Duration};
 
 use futures::StreamExt;
 use libp2p::{
-    autonat, gossipsub, identify, identity, kad::{self, store::MemoryStore}, noise, ping,
-    relay, swarm::{NetworkBehaviour, SwarmEvent}, tcp, yamux, PeerId, StreamProtocol,
-    SwarmBuilder,
+    autonat, gossipsub, identify, identity,
+    kad::{self, store::MemoryStore},
+    noise, ping, relay,
+    swarm::{NetworkBehaviour, SwarmEvent},
+    tcp, yamux, PeerId, StreamProtocol, SwarmBuilder,
 };
 
 const WORLD_TOPIC: &str = "konofix/world/v3";
 const KAD_PROTOCOL: &str = "/konofix/kad/1.0.0";
 const WORLD_PROVIDER_KEY: &str = "/konofix/world/providers/v1";
 const DEFAULT_PORT: u16 = 45555;
+
+#[derive(Debug)]
+struct NodeArgs {
+    port: u16,
+    public_host: Option<String>,
+}
 
 #[derive(NetworkBehaviour)]
 struct NodeBehaviour {
@@ -51,17 +59,88 @@ fn provider_key() -> kad::RecordKey {
     kad::RecordKey::new(&bytes)
 }
 
-fn parse_port() -> u16 {
-    let args: Vec<String> = std::env::args().collect();
-    args.windows(2)
-        .find(|w| w[0] == "--port")
-        .and_then(|w| w[1].parse().ok())
-        .unwrap_or(DEFAULT_PORT)
+fn print_help() {
+    println!("Konofix Node {}", env!("CARGO_PKG_VERSION"));
+    println!();
+    println!("Użycie:");
+    println!("  konofix-node.exe [--port 45555] [--public-host HOST]");
+    println!();
+    println!("Opcje:");
+    println!("  --port PORT          Port TCP i UDP/QUIC (domyślnie 45555)");
+    println!("  --public-host HOST   Publiczny IPv4, IPv6 lub DNS noda");
+    println!("  --public-ip IP       Alias dla --public-host");
+    println!("  -h, --help           Pokaż pomoc");
+    println!();
+    println!("Przykład:");
+    println!("  konofix-node.exe --port 45555 --public-host 203.0.113.10");
+}
+
+fn parse_args() -> Result<Option<NodeArgs>, String> {
+    let mut port = DEFAULT_PORT;
+    let mut public_host = None;
+    let mut args = std::env::args().skip(1);
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--port" => {
+                let raw = args.next().ok_or("Brak wartości po --port")?;
+                port = raw
+                    .parse::<u16>()
+                    .map_err(|_| format!("Nieprawidłowy port: {raw}"))?;
+                if port == 0 {
+                    return Err("Port musi być większy od 0.".into());
+                }
+            }
+            "--public-host" | "--public-ip" => {
+                let raw = args.next().ok_or("Brak wartości publicznego hosta")?;
+                let host = raw.trim().trim_matches(['[', ']']).to_string();
+                if host.is_empty() || host.contains('/') || host.chars().any(char::is_whitespace) {
+                    return Err(format!("Nieprawidłowy publiczny host: {raw}"));
+                }
+                public_host = Some(host);
+            }
+            "-h" | "--help" => {
+                print_help();
+                return Ok(None);
+            }
+            other => return Err(format!("Nieznany argument: {other}. Użyj --help.")),
+        }
+    }
+
+    Ok(Some(NodeArgs { port, public_host }))
+}
+
+fn public_prefix(host: &str) -> String {
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => format!("/ip4/{ip}"),
+        Ok(IpAddr::V6(ip)) => format!("/ip6/{ip}"),
+        Err(_) => format!("/dns4/{host}"),
+    }
+}
+
+fn print_shareable_addresses(host: &str, port: u16, peer: PeerId) {
+    let prefix = public_prefix(host);
+    let tcp = format!("{prefix}/tcp/{port}/p2p/{peer}");
+    let quic = format!("{prefix}/udp/{port}/quic-v1/p2p/{peer}");
+
+    println!();
+    println!("=== GOTOWE ADRESY KONOFIX ===");
+    println!("BOOTSTRAP TCP : {tcp}");
+    println!("BOOTSTRAP QUIC: {quic}");
+    println!("REKOMENDOWANY : {tcp}");
+    println!();
+    println!("Wklej REKOMENDOWANY adres w Konofix Chat -> Ustawienia sieci -> Bootstrap.");
+    println!("Alternatywnie ustaw zmienną środowiskową:");
+    println!("  KONOFIX_BOOTSTRAPS={tcp}");
+    println!();
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let port = parse_port();
+    let Some(args) = parse_args().map_err(std::io::Error::other)? else {
+        return Ok(());
+    };
+    let port = args.port;
     let key = load_or_create_identity().map_err(std::io::Error::other)?;
     let local_peer = key.public().to_peer_id();
 
@@ -92,7 +171,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             kad_cfg.set_record_ttl(Some(Duration::from_secs(120)));
             kad_cfg.set_replication_interval(Some(Duration::from_secs(30)));
             kad_cfg.set_provider_record_ttl(Some(Duration::from_secs(180)));
-            let kad = kad::Behaviour::with_config(peer.clone(), MemoryStore::new(peer.clone()), kad_cfg);
+            let kad = kad::Behaviour::with_config(peer, MemoryStore::new(peer), kad_cfg);
 
             let identify = identify::Behaviour::new(
                 identify::Config::new("/konofix/4.0".into(), key.public())
@@ -106,7 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 kad,
                 identify,
                 ping: ping::Behaviour::default(),
-                autonat: autonat::Behaviour::new(peer.clone(), autonat::Config::default()),
+                autonat: autonat::Behaviour::new(peer, autonat::Config::default()),
                 relay: relay::Behaviour::new(peer, relay::Config::default()),
             })
         })?
@@ -125,8 +204,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Konofix Node {}", env!("CARGO_PKG_VERSION"));
     println!("Peer ID: {local_peer}");
     println!("Port: {port} TCP/UDP");
-    println!("To jest bootstrap + Kademlia + Circuit Relay dla sieci Konofix Chat.");
-    println!("Nie zapisuje historii czatu ani przesylanych plikow.");
+    println!("Bootstrap + Kademlia DHT + Circuit Relay dla Konofix Chat.");
+    println!("Node nie zapisuje historii czatu ani przesylanych plikow.");
+
+    if let Some(host) = &args.public_host {
+        print_shareable_addresses(host, port, local_peer);
+    } else {
+        println!();
+        println!("TIP: uruchom z --public-host <PUBLICZNY_IP_LUB_DNS>, aby dostać gotowy adres bootstrap.");
+    }
 
     loop {
         tokio::select! {
@@ -137,7 +223,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             event = swarm.select_next_some() => {
                 match event {
                     SwarmEvent::NewListenAddr { address, .. } => {
-                        println!("LISTEN: {address}/p2p/{local_peer}");
+                        println!("LISTEN LOCAL: {address}/p2p/{local_peer}");
                     }
                     SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                         println!("+ peer {peer_id}");

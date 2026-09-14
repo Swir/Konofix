@@ -1,4 +1,4 @@
-# Konofix Chat 0.4.1
+# Konofix Chat 0.4.2
 
 **Konofix Chat** to efemeryczny komunikator peer-to-peer dla Windows tworzony przez **Swir**. Użytkownik uruchamia aplikację, wybiera nick, trafia do globalnego `#WORLD`, może tworzyć tymczasowe pokoje i wysyłać pliki bezpośrednio do innych użytkowników. Po wyłączeniu aplikacji użytkownik znika z sieci.
 
@@ -17,17 +17,23 @@ GitHub: https://github.com/Swir/Konofix
 - poznane adresy peerów są cache'owane lokalnie,
 - zamknięcie aplikacji usuwa obecność użytkownika z aktywnej sieci.
 
-## 0.4.1 — branding + przygotowanie realnego testu Internetu
+## 0.4.2 — Internet Test Ready
 
-- pełny branding **Konofix Chat** w GUI, Tauri, Rust, protokołach i dokumentacji,
-- logo aplikacji `K`,
-- stała stopka `by Swir • GitHub`,
-- link do `https://github.com/Swir/Konofix` otwierany z aplikacji,
-- identyfikator Windows/Tauri `info.swir.konofixchat`,
-- `Konofix Node` jako bootstrap/DHT/relay,
-- tymczasowe transfery `.konofixpart`,
-- GitHub Actions `Windows CI` dla TypeScript + Rust,
-- `scripts/internet-test.ps1` do wstępnej kontroli publicznego bootstrapu.
+Ta wersja porządkuje repo i upraszcza uruchomienie pierwszego publicznego Konofix Node. Node potrafi teraz sam wygenerować gotowe multiaddr z Peer ID dla TCP i QUIC.
+
+```powershell
+konofix-node.exe --port 45555 --public-host 203.0.113.10
+```
+
+Wynik zawiera m.in.:
+
+```text
+BOOTSTRAP TCP : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
+BOOTSTRAP QUIC: /ip4/203.0.113.10/udp/45555/quic-v1/p2p/12D3KooW...
+REKOMENDOWANY : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
+```
+
+Adres `REKOMENDOWANY` wklejamy w **Ustawienia sieci → Bootstrap**. Bootstrap służy tylko do wejścia do DHT/relay — nie jest serwerem historii wiadomości ani magazynem plików.
 
 ## Architektura
 
@@ -53,7 +59,7 @@ lub `run-dev.bat`.
 .\scripts\check.ps1
 ```
 
-GitHub wykonuje dodatkowo analogiczną kontrolę na `windows-latest` po każdym pushu do `main`.
+GitHub wykonuje dodatkowo kontrolę na `windows-latest`: TypeScript/Vite, aplikacja Rust i `konofix-node`.
 
 ## Build Windows
 
@@ -78,22 +84,16 @@ src-tauri\target\release\konofix-node.exe
 Node uruchamiamy na publicznie osiągalnym komputerze/VPS:
 
 ```powershell
-konofix-node.exe --port 45555
+konofix-node.exe --port 45555 --public-host TWOJ_PUBLICZNY_IP
 ```
 
-Przykładowy adres bootstrap:
+Otwórz TCP 45555 oraz UDP 45555. Szczegóły są w `docs/NODE.md`.
 
-```text
-/ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
-```
-
-Przed testem można wykonać:
+Przed testem klienta:
 
 ```powershell
 .\scripts\internet-test.ps1 -Bootstrap "/ip4/203.0.113.10/tcp/45555/p2p/12D3KooW..."
 ```
-
-Node nie jest serwerem kont ani archiwum czatu. Służy jako punkt wejścia do DHT i relay, gdy bezpośrednie połączenie jest niemożliwe.
 
 ## Dane lokalne
 
@@ -103,7 +103,7 @@ Node nie jest serwerem kont ani archiwum czatu. Służy jako punkt wejścia do D
 
 ## Status
 
-`0.4.1` przygotowuje projekt do pierwszego pełnego testu Windows ↔ Internet ↔ Windows. Do zamknięcia etapu 0.4.1 nadal wymagamy realnego testu na dwóch niezależnych łączach oraz publicznego Konofix Node z trwałym Peer ID. Po tym przechodzimy zgodnie z roadmapą do **0.5.0 Rooms 2.0**.
+`0.4.2` jest etapem **Real Internet Test**. Kod globalnej warstwy P2P jest gotowy do testu, ale nie oznaczamy jeszcze połączenia Polska ↔ USA / CGNAT ↔ relay jako potwierdzonego, dopóki nie przejdzie rzeczywistego testu na dwóch niezależnych sieciach i stałym publicznym Konofix Node. Po zamknięciu tego etapu przechodzimy do **0.5.0 Rooms 2.0**.
 
 ---
 

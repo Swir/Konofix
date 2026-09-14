@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.2
+
+- przywrócono poprawny `tsconfig.json` i naprawiono Windows CI,
+- repo zostało oczyszczone z awaryjnego bootstrapu źródeł,
+- `Konofix Node` obsługuje `--public-host` / `--public-ip`,
+- Node generuje gotowe adresy bootstrap TCP i QUIC wraz z Peer ID,
+- `internet-test.ps1` sprawdza obecność hosta, portu i Peer ID w multiaddr,
+- zaktualizowano dokumentację oraz roadmapę pod pierwszy realny test Internet ↔ Node ↔ Internet.
+
 ## 0.4.1
 
 - projekt przemianowany na **Konofix Chat**,

@@ -37,17 +37,23 @@
 - stały Peer ID Node
 - skrypty build/test dla Windows
 
-## 0.4.1 — Real Internet Test 🚧
+## 0.4.1 — Rebrand / Test Foundation ✅
 - [x] pełny rebranding **Konofix Chat**
 - [x] stopka `by Swir • GitHub`
 - [x] repo `Swir/Konofix` jako główne źródło projektu
-- [x] Windows CI: TypeScript + `cargo check`
+- [x] odzyskanie pełnego źródła do normalnej struktury repo
+- [x] Windows CI: TypeScript + Rust
 - [x] skrypt precheck publicznego bootstrapu
+
+## 0.4.2 — Real Internet Test 🚧
+- [x] poprawiony Windows CI i przywrócony `tsconfig.json`
+- [x] `Konofix Node --public-host` generuje gotowe adresy bootstrap TCP/QUIC
+- [x] walidacja pełnego multiaddr w `internet-test.ps1`
+- [ ] pierwszy stabilny publiczny/community Konofix Node
 - [ ] dwa komputery w różnych sieciach
 - [ ] test CGNAT ↔ publiczny Node ↔ CGNAT
 - [ ] test TCP, QUIC, relay i DCUtR
 - [ ] poprawki po realnych testach
-- [ ] pierwszy stabilny adres community bootstrap
 
 ## 0.5.0 — Rooms 2.0
 - pełna synchronizacja członków pokoju

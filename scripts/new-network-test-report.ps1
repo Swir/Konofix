@@ -3,6 +3,8 @@ param(
     [Parameter(Mandatory = $true)][string]$ClientA,
     [Parameter(Mandatory = $true)][string]$ClientB,
     [Parameter(Mandatory = $true)][string]$Bootstrap,
+    [string]$BuildVersion = 'unknown',
+    [string]$NodeVersion = 'unknown',
     [string]$OutputDirectory = 'test-results',
     [string]$Notes = ''
 )
@@ -14,17 +16,52 @@ if ($Bootstrap -notmatch '^/(ip4|ip6|dns|dns4|dns6)/.+/p2p/[A-Za-z0-9]+$') {
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-$stamp = [DateTimeOffset]::UtcNow.ToString('yyyyMMdd-HHmmss')
-$path = Join-Path $OutputDirectory "network-test-$($Scenario.ToLowerInvariant())-$stamp.md"
+$now = [DateTimeOffset]::UtcNow
+$stamp = $now.ToString('yyyyMMdd-HHmmss')
+$baseName = "network-test-$($Scenario.ToLowerInvariant())-$stamp"
+$markdownPath = Join-Path $OutputDirectory "$baseName.md"
+$jsonPath = Join-Path $OutputDirectory "$baseName.json"
+
+$checks = [ordered]@{
+    world_a_to_b = 'PENDING'
+    world_b_to_a = 'PENDING'
+    room_discovery = 'PENDING'
+    file_a_to_b_sha256 = 'PENDING'
+    file_b_to_a_sha256 = 'PENDING'
+    client_reconnect = 'PENDING'
+    node_restart_recovery = 'PENDING'
+    relay_observed = 'PENDING'
+    dcutr_direct_upgrade = 'PENDING'
+    nickname_conflict = 'PENDING'
+}
+
+$manifest = [ordered]@{
+    schema_version = 1
+    created_utc = $now.ToString('o')
+    scenario = $Scenario
+    build_version = $BuildVersion
+    node_version = $NodeVersion
+    client_a = $ClientA
+    client_b = $ClientB
+    bootstrap = $Bootstrap
+    notes = $Notes
+    overall = 'PENDING'
+    checks = $checks
+}
+
+$manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
 
 $body = @"
 # Konofix Network Test Report
 
-- UTC: $([DateTimeOffset]::UtcNow.ToString('u'))
+- UTC: $($now.ToString('u'))
 - Scenario: $Scenario
+- Build version: $BuildVersion
+- Node version: $NodeVersion
 - Client A: $ClientA
 - Client B: $ClientB
 - Bootstrap: ``$Bootstrap``
+- Machine-readable manifest: ``$([IO.Path]::GetFileName($jsonPath))``
 - Notes: $Notes
 
 ## Preconditions
@@ -54,8 +91,9 @@ $body = @"
 
 Overall: **PENDING**
 
-Record PASS/FAIL and enough evidence to reproduce failures. Do not include identity keys, tokens, private addresses, or other secrets.
+Record PASS/FAIL and enough evidence to reproduce failures. Keep the JSON manifest in sync with this report so automated release gates can consume the results later. Do not include identity keys, tokens, private addresses, or other secrets.
 "@
 
-Set-Content -LiteralPath $path -Value $body -Encoding UTF8
-Write-Host "Created network test report: $path"
+Set-Content -LiteralPath $markdownPath -Value $body -Encoding UTF8
+Write-Host "Created network test report: $markdownPath"
+Write-Host "Created network test manifest: $jsonPath"

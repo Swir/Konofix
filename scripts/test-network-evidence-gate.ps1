@@ -31,6 +31,15 @@ function Assert-Rejected([scriptblock]$Action, [string]$Name) {
     if (-not $rejected) { throw "Negative evidence self-test was accepted unexpectedly: $Name" }
 }
 
+function New-MutatedManifest([string]$Source, [string]$Name, [scriptblock]$Mutation) {
+    $path = Join-Path $temp $Name
+    Copy-Item $Source $path
+    $data = Get-Content $path -Raw | ConvertFrom-Json
+    & $Mutation $data
+    $data | ConvertTo-Json -Depth 5 | Set-Content $path -Encoding UTF8
+    return $path
+}
+
 try {
     $paths = @()
     foreach ($scenario in @('TCP','QUIC','Relay','DCUtR','CGNAT')) {
@@ -42,26 +51,39 @@ try {
     & $validator -Manifest $paths -RequireAllChecks -ExpectedBuildVersion '0.4.2' -ExpectedNodeVersion '0.4.2' -RequireSingleBootstrapPeer
     Write-Host 'Positive network evidence self-test passed.'
 
-    $wrongVersion = Join-Path $temp 'wrong-version.json'
-    Copy-Item $paths[0] $wrongVersion
-    $data = Get-Content $wrongVersion -Raw | ConvertFrom-Json
-    $data.build_version = '0.4.1'
-    $data | ConvertTo-Json -Depth 5 | Set-Content $wrongVersion -Encoding UTF8
+    $wrongVersion = New-MutatedManifest $paths[0] 'wrong-version.json' { param($d) $d.build_version = '0.4.1' }
     Assert-Rejected { & $validator -Manifest $wrongVersion -RequiredScenario TCP -ExpectedBuildVersion '0.4.2' } 'wrong build version'
 
-    $sameCountry = Join-Path $temp 'same-country.json'
-    Copy-Item $paths[0] $sameCountry
-    $data = Get-Content $sameCountry -Raw | ConvertFrom-Json
-    $data.client_b_country = $data.client_a_country
-    $data | ConvertTo-Json -Depth 5 | Set-Content $sameCountry -Encoding UTF8
+    $wrongNodeVersion = New-MutatedManifest $paths[0] 'wrong-node-version.json' { param($d) $d.node_version = '0.4.1' }
+    Assert-Rejected { & $validator -Manifest $wrongNodeVersion -RequiredScenario TCP -ExpectedNodeVersion '0.4.2' } 'wrong Node version'
+
+    $sameCountry = New-MutatedManifest $paths[0] 'same-country.json' { param($d) $d.client_b_country = $d.client_a_country }
     Assert-Rejected { & $validator -Manifest $sameCountry -RequiredScenario TCP } 'same-country Internet evidence'
 
-    $fakeOverall = Join-Path $temp 'incomplete-core.json'
-    Copy-Item $paths[0] $fakeOverall
-    $data = Get-Content $fakeOverall -Raw | ConvertFrom-Json
-    $data.checks.world_a_to_b = 'PENDING'
-    $data | ConvertTo-Json -Depth 5 | Set-Content $fakeOverall -Encoding UTF8
+    $sameNetwork = New-MutatedManifest $paths[0] 'same-network.json' { param($d) $d.client_b_network = $d.client_a_network }
+    Assert-Rejected { & $validator -Manifest $sameNetwork -RequiredScenario TCP } 'same-network Internet evidence'
+
+    $fakeOverall = New-MutatedManifest $paths[0] 'incomplete-core.json' { param($d) $d.checks.world_a_to_b = 'PENDING' }
     Assert-Rejected { & $validator -Manifest $fakeOverall -RequiredScenario TCP } 'overall PASS with incomplete core check'
+
+    $stale = New-MutatedManifest $paths[0] 'stale.json' { param($d) $d.created_utc = [DateTimeOffset]::UtcNow.AddDays(-31).ToString('o') }
+    Assert-Rejected { & $validator -Manifest $stale -RequiredScenario TCP -MaxAgeDays 30 } 'stale evidence'
+
+    $future = New-MutatedManifest $paths[0] 'future.json' { param($d) $d.created_utc = [DateTimeOffset]::UtcNow.AddHours(1).ToString('o') }
+    Assert-Rejected { & $validator -Manifest $future -RequiredScenario TCP } 'future-dated evidence'
+
+    $relayMissing = New-MutatedManifest $paths[2] 'relay-missing.json' { param($d) $d.checks.relay_observed = 'N/A' }
+    Assert-Rejected { & $validator -Manifest $relayMissing -RequiredScenario Relay } 'Relay PASS without observed relay'
+
+    $dcutrMissing = New-MutatedManifest $paths[3] 'dcutr-missing.json' { param($d) $d.checks.dcutr_direct_upgrade = 'N/A' }
+    Assert-Rejected { & $validator -Manifest $dcutrMissing -RequiredScenario DCUtR } 'DCUtR PASS without direct upgrade'
+
+    $cgnatMissing = New-MutatedManifest $paths[4] 'cgnat-relay-missing.json' { param($d) $d.checks.relay_observed = 'N/A' }
+    Assert-Rejected { & $validator -Manifest $cgnatMissing -RequiredScenario CGNAT } 'CGNAT PASS without relay proof'
+
+    $mixedBootstrap = @($paths)
+    $mixedBootstrap[1] = New-MutatedManifest $paths[1] 'other-bootstrap.json' { param($d) $d.bootstrap = '/dns/konofix.example.test/tcp/4001/p2p/12D3KooWAnotherPeer987654321' }
+    Assert-Rejected { & $validator -Manifest $mixedBootstrap -RequireAllChecks -ExpectedBuildVersion '0.4.2' -ExpectedNodeVersion '0.4.2' -RequireSingleBootstrapPeer } 'mixed public Node Peer IDs'
 
     Write-Host 'Network evidence validator self-tests passed.'
 } finally {

@@ -70,8 +70,12 @@ try {
       ExpectedNodeVersion = $cargoVersion
     }
     if ($RequireNetworkEvidence) { $validatorArgs.RequireSingleBootstrapPeer = $true }
+
+    # validate-network-test-report.ps1 is a PowerShell script and reports failure by throwing.
+    # Do not inspect $LASTEXITCODE here: it belongs to native processes and can contain a
+    # stale non-zero value inherited from an earlier command, causing a valid release gate
+    # to fail nondeterministically.
     & (Join-Path $PSScriptRoot 'validate-network-test-report.ps1') @validatorArgs
-    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "Network evidence validator exited with code $LASTEXITCODE." }
   } elseif (-not $RequireNetworkEvidence) {
     Write-Host 'Network evidence not requested: pre-release/build gate only.' -ForegroundColor Yellow
   }

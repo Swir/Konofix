@@ -9,10 +9,7 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("konofix-node-health-te
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
 
 function Write-Snapshot {
-    param(
-        [string]$Name,
-        [hashtable]$Overrides = @{}
-    )
+    param([string]$Name, [hashtable]$Overrides = @{})
     $snapshot = [ordered]@{
         schema = 1
         status = 'running'
@@ -29,12 +26,8 @@ function Write-Snapshot {
 }
 
 function Expect-Pass {
-    param([string]$Name, [string]$Path, [switch]$RequirePeer)
-    try {
-        & $checker -Path $Path -MaxAgeSeconds 120 -RequirePeer:$RequirePeer
-    } catch {
-        throw "Expected PASS: $Name. Checker error: $($_.Exception.Message)"
-    }
+    param([string]$Name, [scriptblock]$Action)
+    try { & $Action } catch { throw "Expected PASS: $Name. Checker error: $($_.Exception.Message)" }
     Write-Host "PASS fixture accepted: $Name"
 }
 
@@ -48,7 +41,7 @@ function Expect-Reject {
 
 try {
     $valid = Write-Snapshot 'valid'
-    Expect-Pass 'valid health snapshot' $valid -RequirePeer
+    Expect-Pass 'valid health snapshot' { & $checker -Path $valid -MaxAgeSeconds 120 -RequirePeer -ExpectedVersion '0.4.2' -ExpectedPeerId '12D3KooWTestPeerId' }
 
     Expect-Reject 'missing snapshot' { & $checker -Path (Join-Path $tempRoot 'missing.json') }
 
@@ -59,7 +52,9 @@ try {
     foreach ($case in @(
         @{ Name='unsupported schema'; Overrides=@{schema=2} },
         @{ Name='stopped node'; Overrides=@{status='stopped'} },
+        @{ Name='empty version'; Overrides=@{version=''} },
         @{ Name='empty peer id'; Overrides=@{peer_id=''} },
+        @{ Name='negative uptime'; Overrides=@{uptime_seconds=-1} },
         @{ Name='negative peers'; Overrides=@{connected_peers=-1} },
         @{ Name='stale snapshot'; Overrides=@{timestamp_unix=([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()-600)} },
         @{ Name='future snapshot'; Overrides=@{timestamp_unix=([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()+120)} }
@@ -68,8 +63,11 @@ try {
         Expect-Reject $case.Name { & $checker -Path $path -MaxAgeSeconds 120 }
     }
 
+    Expect-Reject 'wrong expected version' { & $checker -Path $valid -ExpectedVersion '9.9.9' }
+    Expect-Reject 'wrong expected Peer ID' { & $checker -Path $valid -ExpectedPeerId '12D3KooWWrongPeer' }
+
     $noPeers = Write-Snapshot 'no-peers' @{connected_peers=0}
-    Expect-Pass 'zero peers allowed without RequirePeer' $noPeers
+    Expect-Pass 'zero peers allowed without RequirePeer' { & $checker -Path $noPeers }
     Expect-Reject 'RequirePeer rejects zero peers' { & $checker -Path $noPeers -MaxAgeSeconds 120 -RequirePeer }
 
     Write-Host 'Konofix Node health checker self-tests passed.'

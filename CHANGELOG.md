@@ -34,6 +34,7 @@
 - Node health snapshots include schema version, process state, application version, stable Peer ID, uptime, connected-peer count, and Unix timestamp,
 - health snapshots are written through a temporary file before replacement and switch to `stopped` on a clean Ctrl+C shutdown,
 - documented public-node monitoring, privacy-safe status output, JSON health checks, dual-stack DNS behavior, and external reachability checks,
+- fixed the English-only project audit failure by migrating the remaining Polish release-gate and release-verification diagnostics to English,
 - updated the roadmap for real Internet testing and typed localization-key migration.
 
 ## 0.4.1
@@ -43,27 +44,3 @@
 - added an active link to `https://github.com/Swir/Konofix`,
 - changed the protocol namespace to `konofix`,
 - changed temporary transfer files to `.konofixpart`,
-- added Windows CI and `scripts/internet-test.ps1`,
-- prepared the project for real Internet ↔ Node ↔ Internet testing.
-
-## 0.4.0
-
-- added a Circuit Relay server to the client,
-- added automatic relay-listener attempts through bootstrap peers,
-- added a persistent cache of peer addresses,
-- the application now attempts to reconnect to known peers during startup,
-- added a standalone `konofix-node` with Kademlia DHT, AutoNAT, Circuit Relay, and GossipSub,
-- Node persists its Peer ID in a local identity file,
-- added `build-node.bat` and `run-node.bat`,
-- expanded project checks and the Windows build scripts,
-- the GUI now shows relay state in the network panel,
-- updated architecture and roadmap documentation.
-
-## 0.3.0
-
-- P2P file transfer,
-- Accept / Reject flow,
-- 256 KiB chunks,
-- SHA-256 verification,
-- `.konofixpart` temporary files,
-- progress indicator and cancellation.

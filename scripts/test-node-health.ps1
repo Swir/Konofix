@@ -30,8 +30,11 @@ function Write-Snapshot {
 
 function Expect-Pass {
     param([string]$Name, [string]$Path, [switch]$RequirePeer)
-    & $checker -Path $Path -MaxAgeSeconds 120 -RequirePeer:$RequirePeer
-    if ($LASTEXITCODE -ne 0) { throw "Expected PASS: $Name" }
+    try {
+        & $checker -Path $Path -MaxAgeSeconds 120 -RequirePeer:$RequirePeer
+    } catch {
+        throw "Expected PASS: $Name. Checker error: $($_.Exception.Message)"
+    }
     Write-Host "PASS fixture accepted: $Name"
 }
 

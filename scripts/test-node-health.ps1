@@ -41,7 +41,7 @@ function Expect-Reject {
 
 try {
     $valid = Write-Snapshot 'valid'
-    Expect-Pass 'valid health snapshot' { & $checker -Path $valid -MaxAgeSeconds 120 -RequirePeer -ExpectedVersion '0.4.2' -ExpectedPeerId '12D3KooWTestPeerId' }
+    Expect-Pass 'valid health snapshot' { & $checker -Path $valid -MaxAgeSeconds 120 -RequirePeer -ExpectedVersion '0.4.2' -ExpectedPeerId '12D3KooWTestPeerId' -MinUptimeSeconds 60 }
 
     Expect-Reject 'missing snapshot' { & $checker -Path (Join-Path $tempRoot 'missing.json') }
 
@@ -65,6 +65,9 @@ try {
 
     Expect-Reject 'wrong expected version' { & $checker -Path $valid -ExpectedVersion '9.9.9' }
     Expect-Reject 'wrong expected Peer ID' { & $checker -Path $valid -ExpectedPeerId '12D3KooWWrongPeer' }
+    Expect-Reject 'negative minimum uptime argument' { & $checker -Path $valid -MinUptimeSeconds -1 }
+    Expect-Reject 'insufficient stability uptime' { & $checker -Path $valid -MinUptimeSeconds 121 }
+    Expect-Pass 'minimum stability uptime satisfied' { & $checker -Path $valid -MinUptimeSeconds 120 }
 
     $noPeers = Write-Snapshot 'no-peers' @{connected_peers=0}
     Expect-Pass 'zero peers allowed without RequirePeer' { & $checker -Path $noPeers }

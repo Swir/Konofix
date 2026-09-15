@@ -56,7 +56,7 @@
 - [x] English-only repository documentation and operational tooling policy with CI audit
 - [x] public Node telemetry, dual-stack-friendly DNS bootstrap generation, and health snapshots
 - [x] automated Node health validation with optional connected-peer assertion
-- [x] reproducible Markdown test-report generator for LAN/TCP/QUIC/Relay/DCUtR/CGNAT scenarios
+- [x] reproducible Markdown + JSON test evidence generator for LAN/TCP/QUIC/Relay/DCUtR/CGNAT scenarios
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test

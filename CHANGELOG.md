@@ -12,6 +12,7 @@
 - added public Node status telemetry, public-host validation warnings and dual-stack-friendly `/dns/...` bootstrap generation,
 - added privacy-safe JSON Node health snapshots with atomic replacement and clean-shutdown state,
 - added strict `scripts/check-node-health.ps1` validation, including stale/future timestamps, stopped state, malformed data, invalid peer counts and optional `-RequirePeer`,
+- added adversarial `scripts/test-node-health.ps1` coverage and wired it into Windows CI so malformed, stale/future, stopped, peerless and unsupported Node-health snapshots cannot silently weaken infrastructure checks,
 - added `scripts/new-network-test-report.ps1` to create consistent evidence-oriented Markdown reports for LAN, TCP, QUIC, Relay, DCUtR and CGNAT tests,
 - extended network-test reports with version metadata and a machine-readable JSON manifest designed for automated release gating,
 - added `scripts/validate-network-test-report.ps1` to reject malformed, incomplete, mixed-version or non-PASS network evidence and require the configured real-network scenarios,

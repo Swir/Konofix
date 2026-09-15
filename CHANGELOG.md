@@ -21,6 +21,7 @@
 - bounded `-MaxAgeSeconds` to 10–86400 seconds, reject non-positive health timestamps, and added adversarial CI coverage so operator configuration cannot accidentally authorize indefinitely stale Node telemetry,
 - reject Node-health snapshots whose uptime exceeds their Unix timestamp, with adversarial CI coverage, so internally impossible telemetry cannot satisfy infrastructure gates,
 - bound Node-health input size before JSON parsing with a 64 KiB default and configurable 1 KiB–1 MiB `-MaxSnapshotBytes` range; adversarial CI now rejects oversized snapshots and invalid limits,
+- require `schema`, `uptime_seconds`, `connected_peers`, and `timestamp_unix` to be genuine JSON integers instead of permissively coercing strings, booleans or fractional numbers; adversarial CI covers these type-confusion cases,
 - added `scripts/new-network-test-report.ps1` to create consistent evidence-oriented Markdown reports for LAN/TCP/QUIC/Relay/DCUtR/CGNAT tests,
 - extended network-test reports with version metadata and a machine-readable JSON manifest designed for automated release gating,
 - added `scripts/validate-network-test-report.ps1` to reject malformed, incomplete, mixed-version or non-PASS network evidence and require the configured real-network scenarios,

@@ -21,6 +21,32 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Get-StrictJsonInt64 {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][string]$Field
+    )
+
+    # ConvertFrom-Json preserves JSON integer tokens as integral CLR values. Reject
+    # strings, booleans and floating-point tokens instead of allowing PowerShell's
+    # permissive casts to coerce them into security-sensitive telemetry values.
+    $typeCode = [System.Type]::GetTypeCode($Value.GetType())
+    $integralTypes = @(
+        [System.TypeCode]::SByte, [System.TypeCode]::Byte,
+        [System.TypeCode]::Int16, [System.TypeCode]::UInt16,
+        [System.TypeCode]::Int32, [System.TypeCode]::UInt32,
+        [System.TypeCode]::Int64, [System.TypeCode]::UInt64
+    )
+    if ($typeCode -notin $integralTypes) {
+        throw "Health snapshot field '$Field' must be a JSON integer."
+    }
+    try {
+        return [Convert]::ToInt64($Value, [System.Globalization.CultureInfo]::InvariantCulture)
+    } catch {
+        throw "Health snapshot field '$Field' is outside the supported signed 64-bit integer range."
+    }
+}
+
 if ($MaxAgeSeconds -lt 10 -or $MaxAgeSeconds -gt 86400) {
     throw 'MaxAgeSeconds must be between 10 and 86400.'
 }
@@ -59,8 +85,9 @@ foreach ($field in $required) {
     }
 }
 
-if ([int]$health.schema -ne 1) {
-    throw "Unsupported health snapshot schema: $($health.schema)"
+$schema = Get-StrictJsonInt64 -Value $health.schema -Field 'schema'
+if ($schema -ne 1) {
+    throw "Unsupported health snapshot schema: $schema"
 }
 
 $version = [string]$health.version
@@ -83,7 +110,7 @@ if ($health.status -ne 'running') {
     throw "Konofix Node is not running according to the snapshot (status=$($health.status))."
 }
 
-$uptime = [int64]$health.uptime_seconds
+$uptime = Get-StrictJsonInt64 -Value $health.uptime_seconds -Field 'uptime_seconds'
 if ($uptime -lt 0) {
     throw 'Node uptime cannot be negative.'
 }
@@ -91,7 +118,7 @@ if ($uptime -lt $MinUptimeSeconds) {
     throw "Konofix Node uptime is below the required stability window (uptime=${uptime}s required=${MinUptimeSeconds}s)."
 }
 
-$timestamp = [int64]$health.timestamp_unix
+$timestamp = Get-StrictJsonInt64 -Value $health.timestamp_unix -Field 'timestamp_unix'
 if ($timestamp -le 0) {
     throw 'Health snapshot timestamp must be a positive Unix timestamp.'
 }
@@ -107,7 +134,7 @@ if ($age -gt $MaxAgeSeconds) {
     throw "Konofix Node health snapshot is stale (age=${age}s, limit=${MaxAgeSeconds}s)."
 }
 
-$peerCount = [int]$health.connected_peers
+$peerCount = Get-StrictJsonInt64 -Value $health.connected_peers -Field 'connected_peers'
 if ($peerCount -lt 0) {
     throw 'Connected peer count cannot be negative.'
 }

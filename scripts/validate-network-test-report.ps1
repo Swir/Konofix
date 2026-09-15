@@ -2,7 +2,10 @@ param(
     [Parameter(Mandatory = $true)][string[]]$Manifest,
     [string[]]$RequiredScenario = @('TCP','QUIC','Relay','DCUtR','CGNAT'),
     [switch]$RequireAllChecks,
-    [int]$MaxAgeDays = 30
+    [int]$MaxAgeDays = 30,
+    [string]$ExpectedBuildVersion = '',
+    [string]$ExpectedNodeVersion = '',
+    [switch]$RequireSingleBootstrapPeer
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +21,8 @@ foreach ($path in $Manifest) {
     if ($allowed -notcontains $data.scenario) { throw "Invalid scenario in ${path}: $($data.scenario)" }
     if ([string]::IsNullOrWhiteSpace($data.build_version) -or $data.build_version -eq 'unknown') { throw "Missing build version in $path" }
     if ([string]::IsNullOrWhiteSpace($data.node_version) -or $data.node_version -eq 'unknown') { throw "Missing Node version in $path" }
+    if ($ExpectedBuildVersion -and $data.build_version -ne $ExpectedBuildVersion) { throw "Evidence build version $($data.build_version) does not match target build $ExpectedBuildVersion in $path" }
+    if ($ExpectedNodeVersion -and $data.node_version -ne $ExpectedNodeVersion) { throw "Evidence Node version $($data.node_version) does not match target Node $ExpectedNodeVersion in $path" }
     if ([string]::IsNullOrWhiteSpace($data.client_a) -or [string]::IsNullOrWhiteSpace($data.client_b) -or $data.client_a -eq $data.client_b) { throw "Two different client endpoints must be recorded in $path" }
     if ($data.bootstrap -notmatch '^/(ip4|ip6|dns|dns4|dns6)/.+/p2p/[A-Za-z0-9]+$') { throw "Invalid bootstrap multiaddress in $path" }
     if ($data.overall -ne 'PASS') { throw "Manifest is not PASS: $path (overall=$($data.overall))" }
@@ -56,8 +61,13 @@ $versions = @($reports | ForEach-Object { $_.build_version } | Sort-Object -Uniq
 $nodeVersions = @($reports | ForEach-Object { $_.node_version } | Sort-Object -Unique)
 if ($versions.Count -ne 1) { throw "Evidence mixes client builds: $($versions -join ', ')" }
 if ($nodeVersions.Count -ne 1) { throw "Evidence mixes Node builds: $($nodeVersions -join ', ')" }
+
+$bootstrapPeerIds = @($reports | ForEach-Object { if ($_.bootstrap -match '/p2p/([^/]+)$') { $Matches[1] } } | Sort-Object -Unique)
+if ($RequireSingleBootstrapPeer -and $bootstrapPeerIds.Count -ne 1) { throw "Promotion evidence must target one stable public Node Peer ID; found: $($bootstrapPeerIds -join ', ')" }
+
 Write-Host 'Network evidence gate passed.'
 Write-Host "Client build: $($versions[0])"
 Write-Host "Node build: $($nodeVersions[0])"
 Write-Host "Passing manifests: $($reports.Count)"
 Write-Host "Scenarios: $((@($reports.scenario | Sort-Object -Unique)) -join ', ')"
+if ($bootstrapPeerIds.Count -gt 0) { Write-Host "Bootstrap Peer IDs: $($bootstrapPeerIds -join ', ')" }

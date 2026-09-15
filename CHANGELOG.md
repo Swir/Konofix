@@ -17,6 +17,7 @@
 - hardened Node health validation with non-negative uptime checks plus optional `-ExpectedVersion` and `-ExpectedPeerId` pinning; CI now rejects healthy snapshots from the wrong build or public Node identity,
 - added optional `-MinUptimeSeconds` Node-health gating and adversarial CI coverage so a freshly restarted deployment cannot be mistaken for infrastructure that has already survived the required stability window,
 - added optional `-MinConnectedPeers` Node-health quorum gating with CI coverage for satisfied, insufficient and invalid quorum requirements, allowing release infrastructure checks to demand more than a single transient peer,
+- made future-clock tolerance explicit with bounded `-MaxFutureSkewSeconds` Node-health gating and CI coverage for strict, tolerated, negative and excessive skew values,
 - added `scripts/new-network-test-report.ps1` to create consistent evidence-oriented Markdown reports for LAN/TCP/QUIC/Relay/DCUtR/CGNAT tests,
 - extended network-test reports with version metadata and a machine-readable JSON manifest designed for automated release gating,
 - added `scripts/validate-network-test-report.ps1` to reject malformed, incomplete, mixed-version or non-PASS network evidence and require the configured real-network scenarios,

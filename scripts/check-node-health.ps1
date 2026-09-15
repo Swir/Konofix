@@ -8,13 +8,18 @@ param(
 
     [string]$ExpectedVersion = '',
 
-    [string]$ExpectedPeerId = ''
+    [string]$ExpectedPeerId = '',
+
+    [int64]$MinUptimeSeconds = 0
 )
 
 $ErrorActionPreference = 'Stop'
 
 if ($MaxAgeSeconds -lt 10) {
     throw 'MaxAgeSeconds must be at least 10.'
+}
+if ($MinUptimeSeconds -lt 0) {
+    throw 'MinUptimeSeconds cannot be negative.'
 }
 
 if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -61,6 +66,9 @@ if ($health.status -ne 'running') {
 $uptime = [int64]$health.uptime_seconds
 if ($uptime -lt 0) {
     throw 'Node uptime cannot be negative.'
+}
+if ($uptime -lt $MinUptimeSeconds) {
+    throw "Konofix Node uptime is below the required stability window (uptime=${uptime}s required=${MinUptimeSeconds}s)."
 }
 
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()

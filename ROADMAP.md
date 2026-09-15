@@ -58,6 +58,7 @@
 - [x] automated Node health validation with optional connected-peer assertion
 - [x] CI self-tests for valid, malformed, stale/future, stopped and peerless Node health snapshots
 - [x] Node-health CI harness made deterministic by validating PowerShell exceptions instead of inherited native-process exit codes
+- [x] Node-health validation bound optionally to the expected release version and stable public Node Peer ID, with adversarial CI coverage
 - [x] reproducible Markdown + JSON test evidence generator for LAN/TCP/QUIC/Relay/DCUtR/CGNAT scenarios
 - [x] automated network-evidence gate validating PASS manifests, required scenarios and consistent client/Node versions
 - [x] strict evidence schema requiring fresh results and independently identified countries/networks for Internet scenarios
@@ -74,7 +75,7 @@
 
 ### Test-release gate
 
-A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from the exact release client and Node version, with independent countries and networks/operators recorded and one stable public bootstrap Peer ID across the promotion evidence. `scripts/release-gate.ps1 -RequireNetworkEvidence -NetworkEvidence <manifests>` enforces that promotion requirement directly. CI also executes adversarial self-tests for both network evidence and Node-health validation so regressions in release or infrastructure gates block Windows builds before packaging.
+A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from the exact release client and Node version, with independent countries and networks/operators recorded and one stable public bootstrap Peer ID across the promotion evidence. `scripts/release-gate.ps1 -RequireNetworkEvidence -NetworkEvidence <manifests>` enforces that promotion requirement directly. Public Node health checks can additionally pin `-ExpectedVersion` and `-ExpectedPeerId` so a healthy but wrong deployment cannot satisfy infrastructure validation. CI also executes adversarial self-tests for both network evidence and Node-health validation so regressions in release or infrastructure gates block Windows builds before packaging.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

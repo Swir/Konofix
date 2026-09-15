@@ -19,8 +19,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-if ($MaxAgeSeconds -lt 10) {
-    throw 'MaxAgeSeconds must be at least 10.'
+if ($MaxAgeSeconds -lt 10 -or $MaxAgeSeconds -gt 86400) {
+    throw 'MaxAgeSeconds must be between 10 and 86400.'
 }
 if ($MaxFutureSkewSeconds -lt 0 -or $MaxFutureSkewSeconds -gt 300) {
     throw 'MaxFutureSkewSeconds must be between 0 and 300.'
@@ -81,8 +81,12 @@ if ($uptime -lt $MinUptimeSeconds) {
     throw "Konofix Node uptime is below the required stability window (uptime=${uptime}s required=${MinUptimeSeconds}s)."
 }
 
+$timestamp = [int64]$health.timestamp_unix
+if ($timestamp -le 0) {
+    throw 'Health snapshot timestamp must be a positive Unix timestamp.'
+}
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-$age = $now - [int64]$health.timestamp_unix
+$age = $now - $timestamp
 if ($age -lt -$MaxFutureSkewSeconds) {
     throw "Health snapshot timestamp is unexpectedly in the future (age=${age}s, allowed_skew=${MaxFutureSkewSeconds}s)."
 }
@@ -102,4 +106,4 @@ if ($peerCount -lt $requiredPeers) {
     throw "Konofix Node does not meet the required connected-peer quorum (connected=$peerCount required=$requiredPeers)."
 }
 
-Write-Host "Konofix Node healthy: version=$version peer_id=$peerId uptime=${uptime}s connected_peers=$peerCount required_peers=$requiredPeers snapshot_age=${age}s future_skew_limit=${MaxFutureSkewSeconds}s"
+Write-Host "Konofix Node healthy: version=$version peer_id=$peerId uptime=${uptime}s connected_peers=$peerCount required_peers=$requiredPeers snapshot_age=${age}s max_age=${MaxAgeSeconds}s future_skew_limit=${MaxFutureSkewSeconds}s"

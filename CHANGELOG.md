@@ -18,6 +18,7 @@
 - upgraded network evidence to schema v2 with explicit country and network/operator identity for both endpoints; Internet tests must prove different countries and independent networks,
 - hardened the evidence gate with freshness/future-time validation, mandatory core PASS checks, and scenario-specific Relay/DCUtR/CGNAT assertions so an `overall=PASS` flag alone cannot authorize promotion,
 - wired schema-v2 network evidence into `scripts/release-gate.ps1`; stable promotion can now require fresh TCP/QUIC/Relay/DCUtR/CGNAT PASS manifests while ordinary CI/pre-release builds remain usable without fabricated evidence,
+- bound stable-promotion evidence to the exact package/Node version being released and optionally to one stable public bootstrap Peer ID across all required scenarios, preventing stale evidence from another build or Node from authorizing promotion,
 - expanded the cross-country testing guide with Node health validation and reproducible PASS/FAIL reporting,
 - updated the roadmap for real Internet testing and typed localization-key migration.
 

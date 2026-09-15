@@ -47,32 +47,16 @@
 
 ## 0.4.2 — Real Internet Test 🚧
 - [x] fixed Windows CI and restored `tsconfig.json`
-- [x] added required Windows/Tauri icon and fixed the packaging pipeline
-- [x] `Konofix Node --public-host` generates ready TCP/QUIC bootstrap addresses
-- [x] `run-node.bat` guides the operator through Node startup
-- [x] full multiaddr validation in `internet-test.ps1`
-- [x] CI builds the production Windows app and `konofix-node.exe`
-- [x] CI uploads a temporary Windows test bundle as a GitHub Actions artifact
-- [x] cross-country test matrix for TCP, QUIC, relay, DCUtR, and CGNAT ↔ Node ↔ CGNAT
-- [x] release gate validates versions, required files, icon, and documentation
-- [x] test-release ZIP + SHA-256 checksum
-- [x] automatic `v0.4.2-test1` pre-release after a successful production build
-- [x] first GitHub pre-release for cross-country testing published
-- [x] packaged artifact verification checks SHA-256, required files, Node binary, and Windows installer presence
+- [x] Windows/Tauri packaging and production app/Node build pipeline
+- [x] `Konofix Node --public-host` ready TCP/QUIC bootstrap addresses
+- [x] public Node launcher, multiaddr precheck, release gate, ZIP/SHA-256 and artifact verification
+- [x] first `v0.4.2-test1` cross-country pre-release
 - [x] system-language detection with English fallback
-- [x] first localization layer: English, Polish, Norwegian, German, French, Spanish, Ukrainian
-- [x] repository-facing documentation policy switched to English
-- [x] CI project audit validates version consistency, English fallback, and English-only repository documentation/workflow text
-- [x] localization architecture and migration policy documented in `docs/LOCALIZATION.md`
-- [x] public Node CLI and operational scripts migrated to English-only output
-- [x] project audit now enforces English-only Node CLI, PowerShell scripts, and batch launchers
-- [x] Node prints periodic uptime and connected-peer telemetry for public test operations
-- [x] Node warns on obviously non-public IP literals passed through `--public-host`
-- [x] DNS bootstrap generation uses generic `/dns/...` multiaddresses for IPv4/IPv6-friendly resolution
-- [x] optional metadata-only JSON health snapshot for VPS/service monitoring
-- [x] health snapshot records version, stable Peer ID, uptime, peer count, timestamp, and clean shutdown state
-- [x] automated health validator rejects malformed, stale, stopped, or otherwise invalid Node snapshots
-- [x] optional connected-peer assertion for controlled cross-country tests
+- [x] English, Polish, Norwegian, German, French, Spanish, Ukrainian localization layer
+- [x] English-only repository documentation and operational tooling policy with CI audit
+- [x] public Node telemetry, dual-stack-friendly DNS bootstrap generation, and health snapshots
+- [x] automated Node health validation with optional connected-peer assertion
+- [x] reproducible Markdown test-report generator for LAN/TCP/QUIC/Relay/DCUtR/CGNAT scenarios
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test
@@ -82,17 +66,7 @@
 
 ### Test-release gate
 
-A test release may be published only when:
-
-- Windows CI is green,
-- a production application bundle is created in CI,
-- `konofix-node.exe` is created in CI,
-- the test artifact contains the application, Node, and instructions,
-- the release gate confirms version consistency,
-- the project audit passes,
-- the ZIP has a SHA-256 checksum,
-- the finished ZIP passes `scripts/verify-release.ps1`,
-- there is a real way to run a publicly reachable bootstrap Node.
+A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

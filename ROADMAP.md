@@ -69,6 +69,7 @@
 - [x] promotion evidence bound to the exact target client/Node version and one stable public bootstrap Peer ID
 - [x] CI self-tests for positive evidence plus wrong client/Node versions, same-country/network, stale/future evidence, incomplete core checks, missing Relay/DCUtR/CGNAT proof and mixed bootstrap Peer IDs
 - [x] README progress bar derived from the active roadmap milestone and checked by CI against roadmap completion
+- [x] release gate invokes the PowerShell network-evidence validator deterministically without inheriting stale native-process exit codes
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test

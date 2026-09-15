@@ -14,7 +14,9 @@ param(
 
     [string]$ExpectedPeerId = '',
 
-    [int64]$MinUptimeSeconds = 0
+    [int64]$MinUptimeSeconds = 0,
+
+    [int64]$MaxSnapshotBytes = 65536
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,9 +33,17 @@ if ($MinUptimeSeconds -lt 0) {
 if ($MinConnectedPeers -lt 0) {
     throw 'MinConnectedPeers cannot be negative.'
 }
+if ($MaxSnapshotBytes -lt 1024 -or $MaxSnapshotBytes -gt 1048576) {
+    throw 'MaxSnapshotBytes must be between 1024 and 1048576.'
+}
 
 if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
     throw "Health snapshot not found: $Path"
+}
+
+$snapshotFile = Get-Item -LiteralPath $Path
+if ($snapshotFile.Length -gt $MaxSnapshotBytes) {
+    throw "Health snapshot is too large (bytes=$($snapshotFile.Length) limit=$MaxSnapshotBytes)."
 }
 
 try {
@@ -109,4 +119,4 @@ if ($peerCount -lt $requiredPeers) {
     throw "Konofix Node does not meet the required connected-peer quorum (connected=$peerCount required=$requiredPeers)."
 }
 
-Write-Host "Konofix Node healthy: version=$version peer_id=$peerId uptime=${uptime}s connected_peers=$peerCount required_peers=$requiredPeers snapshot_age=${age}s max_age=${MaxAgeSeconds}s future_skew_limit=${MaxFutureSkewSeconds}s"
+Write-Host "Konofix Node healthy: version=$version peer_id=$peerId uptime=${uptime}s connected_peers=$peerCount required_peers=$requiredPeers snapshot_age=${age}s max_age=${MaxAgeSeconds}s future_skew_limit=${MaxFutureSkewSeconds}s snapshot_bytes=$($snapshotFile.Length) max_snapshot_bytes=$MaxSnapshotBytes"

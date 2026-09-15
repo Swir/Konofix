@@ -10,167 +10,76 @@ On Windows 11:
 .\scripts\check.ps1
 ```
 
-The validation must pass without errors for:
-
-- TypeScript/Vite,
-- the Rust/Tauri application,
-- `konofix-node`.
-
-GitHub Actions runs the same core validation on `windows-latest`.
+The validation must pass without errors for TypeScript/Vite, the Rust/Tauri application, and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`.
 
 ## 2. LAN baseline
 
-Before Internet testing, validate two computers on the same LAN:
-
-1. Start Konofix Chat on both computers.
-2. Use different nicknames.
-3. Both clients should discover each other through mDNS.
-4. Send messages both ways in `#WORLD`.
-5. Create a temporary room.
-6. Send a small file and a file of at least 100 MB.
-7. Cancel one transfer while it is active.
-8. Close the room host — the room should disappear on the other client.
-
-If the LAN baseline fails, do not proceed to Internet testing.
+Before Internet testing, validate two computers on the same LAN: use different nicknames, verify mDNS discovery, exchange messages in `#WORLD`, create a temporary room, transfer a small file and a file of at least 100 MB, cancel an active transfer, and verify room cleanup after its host leaves. If the LAN baseline fails, do not proceed to Internet testing.
 
 ## 3. Public Konofix Node
 
-The simplest startup path is:
-
-```text
-run-node.bat
-```
-
-The script asks for a public IP address or DNS name.
-
-Manual startup:
+The simplest startup path is `run-node.bat`. Manual startup:
 
 ```powershell
 konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP_OR_DNS
 ```
 
-The VPS/router firewall must expose:
+The VPS/router firewall must expose TCP 45555 and UDP 45555. The Node prints ready TCP and QUIC multiaddresses ending in `/p2p/<PeerId>`. Do not delete `%LOCALAPPDATA%\Konofix Chat\node-identity.key` when the Node Peer ID must remain stable.
 
-- TCP 45555,
-- UDP 45555.
+When health snapshots are enabled, validate them before a remote test:
 
-The Node prints ready TCP and QUIC multiaddresses ending in `/p2p/<PeerId>`.
+```powershell
+.\scripts\check-node-health.ps1 -Path "$env:LOCALAPPDATA\Konofix Chat\node-health.json"
+```
 
-Do not delete `%LOCALAPPDATA%\Konofix Chat\node-identity.key` if the Node Peer ID must remain stable across restarts.
+Use `-RequirePeer` after clients are expected to be connected.
 
-## 4. Bootstrap precheck from each client
+## 4. Bootstrap precheck
 
-On every test computer:
+Run on every test computer:
 
 ```powershell
 .\scripts\internet-test.ps1 -Bootstrap "/ip4/ADDRESS/tcp/45555/p2p/PEER_ID"
 ```
 
-For DNS, use `/dns4/name...` or `/dns/name...`.
-
-The TCP precheck must succeed before the application-level Internet test. UDP/QUIC is verified through libp2p during the actual test.
+For DNS use `/dns/name...` (or an address-family-specific DNS multiaddress when intentionally required). The TCP precheck must succeed before the application-level Internet test. UDP/QUIC is verified through libp2p during the actual test.
 
 ## 5. Cross-country test
 
-Minimum topology:
+Minimum topology: Client A on country/network A, Client B on a different country/network B, and a publicly reachable Node, preferably on a third independent network.
 
-| Role | Requirement |
-| --- | --- |
-| Client A | country/network A, for example Norway / LTE or fiber |
-| Client B | country/network B, for example Poland / another ISP |
-| Node | public IP/DNS, preferably on a third independent network |
-
-Run these steps in order:
-
-1. Both computers add the same bootstrap.
-2. Start Konofix Chat on both with different nicknames.
-3. Verify that the network panel shows bootstrap connectivity and a growing DHT peer count.
-4. Send A → B and B → A messages in `#WORLD`.
-5. Create a room on A and verify that it appears on B.
-6. Send a file A → B and B → A.
-7. Compare file size and SHA-256 between source and received files.
-8. Restart both clients and verify peer discovery/cache reconnect behavior.
-9. Restart the public Node and confirm that its Peer ID remains unchanged.
-10. Repeat after several minutes without manually clearing the peer cache.
+Run in order: both clients add the same bootstrap; start with different nicknames; verify bootstrap/DHT connectivity; exchange `#WORLD` messages both ways; create and discover a room; transfer files both ways and compare SHA-256; restart clients and verify reconnect; restart the public Node and confirm its Peer ID remains unchanged; repeat after several minutes without clearing peer caches.
 
 ## 6. Transport and NAT matrix
 
-Run multiple variants:
+Test TCP bootstrap, UDP/QUIC, Circuit Relay with at least one client behind NAT/CGNAT without port forwarding, DCUtR/direct upgrade where possible, and the critical CGNAT ↔ public Node ↔ CGNAT scenario with clients behind independent networks.
 
-### A. TCP bootstrap
+## 7. Reproducible test report
 
-Use `/tcp/45555/p2p/...` and verify chat, room, and file transfer.
+Create a report before each controlled network test:
 
-### B. QUIC
+```powershell
+.\scripts\new-network-test-report.ps1 `
+  -Scenario CGNAT `
+  -ClientA "Norway / LTE" `
+  -ClientB "Poland / LTE" `
+  -Bootstrap "/dns/node.example.org/tcp/45555/p2p/PEER_ID"
+```
 
-Use `/udp/45555/quic-v1/p2p/...` and verify connectivity over UDP/QUIC.
+Supported scenarios are `LAN`, `TCP`, `QUIC`, `Relay`, `DCUtR`, and `CGNAT`. The generated Markdown file is stored under `test-results/` by default and contains a consistent PASS/FAIL matrix for messaging, rooms, bidirectional file transfer with SHA-256, reconnect, Node restart, relay/DCUtR observations, and nickname conflict handling.
 
-### C. Relay
+Do not put private identity keys, access tokens, or other secrets in reports. Before publishing a report, remove private/local addresses that are not required to reproduce a failure.
 
-At least one client should be behind NAT/CGNAT with no port forwarding. Confirm that it can enter the network through Circuit Relay.
+## 8. Nickname reservation test
 
-### D. DCUtR
+Start two clients with the same nickname, repeat with different letter case, verify that only one Peer ID retains the synchronized reservation, then verify that the nickname becomes available after the winning peer leaves and its lease expires.
 
-While connected through a relay, inspect logs/status and verify whether a successful hole punch can upgrade the connection to a direct path.
+## 9. Resilience testing
 
-### E. CGNAT ↔ Node ↔ CGNAT
-
-Critical scenario before closing the public test stage:
-
-- client A behind CGNAT,
-- client B behind a different CGNAT/NAT,
-- public Konofix Node reachable from both sides.
-
-## 7. Nickname reservation test
-
-1. Start two clients with the same nickname.
-2. Repeat with different letter case, for example `SWIR` and `swir`.
-3. After network synchronization, only one Peer ID should retain the reservation.
-4. After the winning peer leaves and the lease expires, the nickname should become available again.
-
-## 8. Resilience testing
-
-Also test:
-
-- disabling Wi-Fi/LTE during transfer,
-- closing the app during transfer,
-- restarting the Node while clients remain active,
-- malformed bootstrap,
-- unreachable bootstrap,
-- duplicate bootstrap entry,
-- file with a dangerous executable/script extension,
-- cancellation from both sides.
-
-The application must not crash or leave a completed output file after a transfer with an invalid SHA-256. Incomplete data should remain only in `.konofixpart` temporary files and be cleaned according to transfer logic.
-
-## 9. What to record for each test
-
-Record:
-
-- Konofix Chat version,
-- country and connection type for both clients,
-- NAT/CGNAT type when known,
-- TCP/QUIC bootstrap used,
-- whether relay was used,
-- whether DCUtR appeared,
-- chat: PASS/FAIL,
-- rooms: PASS/FAIL,
-- files: PASS/FAIL,
-- reconnect: PASS/FAIL,
-- nickname conflict: PASS/FAIL,
-- failure description and when it occurred.
-
-Never publish private identity keys or other secrets.
+Also test disabling Wi-Fi/LTE during transfer, closing the app during transfer, restarting the Node while clients remain active, malformed/unreachable/duplicate bootstrap entries, dangerous executable/script file extensions, and cancellation from both sides. The application must not crash or leave a completed output file after invalid SHA-256 verification.
 
 ## 10. Release-stage gate
 
-A cross-country GitHub test release is considered build-ready when:
+A cross-country GitHub test release is build-ready when Windows CI is green, production app and Node binaries are generated, documentation/versioning is consistent, Node startup instructions are ready, and there is a realistic publicly reachable bootstrap path.
 
-- Windows CI is green,
-- a production Windows build is generated in CI,
-- `konofix-node.exe` is generated in CI,
-- application and Node documentation use a consistent version,
-- public Node startup instructions are ready,
-- there is at least one realistic path to a publicly reachable bootstrap.
-
-The 0.4.2 stage is fully complete only after a successful test over two independent Internet connections and fixes for issues discovered during those tests.
+The 0.4.2 stage is fully complete only after successful tests over two independent Internet connections, recorded transport/NAT results, and fixes for issues discovered during those tests.

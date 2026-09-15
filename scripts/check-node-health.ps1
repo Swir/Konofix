@@ -85,6 +85,9 @@ $timestamp = [int64]$health.timestamp_unix
 if ($timestamp -le 0) {
     throw 'Health snapshot timestamp must be a positive Unix timestamp.'
 }
+if ($uptime -gt $timestamp) {
+    throw "Node uptime is impossible for the snapshot timestamp (uptime=${uptime}s timestamp=${timestamp})."
+}
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $age = $now - $timestamp
 if ($age -lt -$MaxFutureSkewSeconds) {

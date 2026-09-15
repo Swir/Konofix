@@ -32,6 +32,7 @@
 - expanded adversarial CI coverage to reject wrong Node versions, same-network evidence, stale/future timestamps, missing Relay/DCUtR/CGNAT proof and mixed public bootstrap Peer IDs,
 - made `scripts/release-gate.ps1` evaluate the PowerShell evidence validator through exceptions instead of stale native-process `$LASTEXITCODE`, eliminating a nondeterministic false-failure path during stable promotion,
 - added a roadmap-backed README progress bar and CI validation that fails when its displayed percentage drifts from the active 0.4.2 checklist,
+- configured per-ref Windows CI concurrency with superseded-run cancellation so rapid maintenance commits do not waste runners or package stale intermediate revisions in parallel,
 - expanded the cross-country testing guide with Node health validation and reproducible PASS/FAIL reporting,
 - updated the roadmap for real Internet testing and typed localization-key migration.
 

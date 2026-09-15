@@ -10,7 +10,7 @@ GitHub: https://github.com/Swir/Konofix
 
 `████████████████░░░░ 82%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (27 of 33 tasks complete). It is intentionally not increased by CI runs alone: the remaining real public-Node, cross-country, CGNAT and transport verification work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (28 of 34 tasks complete). It is intentionally not increased by CI runs alone: the remaining real public-Node, cross-country, CGNAT and transport verification work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -73,7 +73,7 @@ Project checks:
 .\scripts\check.ps1
 ```
 
-GitHub Actions additionally validates TypeScript/Vite, the Rust application, `konofix-node`, and the production Windows bundle.
+GitHub Actions additionally validates TypeScript/Vite, the Rust application, `konofix-node`, and the production Windows bundle. Superseded CI runs on the same branch/ref are cancelled automatically so only the newest commit proceeds through expensive Windows packaging.
 
 ## Windows build
 

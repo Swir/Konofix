@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ main ]
 
+# Only the newest run for a branch/ref is useful. This prevents rapid safe-maintenance
+# commits from building obsolete Windows bundles in parallel or occupying runners.
+concurrency:
+  group: windows-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 

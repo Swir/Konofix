@@ -4,7 +4,11 @@ param(
 
     [int]$MaxAgeSeconds = 120,
 
-    [switch]$RequirePeer
+    [switch]$RequirePeer,
+
+    [string]$ExpectedVersion = '',
+
+    [string]$ExpectedPeerId = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,12 +38,29 @@ if ([int]$health.schema -ne 1) {
     throw "Unsupported health snapshot schema: $($health.schema)"
 }
 
-if ([string]::IsNullOrWhiteSpace([string]$health.peer_id)) {
+$version = [string]$health.version
+if ([string]::IsNullOrWhiteSpace($version)) {
+    throw 'Health snapshot contains an empty version.'
+}
+if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and $version -ne $ExpectedVersion) {
+    throw "Konofix Node version mismatch (expected=$ExpectedVersion actual=$version)."
+}
+
+$peerId = [string]$health.peer_id
+if ([string]::IsNullOrWhiteSpace($peerId)) {
     throw 'Health snapshot contains an empty Peer ID.'
+}
+if (-not [string]::IsNullOrWhiteSpace($ExpectedPeerId) -and $peerId -ne $ExpectedPeerId) {
+    throw "Konofix Node Peer ID mismatch (expected=$ExpectedPeerId actual=$peerId)."
 }
 
 if ($health.status -ne 'running') {
     throw "Konofix Node is not running according to the snapshot (status=$($health.status))."
+}
+
+$uptime = [int64]$health.uptime_seconds
+if ($uptime -lt 0) {
+    throw 'Node uptime cannot be negative.'
 }
 
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -59,4 +80,4 @@ if ($RequirePeer -and $peerCount -lt 1) {
     throw 'Konofix Node is healthy but has no connected peers.'
 }
 
-Write-Host "Konofix Node healthy: version=$($health.version) peer_id=$($health.peer_id) uptime=$($health.uptime_seconds)s connected_peers=$peerCount snapshot_age=${age}s"
+Write-Host "Konofix Node healthy: version=$version peer_id=$peerId uptime=${uptime}s connected_peers=$peerCount snapshot_age=${age}s"

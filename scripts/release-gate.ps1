@@ -11,7 +11,7 @@ try {
 
   $cargoMatch = [regex]::Match($cargoText, '(?m)^version\s*=\s*"([^"]+)"')
   if (-not $cargoMatch.Success) {
-    throw 'Nie znaleziono wersji package w src-tauri/Cargo.toml.'
+    throw 'Package version was not found in src-tauri/Cargo.toml.'
   }
 
   $npmVersion = [string]$package.version
@@ -23,10 +23,10 @@ try {
   Write-Host "tauri.conf   : $tauriVersion"
 
   if ([string]::IsNullOrWhiteSpace($npmVersion)) {
-    throw 'package.json nie ma wersji.'
+    throw 'package.json does not define a version.'
   }
   if ($npmVersion -ne $cargoVersion -or $npmVersion -ne $tauriVersion) {
-    throw "Niespójne wersje projektu: npm=$npmVersion cargo=$cargoVersion tauri=$tauriVersion"
+    throw "Project versions are inconsistent: npm=$npmVersion cargo=$cargoVersion tauri=$tauriVersion"
   }
 
   $required = @(
@@ -42,25 +42,25 @@ try {
 
   foreach ($path in $required) {
     if (-not (Test-Path $path)) {
-      throw "Brak wymaganego pliku release: $path"
+      throw "Required release file is missing: $path"
     }
   }
 
   if ((Get-Item 'src-tauri\icons\icon.ico').Length -lt 256) {
-    throw 'icon.ico wygląda na uszkodzoną lub pustą.'
+    throw 'icon.ico appears to be damaged or empty.'
   }
 
   $roadmap = Get-Content 'ROADMAP.md' -Raw
   if ($roadmap -notmatch [regex]::Escape("## $npmVersion — Real Internet Test")) {
-    throw "ROADMAP.md nie zawiera aktywnego etapu wersji $npmVersion."
+    throw "ROADMAP.md does not contain the active $npmVersion stage."
   }
 
   $changelog = Get-Content 'CHANGELOG.md' -Raw
   if ($changelog -notmatch [regex]::Escape("## $npmVersion")) {
-    throw "CHANGELOG.md nie zawiera wersji $npmVersion."
+    throw "CHANGELOG.md does not contain version $npmVersion."
   }
 
-  Write-Host "OK - release gate dla Konofix Chat $npmVersion przeszedł." -ForegroundColor Green
+  Write-Host "OK - release gate for Konofix Chat $npmVersion passed." -ForegroundColor Green
 } finally {
   Pop-Location
 }

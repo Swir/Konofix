@@ -78,6 +78,19 @@ try {
     Expect-Reject 'insufficient peer quorum' { & $checker -Path $valid -MinConnectedPeers 3 }
     Expect-Reject 'negative future skew argument' { & $checker -Path $valid -MaxFutureSkewSeconds -1 }
     Expect-Reject 'excessive future skew argument' { & $checker -Path $valid -MaxFutureSkewSeconds 301 }
+    Expect-Reject 'too-small snapshot size limit' { & $checker -Path $valid -MaxSnapshotBytes 1023 }
+    Expect-Reject 'excessive snapshot size limit' { & $checker -Path $valid -MaxSnapshotBytes 1048577 }
+    Expect-Pass 'minimum supported snapshot size limit accepted' { & $checker -Path $valid -MaxSnapshotBytes 1024 }
+
+    $oversized = Join-Path $tempRoot 'oversized.json'
+    $padding = 'x' * 70000
+    $oversizedSnapshot = [ordered]@{
+        schema = 1; status = 'running'; version = '0.4.2'; peer_id = '12D3KooWTestPeerId'
+        uptime_seconds = 120; connected_peers = 2; timestamp_unix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); padding = $padding
+    }
+    $oversizedSnapshot | ConvertTo-Json -Compress | Set-Content -LiteralPath $oversized -Encoding utf8
+    Expect-Reject 'oversized health snapshot' { & $checker -Path $oversized }
+    Expect-Pass 'oversized fixture accepted only with explicit larger bound' { & $checker -Path $oversized -MaxSnapshotBytes 131072 }
 
     $nearFuture = Write-Snapshot 'near-future' @{timestamp_unix=([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()+10)}
     Expect-Pass 'small configured clock skew accepted' { & $checker -Path $nearFuture -MaxFutureSkewSeconds 15 }

@@ -6,11 +6,11 @@ GitHub: https://github.com/Swir/Konofix
 
 ## Project progress
 
-**Real Internet Test milestone: 79% complete**
+**Real Internet Test milestone: 80% complete**
 
-`████████████████░░░░ 79%`
+`████████████████░░░░ 80%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (23 of 29 tasks complete). It is intentionally not increased by CI runs alone: the remaining real public-Node, cross-country, CGNAT and transport verification work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (24 of 30 tasks complete). It is intentionally not increased by CI runs alone: the remaining real public-Node, cross-country, CGNAT and transport verification work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 

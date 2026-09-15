@@ -6,6 +6,8 @@ param(
 
     [switch]$RequirePeer,
 
+    [int]$MinConnectedPeers = 0,
+
     [string]$ExpectedVersion = '',
 
     [string]$ExpectedPeerId = '',
@@ -20,6 +22,9 @@ if ($MaxAgeSeconds -lt 10) {
 }
 if ($MinUptimeSeconds -lt 0) {
     throw 'MinUptimeSeconds cannot be negative.'
+}
+if ($MinConnectedPeers -lt 0) {
+    throw 'MinConnectedPeers cannot be negative.'
 }
 
 if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -84,8 +89,12 @@ $peerCount = [int]$health.connected_peers
 if ($peerCount -lt 0) {
     throw 'Connected peer count cannot be negative.'
 }
-if ($RequirePeer -and $peerCount -lt 1) {
-    throw 'Konofix Node is healthy but has no connected peers.'
+$requiredPeers = $MinConnectedPeers
+if ($RequirePeer -and $requiredPeers -lt 1) {
+    $requiredPeers = 1
+}
+if ($peerCount -lt $requiredPeers) {
+    throw "Konofix Node does not meet the required connected-peer quorum (connected=$peerCount required=$requiredPeers)."
 }
 
-Write-Host "Konofix Node healthy: version=$version peer_id=$peerId uptime=${uptime}s connected_peers=$peerCount snapshot_age=${age}s"
+Write-Host "Konofix Node healthy: version=$version peer_id=$peerId uptime=${uptime}s connected_peers=$peerCount required_peers=$requiredPeers snapshot_age=${age}s"

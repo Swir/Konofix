@@ -68,6 +68,9 @@ try {
     Expect-Reject 'negative minimum uptime argument' { & $checker -Path $valid -MinUptimeSeconds -1 }
     Expect-Reject 'insufficient stability uptime' { & $checker -Path $valid -MinUptimeSeconds 121 }
     Expect-Pass 'minimum stability uptime satisfied' { & $checker -Path $valid -MinUptimeSeconds 120 }
+    Expect-Reject 'negative minimum peer quorum argument' { & $checker -Path $valid -MinConnectedPeers -1 }
+    Expect-Pass 'minimum peer quorum satisfied' { & $checker -Path $valid -MinConnectedPeers 2 }
+    Expect-Reject 'insufficient peer quorum' { & $checker -Path $valid -MinConnectedPeers 3 }
 
     $noPeers = Write-Snapshot 'no-peers' @{connected_peers=0}
     Expect-Pass 'zero peers allowed without RequirePeer' { & $checker -Path $noPeers }

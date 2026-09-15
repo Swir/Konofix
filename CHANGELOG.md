@@ -19,6 +19,7 @@
 - added optional `-MinConnectedPeers` Node-health quorum gating with CI coverage for satisfied, insufficient and invalid quorum requirements, allowing release infrastructure checks to demand more than a single transient peer,
 - made future-clock tolerance explicit with bounded `-MaxFutureSkewSeconds` Node-health gating and CI coverage for strict, tolerated, negative and excessive skew values,
 - bounded `-MaxAgeSeconds` to 10–86400 seconds, reject non-positive health timestamps, and added adversarial CI coverage so operator configuration cannot accidentally authorize indefinitely stale Node telemetry,
+- reject Node-health snapshots whose uptime exceeds their Unix timestamp, with adversarial CI coverage, so internally impossible telemetry cannot satisfy infrastructure gates,
 - added `scripts/new-network-test-report.ps1` to create consistent evidence-oriented Markdown reports for LAN/TCP/QUIC/Relay/DCUtR/CGNAT tests,
 - extended network-test reports with version metadata and a machine-readable JSON manifest designed for automated release gating,
 - added `scripts/validate-network-test-report.ps1` to reject malformed, incomplete, mixed-version or non-PASS network evidence and require the configured real-network scenarios,

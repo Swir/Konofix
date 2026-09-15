@@ -57,6 +57,7 @@ try {
         @{ Name='negative uptime'; Overrides=@{uptime_seconds=-1} },
         @{ Name='negative peers'; Overrides=@{connected_peers=-1} },
         @{ Name='non-positive timestamp'; Overrides=@{timestamp_unix=0} },
+        @{ Name='impossible uptime'; Overrides=@{timestamp_unix=100; uptime_seconds=101} },
         @{ Name='stale snapshot'; Overrides=@{timestamp_unix=([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()-600)} },
         @{ Name='future snapshot'; Overrides=@{timestamp_unix=([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()+120)} }
     )) {

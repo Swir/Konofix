@@ -66,6 +66,14 @@ The file is refreshed on every status interval and contains only operational met
 
 On a clean Ctrl+C shutdown, `status` is changed to `stopped`. Monitoring should treat an old `timestamp_unix` as a stale or unhealthy process. The snapshot is written through a temporary file before replacement so readers do not normally observe partially written JSON.
 
+Konofix includes a strict health validator suitable for Task Scheduler, a VPS supervisor, or an external monitoring job:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-node-health.ps1 -Path "C:\Konofix\health.json" -MaxAgeSeconds 90
+```
+
+The validator rejects missing or malformed snapshots, unsupported schemas, non-running state, empty Peer IDs, stale timestamps, timestamps unexpectedly far in the future, and invalid peer counts. Add `-RequirePeer` during an active cross-country test when at least one connected peer is expected. A non-zero exit status means the check failed, which makes the script suitable for automated monitoring.
+
 Open/forward these ports in the router and firewall:
 
 - TCP 45555
@@ -103,7 +111,7 @@ A basic health check can verify that:
 2. `timestamp_unix` is newer than roughly two configured status intervals,
 3. the expected `peer_id` remains unchanged across restarts.
 
-`connected_peers` is telemetry, not a standalone health requirement; a healthy node can legitimately have zero peers during quiet periods.
+`connected_peers` is telemetry, not a standalone health requirement; a healthy node can legitimately have zero peers during quiet periods. During a controlled test, `check-node-health.ps1 -RequirePeer` turns that telemetry into a temporary test assertion.
 
 ## Privacy
 

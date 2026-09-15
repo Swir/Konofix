@@ -51,12 +51,17 @@ try {
 
     foreach ($case in @(
         @{ Name='unsupported schema'; Overrides=@{schema=2} },
+        @{ Name='string schema'; Overrides=@{schema='1'} },
         @{ Name='stopped node'; Overrides=@{status='stopped'} },
         @{ Name='empty version'; Overrides=@{version=''} },
         @{ Name='empty peer id'; Overrides=@{peer_id=''} },
         @{ Name='negative uptime'; Overrides=@{uptime_seconds=-1} },
+        @{ Name='string uptime'; Overrides=@{uptime_seconds='120'} },
         @{ Name='negative peers'; Overrides=@{connected_peers=-1} },
+        @{ Name='fractional peers'; Overrides=@{connected_peers=1.5} },
+        @{ Name='boolean peers'; Overrides=@{connected_peers=$true} },
         @{ Name='non-positive timestamp'; Overrides=@{timestamp_unix=0} },
+        @{ Name='string timestamp'; Overrides=@{timestamp_unix=([DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString())} },
         @{ Name='impossible uptime'; Overrides=@{timestamp_unix=100; uptime_seconds=101} },
         @{ Name='stale snapshot'; Overrides=@{timestamp_unix=([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()-600)} },
         @{ Name='future snapshot'; Overrides=@{timestamp_unix=([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()+120)} }

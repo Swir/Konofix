@@ -63,7 +63,14 @@ try {
 
   if ($NetworkEvidence.Count -gt 0) {
     Write-Host 'Validating real-network promotion evidence...' -ForegroundColor Cyan
-    & (Join-Path $PSScriptRoot 'validate-network-test-report.ps1') -Manifest $NetworkEvidence -MaxAgeDays $NetworkEvidenceMaxAgeDays
+    $validatorArgs = @{
+      Manifest = $NetworkEvidence
+      MaxAgeDays = $NetworkEvidenceMaxAgeDays
+      ExpectedBuildVersion = $npmVersion
+      ExpectedNodeVersion = $cargoVersion
+    }
+    if ($RequireNetworkEvidence) { $validatorArgs.RequireSingleBootstrapPeer = $true }
+    & (Join-Path $PSScriptRoot 'validate-network-test-report.ps1') @validatorArgs
     if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "Network evidence validator exited with code $LASTEXITCODE." }
   } elseif (-not $RequireNetworkEvidence) {
     Write-Host 'Network evidence not requested: pre-release/build gate only.' -ForegroundColor Yellow

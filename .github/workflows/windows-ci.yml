@@ -35,6 +35,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-network-evidence-gate.ps1
 
+      - name: Node health validator self-tests
+        shell: pwsh
+        run: .\scripts\test-node-health.ps1
+
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
 

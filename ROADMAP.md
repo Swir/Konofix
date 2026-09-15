@@ -62,7 +62,7 @@
 - [x] scenario-aware evidence checks for Relay, DCUtR and CGNAT instead of accepting an overall PASS alone
 - [x] stable-promotion release gate wired directly to schema-v2 real-network evidence validation
 - [x] promotion evidence bound to the exact target client/Node version and one stable public bootstrap Peer ID
-- [x] CI self-tests for network-evidence acceptance and critical rejection paths
+- [x] CI self-tests for positive evidence plus wrong client/Node versions, same-country/network, stale/future evidence, incomplete core checks, missing Relay/DCUtR/CGNAT proof and mixed bootstrap Peer IDs
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test
@@ -72,7 +72,7 @@
 
 ### Test-release gate
 
-A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from the exact release client and Node version, with independent countries and networks/operators recorded and one stable public bootstrap Peer ID across the promotion evidence. `scripts/release-gate.ps1 -RequireNetworkEvidence -NetworkEvidence <manifests>` enforces that promotion requirement directly. CI also executes `scripts/test-network-evidence-gate.ps1` so regressions in the evidence validator block Windows builds before release packaging.
+A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from the exact release client and Node version, with independent countries and networks/operators recorded and one stable public bootstrap Peer ID across the promotion evidence. `scripts/release-gate.ps1 -RequireNetworkEvidence -NetworkEvidence <manifests>` enforces that promotion requirement directly. CI also executes `scripts/test-network-evidence-gate.ps1`; its positive and adversarial fixtures exercise the critical release-evidence invariants so regressions block Windows builds before release packaging.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

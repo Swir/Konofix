@@ -20,6 +20,7 @@
 - wired schema-v2 network evidence into `scripts/release-gate.ps1`; stable promotion can now require fresh TCP/QUIC/Relay/DCUtR/CGNAT PASS manifests while ordinary CI/pre-release builds remain usable without fabricated evidence,
 - bound stable-promotion evidence to the exact package/Node version being released and optionally to one stable public bootstrap Peer ID across all required scenarios, preventing stale evidence from another build or Node from authorizing promotion,
 - added `scripts/test-network-evidence-gate.ps1` and wired it into Windows CI, continuously testing valid promotion evidence plus rejection of wrong-build, same-country and incomplete-core manifests,
+- expanded adversarial CI coverage to reject wrong Node versions, same-network evidence, stale/future timestamps, missing Relay/DCUtR/CGNAT proof and mixed public bootstrap Peer IDs,
 - expanded the cross-country testing guide with Node health validation and reproducible PASS/FAIL reporting,
 - updated the roadmap for real Internet testing and typed localization-key migration.
 

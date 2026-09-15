@@ -17,7 +17,7 @@
 - hardened Node health validation with non-negative uptime checks plus optional `-ExpectedVersion` and `-ExpectedPeerId` pinning; CI now rejects healthy snapshots from the wrong build or public Node identity,
 - added optional `-MinUptimeSeconds` Node-health gating and adversarial CI coverage so a freshly restarted deployment cannot be mistaken for infrastructure that has already survived the required stability window,
 - added optional `-MinConnectedPeers` Node-health quorum gating with CI coverage for satisfied, insufficient and invalid quorum requirements, allowing release infrastructure checks to demand more than a single transient peer,
-- added `scripts/new-network-test-report.ps1` to create consistent evidence-oriented Markdown reports for LAN, TCP, QUIC, Relay, DCUtR and CGNAT tests,
+- added `scripts/new-network-test-report.ps1` to create consistent evidence-oriented Markdown reports for LAN/TCP/QUIC/Relay/DCUtR/CGNAT tests,
 - extended network-test reports with version metadata and a machine-readable JSON manifest designed for automated release gating,
 - added `scripts/validate-network-test-report.ps1` to reject malformed, incomplete, mixed-version or non-PASS network evidence and require the configured real-network scenarios,
 - upgraded network evidence to schema v2 with explicit country and network/operator identity for both endpoints; Internet tests must prove different countries and independent networks,
@@ -26,6 +26,7 @@
 - bound stable-promotion evidence to the exact package/Node version being released and optionally to one stable public bootstrap Peer ID across all required scenarios, preventing stale evidence from another build or Node from authorizing promotion,
 - added `scripts/test-network-evidence-gate.ps1` and wired it into Windows CI, continuously testing valid promotion evidence plus rejection of wrong-build, same-country and incomplete-core manifests,
 - expanded adversarial CI coverage to reject wrong Node versions, same-network evidence, stale/future timestamps, missing Relay/DCUtR/CGNAT proof and mixed public bootstrap Peer IDs,
+- added a roadmap-backed README progress bar and CI validation that fails when its displayed percentage drifts from the active 0.4.2 checklist,
 - expanded the cross-country testing guide with Node health validation and reproducible PASS/FAIL reporting,
 - updated the roadmap for real Internet testing and typed localization-key migration.
 

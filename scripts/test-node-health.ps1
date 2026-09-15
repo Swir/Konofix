@@ -56,6 +56,7 @@ try {
         @{ Name='empty peer id'; Overrides=@{peer_id=''} },
         @{ Name='negative uptime'; Overrides=@{uptime_seconds=-1} },
         @{ Name='negative peers'; Overrides=@{connected_peers=-1} },
+        @{ Name='non-positive timestamp'; Overrides=@{timestamp_unix=0} },
         @{ Name='stale snapshot'; Overrides=@{timestamp_unix=([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()-600)} },
         @{ Name='future snapshot'; Overrides=@{timestamp_unix=([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()+120)} }
     )) {
@@ -63,6 +64,9 @@ try {
         Expect-Reject $case.Name { & $checker -Path $path -MaxAgeSeconds 120 }
     }
 
+    Expect-Reject 'too-small maximum age argument' { & $checker -Path $valid -MaxAgeSeconds 9 }
+    Expect-Reject 'excessive maximum age argument' { & $checker -Path $valid -MaxAgeSeconds 86401 }
+    Expect-Pass 'maximum supported freshness window accepted' { & $checker -Path $valid -MaxAgeSeconds 86400 }
     Expect-Reject 'wrong expected version' { & $checker -Path $valid -ExpectedVersion '9.9.9' }
     Expect-Reject 'wrong expected Peer ID' { & $checker -Path $valid -ExpectedPeerId '12D3KooWWrongPeer' }
     Expect-Reject 'negative minimum uptime argument' { & $checker -Path $valid -MinUptimeSeconds -1 }

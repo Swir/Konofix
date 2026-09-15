@@ -57,6 +57,7 @@
 - [x] public Node telemetry, dual-stack-friendly DNS bootstrap generation, and health snapshots
 - [x] automated Node health validation with optional connected-peer assertion
 - [x] reproducible Markdown + JSON test evidence generator for LAN/TCP/QUIC/Relay/DCUtR/CGNAT scenarios
+- [x] automated network-evidence gate validating PASS manifests, required scenarios and consistent client/Node versions
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test
@@ -66,7 +67,7 @@
 
 ### Test-release gate
 
-A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path.
+A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires machine-readable PASS evidence for the required real-network scenarios from one consistent client and Node build.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

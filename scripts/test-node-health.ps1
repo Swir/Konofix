@@ -71,6 +71,12 @@ try {
     Expect-Reject 'negative minimum peer quorum argument' { & $checker -Path $valid -MinConnectedPeers -1 }
     Expect-Pass 'minimum peer quorum satisfied' { & $checker -Path $valid -MinConnectedPeers 2 }
     Expect-Reject 'insufficient peer quorum' { & $checker -Path $valid -MinConnectedPeers 3 }
+    Expect-Reject 'negative future skew argument' { & $checker -Path $valid -MaxFutureSkewSeconds -1 }
+    Expect-Reject 'excessive future skew argument' { & $checker -Path $valid -MaxFutureSkewSeconds 301 }
+
+    $nearFuture = Write-Snapshot 'near-future' @{timestamp_unix=([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()+10)}
+    Expect-Pass 'small configured clock skew accepted' { & $checker -Path $nearFuture -MaxFutureSkewSeconds 15 }
+    Expect-Reject 'strict clock skew rejects future snapshot' { & $checker -Path $nearFuture -MaxFutureSkewSeconds 0 }
 
     $noPeers = Write-Snapshot 'no-peers' @{connected_peers=0}
     Expect-Pass 'zero peers allowed without RequirePeer' { & $checker -Path $noPeers }

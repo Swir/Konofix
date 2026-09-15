@@ -4,82 +4,59 @@ This document defines the minimum test set required before closing the first rel
 
 ## 1. Local validation
 
-On Windows 11:
-
-```powershell
-.\scripts\check.ps1
-```
-
-The validation must pass without errors for TypeScript/Vite, the Rust/Tauri application, and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`.
+On Windows 11 run `.\scripts\check.ps1`. Validation must pass for TypeScript/Vite, Rust/Tauri and `konofix-node`; GitHub Actions runs the same core validation on `windows-latest`.
 
 ## 2. LAN baseline
 
-Before Internet testing, validate two computers on the same LAN: use different nicknames, verify mDNS discovery, exchange messages in `#WORLD`, create a temporary room, transfer a small file and a file of at least 100 MB, cancel an active transfer, and verify room cleanup after its host leaves. If the LAN baseline fails, do not proceed to Internet testing.
+Before Internet testing, validate two computers on the same LAN: different nicknames, mDNS discovery, `#WORLD` both ways, a temporary room, small and 100+ MB file transfers, cancellation, and room cleanup after its host leaves. Do not proceed if this baseline fails.
 
 ## 3. Public Konofix Node
 
-The simplest startup path is `run-node.bat`. Manual startup:
-
-```powershell
-konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP_OR_DNS
-```
-
-The VPS/router firewall must expose TCP 45555 and UDP 45555. The Node prints ready TCP and QUIC multiaddresses ending in `/p2p/<PeerId>`. Do not delete `%LOCALAPPDATA%\Konofix Chat\node-identity.key` when the Node Peer ID must remain stable.
-
-When health snapshots are enabled, validate them before a remote test:
-
-```powershell
-.\scripts\check-node-health.ps1 -Path "$env:LOCALAPPDATA\Konofix Chat\node-health.json"
-```
-
-Use `-RequirePeer` after clients are expected to be connected.
+Use `run-node.bat` or `konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP_OR_DNS`. Expose TCP and UDP 45555. Preserve `%LOCALAPPDATA%\Konofix Chat\node-identity.key` for a stable Peer ID. Validate enabled health snapshots with `.\scripts\check-node-health.ps1 -Path "$env:LOCALAPPDATA\Konofix Chat\node-health.json"`; use `-RequirePeer` once clients should be connected.
 
 ## 4. Bootstrap precheck
 
-Run on every test computer:
-
-```powershell
-.\scripts\internet-test.ps1 -Bootstrap "/ip4/ADDRESS/tcp/45555/p2p/PEER_ID"
-```
-
-For DNS use `/dns/name...` (or an address-family-specific DNS multiaddress when intentionally required). The TCP precheck must succeed before the application-level Internet test. UDP/QUIC is verified through libp2p during the actual test.
+On every test PC run `.\scripts\internet-test.ps1 -Bootstrap "/ip4/ADDRESS/tcp/45555/p2p/PEER_ID"`. DNS multiaddresses are supported. TCP precheck must succeed before application-level testing; UDP/QUIC is verified through libp2p during the real test.
 
 ## 5. Cross-country test
 
-Minimum topology: Client A on country/network A, Client B on a different country/network B, and a publicly reachable Node, preferably on a third independent network.
-
-Run in order: both clients add the same bootstrap; start with different nicknames; verify bootstrap/DHT connectivity; exchange `#WORLD` messages both ways; create and discover a room; transfer files both ways and compare SHA-256; restart clients and verify reconnect; restart the public Node and confirm its Peer ID remains unchanged; repeat after several minutes without clearing peer caches.
+Minimum topology: Client A in country/network A, Client B in a different country and independent network/operator B, and a publicly reachable Node, preferably on a third network. Exchange `#WORLD` messages both ways, discover a room, transfer files both ways and compare SHA-256, reconnect clients, restart Node while preserving Peer ID, then repeat after several minutes.
 
 ## 6. Transport and NAT matrix
 
-Test TCP bootstrap, UDP/QUIC, Circuit Relay with at least one client behind NAT/CGNAT without port forwarding, DCUtR/direct upgrade where possible, and the critical CGNAT ↔ public Node ↔ CGNAT scenario with clients behind independent networks.
+Verify TCP, UDP/QUIC, Circuit Relay, DCUtR/direct upgrade where possible, and the critical CGNAT ↔ public Node ↔ CGNAT topology. Do not infer transport success from general chat success: each required transport gets its own report.
 
 ## 7. Reproducible test report
 
-Create a report before each controlled network test:
+For Internet scenarios use schema-v2 endpoint metadata:
 
 ```powershell
 .\scripts\new-network-test-report.ps1 `
   -Scenario CGNAT `
-  -ClientA "Norway / LTE" `
-  -ClientB "Poland / LTE" `
+  -ClientA "PC-A" -ClientACountry "Norway" -ClientANetwork "Operator-A LTE" `
+  -ClientB "PC-B" -ClientBCountry "Poland" -ClientBNetwork "Operator-B LTE" `
+  -BuildVersion "0.4.2" -NodeVersion "0.4.2" `
   -Bootstrap "/dns/node.example.org/tcp/45555/p2p/PEER_ID"
 ```
 
-Supported scenarios are `LAN`, `TCP`, `QUIC`, `Relay`, `DCUtR`, and `CGNAT`. The generated Markdown file is stored under `test-results/` by default and contains a consistent PASS/FAIL matrix for messaging, rooms, bidirectional file transfer with SHA-256, reconnect, Node restart, relay/DCUtR observations, and nickname conflict handling.
+Internet reports are rejected at creation time if countries or network/operator identifiers are missing, countries match, or networks match. The generated JSON is schema v2. After recording results, validate the evidence set with:
 
-Do not put private identity keys, access tokens, or other secrets in reports. Before publishing a report, remove private/local addresses that are not required to reproduce a failure.
+```powershell
+.\scripts\validate-network-test-report.ps1 -Manifest .\test-results\*.json
+```
+
+The promotion gate requires one consistent client/Node build, fresh evidence (30 days by default), PASS for all core communication/resilience checks, Relay observation in Relay and CGNAT evidence, DCUtR upgrade in DCUtR evidence, and passing manifests for TCP, QUIC, Relay, DCUtR and CGNAT. Use `-MaxAgeDays` to tighten the freshness window. `overall=PASS` by itself is intentionally insufficient.
+
+Never put identity keys, access tokens, private addresses or other secrets in reports.
 
 ## 8. Nickname reservation test
 
-Start two clients with the same nickname, repeat with different letter case, verify that only one Peer ID retains the synchronized reservation, then verify that the nickname becomes available after the winning peer leaves and its lease expires.
+Start two clients with the same nickname, repeat with different letter case, verify that only one Peer ID retains the synchronized reservation, then verify that the nickname becomes available after the winner leaves and its lease expires.
 
 ## 9. Resilience testing
 
-Also test disabling Wi-Fi/LTE during transfer, closing the app during transfer, restarting the Node while clients remain active, malformed/unreachable/duplicate bootstrap entries, dangerous executable/script file extensions, and cancellation from both sides. The application must not crash or leave a completed output file after invalid SHA-256 verification.
+Test Wi-Fi/LTE loss during transfer, app closure during transfer, Node restart, malformed/unreachable/duplicate bootstrap entries, dangerous executable/script extensions and cancellation from both sides. The app must not crash or leave a completed output file after failed SHA-256 verification.
 
 ## 10. Release-stage gate
 
-A cross-country GitHub test release is build-ready when Windows CI is green, production app and Node binaries are generated, documentation/versioning is consistent, Node startup instructions are ready, and there is a realistic publicly reachable bootstrap path.
-
-The 0.4.2 stage is fully complete only after successful tests over two independent Internet connections, recorded transport/NAT results, and fixes for issues discovered during those tests.
+A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond test release additionally requires validated schema-v2 evidence from independent countries/networks for the required transport/NAT scenarios and fixes for issues discovered during those tests.

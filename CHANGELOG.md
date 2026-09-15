@@ -35,6 +35,9 @@
 - health snapshots are written through a temporary file before replacement and switch to `stopped` on a clean Ctrl+C shutdown,
 - documented public-node monitoring, privacy-safe status output, JSON health checks, dual-stack DNS behavior, and external reachability checks,
 - fixed the English-only project audit failure by migrating the remaining Polish release-gate and release-verification diagnostics to English,
+- added `scripts/check-node-health.ps1` for strict automated validation of Node health snapshots,
+- health validation detects malformed/missing snapshots, unsupported schema, stopped state, stale/future timestamps, empty Peer IDs, and invalid peer counts,
+- added optional `-RequirePeer` validation for controlled cross-country test windows,
 - updated the roadmap for real Internet testing and typed localization-key migration.
 
 ## 0.4.1

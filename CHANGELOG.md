@@ -15,6 +15,8 @@
 - added `scripts/new-network-test-report.ps1` to create consistent evidence-oriented Markdown reports for LAN, TCP, QUIC, Relay, DCUtR and CGNAT tests,
 - extended network-test reports with version metadata and a machine-readable JSON manifest designed for automated release gating,
 - added `scripts/validate-network-test-report.ps1` to reject malformed, incomplete, mixed-version or non-PASS network evidence and require the configured real-network scenarios,
+- upgraded network evidence to schema v2 with explicit country and network/operator identity for both endpoints; Internet tests must prove different countries and independent networks,
+- hardened the evidence gate with freshness/future-time validation, mandatory core PASS checks, and scenario-specific Relay/DCUtR/CGNAT assertions so an `overall=PASS` flag alone cannot authorize promotion,
 - expanded the cross-country testing guide with Node health validation and reproducible PASS/FAIL reporting,
 - updated the roadmap for real Internet testing and typed localization-key migration.
 

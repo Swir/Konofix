@@ -60,6 +60,7 @@
 - [x] automated network-evidence gate validating PASS manifests, required scenarios and consistent client/Node versions
 - [x] strict evidence schema requiring fresh results and independently identified countries/networks for Internet scenarios
 - [x] scenario-aware evidence checks for Relay, DCUtR and CGNAT instead of accepting an overall PASS alone
+- [x] stable-promotion release gate wired directly to schema-v2 real-network evidence validation
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test
@@ -69,7 +70,7 @@
 
 ### Test-release gate
 
-A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from one consistent client and Node build, with independent countries and networks/operators recorded.
+A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from one consistent client and Node build, with independent countries and networks/operators recorded. `scripts/release-gate.ps1 -RequireNetworkEvidence -NetworkEvidence <manifests>` now enforces that promotion requirement directly.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

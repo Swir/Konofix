@@ -25,6 +25,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
 
       - name: Setup Rust MSVC
         uses: dtolnay/rust-toolchain@stable
@@ -44,7 +45,7 @@ jobs:
         run: .\scripts\test-node-health.ps1
 
       - name: Install frontend dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Project consistency and localization audit
         run: npm run audit

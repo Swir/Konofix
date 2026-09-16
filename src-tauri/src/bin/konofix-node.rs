@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    io::Write,
     net::IpAddr,
     path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -28,6 +29,7 @@ struct NodeArgs {
     public_host: Option<String>,
     status_interval: u64,
     health_file: Option<PathBuf>,
+    identity_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Serialize)]
@@ -52,27 +54,80 @@ struct NodeBehaviour {
     relay: relay::Behaviour,
 }
 
-fn identity_path() -> PathBuf {
+fn default_identity_path() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("Konofix Chat")
         .join("node-identity.key")
 }
 
-fn load_or_create_identity() -> Result<identity::Keypair, String> {
-    let path = identity_path();
-    if let Ok(data) = std::fs::read(&path) {
-        if let Ok(key) = identity::Keypair::from_protobuf_encoding(&data) {
-            return Ok(key);
+fn decode_identity(path: &Path, data: &[u8]) -> Result<identity::Keypair, String> {
+    identity::Keypair::from_protobuf_encoding(data).map_err(|error| {
+        format!(
+            "Identity file {} is invalid; refusing to replace it because that would change the public Node Peer ID: {error}",
+            path.display()
+        )
+    })
+}
+
+fn load_existing_identity(path: &Path) -> Result<identity::Keypair, String> {
+    let data = std::fs::read(path)
+        .map_err(|error| format!("Failed to read identity file {}: {error}", path.display()))?;
+    decode_identity(path, &data)
+}
+
+fn load_or_create_identity(path: &Path) -> Result<identity::Keypair, String> {
+    match std::fs::read(path) {
+        Ok(data) => return decode_identity(path, &data),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "Failed to read identity file {}: {error}",
+                path.display()
+            ))
         }
     }
 
-    let key = identity::Keypair::generate_ed25519();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Failed to create identity directory {}: {error}",
+                parent.display()
+            )
+        })?;
     }
-    let encoded = key.to_protobuf_encoding().map_err(|e| e.to_string())?;
-    std::fs::write(&path, encoded).map_err(|e| e.to_string())?;
+
+    let key = identity::Keypair::generate_ed25519();
+    let encoded = key
+        .to_protobuf_encoding()
+        .map_err(|error| format!("Failed to encode generated Node identity: {error}"))?;
+
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return load_existing_identity(path)
+        }
+        Err(error) => {
+            return Err(format!(
+                "Failed to create identity file {}: {error}",
+                path.display()
+            ))
+        }
+    };
+
+    if let Err(error) = file.write_all(&encoded).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(format!(
+            "Failed to persist identity file {}: {error}",
+            path.display()
+        ));
+    }
+
     Ok(key)
 }
 
@@ -85,7 +140,7 @@ fn print_help() {
     println!("Konofix Node {}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("Usage:");
-    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--status-interval 60] [--health-file PATH]");
+    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--status-interval 60] [--health-file PATH] [--identity-file PATH]");
     println!();
     println!("Options:");
     println!("  --port PORT              TCP and UDP/QUIC port (default: 45555)");
@@ -93,18 +148,23 @@ fn print_help() {
     println!("  --public-ip IP           Alias for --public-host");
     println!("  --status-interval SEC    Print an operational status line every N seconds (default: 60, minimum: 10)");
     println!("  --health-file PATH       Atomically update a metadata-only JSON health snapshot");
+    println!("  --identity-file PATH     Explicit persistent Node identity file (recommended for public/community nodes)");
     println!("  -h, --help               Show this help");
     println!();
     println!("Example:");
-    println!("  konofix-node.exe --port 45555 --public-host 203.0.113.10 --status-interval 60 --health-file konofix-health.json");
+    println!("  konofix-node.exe --port 45555 --public-host 203.0.113.10 --status-interval 60 --health-file C:\\Konofix\\health.json --identity-file C:\\Konofix\\node-identity.key");
 }
 
-fn parse_args() -> Result<Option<NodeArgs>, String> {
+fn parse_args_from<I>(args: I) -> Result<Option<NodeArgs>, String>
+where
+    I: IntoIterator<Item = String>,
+{
     let mut port = DEFAULT_PORT;
     let mut public_host = None;
     let mut status_interval = DEFAULT_STATUS_INTERVAL;
     let mut health_file = None;
-    let mut args = std::env::args().skip(1);
+    let mut identity_file = None;
+    let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -136,11 +196,17 @@ fn parse_args() -> Result<Option<NodeArgs>, String> {
             }
             "--health-file" => {
                 let raw = args.next().ok_or("Missing value after --health-file")?;
-                let path = PathBuf::from(raw.trim());
                 if raw.trim().is_empty() {
                     return Err("Health file path cannot be empty.".into());
                 }
-                health_file = Some(path);
+                health_file = Some(PathBuf::from(raw.trim()));
+            }
+            "--identity-file" => {
+                let raw = args.next().ok_or("Missing value after --identity-file")?;
+                if raw.trim().is_empty() {
+                    return Err("Identity file path cannot be empty.".into());
+                }
+                identity_file = Some(PathBuf::from(raw.trim()));
             }
             "-h" | "--help" => {
                 print_help();
@@ -155,7 +221,12 @@ fn parse_args() -> Result<Option<NodeArgs>, String> {
         public_host,
         status_interval,
         health_file,
+        identity_file,
     }))
+}
+
+fn parse_args() -> Result<Option<NodeArgs>, String> {
+    parse_args_from(std::env::args().skip(1))
 }
 
 fn public_prefix(host: &str) -> String {
@@ -239,7 +310,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     };
     let port = args.port;
-    let key = load_or_create_identity().map_err(std::io::Error::other)?;
+    let identity_path = args
+        .identity_file
+        .clone()
+        .unwrap_or_else(default_identity_path);
+    let key = load_or_create_identity(&identity_path).map_err(std::io::Error::other)?;
     let local_peer = key.public().to_peer_id();
 
     let mut swarm = SwarmBuilder::with_existing_identity(key)
@@ -302,6 +377,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Konofix Node {}", env!("CARGO_PKG_VERSION"));
     println!("Source commit: {SOURCE_COMMIT}");
     println!("Peer ID: {local_peer}");
+    println!("Identity file: {}", identity_path.display());
     println!("Transport: TCP + QUIC on port {port}");
     println!("Services: bootstrap + Kademlia DHT + AutoNAT + Circuit Relay + GossipSub");
     println!("Privacy: this node does not persist chat history or transferred files.");
@@ -380,4 +456,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_test_path(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!("konofix-node-{label}-{}-{nonce}", std::process::id()))
+            .join("node-identity.key")
+    }
+
+    #[test]
+    fn parses_explicit_identity_file() {
+        let args = parse_args_from(vec![
+            "--identity-file".to_string(),
+            "C:\\Konofix\\node-identity.key".to_string(),
+            "--port".to_string(),
+            "46666".to_string(),
+        ])
+        .expect("arguments should parse")
+        .expect("help was not requested");
+
+        assert_eq!(args.port, 46666);
+        assert_eq!(
+            args.identity_file,
+            Some(PathBuf::from("C:\\Konofix\\node-identity.key"))
+        );
+    }
+
+    #[test]
+    fn rejects_empty_identity_file() {
+        let error = parse_args_from(vec![
+            "--identity-file".to_string(),
+            "   ".to_string(),
+        ])
+        .expect_err("empty identity path must fail");
+        assert!(error.contains("Identity file path cannot be empty"));
+    }
+
+    #[test]
+    fn persisted_identity_keeps_peer_id() {
+        let path = unique_test_path("stable");
+        let first = load_or_create_identity(&path).expect("identity should be created");
+        let second = load_or_create_identity(&path).expect("identity should be loaded");
+        assert_eq!(first.public().to_peer_id(), second.public().to_peer_id());
+        let _ = std::fs::remove_dir_all(path.parent().expect("test path has parent"));
+    }
+
+    #[test]
+    fn corrupted_identity_fails_closed_without_replacement() {
+        let path = unique_test_path("corrupt");
+        std::fs::create_dir_all(path.parent().expect("test path has parent"))
+            .expect("test directory should be created");
+        let original = b"not-a-valid-libp2p-key";
+        std::fs::write(&path, original).expect("corrupt fixture should be written");
+
+        let error = load_or_create_identity(&path).expect_err("corrupt identity must fail closed");
+        assert!(error.contains("refusing to replace"));
+        assert_eq!(std::fs::read(&path).expect("fixture should remain"), original);
+        let _ = std::fs::remove_dir_all(path.parent().expect("test path has parent"));
+    }
 }

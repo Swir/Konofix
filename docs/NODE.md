@@ -19,6 +19,7 @@
 - exact source-commit provenance embedded into Node health snapshots
 - IPv4, IPv6, and generic DNS bootstrap address generation
 - fail-closed Windows deployment preflight with deterministic JSON output for automation
+- preview-first Windows startup-task installer with persistent runtime staging, restart policy and optional scoped firewall rules
 
 ## Windows
 
@@ -45,6 +46,44 @@ Then launch the same validated configuration:
 ```
 
 The preflight rejects private, loopback, link-local, CGNAT, documentation and other special-use IP literals by default. It also rejects local/single-label/reserved DNS names, refuses identity/health path collisions, pins an explicit persistent identity path and resolves DNS before `-Start`. `-AllowPrivateAddress` is available only for controlled LAN/lab tests. Use `-AsJson` to obtain normalized launch metadata and bootstrap address templates without starting the Node.
+
+### Supervised startup task
+
+For a public/community Node that should survive user logoff and Windows reboot, use `scripts\install-public-node-task.ps1` from the verified Windows archive. The script reuses the same public-host preflight and defaults persistent state to `%ProgramData%\Konofix Node` when no state directory is supplied.
+
+Start with a mutation-free preview:
+
+```powershell
+.\scripts\install-public-node-task.ps1 `
+  -PublicHost node.yourdomain.com `
+  -StateDirectory C:\ProgramData\KonofixNode `
+  -RequireDnsResolution `
+  -ConfigureFirewall
+```
+
+The preview prints the normalized public host, persistent identity/health paths, staged runtime paths, SYSTEM task identity, restart policy and whether the scoped firewall rules would be managed. `-AsJson` returns the same plan in deterministic machine-readable form.
+
+Install or update the task from an elevated PowerShell window only after reviewing the preview:
+
+```powershell
+.\scripts\install-public-node-task.ps1 `
+  -PublicHost node.yourdomain.com `
+  -StateDirectory C:\ProgramData\KonofixNode `
+  -RequireDnsResolution `
+  -ConfigureFirewall `
+  -Install `
+  -StartNow
+```
+
+Installation copies only `konofix-node.exe` and the validated `public-node.ps1` launcher into the persistent `service` subdirectory, registers a SYSTEM startup task, enables restart attempts with a one-minute interval, and optionally creates inbound TCP and UDP firewall rules scoped to the staged Node executable and configured port. The task command is encoded after all user-controlled values are PowerShell-literal quoted, avoiding fragile nested quoting in Task Scheduler arguments.
+
+To remove the task:
+
+```powershell
+.\scripts\install-public-node-task.ps1 -Uninstall
+```
+
+Uninstall removes the configured startup task and the dedicated `Konofix Public Node` firewall group. It deliberately does **not** delete the state directory, health history or identity key. Keeping the identity prevents an accidental public bootstrap Peer-ID rotation. Delete persistent state only as a separate, deliberate operator action after it is no longer needed.
 
 The raw binary remains available for manual operation:
 
@@ -161,7 +200,7 @@ A public IP or DNS name plus reachable TCP and UDP ports are required for a prop
 
 A small VPS only needs one Konofix Node process. The long-term goal is to run several independent nodes across different countries and providers so one outage cannot disconnect the entire network.
 
-For a public test node, keep the process supervised by the operating system or a service manager, place `--identity-file` on persistent storage, back that file up securely, monitor the periodic status line or JSON health snapshot, and verify both TCP and UDP/QUIC reachability from an external network.
+For a public test node, keep the process supervised by the operating system or a service manager, place `--identity-file` on persistent storage, back that file up securely, monitor the periodic status line or JSON health snapshot, and verify both TCP and UDP/QUIC reachability from an external network. On Windows, the bundled startup-task installer provides a reproducible supervised path without requiring a source checkout or an interactive user session.
 
 A basic health check can verify that:
 

@@ -10,7 +10,7 @@ GitHub: https://github.com/Swir/Konofix
 
 `██████████████████░░ 91%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (49 of 54 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (50 of 55 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -97,6 +97,26 @@ For a long-lived public/community Node, the recommended Windows-artifact path is
 ```
 
 `-AllowPrivateAddress` exists only for controlled LAN/lab tests. The launcher is included in the verified Windows test archive, so a public Node operator does not need a source checkout.
+
+For a Node that should survive logoff/reboot without keeping an interactive terminal open, the same verified Windows archive now includes a supervised startup-task installer. Preview the exact SYSTEM task, persistent paths and optional firewall changes first, then install from an elevated PowerShell window:
+
+```powershell
+.\scripts\install-public-node-task.ps1 `
+  -PublicHost node.yourdomain.com `
+  -StateDirectory C:\ProgramData\KonofixNode `
+  -RequireDnsResolution `
+  -ConfigureFirewall
+
+.\scripts\install-public-node-task.ps1 `
+  -PublicHost node.yourdomain.com `
+  -StateDirectory C:\ProgramData\KonofixNode `
+  -RequireDnsResolution `
+  -ConfigureFirewall `
+  -Install `
+  -StartNow
+```
+
+The installer stages `konofix-node.exe` and the validated launcher under persistent state, runs the Node as SYSTEM at boot, configures restart-on-failure, and can create only the scoped inbound TCP/UDP rules for the selected port. `-Uninstall` removes the task and its firewall group but deliberately preserves Node identity/state, preventing accidental bootstrap Peer-ID rotation.
 
 The raw Node command remains available when explicit manual control is needed:
 

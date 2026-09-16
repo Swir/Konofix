@@ -34,6 +34,8 @@
 - made stable promotion require Node soak evidence and bind that soak to the exact bootstrap Peer ID used by the validated cross-country network evidence,
 - added adversarial Node soak self-tests to Windows CI, added an all-target Rust test pass, and included the Node soak operator guide in Windows artifacts,
 - aligned `scripts/check.ps1` with the CI preflight path so local checks now run release/network/health/soak gates, project audit, frontend build, Rust all-target tests and application/Node checks,
+- added machine-readable Windows artifact provenance (`BUILD_INFO.json`) with exact commit/version plus SHA-256 and sizes for the Node, Rust resolution record and every installer,
+- strengthened release verification so provenance, `Cargo.lock`, Node-soak instructions and all installer hashes are cross-checked after ZIP extraction before artifact upload,
 - expanded cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1

@@ -65,6 +65,8 @@ Project checks:
 
 GitHub Actions validates TypeScript/Vite, Rust all-target tests and checks, `konofix-node`, release/network/Node-health/Node-soak gates, and the production Windows bundle. The repository does not currently contain a committed `package-lock.json`, so CI intentionally uses `npm install --no-audit --no-fund --package-lock=false`; the audit derives dependency policy from Git-tracked files instead of transient workspace files, so an npm-generated lockfile cannot masquerade as a committed reproducibility guarantee. Lockfile-enforced `npm ci` remains pending until a real lockfile is committed and verified. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
 
+Each Windows CI archive also carries `BUILD_INFO.json` with the exact commit/version and SHA-256 plus byte size for `konofix-node.exe` and every Windows installer. `scripts/verify-release.ps1` cross-checks that provenance against the extracted archive and verifies the captured `Cargo.lock` before upload. The lockfile currently records the Rust graph resolved by that build; it is not presented as a deterministic build input until a verified `src-tauri/Cargo.lock` is committed and enforced.
+
 ## Windows build
 
 ```powershell

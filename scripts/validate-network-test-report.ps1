@@ -116,6 +116,9 @@ foreach ($path in $Manifest) {
     $data = Convert-StrictManifestJson -Raw $raw -Path $path
     if ($data -isnot [pscustomobject]) { throw "Network evidence root must be a JSON object: $path" }
 
+    # Keep an explicit schema-v3 fast-fail for the project audit, then apply strict token typing below.
+    # A JSON string "3" can pass this compatibility comparison, but Get-StrictJsonInt64 rejects it.
+    if ($data.schema_version -ne 3) { throw "Unsupported schema_version in ${path}: $($data.schema_version). Regenerate evidence with the current tool." }
     $schema = Get-StrictJsonInt64 -Value (Get-RequiredProperty $data 'schema_version' $path) -Field 'schema_version'
     if ($schema -ne 3) { throw "Unsupported schema_version in ${path}: $schema. Regenerate evidence with the current tool." }
 

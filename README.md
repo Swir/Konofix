@@ -6,11 +6,11 @@ GitHub: https://github.com/Swir/Konofix
 
 ## Project progress
 
-**Real Internet Test milestone: 84% complete**
+**Real Internet Test milestone: 85% complete**
 
-`█████████████████░░░ 84%`
+`█████████████████░░░ 85%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (32 of 38 tasks complete). It is intentionally not increased by CI runs alone: the remaining real public-Node, cross-country, CGNAT and transport verification work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (33 of 39 tasks complete). It is intentionally not increased by CI runs alone: the remaining real public-Node, cross-country, CGNAT and transport verification work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -73,7 +73,7 @@ Project checks:
 .\scripts\check.ps1
 ```
 
-GitHub Actions additionally validates TypeScript/Vite, the Rust application, `konofix-node`, and the production Windows bundle. Superseded CI runs on the same branch/ref are cancelled automatically so only the newest commit proceeds through expensive Windows packaging.
+GitHub Actions additionally validates TypeScript/Vite, the Rust application, `konofix-node`, and the production Windows bundle. Superseded CI runs on the same branch/ref are cancelled automatically so only the newest commit proceeds through expensive Windows packaging. Build/test steps receive a read-only repository token; release write permission is isolated to a small post-build publication job that consumes the verified artifact.
 
 ## Windows build
 

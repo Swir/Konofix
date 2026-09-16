@@ -6,14 +6,10 @@ on:
   pull_request:
     branches: [ main ]
 
-# Only the newest run for a branch/ref is useful. This prevents rapid safe-maintenance
-# commits from building obsolete Windows bundles in parallel or occupying runners.
 concurrency:
   group: windows-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Build/test code gets a read-only token. Release publication is isolated in a
-# separate job with the only contents:write permission in this workflow.
 permissions:
   contents: read
 
@@ -29,6 +25,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
 
       - name: Setup Rust MSVC
         uses: dtolnay/rust-toolchain@stable
@@ -47,8 +44,8 @@ jobs:
         shell: pwsh
         run: .\scripts\test-node-health.ps1
 
-      - name: Install frontend dependencies
-        run: npm install --no-audit --no-fund
+      - name: Install locked frontend dependencies
+        run: npm ci --no-audit --no-fund
 
       - name: Project consistency and localization audit
         run: npm run audit
@@ -77,9 +74,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path artifact | Out-Null
           Copy-Item 'src-tauri\target\release\konofix-node.exe' 'artifact\konofix-node.exe'
-          if (Test-Path 'src-tauri\target\release\bundle') {
-            Copy-Item 'src-tauri\target\release\bundle' 'artifact\bundle' -Recurse -Force
-          }
+          if (Test-Path 'src-tauri\target\release\bundle') { Copy-Item 'src-tauri\target\release\bundle' 'artifact\bundle' -Recurse -Force }
           Copy-Item 'README.md' 'artifact\README.md'
           Copy-Item 'docs\TESTING.md' 'artifact\TESTING.md'
           Copy-Item 'docs\NODE.md' 'artifact\NODE.md'

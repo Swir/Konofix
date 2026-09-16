@@ -65,6 +65,12 @@ function New-SoakSnapshot([string]$Path, [int64]$Timestamp, [int64]$Uptime, [int
 }
 
 try {
+  $nodePath = Join-Path $temp 'konofix-node.exe'
+  $nodeBytesFixture = [byte[]]::new(4096)
+  for ($i = 0; $i -lt $nodeBytesFixture.Length; $i++) { $nodeBytesFixture[$i] = [byte]($i % 251) }
+  [IO.File]::WriteAllBytes($nodePath, $nodeBytesFixture)
+  $nodeHash = (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash.ToLowerInvariant()
+
   $buildInfoPath = Join-Path $temp 'BUILD_INFO.json'
   [ordered]@{
     schema = 1
@@ -73,8 +79,8 @@ try {
     commit = $sourceCommit
     node = [ordered]@{
       path = 'konofix-node.exe'
-      bytes = 1234567
-      sha256 = ('a' * 64)
+      bytes = [int64](Get-Item -LiteralPath $nodePath).Length
+      sha256 = $nodeHash
     }
   } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $buildInfoPath -Encoding UTF8
 
@@ -114,6 +120,17 @@ try {
   Assert-True ($result.bootstrap_peer_id -ceq $peerId) 'Promotion result bootstrap Peer ID mismatch.'
   Assert-True ($result.network_manifest_count -eq 5) 'Promotion result must report five required network scenarios.'
   Assert-True ($result.node_soak_snapshot_count -eq 4) 'Promotion result soak snapshot count mismatch.'
+  Assert-True ($result.node_binary_sha256 -ceq $nodeHash) 'Promotion result Node SHA-256 mismatch.'
+
+  $originalNodeBytes = [IO.File]::ReadAllBytes($nodePath)
+  $tamperedNodeBytes = [byte[]]::new($originalNodeBytes.Length + 1)
+  [Array]::Copy($originalNodeBytes, $tamperedNodeBytes, $originalNodeBytes.Length)
+  $tamperedNodeBytes[$tamperedNodeBytes.Length - 1] = 0x7f
+  [IO.File]::WriteAllBytes($nodePath, $tamperedNodeBytes)
+  Assert-Fails 'tampered Node rejection' 'size does not match BUILD_INFO' {
+    & $tool -BuildInfoPath $buildInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+  }
+  [IO.File]::WriteAllBytes($nodePath, $originalNodeBytes)
 
   $wrongBuild = Join-Path $temp 'BUILD_INFO-wrong-commit.json'
   $bad = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json
@@ -131,7 +148,7 @@ try {
     & $tool -BuildInfoPath $stringSchema -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
-  Write-Host 'OK - exact BUILD_INFO provenance, all required real-network scenarios and matching public-Node soak evidence are combined into one fail-closed promotion preflight.' -ForegroundColor Green
+  Write-Host 'OK - packaged Node bytes, exact BUILD_INFO provenance, all required real-network scenarios and matching public-Node soak evidence are combined into one fail-closed promotion preflight.' -ForegroundColor Green
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

@@ -97,23 +97,38 @@ foreach ($tool in @($networkValidator, $soakValidator)) {
   }
 }
 
-$buildInfo = Read-BuildInfo $BuildInfoPath
+$buildInfoFullPath = [IO.Path]::GetFullPath($BuildInfoPath)
+$buildInfo = Read-BuildInfo $buildInfoFullPath
 if ($buildInfo -isnot [pscustomobject]) { throw 'BUILD_INFO root must be a JSON object.' }
-$schema = Get-StrictInt64 (Get-RequiredProperty $buildInfo 'schema' $BuildInfoPath) 'schema'
+$schema = Get-StrictInt64 (Get-RequiredProperty $buildInfo 'schema' $buildInfoFullPath) 'schema'
 if ($schema -ne 1) { throw "Unsupported BUILD_INFO schema: $schema" }
-$product = Get-StrictString (Get-RequiredProperty $buildInfo 'product' $BuildInfoPath) 'product'
+$product = Get-StrictString (Get-RequiredProperty $buildInfo 'product' $buildInfoFullPath) 'product'
 if ($product -cne 'Konofix Chat') { throw "Unexpected BUILD_INFO product: $product" }
-$version = Get-StrictString (Get-RequiredProperty $buildInfo 'version' $BuildInfoPath) 'version'
-$commit = Get-StrictString (Get-RequiredProperty $buildInfo 'commit' $BuildInfoPath) 'commit'
+$version = Get-StrictString (Get-RequiredProperty $buildInfo 'version' $buildInfoFullPath) 'version'
+$commit = Get-StrictString (Get-RequiredProperty $buildInfo 'commit' $buildInfoFullPath) 'commit'
 if ($commit -cnotmatch '^[0-9a-f]{40}$') { throw 'BUILD_INFO commit must be a canonical lowercase 40-character Git SHA.' }
-$nodeMeta = Get-RequiredProperty $buildInfo 'node' $BuildInfoPath
+$nodeMeta = Get-RequiredProperty $buildInfo 'node' $buildInfoFullPath
 if ($nodeMeta -isnot [pscustomobject]) { throw 'BUILD_INFO node metadata must be a JSON object.' }
-$nodePath = Get-StrictString (Get-RequiredProperty $nodeMeta 'path' $BuildInfoPath) 'node.path'
+$nodePath = Get-StrictString (Get-RequiredProperty $nodeMeta 'path' $buildInfoFullPath) 'node.path'
 if ($nodePath -cne 'konofix-node.exe') { throw "Unexpected BUILD_INFO Node path: $nodePath" }
-$nodeBytes = Get-StrictInt64 (Get-RequiredProperty $nodeMeta 'bytes' $BuildInfoPath) 'node.bytes'
+$nodeBytes = Get-StrictInt64 (Get-RequiredProperty $nodeMeta 'bytes' $buildInfoFullPath) 'node.bytes'
 if ($nodeBytes -le 0) { throw 'BUILD_INFO node.bytes must be positive.' }
-$nodeHash = Get-StrictString (Get-RequiredProperty $nodeMeta 'sha256' $BuildInfoPath) 'node.sha256'
+$nodeHash = Get-StrictString (Get-RequiredProperty $nodeMeta 'sha256' $buildInfoFullPath) 'node.sha256'
 if ($nodeHash -cnotmatch '^[0-9a-f]{64}$') { throw 'BUILD_INFO node.sha256 must be a canonical lowercase SHA-256.' }
+
+$artifactRoot = Split-Path $buildInfoFullPath -Parent
+$nodeBinaryPath = Join-Path $artifactRoot $nodePath
+if (-not (Test-Path -LiteralPath $nodeBinaryPath -PathType Leaf)) {
+  throw "Node binary referenced by BUILD_INFO is missing beside the artifact metadata: $nodeBinaryPath"
+}
+$actualNodeBytes = [int64](Get-Item -LiteralPath $nodeBinaryPath).Length
+if ($actualNodeBytes -ne $nodeBytes) {
+  throw "Node binary size does not match BUILD_INFO. expected=$nodeBytes actual=$actualNodeBytes"
+}
+$actualNodeHash = (Get-FileHash -LiteralPath $nodeBinaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+if (-not [string]::Equals($actualNodeHash, $nodeHash, [StringComparison]::Ordinal)) {
+  throw "Node binary SHA-256 does not match BUILD_INFO. expected=$nodeHash actual=$actualNodeHash"
+}
 
 if ($NetworkEvidence.Count -eq 0) { throw 'At least one network-evidence manifest is required.' }
 if ($NodeSoakEvidence.Count -eq 0) { throw 'At least one Node-soak snapshot is required.' }
@@ -158,7 +173,8 @@ $result = [ordered]@{
   bootstrap_peer_id = $bootstrapPeer
   network_manifest_count = $NetworkEvidence.Count
   node_soak_snapshot_count = $NodeSoakEvidence.Count
-  node_binary_sha256 = $nodeHash
+  node_binary_bytes = $actualNodeBytes
+  node_binary_sha256 = $actualNodeHash
 }
 
 if ($AsJson) {
@@ -172,4 +188,5 @@ Write-Host "Source commit:       $commit"
 Write-Host "Bootstrap Peer ID:   $bootstrapPeer"
 Write-Host "Network manifests:   $($NetworkEvidence.Count)"
 Write-Host "Node soak snapshots: $($NodeSoakEvidence.Count)"
-Write-Host 'PASS - network scenarios and public-Node soak evidence match the exact verified Windows build.' -ForegroundColor Green
+Write-Host "Node SHA-256:        $actualNodeHash"
+Write-Host 'PASS - packaged Node bytes, network scenarios and public-Node soak evidence match the exact verified Windows build.' -ForegroundColor Green

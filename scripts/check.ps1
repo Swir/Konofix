@@ -26,6 +26,9 @@ try {
   Write-Host 'Network evidence validator self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-network-evidence-gate.ps1'
 
+  Write-Host 'Internet bootstrap precheck self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-internet-precheck.ps1'
+
   Write-Host 'Node health validator self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-node-health.ps1'
 
@@ -54,7 +57,7 @@ try {
   cargo check --manifest-path src-tauri/Cargo.toml --bin konofix-node
   if ($LASTEXITCODE -ne 0) { throw "cargo check --bin konofix-node failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'OK - local preflight matches the CI validation path for gates, frontend, Rust tests and Node checks.' -ForegroundColor Green
+  Write-Host 'OK - local preflight matches the CI validation path for gates, bootstrap parsing, frontend, Rust tests and Node checks.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

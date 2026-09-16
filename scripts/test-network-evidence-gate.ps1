@@ -6,6 +6,7 @@ if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) { throw 'Network ev
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("konofix-evidence-selftest-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
+$sourceCommit = '0123456789abcdef0123456789abcdef01234567'
 
 function New-TestManifest([string]$Scenario, [string]$Path) {
     $checks = [ordered]@{
@@ -17,8 +18,8 @@ function New-TestManifest([string]$Scenario, [string]$Path) {
     if ($Scenario -eq 'Relay' -or $Scenario -eq 'CGNAT') { $checks.relay_observed = 'PASS' }
     if ($Scenario -eq 'DCUtR') { $checks.dcutr_direct_upgrade = 'PASS' }
     $manifest = [ordered]@{
-        schema_version = 2; created_utc = [DateTimeOffset]::UtcNow.ToString('o'); scenario = $Scenario
-        build_version = '0.4.2'; node_version = '0.4.2'; client_a = 'selftest-a'; client_b = 'selftest-b'
+        schema_version = 3; created_utc = [DateTimeOffset]::UtcNow.ToString('o'); scenario = $Scenario
+        build_version = '0.4.2'; node_version = '0.4.2'; source_commit = $sourceCommit; client_a = 'selftest-a'; client_b = 'selftest-b'
         client_a_country = 'PL'; client_b_country = 'NO'; client_a_network = 'selftest-net-a'; client_b_network = 'selftest-net-b'
         bootstrap = '/dns/konofix.example.test/tcp/4001/p2p/12D3KooWSelfTestPeer123456789'; overall = 'PASS'; checks = $checks
     }
@@ -48,8 +49,11 @@ try {
         $paths += $path
     }
 
-    & $validator -Manifest $paths -RequireAllChecks -ExpectedBuildVersion '0.4.2' -ExpectedNodeVersion '0.4.2' -RequireSingleBootstrapPeer
+    & $validator -Manifest $paths -RequireAllChecks -ExpectedBuildVersion '0.4.2' -ExpectedNodeVersion '0.4.2' -ExpectedSourceCommit $sourceCommit -RequireSingleBootstrapPeer
     Write-Host 'Positive network evidence self-test passed.'
+
+    $legacySchema = New-MutatedManifest $paths[0] 'legacy-schema.json' { param($d) $d.schema_version = 2 }
+    Assert-Rejected { & $validator -Manifest $legacySchema -RequiredScenario TCP } 'legacy schema without commit-bound evidence'
 
     $wrongVersion = New-MutatedManifest $paths[0] 'wrong-version.json' { param($d) $d.build_version = '0.4.1' }
     Assert-Rejected { & $validator -Manifest $wrongVersion -RequiredScenario TCP -ExpectedBuildVersion '0.4.2' } 'wrong build version'
@@ -57,11 +61,24 @@ try {
     $wrongNodeVersion = New-MutatedManifest $paths[0] 'wrong-node-version.json' { param($d) $d.node_version = '0.4.1' }
     Assert-Rejected { & $validator -Manifest $wrongNodeVersion -RequiredScenario TCP -ExpectedNodeVersion '0.4.2' } 'wrong Node version'
 
+    $wrongCommit = New-MutatedManifest $paths[0] 'wrong-commit.json' { param($d) $d.source_commit = '89abcdef0123456789abcdef0123456789abcdef' }
+    Assert-Rejected { & $validator -Manifest $wrongCommit -RequiredScenario TCP -ExpectedSourceCommit $sourceCommit } 'wrong source commit'
+
+    $malformedCommit = New-MutatedManifest $paths[0] 'malformed-commit.json' { param($d) $d.source_commit = 'not-a-commit' }
+    Assert-Rejected { & $validator -Manifest $malformedCommit -RequiredScenario TCP } 'malformed source commit'
+
+    $mixedCommit = @($paths)
+    $mixedCommit[1] = New-MutatedManifest $paths[1] 'other-commit.json' { param($d) $d.source_commit = '89abcdef0123456789abcdef0123456789abcdef' }
+    Assert-Rejected { & $validator -Manifest $mixedCommit -RequireAllChecks } 'mixed source commits'
+
     $sameCountry = New-MutatedManifest $paths[0] 'same-country.json' { param($d) $d.client_b_country = $d.client_a_country }
     Assert-Rejected { & $validator -Manifest $sameCountry -RequiredScenario TCP } 'same-country Internet evidence'
 
     $sameNetwork = New-MutatedManifest $paths[0] 'same-network.json' { param($d) $d.client_b_network = $d.client_a_network }
     Assert-Rejected { & $validator -Manifest $sameNetwork -RequiredScenario TCP } 'same-network Internet evidence'
+
+    $sameClientCase = New-MutatedManifest $paths[0] 'same-client-case.json' { param($d) $d.client_b = ' SELFTEST-A ' }
+    Assert-Rejected { & $validator -Manifest $sameClientCase -RequiredScenario TCP } 'same client endpoint after normalization'
 
     $fakeOverall = New-MutatedManifest $paths[0] 'incomplete-core.json' { param($d) $d.checks.world_a_to_b = 'PENDING' }
     Assert-Rejected { & $validator -Manifest $fakeOverall -RequiredScenario TCP } 'overall PASS with incomplete core check'
@@ -83,7 +100,7 @@ try {
 
     $mixedBootstrap = @($paths)
     $mixedBootstrap[1] = New-MutatedManifest $paths[1] 'other-bootstrap.json' { param($d) $d.bootstrap = '/dns/konofix.example.test/tcp/4001/p2p/12D3KooWAnotherPeer987654321' }
-    Assert-Rejected { & $validator -Manifest $mixedBootstrap -RequireAllChecks -ExpectedBuildVersion '0.4.2' -ExpectedNodeVersion '0.4.2' -RequireSingleBootstrapPeer } 'mixed public Node Peer IDs'
+    Assert-Rejected { & $validator -Manifest $mixedBootstrap -RequireAllChecks -ExpectedBuildVersion '0.4.2' -ExpectedNodeVersion '0.4.2' -ExpectedSourceCommit $sourceCommit -RequireSingleBootstrapPeer } 'mixed public Node Peer IDs'
 
     Write-Host 'Network evidence validator self-tests passed.'
 } finally {

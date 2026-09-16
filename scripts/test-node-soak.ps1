@@ -8,13 +8,15 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) ("konofix-node-soak-selftest-" + [G
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 $peerId = '12D3KooWSoakSelfTestStablePeer123456789'
 $version = '0.4.2'
+$sourceCommit = '0123456789abcdef0123456789abcdef01234567'
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 function Write-Snapshot([string]$Path, [int64]$Timestamp, [int64]$Uptime, [int64]$Peers) {
     [ordered]@{
-        schema = 1
+        schema = 2
         status = 'running'
         version = $version
+        source_commit = $sourceCommit
         peer_id = $peerId
         uptime_seconds = $Uptime
         connected_peers = $Peers
@@ -61,7 +63,7 @@ try {
         $script:paths += $path
     }
 
-    & $validator -Snapshot $paths -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedVersion $version -ExpectedPeerId $peerId -RequirePeerObserved
+    & $validator -Snapshot $paths -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedVersion $version -ExpectedPeerId $peerId -ExpectedSourceCommit $sourceCommit -RequirePeerObserved
     Write-Host 'Positive Node soak self-test passed.'
 
     $changedPeer = Copy-MutatedSet 'changed-peer' { param($set) Mutate-Json $set[2] { param($d) $d.peer_id = '12D3KooWChangedPeer987654321' } }
@@ -69,6 +71,15 @@ try {
 
     $changedVersion = Copy-MutatedSet 'changed-version' { param($set) Mutate-Json $set[1] { param($d) $d.version = '0.4.1' } }
     Assert-Rejected { & $validator -Snapshot $changedVersion -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 } 'version changed during soak'
+
+    $changedCommit = Copy-MutatedSet 'changed-commit' { param($set) Mutate-Json $set[1] { param($d) $d.source_commit = '89abcdef0123456789abcdef0123456789abcdef' } }
+    Assert-Rejected { & $validator -Snapshot $changedCommit -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 } 'source commit changed during soak'
+
+    $unknownCommit = Copy-MutatedSet 'unknown-commit' { param($set) foreach ($p in $set) { Mutate-Json $p { param($d) $d.source_commit = 'unknown' } } }
+    Assert-Rejected { & $validator -Snapshot $unknownCommit -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedSourceCommit $sourceCommit } 'unknown source commit cannot satisfy promotion pin'
+
+    $malformedCommit = Copy-MutatedSet 'malformed-commit' { param($set) Mutate-Json $set[0] { param($d) $d.source_commit = 'not-a-commit' } }
+    Assert-Rejected { & $validator -Snapshot $malformedCommit -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 } 'malformed source commit'
 
     $restart = Copy-MutatedSet 'restart' { param($set) Mutate-Json $set[2] { param($d) $d.uptime_seconds = 10 } }
     Assert-Rejected { & $validator -Snapshot $restart -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 } 'uptime regression indicates restart'

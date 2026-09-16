@@ -14,6 +14,7 @@
 - automatic generation of ready-to-use public multiaddresses
 - periodic operational status lines with uptime and connected-peer count
 - optional metadata-only JSON health snapshot for supervisors and monitoring
+- exact source-commit provenance embedded into Node health snapshots
 - IPv4, IPv6, and generic DNS bootstrap address generation
 
 ## Windows
@@ -54,15 +55,18 @@ The file is refreshed on every status interval and contains only operational met
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "status": "running",
   "version": "0.4.2",
+  "source_commit": "0123456789abcdef0123456789abcdef01234567",
   "peer_id": "12D3KooW...",
   "uptime_seconds": 3600,
   "connected_peers": 8,
   "timestamp_unix": 1789430400
 }
 ```
+
+CI/repository builds embed the exact 40-character source commit used to produce the Node. A local source tree without usable Git metadata may report `source_commit` as `unknown`; that is accepted for ordinary local health monitoring but cannot satisfy a stable-promotion commit pin.
 
 On a clean Ctrl+C shutdown, `status` is changed to `stopped`. Monitoring should treat an old `timestamp_unix` as a stale or unhealthy process. The snapshot is written through a temporary file before replacement so readers do not normally observe partially written JSON.
 
@@ -72,7 +76,18 @@ Konofix includes a strict health validator suitable for Task Scheduler, a VPS su
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-node-health.ps1 -Path "C:\Konofix\health.json" -MaxAgeSeconds 90
 ```
 
-The validator rejects missing or malformed snapshots, unsupported schemas, non-running state, empty Peer IDs, stale timestamps, timestamps unexpectedly far in the future, and invalid peer counts. Add `-RequirePeer` during an active cross-country test when at least one connected peer is expected. A non-zero exit status means the check failed, which makes the script suitable for automated monitoring.
+For release/evidence collection, pin the exact Node binary as well as its version and Peer ID:
+
+```powershell
+.\scripts\check-node-health.ps1 `
+  -Path "C:\Konofix\health.json" `
+  -ExpectedVersion '0.4.2' `
+  -ExpectedPeerId '12D3KooW...' `
+  -ExpectedSourceCommit '0123456789abcdef0123456789abcdef01234567' `
+  -RequirePeer
+```
+
+The validator rejects missing or malformed snapshots, unsupported schemas, non-running state, empty Peer IDs, malformed source commits, stale timestamps, timestamps unexpectedly far in the future, and invalid peer counts. Add `-RequirePeer` during an active cross-country test when at least one connected peer is expected. A non-zero exit status means the check failed, which makes the script suitable for automated monitoring.
 
 Open/forward these ports in the router and firewall:
 
@@ -109,7 +124,8 @@ A basic health check can verify that:
 
 1. `status` is `running`,
 2. `timestamp_unix` is newer than roughly two configured status intervals,
-3. the expected `peer_id` remains unchanged across restarts.
+3. the expected `peer_id` remains unchanged across restarts,
+4. `source_commit` matches the exact Windows artifact being tested.
 
 `connected_peers` is telemetry, not a standalone health requirement; a healthy node can legitimately have zero peers during quiet periods. During a controlled test, `check-node-health.ps1 -RequirePeer` turns that telemetry into a temporary test assertion.
 

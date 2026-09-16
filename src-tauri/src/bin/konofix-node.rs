@@ -20,6 +20,7 @@ const KAD_PROTOCOL: &str = "/konofix/kad/1.0.0";
 const WORLD_PROVIDER_KEY: &str = "/konofix/world/providers/v1";
 const DEFAULT_PORT: u16 = 45555;
 const DEFAULT_STATUS_INTERVAL: u64 = 60;
+const SOURCE_COMMIT: &str = env!("KONOFIX_SOURCE_COMMIT");
 
 #[derive(Debug)]
 struct NodeArgs {
@@ -34,6 +35,7 @@ struct HealthSnapshot<'a> {
     schema: u8,
     status: &'a str,
     version: &'a str,
+    source_commit: &'a str,
     peer_id: String,
     uptime_seconds: u64,
     connected_peers: usize,
@@ -212,9 +214,10 @@ fn write_health_snapshot(
     }
 
     let snapshot = HealthSnapshot {
-        schema: 1,
+        schema: 2,
         status,
         version: env!("CARGO_PKG_VERSION"),
+        source_commit: SOURCE_COMMIT,
         peer_id: local_peer.to_string(),
         uptime_seconds: started.elapsed().as_secs(),
         connected_peers,
@@ -297,6 +300,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = swarm.listen_on(format!("/ip6/::/udp/{port}/quic-v1").parse()?);
 
     println!("Konofix Node {}", env!("CARGO_PKG_VERSION"));
+    println!("Source commit: {SOURCE_COMMIT}");
     println!("Peer ID: {local_peer}");
     println!("Transport: TCP + QUIC on port {port}");
     println!("Services: bootstrap + Kademlia DHT + AutoNAT + Circuit Relay + GossipSub");

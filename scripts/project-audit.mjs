@@ -158,4 +158,29 @@ if (!/from\s+['"]\.\/i18n['"]/.test(main) || !/\bt\(['"][a-z0-9_.]+['"]/.test(ma
 }
 console.log('Runtime localization migration: typed message keys enforced; no Polish UI literals remain in src/main.ts.');
 
+// Stable promotion must be cryptographically and operationally scoped to one exact source revision,
+// not merely to a mutable semantic version such as 0.4.2.
+const buildScript = read('src-tauri/build.rs');
+const nodeSource = read('src-tauri/src/bin/konofix-node.rs');
+const healthValidator = read('scripts/check-node-health.ps1');
+const soakValidator = read('scripts/validate-node-soak.ps1');
+const reportGenerator = read('scripts/new-network-test-report.ps1');
+const evidenceValidator = read('scripts/validate-network-test-report.ps1');
+const releaseGate = read('scripts/release-gate.ps1');
+const evidenceSelfTest = read('scripts/test-network-evidence-gate.ps1');
+const healthSelfTest = read('scripts/test-node-health.ps1');
+const soakSelfTest = read('scripts/test-node-soak.ps1');
+
+if (!/KONOFIX_SOURCE_COMMIT/.test(buildScript)) fail('Rust build metadata no longer exports KONOFIX_SOURCE_COMMIT.');
+if (!/source_commit/.test(nodeSource) || !/schema:\s*2/.test(nodeSource)) fail('Konofix Node must emit schema-v2 health telemetry containing source_commit.');
+if (!/ExpectedSourceCommit/.test(healthValidator) || !/source_commit/.test(healthValidator)) fail('Node health validation no longer pins exact source commits.');
+if (!/ExpectedSourceCommit/.test(soakValidator) || !/source_commit/.test(soakValidator)) fail('Node soak validation no longer pins exact source commits.');
+if (!/schema_version\s*=\s*3/.test(reportGenerator) || !/source_commit/.test(reportGenerator)) fail('Network report generation must emit schema-v3 exact source-commit evidence.');
+if (!/schema_version\s+-ne\s+3/.test(evidenceValidator) || !/ExpectedSourceCommit/.test(evidenceValidator)) fail('Network evidence validation must enforce schema v3 and exact source commits.');
+if (!/ExpectedSourceCommit/.test(releaseGate) || !/ExpectedSourceCommit\s*=\s*\$targetSourceCommit/.test(releaseGate)) fail('Release gate must propagate the exact target source commit into promotion evidence validation.');
+if (!/wrong source commit|mixed source commits/i.test(evidenceSelfTest)) fail('Network evidence self-tests must cover source-commit mismatch attacks.');
+if (!/wrong expected source commit/i.test(healthSelfTest)) fail('Node health self-tests must cover wrong source-commit pins.');
+if (!/source commit changed during soak/i.test(soakSelfTest)) fail('Node soak self-tests must cover source-commit drift.');
+console.log('Exact-build provenance: Node health, soak evidence, network manifests and release promotion are source-commit bound.');
+
 if (!process.exitCode) console.log('Project audit passed.');

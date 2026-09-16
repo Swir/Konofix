@@ -6,11 +6,11 @@ GitHub: https://github.com/Swir/Konofix
 
 ## Project progress
 
-**Real Internet Test milestone: 88% complete**
+**Real Internet Test milestone: 89% complete**
 
-`██████████████████░░ 88%`
+`██████████████████░░ 89%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (38 of 43 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (39 of 44 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -35,7 +35,7 @@ konofix-node.exe --port 45555 --public-host 203.0.113.10
 
 Paste the recommended address into **Network settings → Bootstrap**. A bootstrap helps peers discover the DHT/relay network; it is not a message-history server or file store.
 
-Stable promotion now also requires a continuous public-Node soak history that proves the Node kept one version and Peer ID, did not restart inside the evidence window, produced fresh snapshots without excessive monitoring gaps, and actually observed peer activity. The soak identity is bound to the same bootstrap Peer ID used by the validated cross-country manifests. See `docs/NODE_SOAK.md`.
+Stable promotion also requires a continuous public-Node soak history that proves the Node kept one version, source commit and Peer ID, did not restart inside the evidence window, produced fresh snapshots without excessive monitoring gaps, and actually observed peer activity. The soak identity is bound to the same bootstrap Peer ID and exact source commit used by the validated cross-country manifests. See `docs/NODE_SOAK.md`.
 
 ## Localization
 
@@ -65,7 +65,7 @@ Project checks:
 
 GitHub Actions validates TypeScript/Vite, Rust all-target tests and checks, `konofix-node`, release/network/Node-health/Node-soak gates, localization/project consistency, and the production Windows bundle. The localization audit requires the typed `MessageKey`/`t()` API, rejects the removed DOM/source-text translator pattern, and fails if Polish UI literals return to `src/main.ts`. The repository does not currently contain a committed `package-lock.json`, so CI intentionally uses `npm install --no-audit --no-fund --package-lock=false`; the audit derives dependency policy from Git-tracked files instead of transient workspace files, so an npm-generated lockfile cannot masquerade as a committed reproducibility guarantee. Lockfile-enforced `npm ci` remains pending until a real lockfile is committed and verified. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
 
-Each Windows CI archive also carries `BUILD_INFO.json` with the exact commit/version and SHA-256 plus byte size for `konofix-node.exe` and every Windows installer. `scripts/verify-release.ps1` cross-checks that provenance against the extracted archive and verifies the captured `Cargo.lock` before upload. The lockfile currently records the Rust graph resolved by that build; it is not presented as a deterministic build input until a verified `src-tauri/Cargo.lock` is committed and enforced.
+Each Windows CI archive also carries `BUILD_INFO.json` with the exact commit/version and SHA-256 plus byte size for `konofix-node.exe` and every Windows installer. The Node binary embeds that same source commit in its schema-v2 health snapshots. Real-network evidence is schema v3 and stable promotion rejects evidence, Node health or soak history from any other source commit, preventing two different `0.4.2` builds from being treated as interchangeable. `scripts/verify-release.ps1` cross-checks packaged provenance against the extracted archive and verifies the captured `Cargo.lock` before upload. The lockfile currently records the Rust graph resolved by that build; it is not presented as a deterministic build input until a verified `src-tauri/Cargo.lock` is committed and enforced.
 
 ## Windows build
 

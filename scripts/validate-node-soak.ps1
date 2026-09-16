@@ -20,6 +20,8 @@ param(
 
     [string]$ExpectedPeerId = '',
 
+    [string]$ExpectedSourceCommit = '',
+
     [int64]$MaxSnapshotBytes = 65536
 )
 
@@ -67,6 +69,11 @@ function Test-OrdinalEqual {
     return [string]::Equals($Left, $Right, [System.StringComparison]::Ordinal)
 }
 
+function Test-SourceCommitFormat {
+    param([Parameter(Mandatory = $true)][string]$Value)
+    return $Value -eq 'unknown' -or $Value -cmatch '^[0-9a-f]{40}$'
+}
+
 if ($Snapshot.Count -lt 2) { throw 'Node soak validation requires at least two health snapshots.' }
 if ($MinSpanSeconds -lt 60 -or $MinSpanSeconds -gt 604800) { throw 'MinSpanSeconds must be between 60 and 604800.' }
 if ($MaxGapSeconds -lt 10 -or $MaxGapSeconds -gt 86400) { throw 'MaxGapSeconds must be between 10 and 86400.' }
@@ -77,6 +84,10 @@ if ($MinConnectedPeers -lt 0) { throw 'MinConnectedPeers cannot be negative.' }
 if ($MaxSnapshotBytes -lt 1024 -or $MaxSnapshotBytes -gt 1048576) { throw 'MaxSnapshotBytes must be between 1024 and 1048576.' }
 if ($PSBoundParameters.ContainsKey('ExpectedVersion') -and [string]::IsNullOrWhiteSpace($ExpectedVersion)) { throw 'ExpectedVersion cannot be empty or whitespace when explicitly supplied.' }
 if ($PSBoundParameters.ContainsKey('ExpectedPeerId') -and [string]::IsNullOrWhiteSpace($ExpectedPeerId)) { throw 'ExpectedPeerId cannot be empty or whitespace when explicitly supplied.' }
+if ($PSBoundParameters.ContainsKey('ExpectedSourceCommit')) {
+    if ([string]::IsNullOrWhiteSpace($ExpectedSourceCommit)) { throw 'ExpectedSourceCommit cannot be empty or whitespace when explicitly supplied.' }
+    if ($ExpectedSourceCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'ExpectedSourceCommit must be a canonical lowercase 40-character Git commit SHA.' }
+}
 
 $samples = @()
 foreach ($path in $Snapshot) {
@@ -85,18 +96,21 @@ foreach ($path in $Snapshot) {
     if ($file.Length -gt $MaxSnapshotBytes) { throw "Node soak snapshot is too large: $path (bytes=$($file.Length) limit=$MaxSnapshotBytes)." }
 
     try { $health = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json } catch { throw "Node soak snapshot is not valid JSON: $path - $($_.Exception.Message)" }
-    $required = @('schema', 'status', 'version', 'peer_id', 'uptime_seconds', 'connected_peers', 'timestamp_unix')
+    $required = @('schema', 'status', 'version', 'source_commit', 'peer_id', 'uptime_seconds', 'connected_peers', 'timestamp_unix')
     foreach ($field in $required) { if ($null -eq $health.$field) { throw "Node soak snapshot is missing required field '$field': $path" } }
 
     $schema = Get-StrictJsonInt64 -Value $health.schema -Field 'schema'
-    if ($schema -ne 1) { throw "Unsupported Node health snapshot schema: $schema" }
+    if ($schema -ne 2) { throw "Unsupported Node health snapshot schema: $schema" }
 
     $status = Get-StrictJsonString -Value $health.status -Field 'status'
     $version = Get-StrictJsonString -Value $health.version -Field 'version'
+    $sourceCommit = Get-StrictJsonString -Value $health.source_commit -Field 'source_commit'
     $peerId = Get-StrictJsonString -Value $health.peer_id -Field 'peer_id'
+    if (-not (Test-SourceCommitFormat $sourceCommit)) { throw "Node soak source_commit is not a canonical lowercase Git SHA or 'unknown': $sourceCommit" }
     if (-not (Test-OrdinalEqual $status 'running')) { throw "Node soak snapshot is not running: $path (status=$status)." }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and -not (Test-OrdinalEqual $version $ExpectedVersion)) { throw "Node soak version mismatch (expected=$ExpectedVersion actual=$version)." }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedPeerId) -and -not (Test-OrdinalEqual $peerId $ExpectedPeerId)) { throw "Node soak Peer ID mismatch (expected=$ExpectedPeerId actual=$peerId)." }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSourceCommit) -and -not (Test-OrdinalEqual $sourceCommit $ExpectedSourceCommit)) { throw "Node soak source commit mismatch (expected=$ExpectedSourceCommit actual=$sourceCommit)." }
 
     $uptime = Get-StrictJsonInt64 -Value $health.uptime_seconds -Field 'uptime_seconds'
     $peers = Get-StrictJsonInt64 -Value $health.connected_peers -Field 'connected_peers'
@@ -110,6 +124,7 @@ foreach ($path in $Snapshot) {
     $samples += [pscustomobject]@{
         path = $path
         version = $version
+        source_commit = $sourceCommit
         peer_id = $peerId
         uptime = $uptime
         peers = $peers
@@ -119,8 +134,10 @@ foreach ($path in $Snapshot) {
 
 $ordered = @($samples | Sort-Object timestamp)
 $versions = @($ordered | ForEach-Object version | Sort-Object -Unique -CaseSensitive)
+$sourceCommits = @($ordered | ForEach-Object source_commit | Sort-Object -Unique -CaseSensitive)
 $peerIds = @($ordered | ForEach-Object peer_id | Sort-Object -Unique -CaseSensitive)
 if ($versions.Count -ne 1) { throw "Node soak snapshots contain multiple versions: $($versions -join ', ')" }
+if ($sourceCommits.Count -ne 1) { throw "Node soak snapshots contain multiple source commits: $($sourceCommits -join ', ')" }
 if ($peerIds.Count -ne 1) { throw "Node soak snapshots contain multiple Peer IDs: $($peerIds -join ', ')" }
 
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -152,4 +169,4 @@ for ($i = 0; $i -lt $ordered.Count; $i++) {
 
 if ($RequirePeerObserved -and -not $peerObserved) { throw 'Node soak evidence never observed a connected peer.' }
 
-Write-Host "Konofix Node soak healthy: version=$($versions[0]) peer_id=$($peerIds[0]) samples=$($ordered.Count) span=${span}s max_gap=${MaxGapSeconds}s latest_age=${latestAge}s peer_observed=$peerObserved"
+Write-Host "Konofix Node soak healthy: version=$($versions[0]) source_commit=$($sourceCommits[0]) peer_id=$($peerIds[0]) samples=$($ordered.Count) span=${span}s max_gap=${MaxGapSeconds}s latest_age=${latestAge}s peer_observed=$peerObserved"

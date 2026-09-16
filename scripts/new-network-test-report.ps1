@@ -9,16 +9,51 @@ param(
     [string]$ClientBNetwork = '',
     [string]$BuildVersion = 'unknown',
     [string]$NodeVersion = 'unknown',
+    [string]$SourceCommit = '',
     [string]$OutputDirectory = 'test-results',
     [string]$Notes = ''
 )
 
 $ErrorActionPreference = 'Stop'
 
+function Get-CanonicalSourceCommit {
+    param([string]$ExplicitCommit)
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitCommit)) {
+        $candidate = $ExplicitCommit.Trim().ToLowerInvariant()
+        if ($candidate -cnotmatch '^[0-9a-f]{40}$') { throw 'SourceCommit must be a full 40-character Git commit SHA.' }
+        return $candidate
+    }
+
+    $bundleRoot = Split-Path $PSScriptRoot -Parent
+    $buildInfoCandidates = @(
+        (Join-Path $bundleRoot 'BUILD_INFO.json'),
+        (Join-Path (Get-Location) 'BUILD_INFO.json')
+    ) | Select-Object -Unique
+    foreach ($buildInfoPath in $buildInfoCandidates) {
+        if (-not (Test-Path -LiteralPath $buildInfoPath -PathType Leaf)) { continue }
+        try {
+            $buildInfo = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json
+            $candidate = ([string]$buildInfo.commit).Trim().ToLowerInvariant()
+            if ($candidate -cmatch '^[0-9a-f]{40}$') { return $candidate }
+        } catch {}
+    }
+
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        try {
+            $repoRoot = Split-Path $PSScriptRoot -Parent
+            $candidate = (& git -C $repoRoot rev-parse HEAD 2>$null).Trim().ToLowerInvariant()
+            if ($LASTEXITCODE -eq 0 -and $candidate -cmatch '^[0-9a-f]{40}$') { return $candidate }
+        } catch {}
+    }
+
+    throw 'Could not determine the exact source commit. Run this tool from the verified Windows test bundle containing BUILD_INFO.json or pass -SourceCommit explicitly.'
+}
+
 if ($Bootstrap -notmatch '^/(ip4|ip6|dns|dns4|dns6)/.+/p2p/[A-Za-z0-9]+$') {
     throw 'Bootstrap must be a complete libp2p multiaddress ending in /p2p/<PeerId>.'
 }
-if ($ClientA -eq $ClientB) { throw 'Client A and Client B must identify different endpoints.' }
+if ($ClientA.Trim().ToLowerInvariant() -eq $ClientB.Trim().ToLowerInvariant()) { throw 'Client A and Client B must identify different endpoints.' }
 if ($Scenario -ne 'LAN') {
     foreach ($value in @($ClientACountry,$ClientBCountry,$ClientANetwork,$ClientBNetwork)) {
         if ([string]::IsNullOrWhiteSpace($value)) { throw 'Internet scenarios require both client countries and network/operator identifiers.' }
@@ -27,6 +62,7 @@ if ($Scenario -ne 'LAN') {
     if ($ClientANetwork.Trim().ToLowerInvariant() -eq $ClientBNetwork.Trim().ToLowerInvariant()) { throw 'Internet scenarios require independent networks/operators.' }
 }
 
+$resolvedCommit = Get-CanonicalSourceCommit -ExplicitCommit $SourceCommit
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $now = [DateTimeOffset]::UtcNow
 $stamp = $now.ToString('yyyyMMdd-HHmmss')
@@ -42,8 +78,8 @@ $checks = [ordered]@{
 }
 
 $manifest = [ordered]@{
-    schema_version = 2; created_utc = $now.ToString('o'); scenario = $Scenario
-    build_version = $BuildVersion; node_version = $NodeVersion
+    schema_version = 3; created_utc = $now.ToString('o'); scenario = $Scenario
+    build_version = $BuildVersion; node_version = $NodeVersion; source_commit = $resolvedCommit
     client_a = $ClientA; client_b = $ClientB
     client_a_country = $ClientACountry; client_b_country = $ClientBCountry
     client_a_network = $ClientANetwork; client_b_network = $ClientBNetwork
@@ -58,6 +94,7 @@ $body = @"
 - Scenario: $Scenario
 - Build version: $BuildVersion
 - Node version: $NodeVersion
+- Source commit: ``$resolvedCommit``
 - Client A: $ClientA — $ClientACountry / $ClientANetwork
 - Client B: $ClientB — $ClientBCountry / $ClientBNetwork
 - Bootstrap: ``$Bootstrap``
@@ -67,7 +104,8 @@ $body = @"
 ## Preconditions
 
 - [ ] Windows build version recorded
-- [ ] Public Node health check passed
+- [ ] Exact source commit matches BUILD_INFO.json
+- [ ] Public Node health check passed for the same source commit
 - [ ] Bootstrap precheck passed from Client A
 - [ ] Bootstrap precheck passed from Client B
 - [ ] Node Peer ID is stable after restart
@@ -97,3 +135,4 @@ Record PASS/FAIL and enough evidence to reproduce failures. Keep the JSON manife
 Set-Content -LiteralPath $markdownPath -Value $body -Encoding UTF8
 Write-Host "Created network test report: $markdownPath"
 Write-Host "Created network test manifest: $jsonPath"
+Write-Host "Evidence source commit: $resolvedCommit"

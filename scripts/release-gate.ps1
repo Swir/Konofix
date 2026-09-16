@@ -7,10 +7,36 @@ param(
   [switch]$RequireNodeSoakEvidence,
   [int]$NodeSoakMinSpanSeconds = 3600,
   [int]$NodeSoakMaxGapSeconds = 180,
-  [int]$NodeSoakMaxAgeSeconds = 300
+  [int]$NodeSoakMaxAgeSeconds = 300,
+
+  [string]$ExpectedSourceCommit = ''
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Resolve-SourceCommit {
+  param([string]$ExplicitCommit, [string]$RepositoryRoot)
+
+  if (-not [string]::IsNullOrWhiteSpace($ExplicitCommit)) {
+    $candidate = $ExplicitCommit.Trim().ToLowerInvariant()
+    if ($candidate -cnotmatch '^[0-9a-f]{40}$') { throw 'ExpectedSourceCommit must be a canonical lowercase 40-character Git commit SHA.' }
+    return $candidate
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_SHA)) {
+    $candidate = $env:GITHUB_SHA.Trim().ToLowerInvariant()
+    if ($candidate -cmatch '^[0-9a-f]{40}$') { return $candidate }
+  }
+
+  if (Get-Command git -ErrorAction SilentlyContinue) {
+    try {
+      $candidate = (& git -C $RepositoryRoot rev-parse HEAD 2>$null).Trim().ToLowerInvariant()
+      if ($LASTEXITCODE -eq 0 -and $candidate -cmatch '^[0-9a-f]{40}$') { return $candidate }
+    } catch {}
+  }
+
+  throw 'Could not determine the exact source commit required for stable promotion. Pass -ExpectedSourceCommit explicitly.'
+}
 
 $root = Split-Path $PSScriptRoot -Parent
 Push-Location $root
@@ -65,8 +91,22 @@ try {
   $changelog = Get-Content 'CHANGELOG.md' -Raw
   if ($changelog -notmatch [regex]::Escape("## $npmVersion")) { throw "CHANGELOG.md does not contain version $npmVersion." }
 
+  $stablePromotion = $RequireNetworkEvidence -or $RequireNodeSoakEvidence
+  $targetSourceCommit = ''
+  if ($stablePromotion -or -not [string]::IsNullOrWhiteSpace($ExpectedSourceCommit)) {
+    $targetSourceCommit = Resolve-SourceCommit -ExplicitCommit $ExpectedSourceCommit -RepositoryRoot $root
+    Write-Host "source commit : $targetSourceCommit"
+
+    if ($stablePromotion -and (Get-Command git -ErrorAction SilentlyContinue)) {
+      $dirty = @(& git -C $root status --porcelain 2>$null)
+      if ($LASTEXITCODE -eq 0 -and $dirty.Count -gt 0) {
+        throw 'Stable promotion requires a clean Git working tree so evidence is bound to the exact committed source.'
+      }
+    }
+  }
+
   if ($RequireNetworkEvidence -and $NetworkEvidence.Count -eq 0) {
-    throw 'Stable promotion requires -NetworkEvidence with schema-v2 PASS manifests.'
+    throw 'Stable promotion requires -NetworkEvidence with schema-v3 PASS manifests.'
   }
 
   $expectedBootstrapPeer = ''
@@ -78,6 +118,7 @@ try {
       ExpectedBuildVersion = $npmVersion
       ExpectedNodeVersion = $cargoVersion
     }
+    if (-not [string]::IsNullOrWhiteSpace($targetSourceCommit)) { $validatorArgs.ExpectedSourceCommit = $targetSourceCommit }
     if ($RequireNetworkEvidence) { $validatorArgs.RequireSingleBootstrapPeer = $true }
 
     & (Join-Path $PSScriptRoot 'validate-network-test-report.ps1') @validatorArgs
@@ -113,6 +154,7 @@ try {
       MaxAgeSeconds = $NodeSoakMaxAgeSeconds
       ExpectedVersion = $cargoVersion
     }
+    if (-not [string]::IsNullOrWhiteSpace($targetSourceCommit)) { $soakArgs.ExpectedSourceCommit = $targetSourceCommit }
     if (-not [string]::IsNullOrWhiteSpace($expectedBootstrapPeer)) { $soakArgs.ExpectedPeerId = $expectedBootstrapPeer }
     if ($RequireNetworkEvidence) { $soakArgs.RequirePeerObserved = $true }
     & (Join-Path $PSScriptRoot 'validate-node-soak.ps1') @soakArgs

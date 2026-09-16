@@ -14,6 +14,8 @@ param(
 
     [string]$ExpectedPeerId = '',
 
+    [string]$ExpectedSourceCommit = '',
+
     [int64]$MinUptimeSeconds = 0,
 
     [int64]$MaxSnapshotBytes = 65536
@@ -68,6 +70,11 @@ function Test-OrdinalEqual {
     return [string]::Equals($Left, $Right, [System.StringComparison]::Ordinal)
 }
 
+function Test-SourceCommitFormat {
+    param([Parameter(Mandatory = $true)][string]$Value)
+    return $Value -eq 'unknown' -or $Value -cmatch '^[0-9a-f]{40}$'
+}
+
 if ($MaxAgeSeconds -lt 10 -or $MaxAgeSeconds -gt 86400) { throw 'MaxAgeSeconds must be between 10 and 86400.' }
 if ($MaxFutureSkewSeconds -lt 0 -or $MaxFutureSkewSeconds -gt 300) { throw 'MaxFutureSkewSeconds must be between 0 and 300.' }
 if ($MinUptimeSeconds -lt 0) { throw 'MinUptimeSeconds cannot be negative.' }
@@ -75,6 +82,10 @@ if ($MinConnectedPeers -lt 0) { throw 'MinConnectedPeers cannot be negative.' }
 if ($MaxSnapshotBytes -lt 1024 -or $MaxSnapshotBytes -gt 1048576) { throw 'MaxSnapshotBytes must be between 1024 and 1048576.' }
 if ($PSBoundParameters.ContainsKey('ExpectedVersion') -and [string]::IsNullOrWhiteSpace($ExpectedVersion)) { throw 'ExpectedVersion cannot be empty or whitespace when explicitly supplied.' }
 if ($PSBoundParameters.ContainsKey('ExpectedPeerId') -and [string]::IsNullOrWhiteSpace($ExpectedPeerId)) { throw 'ExpectedPeerId cannot be empty or whitespace when explicitly supplied.' }
+if ($PSBoundParameters.ContainsKey('ExpectedSourceCommit')) {
+    if ([string]::IsNullOrWhiteSpace($ExpectedSourceCommit)) { throw 'ExpectedSourceCommit cannot be empty or whitespace when explicitly supplied.' }
+    if ($ExpectedSourceCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'ExpectedSourceCommit must be a canonical lowercase 40-character Git commit SHA.' }
+}
 
 if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Health snapshot not found: $Path" }
 $snapshotFile = Get-Item -LiteralPath $Path
@@ -82,18 +93,21 @@ if ($snapshotFile.Length -gt $MaxSnapshotBytes) { throw "Health snapshot is too 
 
 try { $health = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json } catch { throw "Health snapshot is not valid JSON: $($_.Exception.Message)" }
 
-$required = @('schema', 'status', 'version', 'peer_id', 'uptime_seconds', 'connected_peers', 'timestamp_unix')
+$required = @('schema', 'status', 'version', 'source_commit', 'peer_id', 'uptime_seconds', 'connected_peers', 'timestamp_unix')
 foreach ($field in $required) { if ($null -eq $health.$field) { throw "Health snapshot is missing required field: $field" } }
 
 $schema = Get-StrictJsonInt64 -Value $health.schema -Field 'schema'
-if ($schema -ne 1) { throw "Unsupported health snapshot schema: $schema" }
+if ($schema -ne 2) { throw "Unsupported health snapshot schema: $schema" }
 
 $status = Get-StrictJsonString -Value $health.status -Field 'status'
 $version = Get-StrictJsonString -Value $health.version -Field 'version'
+$sourceCommit = Get-StrictJsonString -Value $health.source_commit -Field 'source_commit'
 $peerId = Get-StrictJsonString -Value $health.peer_id -Field 'peer_id'
+if (-not (Test-SourceCommitFormat $sourceCommit)) { throw "Health snapshot source_commit is not a canonical lowercase Git SHA or 'unknown': $sourceCommit" }
 
 if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and -not (Test-OrdinalEqual $version $ExpectedVersion)) { throw "Konofix Node version mismatch (expected=$ExpectedVersion actual=$version)." }
 if (-not [string]::IsNullOrWhiteSpace($ExpectedPeerId) -and -not (Test-OrdinalEqual $peerId $ExpectedPeerId)) { throw "Konofix Node Peer ID mismatch (expected=$ExpectedPeerId actual=$peerId)." }
+if (-not [string]::IsNullOrWhiteSpace($ExpectedSourceCommit) -and -not (Test-OrdinalEqual $sourceCommit $ExpectedSourceCommit)) { throw "Konofix Node source commit mismatch (expected=$ExpectedSourceCommit actual=$sourceCommit)." }
 if (-not (Test-OrdinalEqual $status 'running')) { throw "Konofix Node is not running according to the snapshot (status=$status)." }
 
 $uptime = Get-StrictJsonInt64 -Value $health.uptime_seconds -Field 'uptime_seconds'
@@ -114,4 +128,4 @@ $requiredPeers = $MinConnectedPeers
 if ($RequirePeer -and $requiredPeers -lt 1) { $requiredPeers = 1 }
 if ($peerCount -lt $requiredPeers) { throw "Konofix Node does not meet the required connected-peer quorum (connected=$peerCount required=$requiredPeers)." }
 
-Write-Host "Konofix Node healthy: version=$version peer_id=$peerId uptime=${uptime}s connected_peers=$peerCount required_peers=$requiredPeers snapshot_age=${age}s max_age=${MaxAgeSeconds}s future_skew_limit=${MaxFutureSkewSeconds}s snapshot_bytes=$($snapshotFile.Length) max_snapshot_bytes=$MaxSnapshotBytes"
+Write-Host "Konofix Node healthy: version=$version source_commit=$sourceCommit peer_id=$peerId uptime=${uptime}s connected_peers=$peerCount required_peers=$requiredPeers snapshot_age=${age}s max_age=${MaxAgeSeconds}s future_skew_limit=${MaxFutureSkewSeconds}s snapshot_bytes=$($snapshotFile.Length) max_snapshot_bytes=$MaxSnapshotBytes"

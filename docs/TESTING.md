@@ -14,11 +14,11 @@ Before Internet testing, validate two computers on the same LAN: different nickn
 
 Use `run-node.bat` or `konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP_OR_DNS`. Expose TCP and UDP 45555. Preserve `%LOCALAPPDATA%\Konofix Chat\node-identity.key` for a stable Peer ID. Validate enabled health snapshots with `.\scripts\check-node-health.ps1 -Path "$env:LOCALAPPDATA\Konofix Chat\node-health.json"`; use `-RequirePeer` once clients should be connected.
 
-A single healthy snapshot is not sufficient for stable promotion. Collect a continuous Node-health history and validate it with `scripts\validate-node-soak.ps1`; see `docs\NODE_SOAK.md`. The promotion gate requires that soak history to use the same Node version and bootstrap Peer ID as the real-network evidence.
+A single healthy snapshot is not sufficient for stable promotion. Collect a continuous Node-health history and validate it with `scripts\validate-node-soak.ps1`; see `docs\NODE_SOAK.md`. Schema-v2 Node health carries the exact source commit, and the promotion gate requires that soak history to use the same Node version, exact source commit and bootstrap Peer ID as the real-network evidence.
 
 ## 4. Bootstrap precheck
 
-On every test PC run `.\scripts\internet-test.ps1 -Bootstrap "/ip4/ADDRESS/tcp/45555/p2p/PEER_ID"`. DNS and IPv6 multiaddresses are supported. The precheck now uses strict multiaddr parsing: it rejects malformed host/port values, unsupported transports, missing/invalid Peer IDs, extra path segments, UDP addresses that are not explicit `quic-v1`, and TCP addresses carrying QUIC-only segments. TCP reachability must succeed before application-level testing; UDP/QUIC is structurally validated by this script and then verified through libp2p during the real test.
+On every test PC run `.\scripts\internet-test.ps1 -Bootstrap "/ip4/ADDRESS/tcp/45555/p2p/PEER_ID"`. DNS and IPv6 multiaddresses are supported. The precheck uses strict multiaddr parsing: it rejects malformed host/port values, unsupported transports, missing/invalid Peer IDs, extra path segments, UDP addresses that are not explicit `quic-v1`, and TCP addresses carrying QUIC-only segments. TCP reachability must succeed before application-level testing; UDP/QUIC is structurally validated by this script and then verified through libp2p during the real test.
 
 For parser-only validation without touching the network, use `-ValidateOnly`. `-AsJson` prints the normalized parsed address for automation. The Windows test archive includes this script and the evidence/health/soak tools under its `scripts` directory, so a tester does not need a source checkout to run the operational test flow.
 
@@ -32,7 +32,7 @@ Verify TCP, UDP/QUIC, Circuit Relay, DCUtR/direct upgrade where possible, and th
 
 ## 7. Reproducible test report
 
-For Internet scenarios use schema-v2 endpoint metadata:
+For Internet scenarios use schema-v3 endpoint metadata. Run the generator from the extracted Windows test bundle so it automatically reads the exact `commit` from `BUILD_INFO.json`:
 
 ```powershell
 .\scripts\new-network-test-report.ps1 `
@@ -43,13 +43,15 @@ For Internet scenarios use schema-v2 endpoint metadata:
   -Bootstrap "/dns/node.example.org/tcp/45555/p2p/PEER_ID"
 ```
 
-Internet reports are rejected at creation time if countries or network/operator identifiers are missing, countries match, or networks match. The generated JSON is schema v2. After recording results, validate the evidence set with:
+If `BUILD_INFO.json` and Git metadata are unavailable, the generator fails closed instead of creating ambiguous release evidence; `-SourceCommit <40-character SHA>` can be supplied explicitly when the exact verified commit is known.
+
+Internet reports are rejected at creation time if countries or network/operator identifiers are missing, countries match, networks match, the two endpoint identifiers normalize to the same value, or the source commit cannot be established. The generated JSON is schema v3. After recording results, validate the evidence set with:
 
 ```powershell
 .\scripts\validate-network-test-report.ps1 -Manifest .\test-results\*.json
 ```
 
-The promotion gate requires one consistent client/Node build, fresh evidence (30 days by default), PASS for all core communication/resilience checks, Relay observation in Relay and CGNAT evidence, DCUtR upgrade in DCUtR evidence, and passing manifests for TCP, QUIC, Relay, DCUtR and CGNAT. Use `-MaxAgeDays` to tighten the freshness window. `overall=PASS` by itself is intentionally insufficient.
+The promotion gate requires one consistent client/Node build, one exact source commit, fresh evidence (30 days by default), PASS for all core communication/resilience checks, Relay observation in Relay and CGNAT evidence, DCUtR upgrade in DCUtR evidence, and passing manifests for TCP, QUIC, Relay, DCUtR and CGNAT. Use `-MaxAgeDays` to tighten the freshness window. `overall=PASS` by itself is intentionally insufficient.
 
 Never put identity keys, access tokens, private addresses or other secrets in reports.
 
@@ -63,8 +65,10 @@ Test Wi-Fi/LTE loss during transfer, app closure during transfer, Node restart, 
 
 ## 10. Release-stage gate and artifact provenance
 
-A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond the test release additionally requires validated schema-v2 evidence from independent countries/networks for the required transport/NAT scenarios, continuous Node-soak evidence bound to the same bootstrap Peer ID/version, and fixes for issues discovered during those tests.
+A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond the test release additionally requires validated schema-v3 evidence from independent countries/networks for the required transport/NAT scenarios, continuous schema-v2 Node-soak evidence bound to the same bootstrap Peer ID/version/source commit, and fixes for issues discovered during those tests.
 
-Every Windows CI archive includes `BUILD_INFO.json`. It records the exact Git commit, project version, workflow run, SHA-256 and byte size of `konofix-node.exe`, SHA-256 and byte size of every `.exe`/`.msi` installer, hashes/sizes for the bundled operational test scripts, and the resolved `Cargo.lock` captured by that build. `scripts\verify-release.ps1` extracts the ZIP and cross-checks all of this metadata against the actual packaged files before the artifact is uploaded.
+Every Windows CI archive includes `BUILD_INFO.json`. It records the exact Git commit, project version, workflow run, SHA-256 and byte size of `konofix-node.exe`, SHA-256 and byte size of every `.exe`/`.msi` installer, hashes/sizes for the bundled operational test scripts, and the resolved `Cargo.lock` captured by that build. The Node binary embeds the same source commit into its health telemetry. `scripts\verify-release.ps1` extracts the ZIP and cross-checks packaged metadata against the actual files before the artifact is uploaded.
+
+Stable promotion resolves the target commit from `-ExpectedSourceCommit`, `GITHUB_SHA`, or the clean Git working tree and passes that exact value into both network-evidence and Node-soak validation. This prevents evidence collected for an earlier `0.4.2` commit from being reused for a different `0.4.2` build.
 
 The captured `Cargo.lock` is useful evidence of the Rust dependency graph used by that particular build, but it is not a substitute for committing and enforcing the lockfile as an input. Until a verified `src-tauri\Cargo.lock` is committed, Rust dependency resolution is not claimed to be fully reproducible.

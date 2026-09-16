@@ -10,7 +10,7 @@ GitHub: https://github.com/Swir/Konofix
 
 `█████████████████░░░ 85%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (34 of 40 tasks complete). It is intentionally not increased by CI runs alone: the remaining real public-Node, cross-country, CGNAT and transport verification work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (35 of 41 tasks complete). It is intentionally not increased by CI runs alone: the remaining real public-Node, cross-country, CGNAT and transport verification work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -61,7 +61,7 @@ Project checks:
 .\scripts\check.ps1
 ```
 
-GitHub Actions validates TypeScript/Vite, Rust, `konofix-node`, release/network gates, and the production Windows bundle. The repository does not currently contain a committed `package-lock.json`, so CI intentionally uses `npm install --no-audit --no-fund`; lockfile-enforced `npm ci` remains pending until a real lockfile is committed and verified. Superseded runs are cancelled automatically. Build/test steps receive a read-only repository token; release write permission is isolated to the post-build publication job.
+GitHub Actions validates TypeScript/Vite, Rust, `konofix-node`, release/network gates, and the production Windows bundle. The repository does not currently contain a committed `package-lock.json`, so CI intentionally uses `npm install --no-audit --no-fund`; lockfile-enforced `npm ci` remains pending until a real lockfile is committed and verified. Superseded runs are cancelled automatically. Build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
 
 ## Windows build
 
@@ -99,7 +99,7 @@ Before a client test:
 
 ## Project status
 
-`0.4.2` is the **Real Internet Test** stage. The global P2P layer is ready for controlled testing, but cross-country connectivity and CGNAT ↔ relay scenarios remain unverified until they pass tests on independent networks through a stable public Konofix Node. After this stage closes, development moves to **0.5.0 Rooms 2.0**.
+`0.4.2` is the **Real Internet Test** stage. The global P2P layer is ready for controlled testing, but cross-country connectivity and CGNAT ↔ relay scenarios remain unverified until they pass tests on independent networks through a stable public Konofix Node. The existing `v0.4.2-test1` pre-release is a test vehicle for collecting that evidence, not a declaration that these gates have passed. After this stage closes, development moves to **0.5.0 Rooms 2.0**.
 
 ---
 

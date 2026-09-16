@@ -68,6 +68,29 @@ function Get-RequiredProperty {
     return $property.Value
 }
 
+function Convert-StrictManifestJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Raw,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    if (-not $Raw.TrimStart().StartsWith('{', [System.StringComparison]::Ordinal)) {
+        throw "Network evidence root must be a JSON object: $Path"
+    }
+
+    try {
+        $convertCommand = Get-Command ConvertFrom-Json -ErrorAction Stop
+        if ($convertCommand.Parameters.ContainsKey('DateKind')) {
+            # PowerShell 7.5+ otherwise converts ISO-8601 JSON strings to DateTime values,
+            # which destroys the original JSON token type before our strict schema check.
+            return $Raw | ConvertFrom-Json -DateKind String
+        }
+        return $Raw | ConvertFrom-Json
+    } catch {
+        throw "Invalid JSON manifest: $Path`n$($_.Exception.Message)"
+    }
+}
+
 function Test-OrdinalEqual([string]$Left, [string]$Right) {
     return [string]::Equals($Left, $Right, [System.StringComparison]::Ordinal)
 }
@@ -89,7 +112,8 @@ foreach ($path in $Manifest) {
         throw "Network evidence manifest is too large (path=$path bytes=$($manifestFile.Length) limit=$MaxManifestBytes)."
     }
 
-    try { $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json } catch { throw "Invalid JSON manifest: $path`n$($_.Exception.Message)" }
+    $raw = Get-Content -LiteralPath $path -Raw
+    $data = Convert-StrictManifestJson -Raw $raw -Path $path
     if ($data -isnot [pscustomobject]) { throw "Network evidence root must be a JSON object: $path" }
 
     $schema = Get-StrictJsonInt64 -Value (Get-RequiredProperty $data 'schema_version' $path) -Field 'schema_version'

@@ -171,19 +171,25 @@ $resolvedNodeSoakEvidence = @(Resolve-EvidencePaths -InputPath $NodeSoakEvidence
   -ExpectedBuildVersion $version `
   -ExpectedNodeVersion $version `
   -ExpectedSourceCommit $commit `
-  -RequireSingleBootstrapPeer
+  -RequireSingleBootstrapPeer `
+  -RequireSingleCampaign
 
 $bootstrapPeers = @()
+$campaignIds = @()
 foreach ($manifestPath in $resolvedNetworkEvidence) {
   $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
   $bootstrap = [string]$manifest.bootstrap
   $match = [regex]::Match($bootstrap, '/p2p/([^/]+)$')
   if (-not $match.Success) { throw "Validated network evidence has no terminal bootstrap Peer ID: $manifestPath" }
   $bootstrapPeers += $match.Groups[1].Value
+  $campaignIds += [string]$manifest.campaign_id
 }
 $bootstrapPeers = @($bootstrapPeers | Sort-Object -Unique -CaseSensitive)
+$campaignIds = @($campaignIds | Sort-Object -Unique -CaseSensitive)
 if ($bootstrapPeers.Count -ne 1) { throw 'Promotion evidence must reference exactly one bootstrap Peer ID.' }
+if ($campaignIds.Count -ne 1 -or $campaignIds[0] -cnotmatch '^[0-9a-f]{32}$') { throw 'Promotion evidence must reference exactly one canonical campaign ID.' }
 $bootstrapPeer = $bootstrapPeers[0]
+$campaignId = $campaignIds[0]
 
 & $soakValidator `
   -Snapshot $resolvedNodeSoakEvidence `
@@ -201,6 +207,7 @@ $result = [ordered]@{
   product = $product
   version = $version
   source_commit = $commit
+  campaign_id = $campaignId
   bootstrap_peer_id = $bootstrapPeer
   network_manifest_count = $resolvedNetworkEvidence.Count
   node_soak_snapshot_count = $resolvedNodeSoakEvidence.Count
@@ -216,8 +223,9 @@ if ($AsJson) {
 Write-Host '=== Konofix Stable Promotion Evidence ===' -ForegroundColor Cyan
 Write-Host "Build version:       $version"
 Write-Host "Source commit:       $commit"
+Write-Host "Campaign ID:         $campaignId"
 Write-Host "Bootstrap Peer ID:   $bootstrapPeer"
 Write-Host "Network manifests:   $($resolvedNetworkEvidence.Count)"
 Write-Host "Node soak snapshots: $($resolvedNodeSoakEvidence.Count)"
 Write-Host "Node SHA-256:        $actualNodeHash"
-Write-Host 'PASS - packaged Node bytes, network scenarios and public-Node soak evidence match the exact verified Windows build.' -ForegroundColor Green
+Write-Host 'PASS - packaged Node bytes, one coherent network-test campaign and public-Node soak evidence match the exact verified Windows build.' -ForegroundColor Green

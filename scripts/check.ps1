@@ -36,6 +36,9 @@ try {
   Write-Host 'Public Node deployment self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-public-node.ps1'
 
+  Write-Host 'Public Node startup-task self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-public-node-task.ps1'
+
   Write-Host 'Public Node readiness self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-public-node-readiness.ps1'
 
@@ -78,7 +81,7 @@ try {
   cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-node
   if ($LASTEXITCODE -ne 0) { throw "cargo check --locked --bin konofix-node failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'OK - local preflight matches CI gates, network report editing, public-Node/bootstrap/readiness/health/soak collection validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/tests and Node checks.' -ForegroundColor Green
+  Write-Host 'OK - local preflight matches CI gates, network report editing, public-Node/bootstrap/startup-task/readiness/health/soak collection validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/tests and Node checks.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

@@ -57,6 +57,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-public-node.ps1
 
+      - name: Public Node startup-task self-tests
+        shell: pwsh
+        run: .\scripts\test-public-node-task.ps1
+
       - name: Public Node readiness self-tests
         shell: pwsh
         run: .\scripts\test-public-node-readiness.ps1
@@ -121,6 +125,7 @@ jobs:
           $testTools = @(
             'internet-test.ps1',
             'public-node.ps1',
+            'install-public-node-task.ps1',
             'check-public-node-readiness.ps1',
             'new-network-test-report.ps1',
             'set-network-test-result.ps1',

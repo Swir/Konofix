@@ -10,7 +10,7 @@ GitHub: https://github.com/Swir/Konofix
 
 `██████████████████░░ 89%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (40 of 45 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (41 of 46 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -35,7 +35,7 @@ konofix-node.exe --port 45555 --public-host 203.0.113.10
 
 Paste the recommended address into **Network settings → Bootstrap**. A bootstrap helps peers discover the DHT/relay network; it is not a message-history server or file store.
 
-Stable promotion also requires a continuous public-Node soak history that proves the Node kept one version, source commit and Peer ID, did not restart inside the evidence window, produced fresh snapshots without excessive monitoring gaps, and actually observed peer activity. The soak identity is bound to the same bootstrap Peer ID and exact source commit used by the validated cross-country manifests. See `docs/NODE_SOAK.md`.
+Stable promotion also requires a continuous public-Node soak history that proves the Node kept one version, source commit and Peer ID, did not restart inside the evidence window, produced fresh snapshots without excessive monitoring gaps, and actually observed peer activity. The soak identity is bound to the same bootstrap Peer ID and exact source commit used by the validated cross-country manifests. Public/community deployments can pin identity storage explicitly with `--identity-file`; existing invalid identity files now fail closed instead of being silently replaced with a new Peer ID. See `docs/NODE.md` and `docs/NODE_SOAK.md`.
 
 ## Localization
 
@@ -63,7 +63,7 @@ Project checks:
 .\scripts\check.ps1
 ```
 
-GitHub Actions validates TypeScript/Vite, Rust all-target tests and checks, `konofix-node`, release/network/Node-health/Node-soak gates, localization/project consistency, and the production Windows bundle. The localization audit requires the typed `MessageKey`/`t()` API, rejects the removed DOM/source-text translator pattern, and fails if Polish UI literals return to `src/main.ts`. Frontend dependencies are now pinned by the committed `package-lock.json`; CI uses `npm ci --no-audit --no-fund` and setup-node caching keyed to that exact lockfile. The project audit verifies that the lockfile root package, dependency declarations and CI policy still match `package.json`, rejects a return to `npm install`, and rejects CI-side lockfile regeneration. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
+GitHub Actions validates TypeScript/Vite, Rust all-target tests and checks, `konofix-node`, release/network/Node-health/Node-soak gates, localization/project consistency, and the production Windows bundle. The localization audit requires the typed `MessageKey`/`t()` API, rejects the removed DOM/source-text translator pattern, and fails if Polish UI literals return to `src/main.ts`. Frontend dependencies are pinned by the committed `package-lock.json`; CI uses `npm ci --no-audit --no-fund` and setup-node caching keyed to that exact lockfile. The project audit verifies that the lockfile root package, dependency declarations and CI policy still match `package.json`, rejects a return to `npm install`, and rejects CI-side lockfile regeneration. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
 
 Each Windows CI archive also carries `BUILD_INFO.json` with the exact commit/version and SHA-256 plus byte size for `konofix-node.exe`, the committed frontend lockfile, the captured Rust dependency-resolution record, the bundled test tools and every Windows installer. Release verification requires the packaged `package-lock.json` to match the committed build input byte-for-byte by size and SHA-256. The Node binary embeds that same source commit in its schema-v2 health snapshots. Real-network evidence is schema v3 and stable promotion rejects evidence, Node health or soak history from any other source commit, preventing two different `0.4.2` builds from being treated as interchangeable. The captured `Cargo.lock` records the Rust graph resolved by that build; it is not yet presented as a deterministic Rust build input until a verified `src-tauri/Cargo.lock` is committed and enforced.
 
@@ -81,10 +81,14 @@ The application bundle is written to `src-tauri\target\release\bundle`.
 build-node.bat
 ```
 
-Run the Node on a publicly reachable computer or VPS:
+Run the Node on a publicly reachable computer or VPS. For a long-lived public/community Node, put the identity on persistent storage explicitly:
 
 ```powershell
-konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP
+konofix-node.exe `
+  --port 45555 `
+  --public-host YOUR_PUBLIC_IP_OR_DNS `
+  --identity-file C:\Konofix\node-identity.key `
+  --health-file C:\Konofix\health.json
 ```
 
 Open TCP 45555 and UDP 45555. See `docs/NODE.md` for operator details and `docs/NODE_SOAK.md` for stable-promotion soak evidence.
@@ -98,7 +102,7 @@ Before a client test:
 ## Local data
 
 - peer cache: `%LOCALAPPDATA%\Konofix Chat\peer-cache.json`
-- Node identity: `%LOCALAPPDATA%\Konofix Chat\node-identity.key`
+- default Node identity: `%LOCALAPPDATA%\Konofix Chat\node-identity.key` (or the explicit `--identity-file` path)
 - downloaded files: `Downloads\Konofix Chat`
 
 ## Project status

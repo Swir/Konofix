@@ -14,7 +14,9 @@ fn git_stdout(args: &[&str]) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    String::from_utf8(output.stdout).ok().map(|value| value.trim().to_string())
+    String::from_utf8(output.stdout)
+        .ok()
+        .map(|value| value.trim().to_string())
 }
 
 fn source_commit() -> String {
@@ -35,8 +37,8 @@ fn emit_git_rerun_paths() {
     // embedded provenance when a symbolic branch advances. Watching only .git/HEAD
     // is insufficient because that file usually keeps the same `ref: ...` text.
     let mut logical_paths = vec!["HEAD".to_string(), "packed-refs".to_string()];
-    if let Some(symbolic_ref) = git_stdout(&["symbolic-ref", "-q", "HEAD"])
-        .filter(|value| !value.is_empty())
+    if let Some(symbolic_ref) =
+        git_stdout(&["symbolic-ref", "-q", "HEAD"]).filter(|value| !value.is_empty())
     {
         logical_paths.push(symbolic_ref);
     }

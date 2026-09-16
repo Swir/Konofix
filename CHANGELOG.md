@@ -36,6 +36,7 @@
 - made `scripts/release-gate.ps1` evaluate the PowerShell evidence validator through exceptions instead of stale native-process `$LASTEXITCODE`, eliminating a nondeterministic false-failure path during stable promotion,
 - added a roadmap-backed README progress bar and CI validation that fails when its displayed percentage drifts from the active 0.4.2 checklist,
 - configured per-ref Windows CI concurrency with superseded-run cancellation so rapid maintenance commits do not waste runners or package stale intermediate revisions in parallel,
+- reduced GitHub Actions token exposure by running the entire build/test/package job with `contents: read` and isolating `contents: write` to a small post-build release-publication job that only downloads the already verified artifact,
 - expanded the cross-country testing guide with Node health validation and reproducible PASS/FAIL reporting,
 - updated the roadmap for real Internet testing and typed localization-key migration.
 

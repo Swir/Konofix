@@ -31,6 +31,13 @@ New-Item -ItemType Directory -Force -Path $temp | Out-Null
 try {
   Expand-Archive -Path $ZipPath -DestinationPath $temp -Force
 
+  $toolRelativePaths = @(
+    'scripts\internet-test.ps1',
+    'scripts\new-network-test-report.ps1',
+    'scripts\validate-network-test-report.ps1',
+    'scripts\check-node-health.ps1',
+    'scripts\validate-node-soak.ps1'
+  )
   $required = @(
     'konofix-node.exe',
     'README.md',
@@ -40,7 +47,7 @@ try {
     'RELEASE_NOTES.md',
     'BUILD_INFO.json',
     'Cargo.lock'
-  )
+  ) + $toolRelativePaths
   foreach ($name in $required) {
     $path = Join-Path $temp $name
     Assert-True (Test-Path $path -PathType Leaf) "Release archive does not contain: $name"
@@ -57,6 +64,9 @@ try {
   foreach ($installer in $installers) {
     Assert-True ($installer.Length -gt 1MB) "Installer appears incomplete: $($installer.FullName)"
   }
+
+  $toolFiles = @($toolRelativePaths | ForEach-Object { Get-Item (Join-Path $temp $_) })
+  Assert-True ($toolFiles.Count -eq $toolRelativePaths.Count) 'The release archive does not contain the complete test-tool set.'
 
   $buildInfoPath = Join-Path $temp 'BUILD_INFO.json'
   try { $buildInfo = Get-Content $buildInfoPath -Raw | ConvertFrom-Json } catch { throw "BUILD_INFO.json is not valid JSON: $($_.Exception.Message)" }
@@ -97,10 +107,21 @@ try {
     Assert-Hash -Path $installer.FullName -Expected ([string]$meta.sha256) -Label "Installer $relative"
   }
 
+  $toolMetadata = @($buildInfo.tools)
+  Assert-True ($toolMetadata.Count -eq $toolFiles.Count) "BUILD_INFO.json test-tool count mismatch. metadata=$($toolMetadata.Count) archive=$($toolFiles.Count)"
+  foreach ($tool in $toolFiles) {
+    $relative = [IO.Path]::GetRelativePath($temp, $tool.FullName).Replace('\', '/')
+    $matches = @($toolMetadata | Where-Object { ([string]$_.path) -ceq $relative })
+    Assert-True ($matches.Count -eq 1) "BUILD_INFO.json must contain exactly one entry for test tool: $relative"
+    $meta = $matches[0]
+    Assert-True ([int64]$meta.bytes -eq [int64]$tool.Length) "Test-tool size mismatch for $relative"
+    Assert-Hash -Path $tool.FullName -Expected ([string]$meta.sha256) -Label "Test tool $relative"
+  }
+
   $releaseNotes = Get-Content (Join-Path $temp 'RELEASE_NOTES.md') -Raw
   Assert-True ($releaseNotes -match '0\.4\.2 Test 1') 'RELEASE_NOTES.md does not describe the expected test release.'
 
-  Write-Host "OK - ZIP, provenance metadata, Node, Cargo resolution record, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
+  Write-Host "OK - ZIP, provenance metadata, Node, Cargo resolution record, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
   Write-Host "SHA256: $actual"
   Write-Host "Build commit: $commit"
 } finally {

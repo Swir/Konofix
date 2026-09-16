@@ -139,6 +139,7 @@ jobs:
             'new-network-test-report.ps1',
             'set-network-test-result.ps1',
             'validate-network-test-report.ps1',
+            'validate-network-test-session.ps1',
             'check-promotion-evidence.ps1',
             'check-node-health.ps1',
             'collect-node-soak.ps1',

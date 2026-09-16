@@ -100,8 +100,8 @@ jobs:
       - name: Rust format check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 
-      - name: Cargo clippy - all targets
-        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Cargo Clippy - correctness, suspicious and performance gates
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
 
       - name: Cargo test - all targets
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets

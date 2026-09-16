@@ -73,7 +73,7 @@ A single healthy snapshot is not sufficient for stable promotion. Use `scripts\c
 
 On every test PC run `.\scripts\internet-test.ps1 -Bootstrap "/ip4/ADDRESS/tcp/45555/p2p/PEER_ID"`. DNS and IPv6 multiaddresses are supported. The precheck uses strict multiaddr parsing: it rejects malformed host/port values, unsupported transports, missing/invalid Peer IDs, extra path segments, UDP addresses that are not explicit `quic-v1`, and TCP addresses carrying QUIC-only segments. TCP reachability must succeed before application-level testing; UDP/QUIC is structurally validated by this script and then verified through libp2p during the real test.
 
-For parser-only validation without touching the network, use `-ValidateOnly`. `-AsJson` prints the normalized parsed address for automation. The Windows test archive includes this script, `public-node.ps1`, `install-public-node-task.ps1`, `check-public-node-readiness.ps1`, `new-network-test-session.ps1`, `check-promotion-evidence.ps1`, and the evidence/health/soak tools under its `scripts` directory, so a tester or Node operator does not need a source checkout to run the operational test flow.
+For parser-only validation without touching the network, use `-ValidateOnly`. `-AsJson` prints the normalized parsed address for automation. The Windows test archive includes this script, `public-node.ps1`, `install-public-node-task.ps1`, `check-public-node-readiness.ps1`, `new-network-test-session.ps1`, `validate-network-test-session.ps1`, `check-promotion-evidence.ps1`, and the evidence/health/soak tools under its `scripts` directory, so a tester or Node operator does not need a source checkout to run the operational test flow.
 
 ## 5. Cross-country test
 
@@ -98,6 +98,8 @@ Prefer creating the whole five-scenario evidence workspace in one command from t
 The session bootstrap fails closed before creating final evidence if the two endpoints are not independent, `BUILD_INFO.json` is malformed, the exact packaged `konofix-node.exe` bytes do not match its recorded SHA-256/size, the source commit is not canonical, or TCP and QUIC do not describe the same host, port and Peer ID. It stages output in a temporary directory and moves it into place only after all five schema-v3 PENDING manifests were created successfully, so a failed setup cannot leave a half-created test session that looks complete.
 
 The resulting session directory contains copied `BUILD_INFO.json`, a `SESSION_INFO.json` inventory with the exact version/commit/Node hash/bootstrap identity and hashes of the five initial manifests, plus TCP, QUIC, Relay, DCUtR and CGNAT report pairs. The QUIC scenario starts with the QUIC bootstrap; the remaining scenarios use the paired TCP bootstrap while preserving the same Node Peer ID. Session creation does **not** prove reachability or a transport handshake; both clients still run the real prechecks and scenarios below.
+
+After reports have been edited, `validate-network-test-session.ps1` checks the live manifest set against the immutable session bindings rather than comparing the initial manifest hashes. It rejects mixed endpoint pairs, changed country/network metadata, a different build/commit, a bootstrap outside the paired TCP/QUIC session identity, missing/duplicate scenarios, or a manifest set that no longer matches the session inventory. With `-RequirePassingEvidence`, it also requires the normal schema-v3 evidence gate to pass.
 
 ## 8. Reproducible test report
 
@@ -134,16 +136,17 @@ Internet reports are rejected at creation time if countries or network/operator 
 
 The promotion gate requires one consistent client/Node build, one exact source commit, fresh evidence (30 days by default), PASS for all core communication/resilience checks, Relay observation in Relay and CGNAT evidence, DCUtR upgrade in DCUtR evidence, and passing manifests for TCP, QUIC, Relay, DCUtR and CGNAT. Use `-MaxAgeDays` to tighten the freshness window. `overall=PASS` by itself is intentionally insufficient.
 
-Once all five manifests and the Node soak history are complete, bind them to the exact Windows artifact in one command:
+Once all five manifests and the Node soak history are complete, bind them to the exact Windows artifact **and the one session that created them** in one command:
 
 ```powershell
 .\scripts\check-promotion-evidence.ps1 `
   -BuildInfoPath .\BUILD_INFO.json `
-  -NetworkEvidence .\test-results\tcp.json,.\test-results\quic.json,.\test-results\relay.json,.\test-results\dcutr.json,.\test-results\cgnat.json `
+  -SessionInfoPath .\test-results\konofix-real-network-...\SESSION_INFO.json `
+  -NetworkEvidence .\test-results\konofix-real-network-...\network-test-*.json `
   -NodeSoakEvidence .\node-soak\*.json
 ```
 
-This preflight first validates the exact `BUILD_INFO.json` version/source commit, then validates every required schema-v3 scenario against that build, extracts the single validated bootstrap Peer ID, and finally requires the Node-soak history to match that same version, source commit and Peer ID while proving peer activity. It cannot replace the real tests; it only prevents mismatched evidence from being promoted after those tests are complete.
+This preflight validates the exact `BUILD_INFO.json` version/source commit and packaged Node bytes, validates every required schema-v3 scenario, requires all five reports to belong to the same session endpoint pair and paired TCP/QUIC bootstrap identity, extracts the single validated bootstrap Peer ID, and finally requires the Node-soak history to match that same version, source commit and Peer ID while proving peer activity. The stable source-tree release gate likewise requires `-NetworkSessionInfo` whenever `-RequireNetworkEvidence` is used. These checks cannot replace the real tests; they prevent unrelated or mismatched evidence from being combined after those tests are complete.
 
 Never put identity keys, access tokens, private addresses or other secrets in reports.
 
@@ -157,10 +160,10 @@ Test Wi-Fi/LTE loss during transfer, app closure during transfer, Node restart, 
 
 ## 11. Release-stage gate and artifact provenance
 
-A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond the test release additionally requires validated schema-v3 evidence from independent countries/networks for the required transport/NAT scenarios, continuous schema-v2 Node-soak evidence bound to the same bootstrap Peer ID/version/source commit, and fixes for issues discovered during those tests.
+A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond the test release additionally requires validated schema-v3 evidence from independent countries/networks for the required transport/NAT scenarios, one coherent `SESSION_INFO.json` binding those five scenarios to the same endpoint pair and TCP/QUIC bootstrap identity, continuous schema-v2 Node-soak evidence bound to the same bootstrap Peer ID/version/source commit, and fixes for issues discovered during those tests.
 
 Every Windows CI archive includes `BUILD_INFO.json`. It records the exact Git commit, project version, workflow run, SHA-256 and byte size of `konofix-node.exe`, SHA-256 and byte size of every `.exe`/`.msi` installer, hashes/sizes for the bundled operational test scripts, the exact committed frontend lockfile, and the exact committed Rust lockfile. The Node binary embeds the same source commit into its health telemetry. `scripts\verify-release.ps1` extracts the ZIP and cross-checks packaged metadata and both dependency lockfiles against the committed build inputs before the artifact is uploaded.
 
-Stable promotion resolves the target commit from `-ExpectedSourceCommit`, `GITHUB_SHA`, or the clean Git working tree and passes that exact value into both network-evidence and Node-soak validation. The bundled `check-promotion-evidence.ps1` gives remote testers the same exact-build binding using the artifact's verified `BUILD_INFO.json`. This prevents evidence collected for an earlier `0.4.2` commit from being reused for a different `0.4.2` build.
+Stable promotion resolves the target commit from `-ExpectedSourceCommit`, `GITHUB_SHA`, or the clean Git working tree and passes that exact value into network-evidence, session-consistency and Node-soak validation. The bundled `check-promotion-evidence.ps1` gives remote testers the same exact-build binding using the artifact's verified `BUILD_INFO.json`. This prevents evidence collected for an earlier `0.4.2` commit or a different client pair from being reused for a different `0.4.2` build/session.
 
 Frontend dependency resolution is deterministic through the committed `package-lock.json` and `npm ci`. Rust dependency resolution is deterministic through committed `src-tauri\Cargo.lock`; CI/local/build helpers use `--locked` validation/build commands, and release verification rejects an archive whose packaged Cargo lockfile differs from the committed build input.

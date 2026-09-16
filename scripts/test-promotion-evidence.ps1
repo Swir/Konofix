@@ -5,6 +5,7 @@ New-Item -ItemType Directory -Force -Path $temp | Out-Null
 
 $version = '0.4.2'
 $sourceCommit = '0123456789abcdef0123456789abcdef01234567'
+$campaignId = '0123456789abcdef0123456789abcdef'
 $peerId = '12D3KooWPromotionSelfTestPeer123456789'
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -34,6 +35,7 @@ function New-NetworkManifest([string]$Scenario, [string]$Path) {
   if ($Scenario -eq 'DCUtR') { $checks.dcutr_direct_upgrade = 'PASS' }
   [ordered]@{
     schema_version = 3
+    campaign_id = $campaignId
     created_utc = [DateTimeOffset]::UtcNow.ToString('o')
     scenario = $Scenario
     build_version = $version
@@ -118,6 +120,7 @@ try {
   Assert-True ($result.status -ceq 'PASS') 'Promotion evidence must return PASS.'
   Assert-True ($result.version -ceq $version) 'Promotion result version mismatch.'
   Assert-True ($result.source_commit -ceq $sourceCommit) 'Promotion result source commit mismatch.'
+  Assert-True ($result.campaign_id -ceq $campaignId) 'Promotion result campaign ID mismatch.'
   Assert-True ($result.bootstrap_peer_id -ceq $peerId) 'Promotion result bootstrap Peer ID mismatch.'
   Assert-True ($result.network_manifest_count -eq 5) 'Promotion result must report five required network scenarios.'
   Assert-True ($result.node_soak_snapshot_count -eq 4) 'Promotion wildcard expansion must resolve all four soak snapshots.'
@@ -125,6 +128,16 @@ try {
 
   Assert-Fails 'empty wildcard rejection' 'wildcard matched no files' {
     & $tool -BuildInfoPath $buildInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence (Join-Path $temp 'missing-soak-*.json') -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+  }
+
+  $mixedCampaignPaths = @($networkPaths)
+  $mixedCampaignPath = Join-Path $temp 'quic-other-campaign.json'
+  $mixedCampaign = Get-Content -LiteralPath $networkPaths[1] -Raw | ConvertFrom-Json
+  $mixedCampaign.campaign_id = '89abcdef0123456789abcdef01234567'
+  $mixedCampaign | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $mixedCampaignPath -Encoding UTF8
+  $mixedCampaignPaths[1] = $mixedCampaignPath
+  Assert-Fails 'mixed campaign rejection' 'exactly one campaign_id' {
+    & $tool -BuildInfoPath $buildInfoPath -NetworkEvidence $mixedCampaignPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
   $originalNodeBytes = [IO.File]::ReadAllBytes($nodePath)
@@ -153,7 +166,7 @@ try {
     & $tool -BuildInfoPath $stringSchema -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
-  Write-Host 'OK - packaged Node bytes, exact BUILD_INFO provenance, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
+  Write-Host 'OK - packaged Node bytes, exact BUILD_INFO provenance, one coherent network campaign, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

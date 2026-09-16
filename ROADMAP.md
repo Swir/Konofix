@@ -113,6 +113,8 @@ The active milestone currently has 54 of 59 tasks complete. The remaining five t
 - Internet bootstrap precheck strictly validates TCP and QUIC-v1 multiaddr structure, address families, ports and Peer IDs, with adversarial CI self-tests before any real-network evidence is accepted.
 - Windows test archives carry the operational public-Node/bootstrap/readiness/evidence/health/soak/promotion scripts themselves, including the supervised startup-task installer, exact-build network-session bootstrap and session-consistency validator, and artifact provenance verifies their hashes and sizes so remote testers can run the documented flow without cloning the source repository.
 - Windows artifacts carry machine-readable `BUILD_INFO.json` provenance with commit/version plus hashes and sizes for the Node, committed frontend and Rust lockfiles, test tools and every installer; artifact verification cross-checks that metadata and both committed dependency inputs before upload.
+- Linux public-Node infrastructure now uses an isolated headless Cargo target that single-sources the production Node implementation, rejects desktop dependency leakage, reuses the committed Rust lockfile, and is validated by Linux CI without requiring Tauri/WebKit development libraries.
+- Linux CI now exercises the release Node as a real process, verifies schema-v2 health provenance against the exact build commit, performs a clean stop/restart, and requires persistent Peer-ID continuity before the Linux path is considered build-valid.
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test

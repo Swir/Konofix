@@ -58,7 +58,7 @@ Assert-Fails 'identity/health collision rejection' 'Identity and health files mu
   & $tool -PublicHost '8.8.8.8' -IdentityFile $samePath -HealthFile $samePath -AsJson | Out-Null
 }
 Assert-Fails 'reserved DNS rejection' 'local, single-label, or reserved for testing/documentation' {
-  & $tool -PublicHost 'node.example.com' -StateDirectory $tempState -AsJson | Out-Null
+  & $tool -PublicHost 'node.example' -StateDirectory $tempState -AsJson | Out-Null
 }
 Assert-Fails 'single-label DNS rejection' 'local, single-label, or reserved for testing/documentation' {
   & $tool -PublicHost 'intranet' -StateDirectory $tempState -AsJson | Out-Null

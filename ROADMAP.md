@@ -80,7 +80,7 @@ The active milestone currently has 39 of 44 tasks complete. The remaining five t
 - [x] automated network-evidence gate validating PASS manifests, required scenarios and consistent client/Node versions
 - [x] strict evidence schema requiring fresh results and independently identified countries/networks for Internet scenarios
 - [x] scenario-aware evidence checks for Relay, DCUtR and CGNAT instead of accepting an overall PASS alone
-- [x] stable-promotion release gate wired directly to schema-v2 real-network evidence validation
+- [x] stable-promotion release gate wired directly to schema-v3 real-network evidence validation
 - [x] promotion evidence bound to the exact target client/Node version and one stable public bootstrap Peer ID
 - [x] CI self-tests for positive evidence plus wrong versions, same-country/network, stale/future evidence, incomplete checks and mixed bootstrap Peer IDs
 - [x] README progress bar derived from the active roadmap milestone and checked by CI

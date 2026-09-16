@@ -90,7 +90,7 @@ Defaults:
 - TCP/UDP port: `45555`,
 - status interval: `60` seconds.
 
-The generated service uses a dedicated unprivileged system user and includes hardening such as `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, kernel/control-group protections, a narrow writable state path and restricted address families. It restarts on process failure and preserves identity/state across service restarts and binary updates.
+The generated service uses a dedicated unprivileged system user and a deny-by-default operating-system sandbox around the Node process. It explicitly removes the capability bounding and ambient capability sets, enables `NoNewPrivileges`, isolates temporary storage and devices, makes the system/home trees read-only/inaccessible, protects hostname/clock/kernel/control-group state, restricts `/proc` visibility, blocks namespace and realtime escalation, locks personality/SUID/SGID paths, denies writable+executable memory, restricts the syscall ABI to the native architecture, gives the service a private keyring/IPC lifecycle, restricts address families to `AF_INET`, `AF_INET6` and `AF_UNIX`, and exposes only the dedicated state directory through `ReadWritePaths`. The installer self-tests require these controls and also assert that the generated unit does not accidentally expose a second writable system/application tree. The service restarts on process failure and preserves identity/state across service restarts and binary updates.
 
 Check service state and logs:
 

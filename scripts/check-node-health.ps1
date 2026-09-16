@@ -59,6 +59,15 @@ function Get-StrictJsonString {
     return $Value
 }
 
+function Test-OrdinalEqual {
+    param(
+        [Parameter(Mandatory = $true)][string]$Left,
+        [Parameter(Mandatory = $true)][string]$Right
+    )
+
+    return [string]::Equals($Left, $Right, [System.StringComparison]::Ordinal)
+}
+
 if ($MaxAgeSeconds -lt 10 -or $MaxAgeSeconds -gt 86400) { throw 'MaxAgeSeconds must be between 10 and 86400.' }
 if ($MaxFutureSkewSeconds -lt 0 -or $MaxFutureSkewSeconds -gt 300) { throw 'MaxFutureSkewSeconds must be between 0 and 300.' }
 if ($MinUptimeSeconds -lt 0) { throw 'MinUptimeSeconds cannot be negative.' }
@@ -81,9 +90,9 @@ $status = Get-StrictJsonString -Value $health.status -Field 'status'
 $version = Get-StrictJsonString -Value $health.version -Field 'version'
 $peerId = Get-StrictJsonString -Value $health.peer_id -Field 'peer_id'
 
-if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and $version -ne $ExpectedVersion) { throw "Konofix Node version mismatch (expected=$ExpectedVersion actual=$version)." }
-if (-not [string]::IsNullOrWhiteSpace($ExpectedPeerId) -and $peerId -ne $ExpectedPeerId) { throw "Konofix Node Peer ID mismatch (expected=$ExpectedPeerId actual=$peerId)." }
-if ($status -ne 'running') { throw "Konofix Node is not running according to the snapshot (status=$status)." }
+if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and -not (Test-OrdinalEqual $version $ExpectedVersion)) { throw "Konofix Node version mismatch (expected=$ExpectedVersion actual=$version)." }
+if (-not [string]::IsNullOrWhiteSpace($ExpectedPeerId) -and -not (Test-OrdinalEqual $peerId $ExpectedPeerId)) { throw "Konofix Node Peer ID mismatch (expected=$ExpectedPeerId actual=$peerId)." }
+if (-not (Test-OrdinalEqual $status 'running')) { throw "Konofix Node is not running according to the snapshot (status=$status)." }
 
 $uptime = Get-StrictJsonInt64 -Value $health.uptime_seconds -Field 'uptime_seconds'
 if ($uptime -lt 0) { throw 'Node uptime cannot be negative.' }

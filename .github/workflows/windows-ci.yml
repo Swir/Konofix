@@ -149,6 +149,7 @@ jobs:
             'validate-network-test-session.ps1',
             'check-promotion-evidence.ps1',
             'check-node-health.ps1',
+            'test-node-runtime.ps1',
             'collect-node-soak.ps1',
             'validate-node-soak.ps1'
           )
@@ -213,6 +214,10 @@ jobs:
           }
           $buildInfo | ConvertTo-Json -Depth 6 | Set-Content 'artifact\BUILD_INFO.json' -Encoding utf8
           Get-ChildItem artifact -Recurse | Select-Object FullName, Length
+
+      - name: Smoke staged Node bundle
+        shell: pwsh
+        run: .\artifact\scripts\test-node-runtime.ps1
 
       - name: Create release ZIP and checksum
         shell: pwsh

@@ -35,7 +35,7 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
           toolchain: stable
-          components: rustfmt
+          components: rustfmt, clippy
 
       - name: Release metadata gate
         shell: pwsh
@@ -100,6 +100,9 @@ jobs:
       - name: Rust format check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 
+      - name: Cargo Clippy - correctness, suspicious and performance gates
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
+
       - name: Cargo test - all targets
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
 
@@ -114,6 +117,10 @@ jobs:
 
       - name: Build production Konofix Node
         run: cargo build --locked --manifest-path src-tauri/Cargo.toml --release --bin konofix-node
+
+      - name: Production Node runtime smoke
+        shell: pwsh
+        run: .\scripts\test-node-runtime.ps1
 
       - name: Stage Windows test bundle
         shell: pwsh
@@ -142,6 +149,7 @@ jobs:
             'validate-network-test-session.ps1',
             'check-promotion-evidence.ps1',
             'check-node-health.ps1',
+            'test-node-runtime.ps1',
             'collect-node-soak.ps1',
             'validate-node-soak.ps1'
           )
@@ -206,6 +214,10 @@ jobs:
           }
           $buildInfo | ConvertTo-Json -Depth 6 | Set-Content 'artifact\BUILD_INFO.json' -Encoding utf8
           Get-ChildItem artifact -Recurse | Select-Object FullName, Length
+
+      - name: Smoke staged Node bundle
+        shell: pwsh
+        run: .\artifact\scripts\test-node-runtime.ps1
 
       - name: Create release ZIP and checksum
         shell: pwsh

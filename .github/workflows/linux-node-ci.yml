@@ -1,0 +1,241 @@
+name: Linux Node CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: linux-node-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  node-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Isolated Node manifest parity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          import tomllib
+
+          desktop = tomllib.loads(pathlib.Path("src-tauri/Cargo.toml").read_text(encoding="utf-8"))
+          node = tomllib.loads(pathlib.Path("node-linux/Cargo.toml").read_text(encoding="utf-8"))
+
+          checks = {
+              "package.version": (desktop["package"]["version"], node["package"]["version"]),
+              "package.rust-version": (desktop["package"]["rust-version"], node["package"]["rust-version"]),
+              "dependencies": (desktop["dependencies"], node["dependencies"]),
+              "windows dependencies": (
+                  desktop["target"]["cfg(windows)"]["dependencies"],
+                  node["target"]["cfg(windows)"]["dependencies"],
+              ),
+              "windows build-dependencies": (
+                  desktop["target"]["cfg(windows)"]["build-dependencies"],
+                  node["target"]["cfg(windows)"]["build-dependencies"],
+              ),
+          }
+          drift = [name for name, (expected, actual) in checks.items() if expected != actual]
+          if drift:
+              raise SystemExit("Isolated Linux Node manifest drift: " + ", ".join(drift))
+          print("Isolated Linux Node manifest matches the shared Rust build inputs.")
+          PY
+
+      - name: Prepare isolated Node lockfile
+        shell: bash
+        run: cp src-tauri/Cargo.lock node-linux/Cargo.lock
+
+      - name: Locked Rust metadata
+        run: cargo metadata --locked --manifest-path node-linux/Cargo.toml --no-deps --format-version 1 >/dev/null
+
+      - name: Rust format check
+        shell: bash
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo fmt --manifest-path node-linux/Cargo.toml -- --check
+
+      - name: Headless dependency gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo tree --locked --manifest-path node-linux/Cargo.toml --target x86_64-unknown-linux-gnu --edges normal,build > node-linux-deps.txt
+          if grep -E '(^|[[:space:]])(tauri|tauri-build|rfd) v' node-linux-deps.txt; then
+            echo 'Linux Node dependency graph unexpectedly contains desktop GUI dependencies.' >&2
+            grep -E '(^|[[:space:]])(tauri|tauri-build|rfd) v' node-linux-deps.txt >&2 || true
+            exit 1
+          fi
+
+      - name: Konofix Node tests
+        run: cargo test --locked --manifest-path node-linux/Cargo.toml --bin konofix-node
+
+      - name: Build release Linux Node
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: cargo build --locked --manifest-path node-linux/Cargo.toml --release --bin konofix-node
+
+      - name: Linux Node runtime smoke
+        shell: bash
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node_binary="$GITHUB_WORKSPACE/node-linux/target/release/konofix-node"
+          test -x "$node_binary"
+          "$node_binary" --help | grep -F 'Konofix Node 0.4.2'
+          "$node_binary" --help | grep -F -- '--identity-file'
+          "$node_binary" --help | grep -F -- '--health-file'
+
+          runtime_dir="$(mktemp -d)"
+          identity="$runtime_dir/node-identity.key"
+          health="$runtime_dir/node-health.json"
+          log="$runtime_dir/node.log"
+          pid=''
+
+          cleanup() {
+            if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
+              kill -INT "$pid" 2>/dev/null || true
+              wait "$pid" 2>/dev/null || true
+            fi
+            rm -rf -- "$runtime_dir"
+          }
+          trap cleanup EXIT
+
+          wait_for_health() {
+            local expected_peer="${1:-}"
+            for _ in $(seq 1 80); do
+              if [[ -s "$health" ]] && EXPECTED_PEER="$expected_peer" python3 - "$health" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          try:
+              payload = json.loads(path.read_text(encoding="utf-8"))
+          except (OSError, json.JSONDecodeError):
+              raise SystemExit(1)
+          if payload.get("schema") != 2 or payload.get("status") != "running":
+              raise SystemExit(1)
+          if payload.get("version") != "0.4.2":
+              raise SystemExit(1)
+          if payload.get("source_commit") != os.environ["EXPECTED_SOURCE_COMMIT"]:
+              raise SystemExit(1)
+          peer = payload.get("peer_id")
+          if not isinstance(peer, str) or not peer.strip():
+              raise SystemExit(1)
+          expected_peer = os.environ.get("EXPECTED_PEER", "")
+          if expected_peer and peer != expected_peer:
+              raise SystemExit(1)
+          PY
+              then
+                return 0
+              fi
+              sleep 0.25
+            done
+            echo 'Timed out waiting for a valid running Node health snapshot.' >&2
+            cat "$log" >&2 || true
+            return 1
+          }
+
+          port=$((40000 + RANDOM % 15000))
+          "$node_binary" --port "$port" --status-interval 10 --identity-file "$identity" --health-file "$health" >"$log" 2>&1 &
+          pid=$!
+          wait_for_health
+          first_peer="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["peer_id"])' "$health")"
+          kill -INT "$pid"
+          wait "$pid"
+          pid=''
+          python3 - "$health" "$first_peer" <<'PY'
+          import json
+          import sys
+          payload = json.load(open(sys.argv[1], encoding="utf-8"))
+          if payload.get("status") != "stopped" or payload.get("peer_id") != sys.argv[2]:
+              raise SystemExit("Node did not publish a stopped snapshot with the original Peer ID")
+          PY
+
+          : >"$log"
+          rm -f -- "$health"
+          port=$((55000 + RANDOM % 9000))
+          "$node_binary" --port "$port" --status-interval 10 --identity-file "$identity" --health-file "$health" >"$log" 2>&1 &
+          pid=$!
+          wait_for_health "$first_peer"
+          kill -INT "$pid"
+          wait "$pid"
+          pid=''
+          echo "Linux runtime smoke PASS: exact source provenance and persistent Peer ID $first_peer"
+
+      - name: Linux systemd installer self-tests
+        shell: bash
+        run: bash scripts/test-public-node-linux.sh
+
+      - name: Stage Linux Node bundle
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-linux/scripts artifact-linux/docs
+          install -m 0755 node-linux/target/release/konofix-node artifact-linux/konofix-node
+          install -m 0755 scripts/install-public-node-linux.sh artifact-linux/scripts/install-public-node-linux.sh
+          cp docs/NODE.md artifact-linux/docs/NODE.md
+          cp docs/NODE_SOAK.md artifact-linux/docs/NODE_SOAK.md
+          cp docs/NODE_LINUX.md artifact-linux/docs/NODE_LINUX.md
+          version="$(python3 -c 'import json; print(json.load(open("package.json", encoding="utf-8"))["version"])')"
+          bytes="$(stat -c '%s' artifact-linux/konofix-node)"
+          sha256="$(sha256sum artifact-linux/konofix-node | awk '{print $1}')"
+          cat > artifact-linux/NODE_BUILD_INFO.json <<EOF
+          {
+            "schema": 1,
+            "product": "Konofix Node",
+            "platform": "linux-x86_64",
+            "version": "$version",
+            "commit": "${GITHUB_SHA}",
+            "node": {
+              "path": "konofix-node",
+              "bytes": $bytes,
+              "sha256": "$sha256"
+            }
+          }
+          EOF
+          tar -C artifact-linux -czf Konofix-Node-0.4.2-Linux-x86_64.tar.gz .
+          sha256sum Konofix-Node-0.4.2-Linux-x86_64.tar.gz > Konofix-Node-0.4.2-Linux-x86_64.tar.gz.sha256
+
+      - name: Verify Linux Node bundle
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -tzf Konofix-Node-0.4.2-Linux-x86_64.tar.gz | grep -F './konofix-node'
+          tar -tzf Konofix-Node-0.4.2-Linux-x86_64.tar.gz | grep -F './scripts/install-public-node-linux.sh'
+          tar -tzf Konofix-Node-0.4.2-Linux-x86_64.tar.gz | grep -F './docs/NODE_LINUX.md'
+          tar -tzf Konofix-Node-0.4.2-Linux-x86_64.tar.gz | grep -F './NODE_BUILD_INFO.json'
+          sha256sum -c Konofix-Node-0.4.2-Linux-x86_64.tar.gz.sha256
+
+      - name: Upload Linux Node bundle
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Konofix-Node-0.4.2-Linux-x86_64-${{ github.sha }}
+          path: |
+            artifact-linux
+            Konofix-Node-0.4.2-Linux-x86_64.tar.gz
+            Konofix-Node-0.4.2-Linux-x86_64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14

@@ -6,9 +6,9 @@ authors = ["Swir"]
 edition = "2021"
 rust-version = "1.88"
 
-[lib]
-name = "konofix_chat_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+[[bin]]
+name = "konofix-node"
+path = "src/main.rs"
 
 [target.'cfg(windows)'.build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -46,6 +46,7 @@ try {
     'NODE_SOAK.md',
     'RELEASE_NOTES.md',
     'BUILD_INFO.json',
+    'package-lock.json',
     'Cargo.lock'
   ) + $toolRelativePaths
   foreach ($name in $required) {
@@ -89,6 +90,19 @@ try {
   Assert-True ([int64]$nodeMeta.bytes -eq [int64](Get-Item $node).Length) 'BUILD_INFO.json Node size does not match the archive.'
   Assert-Hash -Path $node -Expected ([string]$nodeMeta.sha256) -Label 'Konofix Node'
 
+  $frontendLock = Join-Path $temp 'package-lock.json'
+  $frontendLockMeta = $buildInfo.frontend_lock
+  Assert-True ($null -ne $frontendLockMeta) 'BUILD_INFO.json is missing frontend lock metadata.'
+  Assert-True ([string]::Equals([string]$frontendLockMeta.path, 'package-lock.json', [System.StringComparison]::Ordinal)) 'BUILD_INFO.json package-lock.json path is invalid.'
+  Assert-True ([int64]$frontendLockMeta.bytes -eq [int64](Get-Item $frontendLock).Length) 'BUILD_INFO.json package-lock.json size does not match the archive.'
+  Assert-Hash -Path $frontendLock -Expected ([string]$frontendLockMeta.sha256) -Label 'package-lock.json'
+
+  $repoFrontendLock = Join-Path $repoRoot 'package-lock.json'
+  Assert-True (Test-Path $repoFrontendLock -PathType Leaf) 'Repository package-lock.json is missing during artifact verification.'
+  Assert-True ([int64](Get-Item $repoFrontendLock).Length -eq [int64](Get-Item $frontendLock).Length) 'Packaged package-lock.json size does not match the committed build input.'
+  $repoFrontendLockHash = (Get-FileHash $repoFrontendLock -Algorithm SHA256).Hash.ToLowerInvariant()
+  Assert-True ([string]::Equals($repoFrontendLockHash, [string]$frontendLockMeta.sha256, [System.StringComparison]::Ordinal)) 'Packaged package-lock.json does not match the committed build input.'
+
   $cargoLock = Join-Path $temp 'Cargo.lock'
   $lockMeta = $buildInfo.rust_lock
   Assert-True ($null -ne $lockMeta) 'BUILD_INFO.json is missing Rust lock metadata.'
@@ -121,7 +135,7 @@ try {
   $releaseNotes = Get-Content (Join-Path $temp 'RELEASE_NOTES.md') -Raw
   Assert-True ($releaseNotes -match '0\.4\.2 Test 1') 'RELEASE_NOTES.md does not describe the expected test release.'
 
-  Write-Host "OK - ZIP, provenance metadata, Node, Cargo resolution record, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
+  Write-Host "OK - ZIP, provenance metadata, Node, frontend/Rust dependency records, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
   Write-Host "SHA256: $actual"
   Write-Host "Build commit: $commit"
 } finally {

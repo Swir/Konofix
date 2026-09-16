@@ -11,9 +11,26 @@ if ($StartupTimeoutSeconds -lt 5 -or $StartupTimeoutSeconds -gt 120) {
 }
 
 $projectRoot = Split-Path $PSScriptRoot -Parent
-if ([string]::IsNullOrWhiteSpace($NodePath)) {
+$buildInfoPath = Join-Path $projectRoot 'BUILD_INFO.json'
+$artifactMode = Test-Path -LiteralPath $buildInfoPath -PathType Leaf
+$buildInfo = $null
+
+if ($artifactMode) {
+    $buildInfo = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json
+    if ([int]$buildInfo.schema -ne 1) {
+        throw "Unsupported BUILD_INFO schema '$($buildInfo.schema)'."
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$buildInfo.version) -or
+        [string]::IsNullOrWhiteSpace([string]$buildInfo.commit)) {
+        throw 'BUILD_INFO.json is missing exact build version/commit metadata.'
+    }
+    if ([string]::IsNullOrWhiteSpace($NodePath)) {
+        $NodePath = Join-Path $projectRoot ([string]$buildInfo.node.path)
+    }
+} elseif ([string]::IsNullOrWhiteSpace($NodePath)) {
     $NodePath = Join-Path $projectRoot 'src-tauri\target\release\konofix-node.exe'
 }
+
 if (-not (Test-Path -LiteralPath $NodePath -PathType Leaf)) {
     throw "Konofix Node executable not found: $NodePath"
 }
@@ -34,6 +51,14 @@ function Get-FreeTcpPort {
 }
 
 function Get-ExpectedSourceCommit {
+    if ($artifactMode) {
+        $commit = [string]$buildInfo.commit
+        if ($commit -cnotmatch '^[0-9a-f]{40}$') {
+            throw "BUILD_INFO.json contains invalid commit '$commit'."
+        }
+        return $commit
+    }
+
     if ($env:GITHUB_SHA -cmatch '^[0-9a-f]{40}$') {
         return $env:GITHUB_SHA
     }
@@ -68,7 +93,7 @@ function Start-SmokeNode {
 }
 
 function Stop-SmokeNode {
-    param([System.Diagnostics.Process]$Process)
+    param([AllowNull()][System.Diagnostics.Process]$Process)
     if ($null -eq $Process) { return }
     try {
         if (-not $Process.HasExited) {
@@ -109,8 +134,24 @@ function Wait-RunningSnapshot {
     throw "Timed out waiting for a running Konofix Node health snapshot.$suffix"
 }
 
-$package = Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw | ConvertFrom-Json
-$expectedVersion = [string]$package.version
+if ($artifactMode) {
+    $expectedVersion = [string]$buildInfo.version
+    $expectedNodeHash = [string]$buildInfo.node.sha256
+    if ($expectedNodeHash -cnotmatch '^[0-9a-f]{64}$') {
+        throw 'BUILD_INFO.json contains an invalid Node SHA-256 digest.'
+    }
+    $actualNodeHash = (Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant()
+    if (-not [string]::Equals($expectedNodeHash, $actualNodeHash, [System.StringComparison]::Ordinal)) {
+        throw "Node SHA-256 mismatch: BUILD_INFO expected '$expectedNodeHash', got '$actualNodeHash'."
+    }
+} else {
+    $packagePath = Join-Path $projectRoot 'package.json'
+    if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
+        throw "package.json not found: $packagePath"
+    }
+    $package = Get-Content -LiteralPath $packagePath -Raw | ConvertFrom-Json
+    $expectedVersion = [string]$package.version
+}
 $expectedCommit = Get-ExpectedSourceCommit
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("konofix-node-runtime-" + [Guid]::NewGuid().ToString('N'))
 $identityPath = Join-Path $tempRoot 'node-identity.key'
@@ -171,7 +212,8 @@ try {
         -ExpectedPeerId $firstPeerId `
         -ExpectedSourceCommit $expectedCommit | Out-Null
 
-    Write-Host "PASS: production konofix-node.exe started twice, emitted valid exact-build health telemetry, and preserved Peer ID $firstPeerId." -ForegroundColor Green
+    $mode = if ($artifactMode) { 'release-bundle' } else { 'repository-build' }
+    Write-Host "PASS: $mode konofix-node.exe started twice, emitted valid exact-build health telemetry, and preserved Peer ID $firstPeerId." -ForegroundColor Green
 } finally {
     Stop-SmokeNode -Process $firstProcess
     Stop-SmokeNode -Process $secondProcess

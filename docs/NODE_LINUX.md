@@ -4,13 +4,17 @@ This guide covers the headless **Konofix Node** on Linux x86_64. The desktop cha
 
 ## Verified build model
 
-`Linux Node CI` builds and tests only `konofix-node` on `ubuntu-latest` with the committed `src-tauri/Cargo.lock` and `--locked`. A dependency gate fails if the Linux Node graph pulls in `tauri`, `tauri-build`, or `rfd`. The CI smoke test executes the produced binary and verifies the public identity/health command-line options.
+`Linux Node CI` builds the production Node implementation through the dedicated `node-linux/Cargo.toml` target. That manifest intentionally has no desktop library target, so Linux never needs to compile the Windows/Tauri application just to produce the server. `node-linux/src/main.rs` includes the canonical implementation from `src-tauri/src/bin/konofix-node.rs`, keeping the runtime single-sourced instead of maintaining a Linux fork.
+
+The isolated manifest is guarded against dependency drift: CI compares its package version, Rust version and shared dependency tables with `src-tauri/Cargo.toml`, copies the committed `src-tauri/Cargo.lock`, and then requires `cargo metadata --locked`, tests and the release build to succeed. A dependency gate separately fails if the Linux graph pulls in `tauri`, `tauri-build`, or `rfd`.
+
+The CI runtime smoke test does more than call `--help`. It launches the release binary, waits for a schema-v2 health snapshot, verifies version and exact embedded source commit, stops the process cleanly, restarts it with the same identity file, and requires the Peer ID to remain unchanged. The systemd installer has its own mutation-free self-tests as a separate gate.
 
 A successful `main` run uploads a Linux x86_64 bundle containing:
 
 - `konofix-node`,
 - `scripts/install-public-node-linux.sh`,
-- Node/soak documentation,
+- Node, soak, and Linux operator documentation,
 - `NODE_BUILD_INFO.json` with exact source commit, version, binary size and SHA-256,
 - a `.tar.gz` archive and SHA-256 checksum.
 

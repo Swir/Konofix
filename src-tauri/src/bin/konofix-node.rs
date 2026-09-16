@@ -2,7 +2,7 @@ use std::{
     collections::HashSet,
     io::Write,
     net::IpAddr,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -139,10 +139,7 @@ fn load_or_create_identity(path: &Path) -> Result<identity::Keypair, String> {
         }
     }
 
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent).map_err(|error| {
             format!(
                 "Failed to create identity directory {}: {error}",
@@ -185,6 +182,115 @@ fn load_or_create_identity(path: &Path) -> Result<identity::Keypair, String> {
 
     harden_identity_permissions(path)?;
     Ok(key)
+}
+
+fn lexically_normalize_absolute(path: &Path) -> Result<PathBuf, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("Failed to resolve current directory: {error}"))?
+            .join(path)
+    };
+
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = normalized.pop();
+            }
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    Ok(normalized)
+}
+
+fn comparable_path(path: &Path) -> Result<PathBuf, String> {
+    let normalized = lexically_normalize_absolute(path)?;
+    if normalized.exists() {
+        return std::fs::canonicalize(&normalized).map_err(|error| {
+            format!(
+                "Failed to resolve state path {}: {error}",
+                normalized.display()
+            )
+        });
+    }
+
+    // Resolve the nearest existing ancestor so aliases through directory symlinks/junctions
+    // are still detected even when the final state file has not been created yet.
+    let mut cursor = normalized.as_path();
+    let mut suffix = Vec::new();
+    while !cursor.exists() {
+        let name = cursor.file_name().ok_or_else(|| {
+            format!(
+                "Could not resolve a parent for state path {}",
+                normalized.display()
+            )
+        })?;
+        suffix.push(name.to_os_string());
+        cursor = cursor.parent().ok_or_else(|| {
+            format!(
+                "Could not resolve a parent for state path {}",
+                normalized.display()
+            )
+        })?;
+    }
+
+    let mut resolved = std::fs::canonicalize(cursor).map_err(|error| {
+        format!(
+            "Failed to resolve state path ancestor {}: {error}",
+            cursor.display()
+        )
+    })?;
+    for part in suffix.iter().rev() {
+        resolved.push(part);
+    }
+    Ok(resolved)
+}
+
+#[cfg(windows)]
+fn same_path(left: &Path, right: &Path) -> Result<bool, String> {
+    let left = comparable_path(left)?.to_string_lossy().to_lowercase();
+    let right = comparable_path(right)?.to_string_lossy().to_lowercase();
+    Ok(left == right)
+}
+
+#[cfg(not(windows))]
+fn same_path(left: &Path, right: &Path) -> Result<bool, String> {
+    Ok(comparable_path(left)? == comparable_path(right)?)
+}
+
+fn validate_state_paths(identity_path: &Path, health_path: Option<&Path>) -> Result<(), String> {
+    let Some(health_path) = health_path else {
+        return Ok(());
+    };
+
+    if same_path(identity_path, health_path)? {
+        return Err(format!(
+            "Identity and health files resolve to the same path ({}). Refusing to start because health telemetry could overwrite the persistent Node identity.",
+            identity_path.display()
+        ));
+    }
+
+    if let Ok(executable) = std::env::current_exe() {
+        if same_path(health_path, &executable)? {
+            return Err(format!(
+                "Health file resolves to the running Konofix Node executable ({}). Refusing to start.",
+                executable.display()
+            ));
+        }
+        if same_path(identity_path, &executable)? {
+            return Err(format!(
+                "Identity file resolves to the running Konofix Node executable ({}). Refusing to start.",
+                executable.display()
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn provider_key() -> kad::RecordKey {
@@ -299,10 +405,7 @@ fn is_non_public_ip(host: &str) -> bool {
             ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
         }
         Ok(IpAddr::V6(ip)) => {
-            ip.is_loopback()
-                || ip.is_unspecified()
-                || ip.is_unique_local()
-                || ip.is_unicast_link_local()
+            ip.is_loopback() || ip.is_unspecified() || ip.is_unique_local() || ip.is_unicast_link_local()
         }
         Err(_) => false,
     }
@@ -332,6 +435,21 @@ fn unix_timestamp() -> u64 {
         .as_secs()
 }
 
+fn unique_health_temp_path(path: &Path) -> Result<PathBuf, String> {
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("Health file path has no file name: {}", path.display()))?
+        .to_string_lossy();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    Ok(path.with_file_name(format!(
+        "{file_name}.tmp-{}-{nonce}",
+        std::process::id()
+    )))
+}
+
 fn write_health_snapshot(
     path: &Path,
     local_peer: PeerId,
@@ -339,11 +457,13 @@ fn write_health_snapshot(
     connected_peers: usize,
     status: &str,
 ) -> Result<(), String> {
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Failed to create health directory {}: {error}",
+                parent.display()
+            )
+        })?;
     }
 
     let snapshot = HealthSnapshot {
@@ -356,13 +476,47 @@ fn write_health_snapshot(
         connected_peers,
         timestamp_unix: unix_timestamp(),
     };
-    let payload = serde_json::to_vec_pretty(&snapshot).map_err(|e| e.to_string())?;
-    let temp_path = path.with_extension("tmp");
-    std::fs::write(&temp_path, payload).map_err(|e| e.to_string())?;
-    if path.exists() {
-        std::fs::remove_file(path).map_err(|e| e.to_string())?;
+    let payload = serde_json::to_vec_pretty(&snapshot)
+        .map_err(|error| format!("Failed to encode health snapshot: {error}"))?;
+    let temp_path = unique_health_temp_path(path)?;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    let mut temp_file = options.open(&temp_path).map_err(|error| {
+        format!(
+            "Failed to create temporary health snapshot {}: {error}",
+            temp_path.display()
+        )
+    })?;
+
+    if let Err(error) = temp_file.write_all(&payload).and_then(|_| temp_file.sync_all()) {
+        drop(temp_file);
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!(
+            "Failed to persist temporary health snapshot {}: {error}",
+            temp_path.display()
+        ));
     }
-    std::fs::rename(&temp_path, path).map_err(|e| e.to_string())?;
+    drop(temp_file);
+
+    #[cfg(windows)]
+    if path.exists() {
+        if let Err(error) = std::fs::remove_file(path) {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(format!(
+                "Failed to replace existing health snapshot {}: {error}",
+                path.display()
+            ));
+        }
+    }
+
+    if let Err(error) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!(
+            "Failed to publish health snapshot {}: {error}",
+            path.display()
+        ));
+    }
     Ok(())
 }
 
@@ -376,8 +530,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .identity_file
         .clone()
         .unwrap_or_else(default_identity_path);
+
+    validate_state_paths(&identity_path, args.health_file.as_deref())
+        .map_err(std::io::Error::other)?;
+
     let key = load_or_create_identity(&identity_path).map_err(std::io::Error::other)?;
     let local_peer = key.public().to_peer_id();
+
+    // Re-check after identity creation so aliases through symlinks/junctions or relative
+    // components resolve against a real on-disk identity before any health write can occur.
+    validate_state_paths(&identity_path, args.health_file.as_deref())
+        .map_err(std::io::Error::other)?;
 
     let mut swarm = SwarmBuilder::with_existing_identity(key)
         .with_tokio()
@@ -460,13 +623,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     status_tick.tick().await;
 
     if let Some(path) = &args.health_file {
-        match write_health_snapshot(path, local_peer, started, connected_peers.len(), "running") {
-            Ok(()) => println!("Health snapshot: {}", path.display()),
-            Err(error) => eprintln!(
-                "WARNING: failed to write health snapshot {}: {error}",
-                path.display()
-            ),
-        }
+        write_health_snapshot(path, local_peer, started, connected_peers.len(), "running")
+            .map_err(std::io::Error::other)?;
+        println!("Health snapshot: {}", path.display());
     }
 
     loop {
@@ -533,10 +692,7 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir()
-            .join(format!(
-                "konofix-node-{label}-{}-{nonce}",
-                std::process::id()
-            ))
+            .join(format!("konofix-node-{label}-{}-{nonce}", std::process::id()))
             .join("node-identity.key")
     }
 
@@ -560,8 +716,11 @@ mod tests {
 
     #[test]
     fn rejects_empty_identity_file() {
-        let error = parse_args_from(vec!["--identity-file".to_string(), "   ".to_string()])
-            .expect_err("empty identity path must fail");
+        let error = parse_args_from(vec![
+            "--identity-file".to_string(),
+            "   ".to_string(),
+        ])
+        .expect_err("empty identity path must fail");
         assert!(error.contains("Identity file path cannot be empty"));
     }
 
@@ -587,11 +746,74 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.contains("refusing to replace"));
-        assert_eq!(
-            std::fs::read(&path).expect("fixture should remain"),
-            original
-        );
+        assert_eq!(std::fs::read(&path).expect("fixture should remain"), original);
         let _ = std::fs::remove_dir_all(path.parent().expect("test path has parent"));
+    }
+
+    #[test]
+    fn rejects_identity_health_path_collision() {
+        let identity = unique_test_path("state-collision");
+        std::fs::create_dir_all(identity.parent().expect("test path has parent"))
+            .expect("test directory should be created");
+        std::fs::write(&identity, b"placeholder").expect("fixture should be written");
+
+        let error = validate_state_paths(&identity, Some(&identity))
+            .expect_err("identity/health collision must fail closed");
+        assert!(error.contains("same path"));
+        let _ = std::fs::remove_dir_all(identity.parent().expect("test path has parent"));
+    }
+
+    #[test]
+    fn rejects_lexically_aliased_identity_health_collision() {
+        let identity = unique_test_path("state-alias");
+        let dir = identity.parent().expect("test path has parent");
+        std::fs::create_dir_all(dir).expect("test directory should be created");
+        std::fs::write(&identity, b"placeholder").expect("fixture should be written");
+        let health_alias = dir
+            .join("not-created")
+            .join("..")
+            .join(identity.file_name().expect("identity has a file name"));
+
+        let error = validate_state_paths(&identity, Some(&health_alias))
+            .expect_err("lexical identity/health alias must fail closed");
+        assert!(error.contains("same path"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn health_snapshot_uses_safe_unique_temp_and_replaces_existing_snapshot() {
+        let identity = unique_test_path("health-write");
+        let dir = identity.parent().expect("test path has parent");
+        std::fs::create_dir_all(dir).expect("test directory should be created");
+        let health = dir.join("node-health.json");
+        let legacy_fixed_temp = health.with_extension("tmp");
+        std::fs::write(&health, b"old-snapshot").expect("old snapshot should be written");
+        std::fs::write(&legacy_fixed_temp, b"unrelated-state")
+            .expect("legacy temp collision sentinel should be written");
+
+        let key = identity::Keypair::generate_ed25519();
+        let peer = key.public().to_peer_id();
+        write_health_snapshot(&health, peer, Instant::now(), 3, "running")
+            .expect("health snapshot should be replaced");
+
+        let text = std::fs::read_to_string(&health).expect("health snapshot should be readable");
+        let json: serde_json::Value = serde_json::from_str(&text).expect("health snapshot should be JSON");
+        assert_eq!(json["schema"], 2);
+        assert_eq!(json["status"], "running");
+        assert_eq!(json["connected_peers"], 3);
+        assert_eq!(json["peer_id"], peer.to_string());
+        assert_eq!(
+            std::fs::read(&legacy_fixed_temp).expect("unrelated state must survive"),
+            b"unrelated-state"
+        );
+
+        let leftovers = std::fs::read_dir(dir)
+            .expect("test directory should be readable")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+            .count();
+        assert_eq!(leftovers, 0, "temporary health files must be cleaned up");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[cfg(unix)]

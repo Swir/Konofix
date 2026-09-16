@@ -117,6 +117,7 @@ The active milestone currently has 54 of 59 tasks complete. The remaining five t
 - Linux public-Node infrastructure now uses an isolated headless Cargo target that single-sources the production Node implementation, rejects desktop dependency leakage, reuses the committed Rust lockfile, and is validated by Linux CI without requiring Tauri/WebKit development libraries.
 - Linux CI now exercises the release Node as a real process, verifies schema-v2 health provenance against the exact build commit, performs a clean stop/restart, and requires persistent Peer-ID continuity before the Linux path is considered build-valid.
 - Linux systemd installation rejects privileged ports below 1024 because the service intentionally runs as the unprivileged `konofix` user; boundary behavior is covered by installer self-tests instead of depending on host-specific capabilities or sysctls.
+- Raw Node state-file safety independently rejects identity/health/executable path collisions, stages health snapshots through unique create-new temporary files with durable writes and cleanup, and fails startup when an explicitly requested initial health snapshot cannot be published.
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test

@@ -42,6 +42,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-network-evidence-gate.ps1
 
+      - name: Internet bootstrap precheck self-tests
+        shell: pwsh
+        run: .\scripts\test-internet-precheck.ps1
+
       - name: Node health validator self-tests
         shell: pwsh
         run: .\scripts\test-node-health.ps1

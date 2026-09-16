@@ -35,7 +35,12 @@ if (pkg.version !== tauri.version || pkg.version !== cargoVersion) {
 const i18n = read('src/i18n.ts');
 if (!/return\s+'en';/.test(i18n)) fail('English locale fallback is missing.');
 if (!/SUPPORTED[^\n]*'en'/.test(i18n)) fail('English is not present in the supported locale list.');
-console.log('Localization fallback: English is configured.');
+if (!/export\s+type\s+MessageKey\s*=/.test(i18n)) fail('Typed MessageKey export is missing from src/i18n.ts.');
+if (!/export\s+function\s+t\s*\(/.test(i18n)) fail('Typed t() translation API is missing from src/i18n.ts.');
+if (/MutationObserver|translateElement|dynamicTranslate/.test(i18n)) {
+  fail('Legacy DOM/source-text localization compatibility code is still present in src/i18n.ts.');
+}
+console.log('Localization fallback: English is configured and typed message-key API is active.');
 
 const polishChars = /[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/;
 const docs = ['README.md', 'ROADMAP.md', 'CHANGELOG.md'];
@@ -96,7 +101,7 @@ for (const file of englishOnlyOperationalFiles) {
 }
 
 const workflowDir = path.join(root, '.github', 'workflows');
-if (fs.existsSync(workflowDir)) {
+if (fs.existsSync(workflowDir))) {
   for (const name of fs.readdirSync(workflowDir)) {
     if (!/\.ya?ml$/i.test(name)) continue;
     const file = `.github/workflows/${name}`;
@@ -145,7 +150,12 @@ if (fs.existsSync(path.join(root, windowsWorkflowPath))) {
 
 const main = read('src/main.ts');
 const polishLiteralCount = (main.match(/[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/g) || []).length;
-console.log(`Runtime localization migration indicator: ${polishLiteralCount} Polish-specific characters remain in src/main.ts.`);
-console.log('This indicator is informational until all runtime strings are migrated to typed translation keys.');
+if (polishLiteralCount !== 0) {
+  fail(`Runtime localization migration regressed: ${polishLiteralCount} Polish-specific characters remain in src/main.ts.`);
+}
+if (!/from\s+['"]\.\/i18n['"]/.test(main) || !/\bt\(['"][a-z0-9_.]+['"]/.test(main)) {
+  fail('src/main.ts must consume the typed localization API.');
+}
+console.log('Runtime localization migration: typed message keys enforced; no Polish UI literals remain in src/main.ts.');
 
 if (!process.exitCode) console.log('Project audit passed.');

@@ -45,6 +45,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-network-evidence-gate.ps1
 
+      - name: Promotion evidence preflight self-tests
+        shell: pwsh
+        run: .\scripts\test-promotion-evidence.ps1
+
       - name: Network report editor self-tests
         shell: pwsh
         run: .\scripts\test-network-report-editor.ps1
@@ -130,6 +134,7 @@ jobs:
             'new-network-test-report.ps1',
             'set-network-test-result.ps1',
             'validate-network-test-report.ps1',
+            'check-promotion-evidence.ps1',
             'check-node-health.ps1',
             'collect-node-soak.ps1',
             'validate-node-soak.ps1'

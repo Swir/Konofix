@@ -79,7 +79,7 @@
 - [x] release gate invokes the PowerShell network-evidence validator deterministically
 - [x] Windows CI cancels superseded runs per branch/ref
 - [x] Windows build/test job uses a read-only GitHub token; release write permission is isolated to post-build publication
-- [x] Windows CI uses lockfile-enforcing `npm ci` with npm caching so dependency drift from `package-lock.json` fails the build instead of being silently resolved
+- [x] Windows CI recovered from the invalid lockfile-only configuration and the compatible install path is verified green; deterministic npm installs remain explicitly pending until a lockfile is committed
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test
@@ -89,7 +89,7 @@
 
 ### Test-release gate
 
-A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from the exact release client and Node version, with independent countries and networks/operators recorded and one stable public bootstrap Peer ID across the promotion evidence. CI uses the committed npm lockfile as an integrity/reproducibility boundary: frontend dependencies are installed with `npm ci`, so lockfile/package metadata disagreement is a hard failure rather than an implicit dependency update.
+A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from the exact release client and Node version, with independent countries and networks/operators recorded and one stable public bootstrap Peer ID across the promotion evidence. The repository currently has no committed `package-lock.json`, so CI deliberately uses `npm install --no-audit --no-fund`; switching back to lockfile-enforced `npm ci` is deferred until a real lockfile is committed and verified.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

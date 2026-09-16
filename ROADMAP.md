@@ -2,11 +2,11 @@
 
 ## Project progress
 
-**Real Internet Test milestone: 86% complete**
+**Real Internet Test milestone: 88% complete**
 
-`█████████████████░░░ 86%`
+`██████████████████░░ 88%`
 
-The active milestone currently has 37 of 43 tasks complete. The remaining six tasks require real public-network evidence or final runtime localization work and are not credited by CI alone.
+The active milestone currently has 38 of 43 tasks complete. The remaining five tasks require real public-network evidence and fixes discovered during those tests; CI alone cannot credit them.
 
 ## 0.1.0 — Foundation ✅
 - Tauri + Rust + libp2p
@@ -94,12 +94,12 @@ The active milestone currently has 37 of 43 tasks complete. The remaining six ta
 - Public Node promotion groundwork now also includes a multi-snapshot soak validator and adversarial CI self-tests. Stable promotion requires a continuous health window with one Node version/Peer ID, no restart, bounded sample gaps, fresh final telemetry and observed peer activity, and the soak identity must match the bootstrap Peer ID in the cross-country evidence.
 - Local preflight now mirrors the CI gate/test path instead of checking only the frontend and basic Cargo compilation.
 - Windows artifacts carry machine-readable `BUILD_INFO.json` provenance with commit/version plus hashes and sizes for the Node and every installer; artifact verification cross-checks that metadata and the captured Rust dependency-resolution record before upload.
+- [x] migrate remaining runtime strings from compatibility translation into typed message keys; remove the DOM/source-text translator and enforce the migration in project audit
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test
 - [ ] TCP, QUIC, relay, and DCUtR verification
 - [ ] fixes discovered during real-world network tests
-- [ ] migrate remaining runtime strings from compatibility translation into typed message keys
 
 ### Test-release gate
 

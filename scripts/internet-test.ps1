@@ -10,23 +10,51 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Test-IpInCidr([System.Net.IPAddress]$Address, [string]$Network, [int]$PrefixLength) {
+  $networkAddress = [System.Net.IPAddress]::Parse($Network)
+  if ($Address.AddressFamily -ne $networkAddress.AddressFamily) { return $false }
+
+  $addressBytes = $Address.GetAddressBytes()
+  $networkBytes = $networkAddress.GetAddressBytes()
+  $bitCount = $addressBytes.Length * 8
+  if ($PrefixLength -lt 0 -or $PrefixLength -gt $bitCount) {
+    throw "Invalid CIDR prefix length $PrefixLength for $Network."
+  }
+
+  $fullBytes = [Math]::Floor($PrefixLength / 8)
+  for ($i = 0; $i -lt $fullBytes; $i++) {
+    if ($addressBytes[$i] -ne $networkBytes[$i]) { return $false }
+  }
+
+  $remainingBits = $PrefixLength % 8
+  if ($remainingBits -eq 0) { return $true }
+  $mask = [byte](0xFF -shl (8 - $remainingBits))
+  return (($addressBytes[$fullBytes] -band $mask) -eq ($networkBytes[$fullBytes] -band $mask))
+}
+
 function Test-GloballyRoutableIp([System.Net.IPAddress]$Address) {
   if ($Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
-    $bytes = $Address.GetAddressBytes()
-    $a = [int]$bytes[0]
-    $b = [int]$bytes[1]
-    $c = [int]$bytes[2]
-
-    if ($a -eq 0 -or $a -eq 10 -or $a -eq 127 -or $a -ge 224) { return $false }
-    if ($a -eq 100 -and $b -ge 64 -and $b -le 127) { return $false }
-    if ($a -eq 169 -and $b -eq 254) { return $false }
-    if ($a -eq 172 -and $b -ge 16 -and $b -le 31) { return $false }
-    if ($a -eq 192 -and $b -eq 0 -and $c -eq 0) { return $false }
-    if ($a -eq 192 -and $b -eq 0 -and $c -eq 2) { return $false }
-    if ($a -eq 192 -and $b -eq 168) { return $false }
-    if ($a -eq 198 -and ($b -eq 18 -or $b -eq 19)) { return $false }
-    if ($a -eq 198 -and $b -eq 51 -and $c -eq 100) { return $false }
-    if ($a -eq 203 -and $b -eq 0 -and $c -eq 113) { return $false }
+    foreach ($blocked in @(
+      @('0.0.0.0', 8),
+      @('10.0.0.0', 8),
+      @('100.64.0.0', 10),
+      @('127.0.0.0', 8),
+      @('169.254.0.0', 16),
+      @('172.16.0.0', 12),
+      @('192.0.0.0', 24),
+      @('192.0.2.0', 24),
+      @('192.88.99.0', 24),
+      @('192.168.0.0', 16),
+      @('198.18.0.0', 15),
+      @('198.51.100.0', 24),
+      @('203.0.113.0', 24),
+      @('224.0.0.0', 4),
+      @('240.0.0.0', 4)
+    )) {
+      if (Test-IpInCidr -Address $Address -Network ([string]$blocked[0]) -PrefixLength ([int]$blocked[1])) {
+        return $false
+      }
+    }
     return $true
   }
 
@@ -44,12 +72,30 @@ function Test-GloballyRoutableIp([System.Net.IPAddress]$Address) {
     return $false
   }
 
-  $bytes = $Address.GetAddressBytes()
-  if (($bytes[0] -band 0xE0) -ne 0x20) { return $false }
-  if ($bytes[0] -eq 0x20 -and $bytes[1] -eq 0x01 -and $bytes[2] -eq 0x0D -and $bytes[3] -eq 0xB8) {
-    return $false
+  # Public evidence deliberately accepts only IPv6 global-unicast space and excludes
+  # documentation/benchmark/ORCHID special-use ranges that sit inside 2000::/3.
+  if (-not (Test-IpInCidr -Address $Address -Network '2000::' -PrefixLength 3)) { return $false }
+  foreach ($blocked in @(
+    @('2001:2::', 48),
+    @('2001:db8::', 32),
+    @('2001:10::', 28),
+    @('2001:20::', 28)
+  )) {
+    if (Test-IpInCidr -Address $Address -Network ([string]$blocked[0]) -PrefixLength ([int]$blocked[1])) {
+      return $false
+    }
   }
   return $true
+}
+
+function Test-ReservedPublicDnsName([string]$HostName) {
+  $normalized = $HostName.TrimEnd('.').ToLowerInvariant()
+  foreach ($suffix in @('localhost', 'local', 'invalid', 'test', 'example', 'home.arpa', 'onion', 'internal')) {
+    if ($normalized -eq $suffix -or $normalized.EndsWith('.' + $suffix, [System.StringComparison]::Ordinal)) {
+      return $true
+    }
+  }
+  return $false
 }
 
 function Resolve-PublicDnsAddresses([string]$HostProtocol, [string]$HostName) {
@@ -164,6 +210,9 @@ if ($strictPublicValidation) {
   } else {
     if ([string]$parsed.host -notmatch '\.') {
       throw "DNS bootstrap host '$($parsed.host)' must be a fully-qualified public hostname for public-node evidence."
+    }
+    if (Test-ReservedPublicDnsName ([string]$parsed.host)) {
+      throw "DNS bootstrap host '$($parsed.host)' uses a reserved/private-use suffix and cannot be used as public-node evidence."
     }
     if ($RequireDnsResolution) {
       $resolvedAddresses = @(Resolve-PublicDnsAddresses -HostProtocol ([string]$parsed.host_protocol) -HostName ([string]$parsed.host))

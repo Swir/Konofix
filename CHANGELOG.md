@@ -21,9 +21,10 @@
 - added a roadmap-backed README progress bar checked by CI,
 - configured per-ref Windows CI concurrency with superseded-run cancellation,
 - reduced GitHub Actions token exposure by isolating `contents: write` to the post-build release-publication job,
-- attempted lockfile-enforced npm CI, detected that the repository does not yet contain `package-lock.json`, and restored the green-compatible install path instead of leaving Windows CI permanently blocked; deterministic npm installs remain pending until a lockfile is committed,
-- corrected README and ROADMAP dependency-install documentation so it matches the verified green Windows CI configuration instead of claiming a nonexistent lockfile boundary,
-- added a project-audit guard that keeps Windows CI dependency installation synchronized with actual lockfile state and rejects `npm ci` or setup-node npm caching when `package-lock.json` is absent,
+- attempted lockfile-enforced npm CI, detected that the repository did not yet contain `package-lock.json`, and restored the green-compatible install path rather than leaving Windows CI blocked,
+- corrected README and ROADMAP dependency-install documentation to match the then-current verified Windows CI configuration,
+- added a project-audit guard that keeps Windows CI dependency installation synchronized with actual lockfile state,
+- detected the newly generated committed `package-lock.json` through that guard and switched Windows CI to deterministic `npm ci --no-audit --no-fund` with setup-node npm caching,
 - expanded cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1

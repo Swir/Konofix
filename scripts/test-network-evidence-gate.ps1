@@ -7,6 +7,7 @@ if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) { throw 'Network ev
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("konofix-evidence-selftest-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 $sourceCommit = '0123456789abcdef0123456789abcdef01234567'
+$campaignId = '0123456789abcdef0123456789abcdef'
 
 function New-TestManifest([string]$Scenario, [string]$Path) {
     $checks = [ordered]@{
@@ -18,7 +19,7 @@ function New-TestManifest([string]$Scenario, [string]$Path) {
     if ($Scenario -eq 'Relay' -or $Scenario -eq 'CGNAT') { $checks.relay_observed = 'PASS' }
     if ($Scenario -eq 'DCUtR') { $checks.dcutr_direct_upgrade = 'PASS' }
     $manifest = [ordered]@{
-        schema_version = 3; created_utc = [DateTimeOffset]::UtcNow.ToString('o'); scenario = $Scenario
+        schema_version = 3; campaign_id = $campaignId; created_utc = [DateTimeOffset]::UtcNow.ToString('o'); scenario = $Scenario
         build_version = '0.4.2'; node_version = '0.4.2'; source_commit = $sourceCommit; client_a = 'selftest-a'; client_b = 'selftest-b'
         client_a_country = 'PL'; client_b_country = 'NO'; client_a_network = 'selftest-net-a'; client_b_network = 'selftest-net-b'
         bootstrap = '/dns/konofix.example.test/tcp/4001/p2p/12D3KooWSelfTestPeer123456789'; overall = 'PASS'; checks = $checks
@@ -49,7 +50,7 @@ try {
         $paths += $path
     }
 
-    & $validator -Manifest $paths -RequireAllChecks -ExpectedBuildVersion '0.4.2' -ExpectedNodeVersion '0.4.2' -ExpectedSourceCommit $sourceCommit -RequireSingleBootstrapPeer
+    & $validator -Manifest $paths -RequireAllChecks -ExpectedBuildVersion '0.4.2' -ExpectedNodeVersion '0.4.2' -ExpectedSourceCommit $sourceCommit -RequireSingleBootstrapPeer -RequireSingleCampaign
     Write-Host 'Positive network evidence self-test passed.'
 
     $legacySchema = New-MutatedManifest $paths[0] 'legacy-schema.json' { param($d) $d.schema_version = 2 }
@@ -79,6 +80,39 @@ try {
     $mixedCommit = @($paths)
     $mixedCommit[1] = New-MutatedManifest $paths[1] 'other-commit.json' { param($d) $d.source_commit = '89abcdef0123456789abcdef0123456789abcdef' }
     Assert-Rejected { & $validator -Manifest $mixedCommit -RequireAllChecks } 'mixed source commits'
+
+    $missingCampaign = New-MutatedManifest $paths[0] 'missing-campaign.json' { param($d) $d.PSObject.Properties.Remove('campaign_id') }
+    Assert-Rejected { & $validator -Manifest @($missingCampaign,$paths[1],$paths[2],$paths[3],$paths[4]) -RequireAllChecks -RequireSingleCampaign } 'missing campaign ID in promotion evidence'
+
+    $numericCampaign = New-MutatedManifest $paths[0] 'numeric-campaign.json' { param($d) $d.campaign_id = 42 }
+    Assert-Rejected { & $validator -Manifest $numericCampaign -RequiredScenario TCP } 'numeric campaign ID coercion'
+
+    $malformedCampaign = New-MutatedManifest $paths[0] 'malformed-campaign.json' { param($d) $d.campaign_id = 'ABC-not-canonical' }
+    Assert-Rejected { & $validator -Manifest $malformedCampaign -RequiredScenario TCP } 'malformed campaign ID'
+
+    $mixedCampaign = @($paths)
+    $mixedCampaign[1] = New-MutatedManifest $paths[1] 'other-campaign.json' { param($d) $d.campaign_id = '89abcdef0123456789abcdef01234567' }
+    Assert-Rejected { & $validator -Manifest $mixedCampaign -RequireAllChecks -RequireSingleCampaign } 'mixed campaign IDs'
+
+    $mixedClientA = @($paths)
+    $mixedClientA[1] = New-MutatedManifest $paths[1] 'other-client-a.json' { param($d) $d.client_a = 'selftest-c' }
+    Assert-Rejected { & $validator -Manifest $mixedClientA -RequireAllChecks -RequireSingleCampaign } 'mixed Client A identities inside one campaign'
+
+    $mixedClientB = @($paths)
+    $mixedClientB[2] = New-MutatedManifest $paths[2] 'other-client-b.json' { param($d) $d.client_b = 'selftest-c' }
+    Assert-Rejected { & $validator -Manifest $mixedClientB -RequireAllChecks -RequireSingleCampaign } 'mixed Client B identities inside one campaign'
+
+    $swappedClients = @($paths)
+    $swappedClients[3] = New-MutatedManifest $paths[3] 'swapped-clients.json' { param($d) $a=$d.client_a; $d.client_a=$d.client_b; $d.client_b=$a }
+    Assert-Rejected { & $validator -Manifest $swappedClients -RequireAllChecks -RequireSingleCampaign } 'swapped client orientation inside one campaign'
+
+    $mixedCountry = @($paths)
+    $mixedCountry[1] = New-MutatedManifest $paths[1] 'other-country.json' { param($d) $d.client_a_country = 'DE' }
+    Assert-Rejected { & $validator -Manifest $mixedCountry -RequireAllChecks -RequireSingleCampaign } 'mixed country metadata inside one campaign'
+
+    $mixedNetwork = @($paths)
+    $mixedNetwork[1] = New-MutatedManifest $paths[1] 'other-network.json' { param($d) $d.client_a_network = 'selftest-net-c' }
+    Assert-Rejected { & $validator -Manifest $mixedNetwork -RequireAllChecks -RequireSingleCampaign } 'mixed network metadata inside one campaign'
 
     $sameCountry = New-MutatedManifest $paths[0] 'same-country.json' { param($d) $d.client_b_country = $d.client_a_country }
     Assert-Rejected { & $validator -Manifest $sameCountry -RequiredScenario TCP } 'same-country Internet evidence'
@@ -121,7 +155,7 @@ try {
 
     $mixedBootstrap = @($paths)
     $mixedBootstrap[1] = New-MutatedManifest $paths[1] 'other-bootstrap.json' { param($d) $d.bootstrap = '/dns/konofix.example.test/tcp/4001/p2p/12D3KooWAnotherPeer987654321' }
-    Assert-Rejected { & $validator -Manifest $mixedBootstrap -RequireAllChecks -ExpectedBuildVersion '0.4.2' -ExpectedNodeVersion '0.4.2' -ExpectedSourceCommit $sourceCommit -RequireSingleBootstrapPeer } 'mixed public Node Peer IDs'
+    Assert-Rejected { & $validator -Manifest $mixedBootstrap -RequireAllChecks -ExpectedBuildVersion '0.4.2' -ExpectedNodeVersion '0.4.2' -ExpectedSourceCommit $sourceCommit -RequireSingleBootstrapPeer -RequireSingleCampaign } 'mixed public Node Peer IDs'
 
     $oversized = Join-Path $temp 'oversized.json'
     Copy-Item $paths[0] $oversized

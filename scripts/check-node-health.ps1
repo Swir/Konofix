@@ -73,6 +73,8 @@ if ($MaxFutureSkewSeconds -lt 0 -or $MaxFutureSkewSeconds -gt 300) { throw 'MaxF
 if ($MinUptimeSeconds -lt 0) { throw 'MinUptimeSeconds cannot be negative.' }
 if ($MinConnectedPeers -lt 0) { throw 'MinConnectedPeers cannot be negative.' }
 if ($MaxSnapshotBytes -lt 1024 -or $MaxSnapshotBytes -gt 1048576) { throw 'MaxSnapshotBytes must be between 1024 and 1048576.' }
+if ($PSBoundParameters.ContainsKey('ExpectedVersion') -and [string]::IsNullOrWhiteSpace($ExpectedVersion)) { throw 'ExpectedVersion cannot be empty or whitespace when explicitly supplied.' }
+if ($PSBoundParameters.ContainsKey('ExpectedPeerId') -and [string]::IsNullOrWhiteSpace($ExpectedPeerId)) { throw 'ExpectedPeerId cannot be empty or whitespace when explicitly supplied.' }
 
 if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Health snapshot not found: $Path" }
 $snapshotFile = Get-Item -LiteralPath $Path

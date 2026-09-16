@@ -65,6 +65,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-node-soak.ps1
 
+      - name: Node soak collector self-tests
+        shell: pwsh
+        run: .\scripts\test-node-soak-collector.ps1
+
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
 
@@ -117,6 +121,7 @@ jobs:
             'new-network-test-report.ps1',
             'validate-network-test-report.ps1',
             'check-node-health.ps1',
+            'collect-node-soak.ps1',
             'validate-node-soak.ps1'
           )
           foreach ($tool in $testTools) {

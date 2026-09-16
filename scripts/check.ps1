@@ -42,6 +42,9 @@ try {
   Write-Host 'Node soak stability self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-node-soak.ps1'
 
+  Write-Host 'Node soak collector self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-node-soak-collector.ps1'
+
   Write-Host 'Frontend dependencies (locked)...' -ForegroundColor Yellow
   npm ci --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }
@@ -72,7 +75,7 @@ try {
   cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-node
   if ($LASTEXITCODE -ne 0) { throw "cargo check --locked --bin konofix-node failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'OK - local preflight matches CI gates, public-Node/bootstrap/readiness validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/tests and Node checks.' -ForegroundColor Green
+  Write-Host 'OK - local preflight matches CI gates, public-Node/bootstrap/readiness/health/soak collection validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/tests and Node checks.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

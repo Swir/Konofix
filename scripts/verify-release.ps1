@@ -38,6 +38,7 @@ try {
     'scripts\new-network-test-report.ps1',
     'scripts\validate-network-test-report.ps1',
     'scripts\check-node-health.ps1',
+    'scripts\collect-node-soak.ps1',
     'scripts\validate-node-soak.ps1'
   )
   $required = @(

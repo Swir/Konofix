@@ -10,28 +10,28 @@ Start the public Node with a persistent identity and health output:
 konofix-node.exe --port 45555 --public-host node.example.com --status-interval 30 --health-file C:\Konofix\health.json
 ```
 
-Copy each refreshed snapshot to an evidence directory without modifying the JSON content. The file names do not matter because the validator sorts samples by `timestamp_unix`.
+The preferred collector is `collect-node-soak.ps1`. It copies the health file to a private scratch path, validates that exact copy with the normal Node-health validator, then moves only validated bytes into the evidence directory. Re-reading the same snapshot is deduplicated; a different snapshot that claims the same Unix timestamp is rejected instead of overwriting evidence. Short read/replace races are retried, while persistent malformed, stale, wrong-version, wrong-commit or wrong-Peer-ID state fails closed.
 
-Example collection loop for a controlled test machine:
+Use the version and full source commit from the Windows artifact's `BUILD_INFO.json`, and the stable Peer ID printed by the public Node/readiness check:
 
 ```powershell
-$source = 'C:\Konofix\health.json'
-$target = 'C:\Konofix\soak-evidence'
-New-Item -ItemType Directory -Force -Path $target | Out-Null
-while ($true) {
-  if (Test-Path $source) {
-    $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-    Copy-Item $source (Join-Path $target "$stamp.json") -Force
-  }
-  Start-Sleep -Seconds 60
-}
+.\scripts\collect-node-soak.ps1 `
+  -HealthFile 'C:\Konofix\health.json' `
+  -OutputDirectory 'C:\Konofix\soak-evidence' `
+  -DurationSeconds 3600 `
+  -IntervalSeconds 60 `
+  -ExpectedVersion '0.4.2' `
+  -ExpectedPeerId '12D3KooW...' `
+  -ExpectedSourceCommit '0123456789abcdef0123456789abcdef01234567'
 ```
+
+For a one-shot capture, such as a deployment diagnostic, add `-Once`. The collector never edits the Node health file and never overwrites previously collected evidence.
 
 For release evidence, keep the Node identity file unchanged and collect snapshots from the same process window. A one-hour window is the current default minimum for stable-promotion validation; longer unattended runs are encouraged before wider deployment.
 
 ## Validate the soak
 
-Use the `commit` value from the Windows artifact's `BUILD_INFO.json` as the source-commit pin:
+Use the same source-commit and Peer-ID pins used during collection:
 
 ```powershell
 $files = (Get-ChildItem 'C:\Konofix\soak-evidence\*.json').FullName

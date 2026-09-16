@@ -44,10 +44,14 @@ Preview mode performs validation and prints the exact systemd unit without chang
 
 - the selected binary exists, is executable and identifies itself as Konofix Node,
 - the port and status interval are in supported ranges,
-- state/install directories are separate absolute paths with safe characters,
+- state/install directories are absolute, use supported characters and resolve to dedicated canonical subdirectories,
+- state and install directories are not equal, nested, lexical aliases or symlink aliases of each other,
+- neither state nor install storage resolves to `/` or a top-level system directory such as `/var` or `/usr`,
 - literal IP addresses are globally routable unless the explicit lab override is used,
 - DNS names use public-looking fully qualified syntax,
 - `--require-dns-resolution` resolves the DNS name and rejects non-global answers.
+
+Canonical path validation is deliberate: the service grants write access only to the state directory while the staged executable belongs in a separate read-only system location. Inputs containing `.`/`..` components or symlink aliases are normalized before the unit is generated, so alternate spellings cannot bypass that separation.
 
 Private/CGNAT/documentation IPs are rejected by default. `--allow-private-address` exists only for controlled lab testing and must not be used as public-network evidence.
 

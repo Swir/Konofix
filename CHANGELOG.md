@@ -2,6 +2,11 @@
 
 ## 0.4.2
 
+- added a production Windows Node runtime smoke that executes the release-built `konofix-node.exe`, validates exact version/source-commit health telemetry, restarts with one persisted identity and requires the Peer ID to remain stable,
+- made the runtime smoke portable in extracted Windows test artifacts, where it verifies the packaged Node SHA-256 against `BUILD_INFO.json` before execution; release provenance and archive verification now include the smoke tool itself,
+- added high-signal Clippy correctness/suspicious/performance gates to Windows CI and the matching local preflight,
+- fixed local incremental source provenance by making `build.rs` watch the actual symbolic Git branch ref and packed refs, preventing a new local commit from silently retaining an older embedded source SHA,
+- made `build-windows.ps1` execute the production Node smoke after release compilation and documented repository-build versus verified-artifact smoke modes,
 - restored Windows CI, Tauri packaging, production application and `konofix-node.exe` builds,
 - added public-host bootstrap generation, Node launcher and strict bootstrap prechecks,
 - hardened the Internet bootstrap precheck with strict TCP/QUIC-v1 multiaddr grammar, host/port/Peer-ID validation, parser-only/JSON modes and adversarial Windows CI self-tests,

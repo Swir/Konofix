@@ -79,7 +79,7 @@
 - [x] release gate invokes the PowerShell network-evidence validator deterministically
 - [x] Windows CI cancels superseded runs per branch/ref
 - [x] Windows build/test job uses a read-only GitHub token; release write permission is isolated to post-build publication
-- [x] Windows CI recovered from the invalid lockfile-only configuration and the compatible install path is verified green; deterministic npm installs remain explicitly pending until a lockfile is committed
+- [x] committed frontend lockfile is enforced by Windows CI with deterministic `npm ci` and setup-node npm caching; project audit rejects install-policy drift
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test
@@ -89,7 +89,7 @@
 
 ### Test-release gate
 
-A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from the exact release client and Node version, with independent countries and networks/operators recorded and one stable public bootstrap Peer ID across the promotion evidence. The repository currently has no committed `package-lock.json`, so CI deliberately uses `npm install --no-audit --no-fund`; switching back to lockfile-enforced `npm ci` is deferred until a real lockfile is committed and verified. The project audit now enforces this lockfile/install-policy relationship so CI cannot silently return to an incompatible npm configuration.
+A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from the exact release client and Node version, with independent countries and networks/operators recorded and one stable public bootstrap Peer ID across the promotion evidence. The repository now has a committed `package-lock.json`; CI therefore uses lockfile-enforced `npm ci --no-audit --no-fund` with npm caching, and the project audit enforces that relationship to prevent dependency-policy drift.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

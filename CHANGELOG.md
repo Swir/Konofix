@@ -23,6 +23,7 @@
 - bound Node-health input size before JSON parsing with a 64 KiB default and configurable 1 KiB–1 MiB `-MaxSnapshotBytes` range; adversarial CI now rejects oversized snapshots and invalid limits,
 - require `schema`, `uptime_seconds`, `connected_peers`, and `timestamp_unix` to be genuine JSON integers instead of permissively coercing strings, booleans or fractional numbers; adversarial CI covers these type-confusion cases,
 - require textual Node-health fields to be genuine non-empty JSON strings and compare trusted status/version/Peer ID values with ordinal case-sensitive semantics, preventing PowerShell's default case-insensitive comparison from weakening identity checks,
+- make explicitly supplied `-ExpectedVersion` and `-ExpectedPeerId` fail closed when empty or whitespace, with adversarial CI coverage, so an operator mistake cannot silently turn an intended identity pin into an unpinned health check,
 - added `scripts/new-network-test-report.ps1` to create consistent evidence-oriented Markdown reports for LAN/TCP/QUIC/Relay/DCUtR/CGNAT tests,
 - extended network-test reports with version metadata and a machine-readable JSON manifest designed for automated release gating,
 - added `scripts/validate-network-test-report.ps1` to reject malformed, incomplete, mixed-version or non-PASS network evidence and require the configured real-network scenarios,

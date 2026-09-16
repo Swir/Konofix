@@ -25,7 +25,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
       - name: Setup Rust MSVC
         uses: dtolnay/rust-toolchain@stable
@@ -45,7 +44,7 @@ jobs:
         run: .\scripts\test-node-health.ps1
 
       - name: Install frontend dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm install --no-audit --no-fund
 
       - name: Project consistency and localization audit
         run: npm run audit
@@ -111,41 +110,3 @@ jobs:
             Konofix-Chat-0.4.2-test1-Windows.zip.sha256
           if-no-files-found: error
           retention-days: 14
-
-  publish-test-release:
-    if: github.event_name == 'push'
-    needs: check-windows
-    runs-on: windows-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - name: Download verified Windows test bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: Konofix-Chat-0.4.2-Windows-${{ github.sha }}
-          path: release-artifact
-
-      - name: Publish first cross-country test pre-release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $tag = 'v0.4.2-test1'
-          $repo = $env:GITHUB_REPOSITORY
-          gh release view $tag --repo $repo *> $null
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag already exists - skipping duplicate publication."
-            exit 0
-          }
-          gh release create $tag `
-            'release-artifact\Konofix-Chat-0.4.2-test1-Windows.zip' `
-            'release-artifact\Konofix-Chat-0.4.2-test1-Windows.zip.sha256' `
-            'release-artifact\artifact\konofix-node.exe' `
-            --repo $repo `
-            --target $env:GITHUB_SHA `
-            --title 'Konofix Chat 0.4.2 Test 1 — Cross-country P2P Preview' `
-            --notes-file 'release-artifact\artifact\RELEASE_NOTES.md' `
-            --prerelease
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

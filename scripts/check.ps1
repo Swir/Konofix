@@ -17,44 +17,44 @@ Write-Host "npm:   $(npm --version)"
 Write-Host "Rust:  $(rustc --version)"
 Write-Host "Cargo: $(cargo --version)"
 
-Push-Location (Split-Path $PSScriptRoot -Parent)
+$root = Split-Path $PSScriptRoot -Parent
+Push-Location $root
 try {
-  Write-Host 'README roadmap progress...' -ForegroundColor Yellow
-  $roadmap = Get-Content ROADMAP.md -Raw
-  $readme = Get-Content README.md -Raw
-  $milestone = [regex]::Match($roadmap, '(?ms)^## 0\.4\.2 — Real Internet Test.*?(?=^## 0\.5\.0)')
-  if (-not $milestone.Success) { throw 'Cannot locate the active 0.4.2 roadmap milestone.' }
-  $done = ([regex]::Matches($milestone.Value, '(?m)^- \[x\] ')).Count
-  $open = ([regex]::Matches($milestone.Value, '(?m)^- \[ \] ')).Count
-  $total = $done + $open
-  if ($total -le 0) { throw 'Active roadmap milestone contains no checklist tasks.' }
-  $percent = [int][math]::Round(($done * 100.0) / $total, 0, [MidpointRounding]::AwayFromZero)
-  if ($readme -notmatch "Real Internet Test milestone: $percent% complete") {
-    throw "README progress is stale: roadmap is $done/$total ($percent%). Update the README progress bar with the roadmap."
-  }
-  if ($readme -notmatch "(?m)^`[^`]* $percent%`$") {
-    throw "README progress bar does not show the current $percent%."
-  }
-  Write-Host "README progress OK: $done/$total ($percent%)." -ForegroundColor Green
+  Write-Host 'Release metadata gate...' -ForegroundColor Yellow
+  & '.\scripts\release-gate.ps1'
 
-  if (-not (Test-Path node_modules)) {
-    Write-Host 'npm install...' -ForegroundColor Yellow
-    npm install
-  }
-  Write-Host 'TypeScript...' -ForegroundColor Yellow
-  npx tsc --noEmit
+  Write-Host 'Network evidence validator self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-network-evidence-gate.ps1'
 
-  Write-Host 'Frontend build...' -ForegroundColor Yellow
+  Write-Host 'Node health validator self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-node-health.ps1'
+
+  Write-Host 'Node soak stability self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-node-soak.ps1'
+
+  Write-Host 'Frontend dependencies...' -ForegroundColor Yellow
+  npm install --no-audit --no-fund --package-lock=false
+  if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE." }
+
+  Write-Host 'Project consistency and localization audit...' -ForegroundColor Yellow
+  npm run audit
+  if ($LASTEXITCODE -ne 0) { throw "npm run audit failed with exit code $LASTEXITCODE." }
+
+  Write-Host 'TypeScript + Vite build...' -ForegroundColor Yellow
   npm run build
+  if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'Rust: application + Konofix Node...' -ForegroundColor Yellow
-  Push-Location src-tauri
-  try {
-    cargo check
-    cargo check --bin konofix-node
-  } finally { Pop-Location }
+  Write-Host 'Rust all-target tests...' -ForegroundColor Yellow
+  cargo test --manifest-path src-tauri/Cargo.toml --all-targets
+  if ($LASTEXITCODE -ne 0) { throw "cargo test failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'OK - frontend, Rust application, Konofix Node, and roadmap progress checks passed.' -ForegroundColor Green
+  Write-Host 'Rust checks: application + Konofix Node...' -ForegroundColor Yellow
+  cargo check --manifest-path src-tauri/Cargo.toml
+  if ($LASTEXITCODE -ne 0) { throw "cargo check failed with exit code $LASTEXITCODE." }
+  cargo check --manifest-path src-tauri/Cargo.toml --bin konofix-node
+  if ($LASTEXITCODE -ne 0) { throw "cargo check --bin konofix-node failed with exit code $LASTEXITCODE." }
+
+  Write-Host 'OK - local preflight matches the CI validation path for gates, frontend, Rust tests and Node checks.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

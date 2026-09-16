@@ -33,6 +33,7 @@
 - added multi-snapshot public Node soak validation that rejects identity/version drift, restarts, stale samples, monitoring gaps and inconsistent uptime cadence,
 - made stable promotion require Node soak evidence and bind that soak to the exact bootstrap Peer ID used by the validated cross-country network evidence,
 - added adversarial Node soak self-tests to Windows CI, added an all-target Rust test pass, and included the Node soak operator guide in Windows artifacts,
+- aligned `scripts/check.ps1` with the CI preflight path so local checks now run release/network/health/soak gates, project audit, frontend build, Rust all-target tests and application/Node checks,
 - expanded cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1

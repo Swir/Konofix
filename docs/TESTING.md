@@ -4,7 +4,7 @@ This document defines the minimum test set required before closing the first rel
 
 ## 1. Local validation
 
-On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release gate, network-evidence self-tests, Node-health self-tests, Node-soak self-tests, project/localization audit, TypeScript/Vite build, Rust all-target tests and Rust checks for both the application and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`.
+On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release gate, network-evidence self-tests, strict bootstrap-precheck self-tests, Node-health self-tests, Node-soak self-tests, project/localization audit, TypeScript/Vite build, Rust all-target tests and Rust checks for both the application and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`.
 
 ## 2. LAN baseline
 
@@ -18,7 +18,9 @@ A single healthy snapshot is not sufficient for stable promotion. Collect a cont
 
 ## 4. Bootstrap precheck
 
-On every test PC run `.\scripts\internet-test.ps1 -Bootstrap "/ip4/ADDRESS/tcp/45555/p2p/PEER_ID"`. DNS multiaddresses are supported. TCP precheck must succeed before application-level testing; UDP/QUIC is verified through libp2p during the real test.
+On every test PC run `.\scripts\internet-test.ps1 -Bootstrap "/ip4/ADDRESS/tcp/45555/p2p/PEER_ID"`. DNS and IPv6 multiaddresses are supported. The precheck now uses strict multiaddr parsing: it rejects malformed host/port values, unsupported transports, missing/invalid Peer IDs, extra path segments, UDP addresses that are not explicit `quic-v1`, and TCP addresses carrying QUIC-only segments. TCP reachability must succeed before application-level testing; UDP/QUIC is structurally validated by this script and then verified through libp2p during the real test.
+
+For parser-only validation without touching the network, use `-ValidateOnly`. `-AsJson` prints the normalized parsed address for automation. The Windows test archive includes this script and the evidence/health/soak tools under its `scripts` directory, so a tester does not need a source checkout to run the operational test flow.
 
 ## 5. Cross-country test
 
@@ -63,6 +65,6 @@ Test Wi-Fi/LTE loss during transfer, app closure during transfer, Node restart, 
 
 A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond the test release additionally requires validated schema-v2 evidence from independent countries/networks for the required transport/NAT scenarios, continuous Node-soak evidence bound to the same bootstrap Peer ID/version, and fixes for issues discovered during those tests.
 
-Every Windows CI archive includes `BUILD_INFO.json`. It records the exact Git commit, project version, workflow run, SHA-256 and byte size of `konofix-node.exe`, SHA-256 and byte size of every `.exe`/`.msi` installer, and the resolved `Cargo.lock` captured by that build. `scripts\verify-release.ps1` extracts the ZIP and cross-checks all of this metadata against the actual packaged files before the artifact is uploaded.
+Every Windows CI archive includes `BUILD_INFO.json`. It records the exact Git commit, project version, workflow run, SHA-256 and byte size of `konofix-node.exe`, SHA-256 and byte size of every `.exe`/`.msi` installer, hashes/sizes for the bundled operational test scripts, and the resolved `Cargo.lock` captured by that build. `scripts\verify-release.ps1` extracts the ZIP and cross-checks all of this metadata against the actual packaged files before the artifact is uploaded.
 
 The captured `Cargo.lock` is useful evidence of the Rust dependency graph used by that particular build, but it is not a substitute for committing and enforcing the lockfile as an input. Until a verified `src-tauri\Cargo.lock` is committed, Rust dependency resolution is not claimed to be fully reproducible.

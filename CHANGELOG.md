@@ -82,7 +82,10 @@
 - added positive/adversarial network-session self-tests, wired them into CI/local preflight, bundled the session creator into verified Windows artifacts and included its hash/size in `BUILD_INFO.json` provenance,
 - added `scripts/validate-network-test-session.ps1` and made stable promotion require one coherent session, rejecting mixed endpoint/country/network metadata, changed exact-build provenance, missing/duplicate scenarios and bootstrap addresses outside the paired TCP/QUIC session identity,
 - strengthened `check-promotion-evidence.ps1` and the source-tree stable release gate so five PASS manifests cannot be assembled from unrelated sessions, and added adversarial promotion/session tests plus Windows-artifact provenance for the validator,
-- added `cargo fmt --check` to Windows CI and the local preflight and install `rustfmt` explicitly in CI so formatting regressions fail before tests/builds.
+- added `cargo fmt --check` to Windows CI and the local preflight and install `rustfmt` explicitly in CI so formatting regressions fail before tests/builds,
+- added a headless Linux x86_64 build path for `konofix-node` using an isolated Cargo target that single-sources the production Node implementation, reuses the committed Rust lockfile and rejects Tauri/rfd dependency leakage,
+- added a hardened Linux/systemd public-Node installer plus CI self-tests, Linux operator documentation, release tarball/SHA-256 staging and exact `NODE_BUILD_INFO.json` provenance,
+- strengthened Linux CI with a manifest-parity gate and a real release-binary runtime smoke that validates exact source-commit health provenance and persistent Peer-ID continuity across a clean stop/restart.
 
 ## 0.4.1
 

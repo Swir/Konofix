@@ -2,6 +2,7 @@ param(
   [string[]]$NetworkEvidence = @(),
   [switch]$RequireNetworkEvidence,
   [int]$NetworkEvidenceMaxAgeDays = 30,
+  [string]$NetworkSessionInfo = '',
 
   [string[]]$NodeSoakEvidence = @(),
   [switch]$RequireNodeSoakEvidence,
@@ -74,6 +75,7 @@ try {
     'CHANGELOG.md',
     '.github\workflows\windows-ci.yml',
     'scripts\validate-network-test-report.ps1',
+    'scripts\validate-network-test-session.ps1',
     'scripts\validate-node-soak.ps1'
   )
 
@@ -108,6 +110,9 @@ try {
   if ($RequireNetworkEvidence -and $NetworkEvidence.Count -eq 0) {
     throw 'Stable promotion requires -NetworkEvidence with schema-v3 PASS manifests.'
   }
+  if ($RequireNetworkEvidence -and [string]::IsNullOrWhiteSpace($NetworkSessionInfo)) {
+    throw 'Stable promotion requires -NetworkSessionInfo so all transport evidence is bound to one coherent cross-country test session.'
+  }
 
   $expectedBootstrapPeer = ''
   if ($NetworkEvidence.Count -gt 0) {
@@ -135,6 +140,18 @@ try {
       $bootstrapPeers = @($bootstrapPeers | Sort-Object -Unique -CaseSensitive)
       if ($bootstrapPeers.Count -ne 1) { throw 'Stable promotion evidence must reference exactly one bootstrap Peer ID.' }
       $expectedBootstrapPeer = $bootstrapPeers[0]
+
+      Write-Host 'Validating coherent cross-country test session...' -ForegroundColor Cyan
+      $sessionArgs = @{
+        SessionInfoPath = $NetworkSessionInfo
+        Manifest = $NetworkEvidence
+        ExpectedBuildVersion = $npmVersion
+        ExpectedNodeVersion = $cargoVersion
+        ExpectedBootstrapPeerId = $expectedBootstrapPeer
+        RequirePassingEvidence = $true
+      }
+      if (-not [string]::IsNullOrWhiteSpace($targetSourceCommit)) { $sessionArgs.ExpectedSourceCommit = $targetSourceCommit }
+      & (Join-Path $PSScriptRoot 'validate-network-test-session.ps1') @sessionArgs
     }
   } elseif (-not $RequireNetworkEvidence) {
     Write-Host 'Network evidence not requested: pre-release/build gate only.' -ForegroundColor Yellow

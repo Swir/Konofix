@@ -53,6 +53,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-network-report-editor.ps1
 
+      - name: Network test session bootstrap self-tests
+        shell: pwsh
+        run: .\scripts\test-network-test-session.ps1
+
       - name: Internet bootstrap precheck self-tests
         shell: pwsh
         run: .\scripts\test-internet-precheck.ps1
@@ -131,9 +135,11 @@ jobs:
             'public-node.ps1',
             'install-public-node-task.ps1',
             'check-public-node-readiness.ps1',
+            'new-network-test-session.ps1',
             'new-network-test-report.ps1',
             'set-network-test-result.ps1',
             'validate-network-test-report.ps1',
+            'validate-network-test-session.ps1',
             'check-promotion-evidence.ps1',
             'check-node-health.ps1',
             'collect-node-soak.ps1',

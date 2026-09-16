@@ -4,6 +4,9 @@ param(
   [string]$BuildInfoPath,
 
   [Parameter(Mandatory = $true)]
+  [string]$SessionInfoPath,
+
+  [Parameter(Mandatory = $true)]
   [string[]]$NetworkEvidence,
 
   [Parameter(Mandatory = $true)]
@@ -121,8 +124,9 @@ function Resolve-EvidencePaths {
 
 $scriptRoot = $PSScriptRoot
 $networkValidator = Join-Path $scriptRoot 'validate-network-test-report.ps1'
+$sessionValidator = Join-Path $scriptRoot 'validate-network-test-session.ps1'
 $soakValidator = Join-Path $scriptRoot 'validate-node-soak.ps1'
-foreach ($tool in @($networkValidator, $soakValidator)) {
+foreach ($tool in @($networkValidator, $sessionValidator, $soakValidator)) {
   if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
     throw "Required promotion validator is missing: $tool"
   }
@@ -160,6 +164,7 @@ $actualNodeHash = (Get-FileHash -LiteralPath $nodeBinaryPath -Algorithm SHA256).
 if (-not [string]::Equals($actualNodeHash, $nodeHash, [StringComparison]::Ordinal)) {
   throw "Node binary SHA-256 does not match BUILD_INFO. expected=$nodeHash actual=$actualNodeHash"
 }
+$actualBuildInfoHash = (Get-FileHash -LiteralPath $buildInfoFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
 $resolvedNetworkEvidence = @(Resolve-EvidencePaths -InputPath $NetworkEvidence -Label 'Network evidence')
 $resolvedNodeSoakEvidence = @(Resolve-EvidencePaths -InputPath $NodeSoakEvidence -Label 'Node soak evidence')
@@ -185,6 +190,17 @@ $bootstrapPeers = @($bootstrapPeers | Sort-Object -Unique -CaseSensitive)
 if ($bootstrapPeers.Count -ne 1) { throw 'Promotion evidence must reference exactly one bootstrap Peer ID.' }
 $bootstrapPeer = $bootstrapPeers[0]
 
+& $sessionValidator `
+  -SessionInfoPath $SessionInfoPath `
+  -Manifest $resolvedNetworkEvidence `
+  -ExpectedBuildVersion $version `
+  -ExpectedNodeVersion $version `
+  -ExpectedSourceCommit $commit `
+  -ExpectedBuildInfoSha256 $actualBuildInfoHash `
+  -ExpectedNodeSha256 $actualNodeHash `
+  -ExpectedBootstrapPeerId $bootstrapPeer `
+  -RequirePassingEvidence | Out-Null
+
 & $soakValidator `
   -Snapshot $resolvedNodeSoakEvidence `
   -MinSpanSeconds $NodeSoakMinSpanSeconds `
@@ -206,6 +222,8 @@ $result = [ordered]@{
   node_soak_snapshot_count = $resolvedNodeSoakEvidence.Count
   node_binary_bytes = $actualNodeBytes
   node_binary_sha256 = $actualNodeHash
+  build_info_sha256 = $actualBuildInfoHash
+  coherent_test_session = $true
 }
 
 if ($AsJson) {
@@ -220,4 +238,4 @@ Write-Host "Bootstrap Peer ID:   $bootstrapPeer"
 Write-Host "Network manifests:   $($resolvedNetworkEvidence.Count)"
 Write-Host "Node soak snapshots: $($resolvedNodeSoakEvidence.Count)"
 Write-Host "Node SHA-256:        $actualNodeHash"
-Write-Host 'PASS - packaged Node bytes, network scenarios and public-Node soak evidence match the exact verified Windows build.' -ForegroundColor Green
+Write-Host 'PASS - packaged Node bytes, one coherent cross-country test session, required network scenarios and public-Node soak evidence match the exact verified Windows build.' -ForegroundColor Green

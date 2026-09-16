@@ -6,14 +6,76 @@ param(
     [string]$ExpectedBuildVersion = '',
     [string]$ExpectedNodeVersion = '',
     [string]$ExpectedSourceCommit = '',
-    [switch]$RequireSingleBootstrapPeer
+    [switch]$RequireSingleBootstrapPeer,
+    [int64]$MaxManifestBytes = 262144
 )
 
 $ErrorActionPreference = 'Stop'
 $allowed = @('LAN','TCP','QUIC','Relay','DCUtR','CGNAT')
 $requiredChecks = @('world_a_to_b','world_b_to_a','room_discovery','file_a_to_b_sha256','file_b_to_a_sha256','client_reconnect','node_restart_recovery','relay_observed','dcutr_direct_upgrade','nickname_conflict')
 $coreChecks = @('world_a_to_b','world_b_to_a','room_discovery','file_a_to_b_sha256','file_b_to_a_sha256','client_reconnect','node_restart_recovery','nickname_conflict')
+$allowedResults = @('PASS','FAIL','PENDING','N/A')
 
+function Get-StrictJsonInt64 {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][string]$Field
+    )
+
+    if ($null -eq $Value) { throw "Evidence field '$Field' cannot be null." }
+    $typeCode = [System.Type]::GetTypeCode($Value.GetType())
+    $integralTypes = @(
+        [System.TypeCode]::SByte, [System.TypeCode]::Byte,
+        [System.TypeCode]::Int16, [System.TypeCode]::UInt16,
+        [System.TypeCode]::Int32, [System.TypeCode]::UInt32,
+        [System.TypeCode]::Int64, [System.TypeCode]::UInt64
+    )
+    if ($typeCode -notin $integralTypes) {
+        throw "Evidence field '$Field' must be a JSON integer."
+    }
+    try {
+        return [Convert]::ToInt64($Value, [System.Globalization.CultureInfo]::InvariantCulture)
+    } catch {
+        throw "Evidence field '$Field' is outside the supported signed 64-bit integer range."
+    }
+}
+
+function Get-StrictJsonString {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][string]$Field,
+        [switch]$AllowEmpty
+    )
+
+    if ($Value -isnot [string]) { throw "Evidence field '$Field' must be a JSON string." }
+    if (-not $AllowEmpty -and [string]::IsNullOrWhiteSpace($Value)) {
+        throw "Evidence field '$Field' cannot be empty or whitespace."
+    }
+    return [string]$Value
+}
+
+function Get-RequiredProperty {
+    param(
+        [Parameter(Mandatory = $true)]$Object,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        throw "Missing required field '$Name' in $Path"
+    }
+    return $property.Value
+}
+
+function Test-OrdinalEqual([string]$Left, [string]$Right) {
+    return [string]::Equals($Left, $Right, [System.StringComparison]::Ordinal)
+}
+
+if ($MaxManifestBytes -lt 1024 -or $MaxManifestBytes -gt 1048576) { throw 'MaxManifestBytes must be between 1024 and 1048576.' }
+if ($MaxAgeDays -lt 0 -or $MaxAgeDays -gt 3650) { throw 'MaxAgeDays must be between 0 and 3650.' }
+if ($PSBoundParameters.ContainsKey('ExpectedBuildVersion') -and [string]::IsNullOrWhiteSpace($ExpectedBuildVersion)) { throw 'ExpectedBuildVersion cannot be empty or whitespace when explicitly supplied.' }
+if ($PSBoundParameters.ContainsKey('ExpectedNodeVersion') -and [string]::IsNullOrWhiteSpace($ExpectedNodeVersion)) { throw 'ExpectedNodeVersion cannot be empty or whitespace when explicitly supplied.' }
 if ($PSBoundParameters.ContainsKey('ExpectedSourceCommit')) {
     if ([string]::IsNullOrWhiteSpace($ExpectedSourceCommit)) { throw 'ExpectedSourceCommit cannot be empty or whitespace when explicitly supplied.' }
     if ($ExpectedSourceCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'ExpectedSourceCommit must be a canonical lowercase 40-character Git commit SHA.' }
@@ -22,59 +84,110 @@ if ($PSBoundParameters.ContainsKey('ExpectedSourceCommit')) {
 $reports = @()
 foreach ($path in $Manifest) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Manifest not found: $path" }
-    try { $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json } catch { throw "Invalid JSON manifest: $path`n$($_.Exception.Message)" }
-    if ($data.schema_version -ne 3) { throw "Unsupported schema_version in ${path}: $($data.schema_version). Regenerate evidence with the current tool." }
-    if ($allowed -notcontains $data.scenario) { throw "Invalid scenario in ${path}: $($data.scenario)" }
-    if ([string]::IsNullOrWhiteSpace($data.build_version) -or $data.build_version -eq 'unknown') { throw "Missing build version in $path" }
-    if ([string]::IsNullOrWhiteSpace($data.node_version) -or $data.node_version -eq 'unknown') { throw "Missing Node version in $path" }
-    if ($data.source_commit -isnot [string] -or $data.source_commit -cnotmatch '^[0-9a-f]{40}$') { throw "Missing or invalid source_commit in $path" }
-    if ($ExpectedBuildVersion -and $data.build_version -ne $ExpectedBuildVersion) { throw "Evidence build version $($data.build_version) does not match target build $ExpectedBuildVersion in $path" }
-    if ($ExpectedNodeVersion -and $data.node_version -ne $ExpectedNodeVersion) { throw "Evidence Node version $($data.node_version) does not match target Node $ExpectedNodeVersion in $path" }
-    if ($ExpectedSourceCommit -and -not [string]::Equals([string]$data.source_commit, $ExpectedSourceCommit, [System.StringComparison]::Ordinal)) { throw "Evidence source commit $($data.source_commit) does not match target commit $ExpectedSourceCommit in $path" }
-    if ([string]::IsNullOrWhiteSpace($data.client_a) -or [string]::IsNullOrWhiteSpace($data.client_b)) { throw "Two client endpoint identifiers are required in $path" }
-    if ($data.client_a.Trim().ToLowerInvariant() -eq $data.client_b.Trim().ToLowerInvariant()) { throw "Two different client endpoints must be recorded in $path" }
-    if ($data.bootstrap -notmatch '^/(ip4|ip6|dns|dns4|dns6)/.+/p2p/[A-Za-z0-9]+$') { throw "Invalid bootstrap multiaddress in $path" }
-    if ($data.overall -ne 'PASS') { throw "Manifest is not PASS: $path (overall=$($data.overall))" }
+    $manifestFile = Get-Item -LiteralPath $path
+    if ($manifestFile.Length -gt $MaxManifestBytes) {
+        throw "Network evidence manifest is too large (path=$path bytes=$($manifestFile.Length) limit=$MaxManifestBytes)."
+    }
 
-    try { $created = [DateTimeOffset]::Parse($data.created_utc) } catch { throw "Invalid created_utc in $path" }
+    try { $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json } catch { throw "Invalid JSON manifest: $path`n$($_.Exception.Message)" }
+    if ($data -isnot [pscustomobject]) { throw "Network evidence root must be a JSON object: $path" }
+
+    $schema = Get-StrictJsonInt64 -Value (Get-RequiredProperty $data 'schema_version' $path) -Field 'schema_version'
+    if ($schema -ne 3) { throw "Unsupported schema_version in ${path}: $schema. Regenerate evidence with the current tool." }
+
+    $createdUtc = Get-StrictJsonString -Value (Get-RequiredProperty $data 'created_utc' $path) -Field 'created_utc'
+    $scenario = Get-StrictJsonString -Value (Get-RequiredProperty $data 'scenario' $path) -Field 'scenario'
+    $buildVersion = Get-StrictJsonString -Value (Get-RequiredProperty $data 'build_version' $path) -Field 'build_version'
+    $nodeVersion = Get-StrictJsonString -Value (Get-RequiredProperty $data 'node_version' $path) -Field 'node_version'
+    $sourceCommit = Get-StrictJsonString -Value (Get-RequiredProperty $data 'source_commit' $path) -Field 'source_commit'
+    $clientA = Get-StrictJsonString -Value (Get-RequiredProperty $data 'client_a' $path) -Field 'client_a'
+    $clientB = Get-StrictJsonString -Value (Get-RequiredProperty $data 'client_b' $path) -Field 'client_b'
+    $bootstrap = Get-StrictJsonString -Value (Get-RequiredProperty $data 'bootstrap' $path) -Field 'bootstrap'
+    $overall = Get-StrictJsonString -Value (Get-RequiredProperty $data 'overall' $path) -Field 'overall'
+
+    if ($allowed -cnotcontains $scenario) { throw "Invalid scenario in ${path}: $scenario" }
+    if ($sourceCommit -cnotmatch '^[0-9a-f]{40}$') { throw "Missing or invalid source_commit in $path" }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedBuildVersion) -and -not (Test-OrdinalEqual $buildVersion $ExpectedBuildVersion)) { throw "Evidence build version $buildVersion does not match target build $ExpectedBuildVersion in $path" }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedNodeVersion) -and -not (Test-OrdinalEqual $nodeVersion $ExpectedNodeVersion)) { throw "Evidence Node version $nodeVersion does not match target Node $ExpectedNodeVersion in $path" }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSourceCommit) -and -not (Test-OrdinalEqual $sourceCommit $ExpectedSourceCommit)) { throw "Evidence source commit $sourceCommit does not match target commit $ExpectedSourceCommit in $path" }
+    if ($clientA.Trim().ToLowerInvariant() -eq $clientB.Trim().ToLowerInvariant()) { throw "Two different client endpoints must be recorded in $path" }
+    if ($bootstrap -cnotmatch '^/(ip4|ip6|dns|dns4|dns6)/.+/p2p/[A-Za-z0-9]+$') { throw "Invalid bootstrap multiaddress in $path" }
+    if (-not (Test-OrdinalEqual $overall 'PASS')) { throw "Manifest is not PASS: $path (overall=$overall)" }
+
+    $created = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse($createdUtc, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$created)) {
+        throw "Invalid created_utc in $path"
+    }
     $age = [DateTimeOffset]::UtcNow - $created.ToUniversalTime()
     if ($age.TotalMinutes -lt -5) { throw "Evidence timestamp is in the future: $path" }
     if ($MaxAgeDays -gt 0 -and $age.TotalDays -gt $MaxAgeDays) { throw "Evidence is older than $MaxAgeDays days: $path" }
 
-    if ($data.scenario -ne 'LAN') {
-        foreach ($field in @('client_a_country','client_b_country','client_a_network','client_b_network')) {
-            if ([string]::IsNullOrWhiteSpace($data.$field)) { throw "Missing $field in $path" }
-        }
-        if ($data.client_a_country.Trim().ToLowerInvariant() -eq $data.client_b_country.Trim().ToLowerInvariant()) { throw "Internet evidence must use different countries: $path" }
-        if ($data.client_a_network.Trim().ToLowerInvariant() -eq $data.client_b_network.Trim().ToLowerInvariant()) { throw "Internet evidence must use independent networks/operators: $path" }
+    if ($scenario -ne 'LAN') {
+        $clientACountry = Get-StrictJsonString -Value (Get-RequiredProperty $data 'client_a_country' $path) -Field 'client_a_country'
+        $clientBCountry = Get-StrictJsonString -Value (Get-RequiredProperty $data 'client_b_country' $path) -Field 'client_b_country'
+        $clientANetwork = Get-StrictJsonString -Value (Get-RequiredProperty $data 'client_a_network' $path) -Field 'client_a_network'
+        $clientBNetwork = Get-StrictJsonString -Value (Get-RequiredProperty $data 'client_b_network' $path) -Field 'client_b_network'
+        if ($clientACountry.Trim().ToLowerInvariant() -eq $clientBCountry.Trim().ToLowerInvariant()) { throw "Internet evidence must use different countries: $path" }
+        if ($clientANetwork.Trim().ToLowerInvariant() -eq $clientBNetwork.Trim().ToLowerInvariant()) { throw "Internet evidence must use independent networks/operators: $path" }
     }
 
-    if ($null -eq $data.checks) { throw "Missing checks object in $path" }
+    $checks = Get-RequiredProperty $data 'checks' $path
+    if ($checks -isnot [pscustomobject]) { throw "Evidence field 'checks' must be a JSON object in $path" }
     foreach ($name in $requiredChecks) {
-        $property = $data.checks.PSObject.Properties[$name]
-        if ($null -eq $property) { throw "Missing check '$name' in $path" }
-        if ($property.Value -notin @('PASS','FAIL','PENDING','N/A')) { throw "Invalid result for '$name' in $path" }
+        $property = $checks.PSObject.Properties[$name]
+        if ($null -eq $property -or $null -eq $property.Value) { throw "Missing check '$name' in $path" }
+        $resultValue = Get-StrictJsonString -Value $property.Value -Field "checks.$name"
+        if ($allowedResults -cnotcontains $resultValue) { throw "Invalid result for '$name' in $path" }
     }
-    foreach ($name in $coreChecks) { if ($data.checks.$name -ne 'PASS') { throw "Core check '$name' must be PASS in $path" } }
-    if ($data.scenario -eq 'Relay' -and $data.checks.relay_observed -ne 'PASS') { throw "Relay evidence must record relay_observed=PASS in $path" }
-    if ($data.scenario -eq 'DCUtR' -and $data.checks.dcutr_direct_upgrade -ne 'PASS') { throw "DCUtR evidence must record dcutr_direct_upgrade=PASS in $path" }
-    if ($data.scenario -eq 'CGNAT' -and $data.checks.relay_observed -ne 'PASS') { throw "CGNAT evidence must prove relay operation in $path" }
-    if ($RequireAllChecks) { foreach ($name in $requiredChecks) { if ($data.checks.$name -notin @('PASS','N/A')) { throw "Required check '$name' is incomplete in $path" } } }
-    $reports += $data
+    foreach ($name in $coreChecks) { if (-not (Test-OrdinalEqual ([string]$checks.$name) 'PASS')) { throw "Core check '$name' must be PASS in $path" } }
+    if ($scenario -eq 'Relay' -and -not (Test-OrdinalEqual ([string]$checks.relay_observed) 'PASS')) { throw "Relay evidence must record relay_observed=PASS in $path" }
+    if ($scenario -eq 'DCUtR' -and -not (Test-OrdinalEqual ([string]$checks.dcutr_direct_upgrade) 'PASS')) { throw "DCUtR evidence must record dcutr_direct_upgrade=PASS in $path" }
+    if ($scenario -eq 'CGNAT' -and -not (Test-OrdinalEqual ([string]$checks.relay_observed) 'PASS')) { throw "CGNAT evidence must prove relay operation in $path" }
+    if ($RequireAllChecks) {
+        foreach ($name in $requiredChecks) {
+            $resultValue = [string]$checks.$name
+            if ($resultValue -cne 'PASS' -and $resultValue -cne 'N/A') { throw "Required check '$name' is incomplete in $path" }
+        }
+    }
+
+    $notesProperty = $data.PSObject.Properties['notes']
+    if ($null -ne $notesProperty -and $null -ne $notesProperty.Value) {
+        $notes = Get-StrictJsonString -Value $notesProperty.Value -Field 'notes' -AllowEmpty
+        if ($notes.Length -gt 8000) { throw "Evidence field 'notes' is too long in $path" }
+    }
+
+    $checkEvidenceProperty = $data.PSObject.Properties['check_evidence']
+    if ($null -ne $checkEvidenceProperty -and $null -ne $checkEvidenceProperty.Value) {
+        if ($checkEvidenceProperty.Value -isnot [pscustomobject]) { throw "Evidence field 'check_evidence' must be a JSON object in $path" }
+        foreach ($property in $checkEvidenceProperty.Value.PSObject.Properties) {
+            if ($requiredChecks -cnotcontains $property.Name) { throw "Unknown check_evidence key '$($property.Name)' in $path" }
+            $evidenceText = Get-StrictJsonString -Value $property.Value -Field "check_evidence.$($property.Name)" -AllowEmpty
+            if ($evidenceText.Length -gt 2000) { throw "Evidence note for '$($property.Name)' exceeds 2000 characters in $path" }
+        }
+    }
+
+    $reports += [pscustomobject]@{
+        scenario = $scenario
+        build_version = $buildVersion
+        node_version = $nodeVersion
+        source_commit = $sourceCommit
+        bootstrap = $bootstrap
+        overall = $overall
+    }
 }
 
 foreach ($scenario in $RequiredScenario) {
-    if ($allowed -notcontains $scenario) { throw "Unknown required scenario: $scenario" }
-    if (-not ($reports | Where-Object { $_.scenario -eq $scenario -and $_.overall -eq 'PASS' })) { throw "No passing manifest supplied for required scenario: $scenario" }
+    if ($allowed -cnotcontains $scenario) { throw "Unknown required scenario: $scenario" }
+    if (-not ($reports | Where-Object { $_.scenario -ceq $scenario -and $_.overall -ceq 'PASS' })) { throw "No passing manifest supplied for required scenario: $scenario" }
 }
-$versions = @($reports | ForEach-Object { $_.build_version } | Sort-Object -Unique)
-$nodeVersions = @($reports | ForEach-Object { $_.node_version } | Sort-Object -Unique)
+$versions = @($reports | ForEach-Object { $_.build_version } | Sort-Object -Unique -CaseSensitive)
+$nodeVersions = @($reports | ForEach-Object { $_.node_version } | Sort-Object -Unique -CaseSensitive)
 $sourceCommits = @($reports | ForEach-Object { $_.source_commit } | Sort-Object -Unique -CaseSensitive)
 if ($versions.Count -ne 1) { throw "Evidence mixes client builds: $($versions -join ', ')" }
 if ($nodeVersions.Count -ne 1) { throw "Evidence mixes Node builds: $($nodeVersions -join ', ')" }
 if ($sourceCommits.Count -ne 1) { throw "Evidence mixes source commits: $($sourceCommits -join ', ')" }
 
-$bootstrapPeerIds = @($reports | ForEach-Object { if ($_.bootstrap -match '/p2p/([^/]+)$') { $Matches[1] } } | Sort-Object -Unique)
+$bootstrapPeerIds = @($reports | ForEach-Object { if ($_.bootstrap -cmatch '/p2p/([^/]+)$') { $Matches[1] } } | Sort-Object -Unique -CaseSensitive)
 if ($RequireSingleBootstrapPeer -and $bootstrapPeerIds.Count -ne 1) { throw "Promotion evidence must target one stable public Node Peer ID; found: $($bootstrapPeerIds -join ', ')" }
 
 Write-Host 'Network evidence gate passed.'
@@ -82,5 +195,5 @@ Write-Host "Client build: $($versions[0])"
 Write-Host "Node build: $($nodeVersions[0])"
 Write-Host "Source commit: $($sourceCommits[0])"
 Write-Host "Passing manifests: $($reports.Count)"
-Write-Host "Scenarios: $((@($reports.scenario | Sort-Object -Unique)) -join ', ')"
+Write-Host "Scenarios: $((@($reports.scenario | Sort-Object -Unique -CaseSensitive)) -join ', ')"
 if ($bootstrapPeerIds.Count -gt 0) { Write-Host "Bootstrap Peer IDs: $($bootstrapPeerIds -join ', ')" }

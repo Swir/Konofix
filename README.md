@@ -10,7 +10,7 @@ GitHub: https://github.com/Swir/Konofix
 
 `██████████████████░░ 91%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (48 of 53 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (49 of 54 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -36,7 +36,7 @@ konofix-node.exe --port 45555 --public-host 203.0.113.10
 
 Paste the recommended address into **Network settings → Bootstrap**. A bootstrap helps peers discover the DHT/relay network; it is not a message-history server or file store.
 
-Stable promotion also requires a continuous public-Node soak history that proves the Node kept one version, source commit and Peer ID, did not restart inside the evidence window, produced fresh snapshots without excessive monitoring gaps, and actually observed peer activity. The soak identity is bound to the same bootstrap Peer ID and exact source commit used by the validated cross-country manifests. Public/community deployments can pin identity storage explicitly with `--identity-file`; existing invalid identity files now fail closed instead of being silently replaced with a new Peer ID. A validated soak collector snapshots only health data that passes the same strict health gate, deduplicates unchanged samples, rejects conflicting same-timestamp evidence and is included in verified Windows artifacts. Cross-country testers also get a report editor that updates schema-v3 JSON and Markdown together, protects recorded results from accidental overwrite and can validate a completed scenario before finalizing it. See `docs/NODE.md`, `docs/NODE_SOAK.md`, and `docs/TESTING.md`.
+Stable promotion also requires a continuous public-Node soak history that proves the Node kept one version, source commit and Peer ID, did not restart inside the evidence window, produced fresh snapshots without excessive monitoring gaps, and actually observed peer activity. The soak identity is bound to the same bootstrap Peer ID and exact source commit used by the validated cross-country manifests. Public/community deployments can pin identity storage explicitly with `--identity-file`; existing invalid identity files now fail closed instead of being silently replaced with a new Peer ID. A validated soak collector snapshots only health data that passes the same strict health gate, deduplicates unchanged samples, rejects conflicting same-timestamp evidence and is included in verified Windows artifacts. Cross-country testers also get a report editor that updates schema-v3 JSON and Markdown together, protects recorded results from accidental overwrite and can validate a completed scenario before finalizing it. The promotion validator treats schema-v3 JSON as typed evidence rather than coercible PowerShell values, enforces canonical casing and bounds manifest size before parsing. See `docs/NODE.md`, `docs/NODE_SOAK.md`, and `docs/TESTING.md`.
 
 ## Localization
 

@@ -37,7 +37,7 @@ function New-MutatedManifest([string]$Source, [string]$Name, [scriptblock]$Mutat
     Copy-Item $Source $path
     $data = Get-Content $path -Raw | ConvertFrom-Json
     & $Mutation $data
-    $data | ConvertTo-Json -Depth 5 | Set-Content $path -Encoding UTF8
+    $data | ConvertTo-Json -Depth 7 | Set-Content $path -Encoding UTF8
     return $path
 }
 
@@ -55,8 +55,17 @@ try {
     $legacySchema = New-MutatedManifest $paths[0] 'legacy-schema.json' { param($d) $d.schema_version = 2 }
     Assert-Rejected { & $validator -Manifest $legacySchema -RequiredScenario TCP } 'legacy schema without commit-bound evidence'
 
+    $stringSchema = New-MutatedManifest $paths[0] 'string-schema.json' { param($d) $d.schema_version = '3' }
+    Assert-Rejected { & $validator -Manifest $stringSchema -RequiredScenario TCP } 'string-coerced schema version'
+
+    $lowercaseScenario = New-MutatedManifest $paths[0] 'lowercase-scenario.json' { param($d) $d.scenario = 'tcp' }
+    Assert-Rejected { & $validator -Manifest $lowercaseScenario -RequiredScenario TCP } 'non-canonical scenario casing'
+
     $wrongVersion = New-MutatedManifest $paths[0] 'wrong-version.json' { param($d) $d.build_version = '0.4.1' }
     Assert-Rejected { & $validator -Manifest $wrongVersion -RequiredScenario TCP -ExpectedBuildVersion '0.4.2' } 'wrong build version'
+
+    $numericVersion = New-MutatedManifest $paths[0] 'numeric-version.json' { param($d) $d.build_version = 42 }
+    Assert-Rejected { & $validator -Manifest $numericVersion -RequiredScenario TCP } 'numeric build version coercion'
 
     $wrongNodeVersion = New-MutatedManifest $paths[0] 'wrong-node-version.json' { param($d) $d.node_version = '0.4.1' }
     Assert-Rejected { & $validator -Manifest $wrongNodeVersion -RequiredScenario TCP -ExpectedNodeVersion '0.4.2' } 'wrong Node version'
@@ -74,6 +83,9 @@ try {
     $sameCountry = New-MutatedManifest $paths[0] 'same-country.json' { param($d) $d.client_b_country = $d.client_a_country }
     Assert-Rejected { & $validator -Manifest $sameCountry -RequiredScenario TCP } 'same-country Internet evidence'
 
+    $numericCountry = New-MutatedManifest $paths[0] 'numeric-country.json' { param($d) $d.client_a_country = 47 }
+    Assert-Rejected { & $validator -Manifest $numericCountry -RequiredScenario TCP } 'numeric country coercion'
+
     $sameNetwork = New-MutatedManifest $paths[0] 'same-network.json' { param($d) $d.client_b_network = $d.client_a_network }
     Assert-Rejected { & $validator -Manifest $sameNetwork -RequiredScenario TCP } 'same-network Internet evidence'
 
@@ -82,6 +94,15 @@ try {
 
     $fakeOverall = New-MutatedManifest $paths[0] 'incomplete-core.json' { param($d) $d.checks.world_a_to_b = 'PENDING' }
     Assert-Rejected { & $validator -Manifest $fakeOverall -RequiredScenario TCP } 'overall PASS with incomplete core check'
+
+    $lowercaseResult = New-MutatedManifest $paths[0] 'lowercase-result.json' { param($d) $d.checks.world_a_to_b = 'pass' }
+    Assert-Rejected { & $validator -Manifest $lowercaseResult -RequiredScenario TCP } 'non-canonical check result casing'
+
+    $booleanResult = New-MutatedManifest $paths[0] 'boolean-result.json' { param($d) $d.checks.world_a_to_b = $true }
+    Assert-Rejected { & $validator -Manifest $booleanResult -RequiredScenario TCP } 'boolean check result coercion'
+
+    $invalidTimestampType = New-MutatedManifest $paths[0] 'numeric-created-utc.json' { param($d) $d.created_utc = 1234567890 }
+    Assert-Rejected { & $validator -Manifest $invalidTimestampType -RequiredScenario TCP } 'numeric timestamp coercion'
 
     $stale = New-MutatedManifest $paths[0] 'stale.json' { param($d) $d.created_utc = [DateTimeOffset]::UtcNow.AddDays(-31).ToString('o') }
     Assert-Rejected { & $validator -Manifest $stale -RequiredScenario TCP -MaxAgeDays 30 } 'stale evidence'
@@ -101,6 +122,11 @@ try {
     $mixedBootstrap = @($paths)
     $mixedBootstrap[1] = New-MutatedManifest $paths[1] 'other-bootstrap.json' { param($d) $d.bootstrap = '/dns/konofix.example.test/tcp/4001/p2p/12D3KooWAnotherPeer987654321' }
     Assert-Rejected { & $validator -Manifest $mixedBootstrap -RequireAllChecks -ExpectedBuildVersion '0.4.2' -ExpectedNodeVersion '0.4.2' -ExpectedSourceCommit $sourceCommit -RequireSingleBootstrapPeer } 'mixed public Node Peer IDs'
+
+    $oversized = Join-Path $temp 'oversized.json'
+    Copy-Item $paths[0] $oversized
+    Add-Content -LiteralPath $oversized -Value (' ' * 8192) -NoNewline
+    Assert-Rejected { & $validator -Manifest $oversized -RequiredScenario TCP -MaxManifestBytes 4096 } 'oversized evidence manifest before JSON parsing'
 
     Write-Host 'Network evidence validator self-tests passed.'
 } finally {

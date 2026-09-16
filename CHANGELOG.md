@@ -99,7 +99,9 @@
 - canonicalized Linux public-Node state/install paths before systemd unit generation and reject root/top-level, equal, nested, lexical-alias and symlink-alias layouts so writable identity/health state cannot overlap the staged executable,
 - extended Linux installer self-tests with canonical rendering plus adversarial root, nesting, lexical-alias and symlink-alias path cases,
 - moved Linux bundle staging and integrity verification onto pull requests as well as `main` pushes, leaving only artifact upload push-only,
-- added a reusable fail-closed Linux archive provenance verifier that validates the outer checksum and inspects TAR members before extraction, rejects unsafe, duplicate, non-regular, missing or unexpected entries, verifies exact commit/version plus every recorded byte size/SHA-256, checks executable modes, and includes adversarial self-tests for tampering, extra inventory, path traversal and wrong commit/version.
+- added a reusable fail-closed Linux archive provenance verifier that validates the outer checksum and inspects TAR members before extraction, rejects unsafe, duplicate, non-regular, missing or unexpected entries, verifies exact commit/version plus every recorded byte size/SHA-256, checks executable modes, and includes adversarial self-tests for tampering, extra inventory, path traversal and wrong commit/version,
+- made production public-Node readiness fail closed on non-globally-routable literal endpoints (including private, CGNAT, loopback/link-local and documentation ranges), require public-looking FQDNs, require DNS bootstraps to resolve only to globally routable addresses, and record the resolved-address evidence in readiness schema v2,
+- expanded Internet-precheck and public-readiness adversarial tests so documentation/private endpoints can still be used for parser fixtures but can no longer be mistaken for real public-network evidence.
 
 ## 0.4.1
 

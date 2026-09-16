@@ -1,11 +1,82 @@
+[CmdletBinding()]
 param(
   [Parameter(Mandatory=$true)]
   [string]$Bootstrap,
   [switch]$ValidateOnly,
-  [switch]$AsJson
+  [switch]$AsJson,
+  [switch]$RequirePublicHost,
+  [switch]$RequireDnsResolution
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Test-GloballyRoutableIp([System.Net.IPAddress]$Address) {
+  if ($Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+    $bytes = $Address.GetAddressBytes()
+    $a = [int]$bytes[0]
+    $b = [int]$bytes[1]
+    $c = [int]$bytes[2]
+
+    if ($a -eq 0 -or $a -eq 10 -or $a -eq 127 -or $a -ge 224) { return $false }
+    if ($a -eq 100 -and $b -ge 64 -and $b -le 127) { return $false }
+    if ($a -eq 169 -and $b -eq 254) { return $false }
+    if ($a -eq 172 -and $b -ge 16 -and $b -le 31) { return $false }
+    if ($a -eq 192 -and $b -eq 0 -and $c -eq 0) { return $false }
+    if ($a -eq 192 -and $b -eq 0 -and $c -eq 2) { return $false }
+    if ($a -eq 192 -and $b -eq 168) { return $false }
+    if ($a -eq 198 -and ($b -eq 18 -or $b -eq 19)) { return $false }
+    if ($a -eq 198 -and $b -eq 51 -and $c -eq 100) { return $false }
+    if ($a -eq 203 -and $b -eq 0 -and $c -eq 113) { return $false }
+    return $true
+  }
+
+  if ($Address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetworkV6) {
+    return $false
+  }
+  if ($Address.IsIPv4MappedToIPv6) {
+    return Test-GloballyRoutableIp ($Address.MapToIPv4())
+  }
+  if ($Address.Equals([System.Net.IPAddress]::IPv6Any) -or
+      $Address.Equals([System.Net.IPAddress]::IPv6Loopback) -or
+      $Address.IsIPv6LinkLocal -or
+      $Address.IsIPv6SiteLocal -or
+      $Address.IsIPv6Multicast) {
+    return $false
+  }
+
+  $bytes = $Address.GetAddressBytes()
+  if (($bytes[0] -band 0xE0) -ne 0x20) { return $false }
+  if ($bytes[0] -eq 0x20 -and $bytes[1] -eq 0x01 -and $bytes[2] -eq 0x0D -and $bytes[3] -eq 0xB8) {
+    return $false
+  }
+  return $true
+}
+
+function Resolve-PublicDnsAddresses([string]$HostProtocol, [string]$HostName) {
+  try {
+    $resolved = @([System.Net.Dns]::GetHostAddresses($HostName))
+  } catch {
+    throw "DNS bootstrap host '$HostName' could not be resolved: $($_.Exception.GetBaseException().Message)"
+  }
+
+  if ($HostProtocol -eq 'dns4') {
+    $resolved = @($resolved | Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork })
+  } elseif ($HostProtocol -eq 'dns6') {
+    $resolved = @($resolved | Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetworkV6 })
+  }
+
+  if ($resolved.Count -eq 0) {
+    throw "DNS bootstrap host '$HostName' returned no addresses compatible with '$HostProtocol'."
+  }
+
+  $nonPublic = @($resolved | Where-Object { -not (Test-GloballyRoutableIp $_) })
+  if ($nonPublic.Count -gt 0) {
+    $joined = ($nonPublic | ForEach-Object { $_.ToString() }) -join ', '
+    throw "DNS bootstrap host '$HostName' resolves to non-public address(es): $joined"
+  }
+
+  return @($resolved | ForEach-Object { $_.ToString() } | Sort-Object -Unique)
+}
 
 function Parse-KonofixBootstrap([string]$Address) {
   $value = $Address.Trim()
@@ -80,14 +151,43 @@ function Parse-KonofixBootstrap([string]$Address) {
 }
 
 $parsed = Parse-KonofixBootstrap $Bootstrap
+$resolvedAddresses = @()
+$strictPublicValidation = $RequirePublicHost -or $RequireDnsResolution
+
+if ($strictPublicValidation) {
+  if ($parsed.host_protocol -in @('ip4', 'ip6')) {
+    $parsedIp = [System.Net.IPAddress]::Parse([string]$parsed.host)
+    if (-not (Test-GloballyRoutableIp $parsedIp)) {
+      throw "Bootstrap IP '$($parsed.host)' is not globally routable and cannot be used as public-node evidence."
+    }
+    $resolvedAddresses = @([string]$parsed.host)
+  } else {
+    if ([string]$parsed.host -notmatch '\.') {
+      throw "DNS bootstrap host '$($parsed.host)' must be a fully-qualified public hostname for public-node evidence."
+    }
+    if ($RequireDnsResolution) {
+      $resolvedAddresses = @(Resolve-PublicDnsAddresses -HostProtocol ([string]$parsed.host_protocol) -HostName ([string]$parsed.host))
+    }
+  }
+}
+
+$parsed | Add-Member -NotePropertyName public_host_validated -NotePropertyValue ([bool]$strictPublicValidation) -Force
+$parsed | Add-Member -NotePropertyName dns_resolution_checked -NotePropertyValue ([bool]($RequireDnsResolution -and $parsed.host_protocol -in @('dns', 'dns4', 'dns6'))) -Force
+$parsed | Add-Member -NotePropertyName resolved_addresses -NotePropertyValue @($resolvedAddresses) -Force
 
 if ($AsJson) {
-  $parsed | ConvertTo-Json -Compress
+  $parsed | ConvertTo-Json -Depth 4 -Compress
 } else {
   Write-Host '=== Konofix Chat 0.4.2 - INTERNET PRECHECK ===' -ForegroundColor Cyan
   Write-Host "Bootstrap: $($parsed.address)"
   Write-Host "Host: $($parsed.host)  Port: $($parsed.port)  Transport: $($parsed.transport)" -ForegroundColor Yellow
   Write-Host "Peer ID: $($parsed.peer_id)" -ForegroundColor DarkGray
+  if ($strictPublicValidation) {
+    Write-Host 'Public-host policy: globally routable endpoint required.' -ForegroundColor Green
+  }
+  if ($resolvedAddresses.Count -gt 0) {
+    Write-Host "Resolved public address(es): $($resolvedAddresses -join ', ')" -ForegroundColor DarkGray
+  }
 }
 
 if (-not $ValidateOnly) {

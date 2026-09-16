@@ -68,9 +68,11 @@ function Read-BoundedJsonObject([string]$Path, [int64]$MaxBytes, [string]$Label)
 function Parse-Bootstrap([string]$Address) {
     $internetTest = Join-Path $PSScriptRoot 'internet-test.ps1'
     Assert-True (Test-Path -LiteralPath $internetTest -PathType Leaf) "Required bootstrap validator is missing: $internetTest"
-    $json = (& $internetTest -Bootstrap $Address -ValidateOnly -AsJson | Out-String).Trim()
+    $json = (& $internetTest -Bootstrap $Address -ValidateOnly -AsJson -RequirePublicHost -RequireDnsResolution | Out-String).Trim()
     Assert-True (-not [string]::IsNullOrWhiteSpace($json)) "Bootstrap validation returned no structured result: $Address"
-    try { return $json | ConvertFrom-Json } catch { throw "Bootstrap validation returned invalid JSON for '$Address'." }
+    try { $parsed = $json | ConvertFrom-Json } catch { throw "Bootstrap validation returned invalid JSON for '$Address'." }
+    Assert-True ([bool]$parsed.public_host_validated) "Bootstrap did not pass the globally-routable public-host policy: $Address"
+    return $parsed
 }
 
 function Assert-OptionalPin([string]$Name, [string]$Actual, [string]$Expected, [string]$Pattern = '') {
@@ -200,12 +202,13 @@ if ($RequirePassingEvidence) {
 }
 
 $result = [ordered]@{
-    schema = 1
+    schema = 2
     status = 'PASS'
     build_version = $buildVersion
     node_version = $nodeVersion
     source_commit = $sourceCommit
     bootstrap_peer_id = $bootstrapPeer
+    public_host_validated = $true
     client_a = $aId
     client_b = $bId
     manifest_count = $manifestPaths.Count
@@ -215,5 +218,6 @@ if ($AsJson) { $result | ConvertTo-Json -Depth 3; return }
 Write-Host 'Network test session consistency passed.' -ForegroundColor Green
 Write-Host "Build: $buildVersion / $sourceCommit"
 Write-Host "Bootstrap Peer ID: $bootstrapPeer"
+Write-Host 'Public bootstrap policy: PASS'
 Write-Host "Clients: $aId <-> $bId"
 Write-Host "Manifests: $($manifestPaths.Count)"

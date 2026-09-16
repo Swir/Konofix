@@ -6,8 +6,8 @@ New-Item -ItemType Directory -Force -Path $temp | Out-Null
 $version = '0.4.2'
 $sourceCommit = '0123456789abcdef0123456789abcdef01234567'
 $peerId = '12D3KooWPromotionSelfTestPeer123456789'
-$tcpBootstrap = "/dns/konofix.example.test/tcp/45555/p2p/$peerId"
-$quicBootstrap = "/dns/konofix.example.test/udp/45555/quic-v1/p2p/$peerId"
+$tcpBootstrap = "/ip4/8.8.8.8/tcp/45555/p2p/$peerId"
+$quicBootstrap = "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$peerId"
 $fileHashA = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 $fileHashB = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -176,8 +176,6 @@ try {
     & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence (Join-Path $temp 'missing-soak-*.json') -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
-  # Mutate the same session-owned manifest in place so the test reaches the evidence-quality
-  # validator instead of being rejected earlier by session-inventory/path consistency.
   $tcpOriginal = Get-Content -LiteralPath $networkPaths[0] -Raw
   try {
     $missingEvidence = $tcpOriginal | ConvertFrom-Json
@@ -224,7 +222,7 @@ try {
     & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $mixedSessionPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
-  Write-Host 'OK - packaged Node bytes, exact BUILD_INFO provenance, one coherent test session, evidence-rich PASS checks, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
+  Write-Host 'OK - packaged Node bytes, exact BUILD_INFO provenance, one coherent public-endpoint test session, evidence-rich PASS checks, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

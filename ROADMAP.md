@@ -78,8 +78,9 @@
 - [x] README progress bar derived from the active roadmap milestone and checked by CI
 - [x] release gate invokes the PowerShell network-evidence validator deterministically
 - [x] Windows CI cancels superseded runs per branch/ref
-- [x] Windows build/test job uses a read-only GitHub token; release write permission is isolated to post-build publication
-- [x] committed frontend lockfile is enforced by Windows CI with deterministic `npm ci` and setup-node npm caching; project audit rejects install-policy drift
+- [x] Windows build/test job uses a read-only GitHub token
+- [x] project audit prevents `npm ci`/npm-cache activation unless a real committed frontend lockfile exists
+- [x] automatic GitHub Release publication removed from ordinary pushes; release publication remains gated by real public-network readiness
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test
@@ -89,7 +90,7 @@
 
 ### Test-release gate
 
-A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from the exact release client and Node version, with independent countries and networks/operators recorded and one stable public bootstrap Peer ID across the promotion evidence. The repository now has a committed `package-lock.json`; CI therefore uses lockfile-enforced `npm ci --no-audit --no-fund` with npm caching, and the project audit enforces that relationship to prevent dependency-policy drift.
+The existing `v0.4.2-test1` pre-release is a controlled preview for gathering real-network evidence, not proof that the public-network milestone has passed. No later release should be published automatically from an ordinary push. A new release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from the exact release client and Node version, with independent countries and networks/operators recorded and one stable public bootstrap Peer ID across the promotion evidence. The repository currently has no committed `package-lock.json`; Windows CI therefore uses `npm install --no-audit --no-fund` without setup-node npm caching, while the project audit prevents accidental activation of lockfile-only CI behavior.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

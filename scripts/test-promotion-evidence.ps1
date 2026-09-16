@@ -6,6 +6,8 @@ New-Item -ItemType Directory -Force -Path $temp | Out-Null
 $version = '0.4.2'
 $sourceCommit = '0123456789abcdef0123456789abcdef01234567'
 $peerId = '12D3KooWPromotionSelfTestPeer123456789'
+$tcpBootstrap = "/dns/konofix.example.test/tcp/45555/p2p/$peerId"
+$quicBootstrap = "/dns/konofix.example.test/udp/45555/quic-v1/p2p/$peerId"
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 function Assert-True([bool]$Condition, [string]$Message) {
@@ -32,6 +34,7 @@ function New-NetworkManifest([string]$Scenario, [string]$Path) {
   }
   if ($Scenario -eq 'Relay' -or $Scenario -eq 'CGNAT') { $checks.relay_observed = 'PASS' }
   if ($Scenario -eq 'DCUtR') { $checks.dcutr_direct_upgrade = 'PASS' }
+  $bootstrap = if ($Scenario -eq 'QUIC') { $quicBootstrap } else { $tcpBootstrap }
   [ordered]@{
     schema_version = 3
     created_utc = [DateTimeOffset]::UtcNow.ToString('o')
@@ -45,7 +48,7 @@ function New-NetworkManifest([string]$Scenario, [string]$Path) {
     client_b_country = 'NO'
     client_a_network = 'promotion-net-a'
     client_b_network = 'promotion-net-b'
-    bootstrap = "/dns/konofix.example.test/tcp/45555/p2p/$peerId"
+    bootstrap = $bootstrap
     overall = 'PASS'
     checks = $checks
   } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding UTF8
@@ -83,13 +86,41 @@ try {
       sha256 = $nodeHash
     }
   } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $buildInfoPath -Encoding UTF8
+  $buildInfoHash = (Get-FileHash -LiteralPath $buildInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
   $networkPaths = @()
   foreach ($scenario in @('TCP','QUIC','Relay','DCUtR','CGNAT')) {
-    $path = Join-Path $temp "$($scenario.ToLowerInvariant()).json"
+    $path = Join-Path $temp ("network-test-{0}-selftest.json" -f $scenario.ToLowerInvariant())
     New-NetworkManifest -Scenario $scenario -Path $path
     $networkPaths += $path
   }
+
+  $sessionInfoPath = Join-Path $temp 'SESSION_INFO.json'
+  $manifestInventory = @($networkPaths | ForEach-Object {
+    $item = Get-Item -LiteralPath $_
+    [ordered]@{
+      path = $item.Name
+      bytes = [int64]$item.Length
+      sha256 = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+  })
+  [ordered]@{
+    schema_version = 1
+    created_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    product = 'Konofix Chat'
+    build_version = $version
+    node_version = $version
+    source_commit = $sourceCommit
+    build_info_sha256 = $buildInfoHash
+    node_sha256 = $nodeHash
+    bootstrap_peer_id = $peerId
+    tcp_bootstrap = $tcpBootstrap
+    quic_bootstrap = $quicBootstrap
+    client_a = [ordered]@{ id = 'promotion-selftest-a'; country = 'PL'; network = 'promotion-net-a' }
+    client_b = [ordered]@{ id = 'promotion-selftest-b'; country = 'NO'; network = 'promotion-net-b' }
+    manifests = $manifestInventory
+    notes = 'promotion session fixture'
+  } | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $sessionInfoPath -Encoding UTF8
 
   $soakPaths = @()
   $samples = @(
@@ -107,6 +138,7 @@ try {
   $soakWildcard = Join-Path $temp 'soak-*.json'
   $result = (& $tool `
     -BuildInfoPath $buildInfoPath `
+    -SessionInfoPath $sessionInfoPath `
     -NetworkEvidence $networkPaths `
     -NodeSoakEvidence $soakWildcard `
     -NodeSoakMinSpanSeconds 180 `
@@ -122,9 +154,11 @@ try {
   Assert-True ($result.network_manifest_count -eq 5) 'Promotion result must report five required network scenarios.'
   Assert-True ($result.node_soak_snapshot_count -eq 4) 'Promotion wildcard expansion must resolve all four soak snapshots.'
   Assert-True ($result.node_binary_sha256 -ceq $nodeHash) 'Promotion result Node SHA-256 mismatch.'
+  Assert-True ($result.build_info_sha256 -ceq $buildInfoHash) 'Promotion result BUILD_INFO SHA-256 mismatch.'
+  Assert-True ($result.coherent_test_session -eq $true) 'Promotion result must prove a coherent test session.'
 
   Assert-Fails 'empty wildcard rejection' 'wildcard matched no files' {
-    & $tool -BuildInfoPath $buildInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence (Join-Path $temp 'missing-soak-*.json') -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence (Join-Path $temp 'missing-soak-*.json') -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
   $originalNodeBytes = [IO.File]::ReadAllBytes($nodePath)
@@ -133,7 +167,7 @@ try {
   $tamperedNodeBytes[$tamperedNodeBytes.Length - 1] = 0x7f
   [IO.File]::WriteAllBytes($nodePath, $tamperedNodeBytes)
   Assert-Fails 'tampered Node rejection' 'size does not match BUILD_INFO' {
-    & $tool -BuildInfoPath $buildInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
   [IO.File]::WriteAllBytes($nodePath, $originalNodeBytes)
 
@@ -142,7 +176,7 @@ try {
   $bad.commit = '89abcdef0123456789abcdef0123456789abcdef'
   $bad | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $wrongBuild -Encoding UTF8
   Assert-Fails 'wrong build provenance rejection' 'source commit' {
-    & $tool -BuildInfoPath $wrongBuild -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+    & $tool -BuildInfoPath $wrongBuild -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
   $stringSchema = Join-Path $temp 'BUILD_INFO-string-schema.json'
@@ -150,10 +184,18 @@ try {
   $raw = $raw -replace '"schema"\s*:\s*1', '"schema": "1"'
   Set-Content -LiteralPath $stringSchema -Value $raw -Encoding UTF8
   Assert-Fails 'string schema rejection' 'must be a JSON integer' {
-    & $tool -BuildInfoPath $stringSchema -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+    & $tool -BuildInfoPath $stringSchema -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
-  Write-Host 'OK - packaged Node bytes, exact BUILD_INFO provenance, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
+  $mixedSessionPath = Join-Path $temp 'SESSION_INFO-mixed-client.json'
+  $mixedSession = Get-Content -LiteralPath $sessionInfoPath -Raw | ConvertFrom-Json
+  $mixedSession.client_b.country = 'DE'
+  $mixedSession | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $mixedSessionPath -Encoding UTF8
+  Assert-Fails 'mixed session endpoint rejection' 'client_b_country does not match SESSION_INFO' {
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $mixedSessionPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+  }
+
+  Write-Host 'OK - packaged Node bytes, exact BUILD_INFO provenance, one coherent test session, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

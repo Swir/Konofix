@@ -6,11 +6,11 @@ GitHub: https://github.com/Swir/Konofix
 
 ## Project progress
 
-**Real Internet Test milestone: 89% complete**
+**Real Internet Test milestone: 90% complete**
 
-`██████████████████░░ 89%`
+`██████████████████░░ 90%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (42 of 47 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (43 of 48 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -63,7 +63,7 @@ Project checks:
 .\scripts\check.ps1
 ```
 
-GitHub Actions validates TypeScript/Vite, Rust all-target tests and checks, `konofix-node`, release/network/Node-health/Node-soak gates, localization/project consistency, and the production Windows bundle. Pull requests to `main` now execute the production Tauri build, production Node build, test-bundle staging, ZIP/SHA-256 generation and release-artifact verification before merge; only artifact upload remains restricted to a `main` push. The localization audit requires the typed `MessageKey`/`t()` API, rejects the removed DOM/source-text translator pattern, and fails if Polish UI literals return to `src/main.ts`. Frontend dependencies are pinned by the committed `package-lock.json`; CI uses `npm ci --no-audit --no-fund` and setup-node caching keyed to that exact lockfile. The project audit verifies that the lockfile root package, dependency declarations and CI policy still match `package.json`, rejects a return to `npm install`, and rejects CI-side lockfile regeneration. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
+GitHub Actions validates TypeScript/Vite, Rust all-target tests and checks, `konofix-node`, release/network/public-Node/Node-health/Node-soak gates, localization/project consistency, and the production Windows bundle. Pull requests to `main` execute the production Tauri build, production Node build, test-bundle staging, ZIP/SHA-256 generation and release-artifact verification before merge; only artifact upload remains restricted to a `main` push. The localization audit requires the typed `MessageKey`/`t()` API, rejects the removed DOM/source-text translator pattern, and fails if Polish UI literals return to `src/main.ts`. Frontend dependencies are pinned by the committed `package-lock.json`; CI and the local preflight use `npm ci --no-audit --no-fund`, with setup-node caching keyed to that exact lockfile. The project audit verifies that the lockfile root package, dependency declarations and CI policy still match `package.json`, rejects a return to `npm install`, and rejects CI-side lockfile regeneration. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
 
 Each Windows CI archive also carries `BUILD_INFO.json` with the exact commit/version and SHA-256 plus byte size for `konofix-node.exe`, the committed frontend lockfile, the captured Rust dependency-resolution record, the bundled test tools and every Windows installer. Release verification requires the packaged `package-lock.json` to match the committed build input byte-for-byte by size and SHA-256. The Node binary embeds that same source commit in its schema-v2 health snapshots. Real-network evidence is schema v3 and stable promotion rejects evidence, Node health or soak history from any other source commit, preventing two different `0.4.2` builds from being treated as interchangeable. The captured `Cargo.lock` records the Rust graph resolved by that build; it is not yet presented as a deterministic Rust build input until a verified `src-tauri/Cargo.lock` is committed and enforced.
 
@@ -81,7 +81,23 @@ The application bundle is written to `src-tauri\target\release\bundle`.
 build-node.bat
 ```
 
-Run the Node on a publicly reachable computer or VPS. For a long-lived public/community Node, put the identity on persistent storage explicitly:
+For a long-lived public/community Node, the recommended Windows-artifact path is the fail-closed deployment preflight/launcher. It validates the public host, rejects private/CGNAT/documentation/special-use IP literals by default, keeps identity and health state on separate paths, optionally verifies DNS resolution, and passes an explicit persistent identity file to the Node:
+
+```powershell
+.\scripts\public-node.ps1 `
+  -PublicHost node.yourdomain.com `
+  -StateDirectory C:\Konofix `
+  -RequireDnsResolution
+
+.\scripts\public-node.ps1 `
+  -PublicHost node.yourdomain.com `
+  -StateDirectory C:\Konofix `
+  -Start
+```
+
+`-AllowPrivateAddress` exists only for controlled LAN/lab tests. The launcher is included in the verified Windows test archive, so a public Node operator does not need a source checkout.
+
+The raw Node command remains available when explicit manual control is needed:
 
 ```powershell
 konofix-node.exe `

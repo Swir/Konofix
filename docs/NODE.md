@@ -18,10 +18,35 @@
 - optional metadata-only JSON health snapshot for supervisors and monitoring
 - exact source-commit provenance embedded into Node health snapshots
 - IPv4, IPv6, and generic DNS bootstrap address generation
+- fail-closed Windows deployment preflight with deterministic JSON output for automation
 
 ## Windows
 
-Run `build-node.bat`, then start:
+Run `build-node.bat`, then start from the source tree, or use the `konofix-node.exe` included in a verified Windows test archive.
+
+### Recommended public deployment preflight
+
+The extracted Windows test archive includes `scripts\public-node.ps1`. Run it before exposing a Node. It validates the host and state paths without starting the process:
+
+```powershell
+.\scripts\public-node.ps1 `
+  -PublicHost node.yourdomain.com `
+  -StateDirectory C:\Konofix `
+  -RequireDnsResolution
+```
+
+Then launch the same validated configuration:
+
+```powershell
+.\scripts\public-node.ps1 `
+  -PublicHost node.yourdomain.com `
+  -StateDirectory C:\Konofix `
+  -Start
+```
+
+The preflight rejects private, loopback, link-local, CGNAT, documentation and other special-use IP literals by default. It also rejects local/single-label/reserved DNS names, refuses identity/health path collisions, pins an explicit persistent identity path and resolves DNS before `-Start`. `-AllowPrivateAddress` is available only for controlled LAN/lab tests. Use `-AsJson` to obtain normalized launch metadata and bootstrap address templates without starting the Node.
+
+The raw binary remains available for manual operation:
 
 ```powershell
 src-tauri\target\release\konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP
@@ -30,7 +55,7 @@ src-tauri\target\release\konofix-node.exe --port 45555 --public-host YOUR_PUBLIC
 A public DNS name is also supported:
 
 ```powershell
-konofix-node.exe --port 45555 --public-host node.example.com
+konofix-node.exe --port 45555 --public-host node.yourdomain.com
 ```
 
 ### Stable public identity
@@ -40,7 +65,7 @@ A public/community Node should use an explicit identity path on persistent stora
 ```powershell
 konofix-node.exe `
   --port 45555 `
-  --public-host node.example.com `
+  --public-host node.yourdomain.com `
   --identity-file C:\Konofix\node-identity.key `
   --health-file C:\Konofix\health.json
 ```
@@ -52,7 +77,7 @@ Identity handling is deliberately fail-closed. If an existing identity file cann
 The default status interval is 60 seconds. It can be changed to any value of 10 seconds or more:
 
 ```powershell
-konofix-node.exe --port 45555 --public-host node.example.com --status-interval 30
+konofix-node.exe --port 45555 --public-host node.yourdomain.com --status-interval 30
 ```
 
 Status output is intentionally metadata-only:
@@ -66,7 +91,7 @@ It does not include chat messages, room contents, filenames, or transferred data
 For service supervision or a monitoring agent, enable a JSON health snapshot:
 
 ```powershell
-konofix-node.exe --port 45555 --public-host node.example.com --status-interval 30 --health-file C:\Konofix\health.json
+konofix-node.exe --port 45555 --public-host node.yourdomain.com --status-interval 30 --health-file C:\Konofix\health.json
 ```
 
 The file is refreshed on every status interval and contains only operational metadata:
@@ -128,7 +153,7 @@ For DNS names, the Node uses the generic `/dns/...` multiaddr form so the hostna
 
 Paste the `RECOMMENDED` address into **Network settings → Bootstrap**. The client stores it locally.
 
-Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, private IPv4 addresses, and IPv6 unique-local/link-local addresses are not global bootstrap addresses. The Node prints a warning when `--public-host` is an obviously non-public IP literal.
+Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, private IPv4 addresses, and IPv6 unique-local/link-local addresses are not global bootstrap addresses. The Node prints a warning when `--public-host` is an obviously non-public IP literal; the recommended `public-node.ps1` deployment preflight is stricter and rejects those configurations before launch unless the explicit lab override is supplied.
 
 A public IP or DNS name plus reachable TCP and UDP ports are required for a proper Internet test.
 

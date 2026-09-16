@@ -48,6 +48,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-internet-precheck.ps1
 
+      - name: Public Node deployment self-tests
+        shell: pwsh
+        run: .\scripts\test-public-node.ps1
+
       - name: Node health validator self-tests
         shell: pwsh
         run: .\scripts\test-node-health.ps1
@@ -97,6 +101,7 @@ jobs:
 
           $testTools = @(
             'internet-test.ps1',
+            'public-node.ps1',
             'new-network-test-report.ps1',
             'validate-network-test-report.ps1',
             'check-node-health.ps1',

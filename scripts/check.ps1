@@ -7,8 +7,8 @@ function Need($cmd, $hint) {
   }
 }
 
-Need node 'Install Node.js 20+.'
-Need npm 'Install Node.js 20+.'
+Need node 'Install Node.js 22+.'
+Need npm 'Install Node.js 22+.'
 Need cargo 'Install Rust with rustup (MSVC toolchain).'
 Need rustc 'Install Rust with rustup (MSVC toolchain).'
 
@@ -29,15 +29,18 @@ try {
   Write-Host 'Internet bootstrap precheck self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-internet-precheck.ps1'
 
+  Write-Host 'Public Node deployment self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-public-node.ps1'
+
   Write-Host 'Node health validator self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-node-health.ps1'
 
   Write-Host 'Node soak stability self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-node-soak.ps1'
 
-  Write-Host 'Frontend dependencies...' -ForegroundColor Yellow
-  npm install --no-audit --no-fund --package-lock=false
-  if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE." }
+  Write-Host 'Frontend dependencies (locked)...' -ForegroundColor Yellow
+  npm ci --no-audit --no-fund
+  if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }
 
   Write-Host 'Project consistency and localization audit...' -ForegroundColor Yellow
   npm run audit
@@ -57,7 +60,7 @@ try {
   cargo check --manifest-path src-tauri/Cargo.toml --bin konofix-node
   if ($LASTEXITCODE -ne 0) { throw "cargo check --bin konofix-node failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'OK - local preflight matches the CI validation path for gates, bootstrap parsing, frontend, Rust tests and Node checks.' -ForegroundColor Green
+  Write-Host 'OK - local preflight matches CI gates, public-Node/bootstrap validation, deterministic frontend install, frontend build, Rust tests and Node checks.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

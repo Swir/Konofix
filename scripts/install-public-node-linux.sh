@@ -26,7 +26,7 @@ Usage:
 
 Options:
   --public-host HOST          Public IPv4, IPv6, or DNS name advertised by the Node.
-  --port PORT                TCP and UDP/QUIC port (default: 45555).
+  --port PORT                TCP and UDP/QUIC port (default: 45555; allowed: 1024-65535).
   --status-interval SEC      Node status/health interval (default: 60; minimum: 10).
   --binary PATH              Source konofix-node binary (default: ./konofix-node).
   --state-dir PATH           Persistent identity/health directory (default: /var/lib/konofix-node).
@@ -39,6 +39,8 @@ Options:
   --uninstall                Disable/remove the unit and staged binary; preserve state/identity.
   -h, --help                 Show this help.
 
+The service runs as the unprivileged 'konofix' user, so the installer deliberately rejects
+privileged ports below 1024 instead of relying on host-specific capabilities/sysctls.
 The installer never edits a firewall. Public deployments must allow the selected TCP and UDP
 port in the VPS/provider firewall and any host firewall before Internet testing.
 EOF
@@ -69,7 +71,7 @@ while (($#)); do
 done
 
 [[ "$PORT" =~ ^[0-9]+$ ]] || fail "Port must be an integer."
-((PORT >= 1 && PORT <= 65535)) || fail "Port must be between 1 and 65535."
+((PORT >= 1024 && PORT <= 65535)) || fail "Port must be between 1024 and 65535 for the unprivileged service user."
 [[ "$STATUS_INTERVAL" =~ ^[0-9]+$ ]] || fail "Status interval must be an integer."
 ((STATUS_INTERVAL >= 10 && STATUS_INTERVAL <= 86400)) || fail "Status interval must be between 10 and 86400 seconds."
 [[ "$STATE_DIR" == /* ]] || fail "State directory must be an absolute path."

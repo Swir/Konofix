@@ -4,7 +4,7 @@ This document defines the minimum test set required before closing the first rel
 
 ## 1. Local validation
 
-On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release gate, network-evidence self-tests, exact-build promotion-evidence self-tests, network-report-editor self-tests, strict bootstrap-precheck self-tests, public-Node deployment/startup-task/readiness self-tests, Node-health self-tests, Node-soak validator/collector self-tests, project/localization audit, deterministic `npm ci`, TypeScript/Vite build, a locked Rust metadata check, Rust all-target tests and Rust checks for both the application and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`, and pull requests reproduce the production Windows packaging/verification path before merge.
+On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release gate, network-evidence self-tests, exact-build promotion-evidence self-tests, network-report-editor and network-test-session self-tests, strict bootstrap-precheck self-tests, public-Node deployment/startup-task/readiness self-tests, Node-health self-tests, Node-soak validator/collector self-tests, project/localization audit, deterministic `npm ci`, TypeScript/Vite build, a locked Rust metadata check, Rust all-target tests and Rust checks for both the application and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`, and pull requests reproduce the production Windows packaging/verification path before merge.
 
 ## 2. LAN baseline
 
@@ -73,7 +73,7 @@ A single healthy snapshot is not sufficient for stable promotion. Use `scripts\c
 
 On every test PC run `.\scripts\internet-test.ps1 -Bootstrap "/ip4/ADDRESS/tcp/45555/p2p/PEER_ID"`. DNS and IPv6 multiaddresses are supported. The precheck uses strict multiaddr parsing: it rejects malformed host/port values, unsupported transports, missing/invalid Peer IDs, extra path segments, UDP addresses that are not explicit `quic-v1`, and TCP addresses carrying QUIC-only segments. TCP reachability must succeed before application-level testing; UDP/QUIC is structurally validated by this script and then verified through libp2p during the real test.
 
-For parser-only validation without touching the network, use `-ValidateOnly`. `-AsJson` prints the normalized parsed address for automation. The Windows test archive includes this script, `public-node.ps1`, `install-public-node-task.ps1`, `check-public-node-readiness.ps1`, `check-promotion-evidence.ps1`, and the evidence/health/soak tools under its `scripts` directory, so a tester or Node operator does not need a source checkout to run the operational test flow.
+For parser-only validation without touching the network, use `-ValidateOnly`. `-AsJson` prints the normalized parsed address for automation. The Windows test archive includes this script, `public-node.ps1`, `install-public-node-task.ps1`, `check-public-node-readiness.ps1`, `new-network-test-session.ps1`, `check-promotion-evidence.ps1`, and the evidence/health/soak tools under its `scripts` directory, so a tester or Node operator does not need a source checkout to run the operational test flow.
 
 ## 5. Cross-country test
 
@@ -83,9 +83,25 @@ Minimum topology: Client A in country/network A, Client B in a different country
 
 Verify TCP, UDP/QUIC, Circuit Relay, DCUtR/direct upgrade where possible, and the critical CGNAT ↔ public Node ↔ CGNAT topology. Do not infer transport success from general chat success: each required transport gets its own report.
 
-## 7. Reproducible test report
+## 7. Exact-build test session bootstrap
 
-For Internet scenarios use schema-v3 endpoint metadata. Run the generator from the extracted Windows test bundle so it automatically reads the exact `commit` from `BUILD_INFO.json`:
+Prefer creating the whole five-scenario evidence workspace in one command from the **extracted verified Windows test archive**:
+
+```powershell
+.\scripts\new-network-test-session.ps1 `
+  -ClientA "PC-A" -ClientACountry "Norway" -ClientANetwork "Operator-A LTE" `
+  -ClientB "PC-B" -ClientBCountry "Poland" -ClientBNetwork "Operator-B LTE" `
+  -TcpBootstrap "/dns/node.yourdomain.com/tcp/45555/p2p/PEER_ID" `
+  -QuicBootstrap "/dns/node.yourdomain.com/udp/45555/quic-v1/p2p/PEER_ID"
+```
+
+The session bootstrap fails closed before creating final evidence if the two endpoints are not independent, `BUILD_INFO.json` is malformed, the exact packaged `konofix-node.exe` bytes do not match its recorded SHA-256/size, the source commit is not canonical, or TCP and QUIC do not describe the same host, port and Peer ID. It stages output in a temporary directory and moves it into place only after all five schema-v3 PENDING manifests were created successfully, so a failed setup cannot leave a half-created test session that looks complete.
+
+The resulting session directory contains copied `BUILD_INFO.json`, a `SESSION_INFO.json` inventory with the exact version/commit/Node hash/bootstrap identity and hashes of the five initial manifests, plus TCP, QUIC, Relay, DCUtR and CGNAT report pairs. The QUIC scenario starts with the QUIC bootstrap; the remaining scenarios use the paired TCP bootstrap while preserving the same Node Peer ID. Session creation does **not** prove reachability or a transport handshake; both clients still run the real prechecks and scenarios below.
+
+## 8. Reproducible test report
+
+If a single report is needed independently, use the schema-v3 generator from the extracted Windows test bundle so it automatically reads the exact `commit` from `BUILD_INFO.json`:
 
 ```powershell
 .\scripts\new-network-test-report.ps1 `
@@ -131,15 +147,15 @@ This preflight first validates the exact `BUILD_INFO.json` version/source commit
 
 Never put identity keys, access tokens, private addresses or other secrets in reports.
 
-## 8. Nickname reservation test
+## 9. Nickname reservation test
 
 Start two clients with the same nickname, repeat with different letter case, verify that only one Peer ID retains the synchronized reservation, then verify that the nickname becomes available after the winner leaves and its lease expires.
 
-## 9. Resilience testing
+## 10. Resilience testing
 
 Test Wi-Fi/LTE loss during transfer, app closure during transfer, Node restart, malformed/unreachable/duplicate bootstrap entries, dangerous executable/script extensions and cancellation from both sides. The app must not crash or leave a completed output file after failed SHA-256 verification.
 
-## 10. Release-stage gate and artifact provenance
+## 11. Release-stage gate and artifact provenance
 
 A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond the test release additionally requires validated schema-v3 evidence from independent countries/networks for the required transport/NAT scenarios, continuous schema-v2 Node-soak evidence bound to the same bootstrap Peer ID/version/source commit, and fixes for issues discovered during those tests.
 

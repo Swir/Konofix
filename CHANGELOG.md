@@ -4,6 +4,8 @@
 
 - restored Windows CI, Tauri packaging, production application and `konofix-node.exe` builds,
 - added public-host bootstrap generation, Node launcher and strict bootstrap prechecks,
+- hardened the Internet bootstrap precheck with strict TCP/QUIC-v1 multiaddr grammar, host/port/Peer-ID validation, parser-only/JSON modes and adversarial Windows CI self-tests,
+- packaged the operational bootstrap, network-evidence, Node-health and Node-soak PowerShell tools inside every Windows test archive and added their hashes/sizes to verified `BUILD_INFO.json` provenance,
 - added release gating, packaged artifact verification, ZIP + SHA-256 generation and the first `v0.4.2-test1` pre-release,
 - added automatic operating-system locale detection with English fallback,
 - added the first multilingual UI compatibility layer for English, Polish, Norwegian, German, French, Spanish, and Ukrainian,
@@ -36,9 +38,9 @@
 - added multi-snapshot public Node soak validation that rejects identity/version drift, restarts, stale samples, monitoring gaps and inconsistent uptime cadence,
 - made stable promotion require Node soak evidence and bind that soak to the exact bootstrap Peer ID used by the validated cross-country network evidence,
 - added adversarial Node soak self-tests to Windows CI, added an all-target Rust test pass, and included the Node soak operator guide in Windows artifacts,
-- aligned `scripts/check.ps1` with the CI preflight path so local checks now run release/network/health/soak gates, project audit, frontend build, Rust all-target tests and application/Node checks,
-- added machine-readable Windows artifact provenance (`BUILD_INFO.json`) with exact commit/version plus SHA-256 and sizes for the Node, Rust resolution record and every installer,
-- strengthened release verification so provenance, `Cargo.lock`, Node-soak instructions and all installer hashes are cross-checked after ZIP extraction before artifact upload,
+- aligned `scripts/check.ps1` with the CI preflight path so local checks now run release/network/bootstrap/health/soak gates, project audit, frontend build, Rust all-target tests and application/Node checks,
+- added machine-readable Windows artifact provenance (`BUILD_INFO.json`) with exact commit/version plus SHA-256 and sizes for the Node, Rust resolution record, bundled test tools and every installer,
+- strengthened release verification so provenance, `Cargo.lock`, Node-soak instructions, test-tool hashes and all installer hashes are cross-checked after ZIP extraction before artifact upload,
 - expanded cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1

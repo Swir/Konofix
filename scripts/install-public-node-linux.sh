@@ -43,6 +43,9 @@ The service runs as the unprivileged 'konofix' user, so the installer deliberate
 privileged ports below 1024 instead of relying on host-specific capabilities/sysctls.
 State and install paths are canonicalized, must be dedicated non-top-level directories, and
 must not overlap; this keeps writable Node state separated from the staged executable.
+The generated systemd service also removes Linux capabilities, isolates devices/tmp/proc,
+blocks namespace/realtime/kernel/clock/hostname mutation, and exposes only the dedicated
+state directory as writable service storage.
 The installer never edits a firewall. Public deployments must allow the selected TCP and UDP
 port in the VPS/provider firewall and any host firewall before Internet testing.
 EOF
@@ -181,16 +184,28 @@ RestartSec=5s
 TimeoutStopSec=30s
 UMask=0077
 NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectHostname=true
+ProtectClock=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+KeyringMode=private
+RemoveIPC=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 ReadWritePaths=${STATE_DIR}
 

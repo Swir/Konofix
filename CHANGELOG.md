@@ -38,7 +38,7 @@
 - fixed Windows CI #165 by making dependency-policy detection use Git-tracked lockfile state instead of an untracked `package-lock.json` created by `npm install`,
 - changed no-lockfile CI installation to `npm install --no-audit --no-fund --package-lock=false` so the build workspace cannot manufacture misleading lockfile state,
 - pinned every external GitHub Action in Windows CI to an immutable full commit SHA, disabled persisted checkout credentials, and made the project audit reject future floating Action refs,
-- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 41/46 tasks (89%),
+- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 42/47 tasks (89%),
 - made project audit recompute the active roadmap checklist and reject stale README/ROADMAP percentages or task counts,
 - added multi-snapshot public Node soak validation that rejects identity/version/source-commit drift, restarts, stale samples, monitoring gaps and inconsistent uptime cadence,
 - made stable promotion require Node soak evidence and bind that soak to the exact bootstrap Peer ID used by the validated cross-country network evidence,
@@ -54,6 +54,7 @@
 - changed Node identity loading to fail closed when an existing key is unreadable or malformed, preventing silent Peer-ID rotation and invalidation of bootstrap/soak evidence,
 - made first-time identity creation use create-new semantics and durable flush, handling a concurrent creator by loading the winning identity instead of overwriting it,
 - added Rust regression tests for explicit identity-path parsing, empty-path rejection, Peer-ID persistence and corrupted-key preservation,
+- changed pull-request Windows CI to execute the production Tauri/Node builds, stage the complete Windows test bundle, create ZIP/SHA-256 and run release-artifact verification before merge; only artifact upload remains push-only,
 - expanded public Node operator documentation, cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1

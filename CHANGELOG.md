@@ -38,7 +38,7 @@
 - fixed Windows CI #165 by making dependency-policy detection use Git-tracked lockfile state instead of an untracked `package-lock.json` created by `npm install`,
 - changed no-lockfile CI installation to `npm install --no-audit --no-fund --package-lock=false` so the build workspace cannot manufacture misleading lockfile state,
 - pinned every external GitHub Action in Windows CI to an immutable full commit SHA, disabled persisted checkout credentials, and made the project audit reject future floating Action refs,
-- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 43/48 tasks (90%),
+- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 44/49 tasks (90%),
 - made project audit recompute the active roadmap checklist and reject stale README/ROADMAP percentages or task counts,
 - added multi-snapshot public Node soak validation that rejects identity/version/source-commit drift, restarts, stale samples, monitoring gaps and inconsistent uptime cadence,
 - made stable promotion require Node soak evidence and bind that soak to the exact bootstrap Peer ID used by the validated cross-country network evidence,
@@ -57,6 +57,10 @@
 - changed pull-request Windows CI to execute the production Tauri/Node builds, stage the complete Windows test bundle, create ZIP/SHA-256 and run release-artifact verification before merge; only artifact upload remains push-only,
 - added `scripts/public-node.ps1`, a fail-closed deployment preflight/launcher that rejects obviously non-public IPv4/IPv6 and reserved DNS names by default, validates persistent state-path separation, optionally resolves DNS before launch and emits deterministic JSON configuration for automation,
 - added adversarial public-Node deployment self-tests to Windows CI/local preflight and included the launcher in Windows artifact provenance so remote operators can use the validated flow without cloning the repository,
+- hardened the raw Node against identity/health/executable state-path collisions so an operator bypassing `public-node.ps1` cannot accidentally let health telemetry overwrite the persistent Peer-ID key or binary,
+- replaced the fixed health `.tmp` staging name with unique create-new temporary files, durable writes and cleanup on failure, preventing custom-path collisions and accidental truncation of unrelated state,
+- made an explicitly requested initial `--health-file` snapshot a fail-closed startup contract while keeping later transient monitoring-write failures observable as warnings,
+- added Rust regression tests for state-path collision rejection and safe health-snapshot replacement/cleanup,
 - expanded public Node operator guidance and release-gate documentation while keeping the stable public-Node and cross-country gates dependent on real evidence.
 
 ## 0.4.1

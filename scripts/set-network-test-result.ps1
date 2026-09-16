@@ -37,6 +37,11 @@ try {
 
 if ($data.schema_version -ne 3) { throw "Unsupported network evidence schema: $($data.schema_version)" }
 if ($null -eq $data.checks) { throw 'Network test manifest is missing the checks object.' }
+if ($null -ne $data.PSObject.Properties['campaign_id']) {
+    if ($data.campaign_id -isnot [string] -or [string]$data.campaign_id -cnotmatch '^[0-9a-f]{32}$') {
+        throw 'Network test manifest contains an invalid campaign_id.'
+    }
+}
 $checkProperty = $data.checks.PSObject.Properties[$Check]
 if ($null -eq $checkProperty) { throw "Network test manifest is missing check '$Check'." }
 
@@ -117,11 +122,12 @@ $rows = foreach ($name in $labels.Keys) {
     "| $($labels[$name]) | $resultValue | $(Escape-MarkdownCell $note) |"
 }
 
+$campaignLine = if ($null -ne $data.PSObject.Properties['campaign_id']) { "- Campaign ID: ``$($data.campaign_id)```n" } else { '' }
 $markdown = @"
 # Konofix Network Test Report
 
 - UTC: $($data.created_utc)
-- Scenario: $($data.scenario)
+$campaignLine- Scenario: $($data.scenario)
 - Build version: $($data.build_version)
 - Node version: $($data.node_version)
 - Source commit: ``$($data.source_commit)``
@@ -167,4 +173,5 @@ try {
 Write-Host "Recorded $Check=$Result; overall=$($data.overall)" -ForegroundColor Green
 Write-Host "Manifest: $manifestFull"
 Write-Host "Report:   $markdownFull"
+if ($null -ne $data.PSObject.Properties['campaign_id']) { Write-Host "Campaign: $($data.campaign_id)" }
 if ($Finalize) { Write-Host 'Final schema-v3 scenario validation passed.' -ForegroundColor Green }

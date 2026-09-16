@@ -8,6 +8,8 @@ $sourceCommit = '0123456789abcdef0123456789abcdef01234567'
 $peerId = '12D3KooWPromotionSelfTestPeer123456789'
 $tcpBootstrap = "/dns/konofix.example.test/tcp/45555/p2p/$peerId"
 $quicBootstrap = "/dns/konofix.example.test/udp/45555/quic-v1/p2p/$peerId"
+$fileHashA = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+$fileHashB = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 function Assert-True([bool]$Condition, [string]$Message) {
@@ -34,6 +36,18 @@ function New-NetworkManifest([string]$Scenario, [string]$Path) {
   }
   if ($Scenario -eq 'Relay' -or $Scenario -eq 'CGNAT') { $checks.relay_observed = 'PASS' }
   if ($Scenario -eq 'DCUtR') { $checks.dcutr_direct_upgrade = 'PASS' }
+  $checkEvidence = [ordered]@{
+    world_a_to_b = 'message msg-a observed by client B'
+    world_b_to_a = 'message msg-b observed by client A'
+    room_discovery = 'temporary room visible on both clients'
+    file_a_to_b_sha256 = "sender and receiver sha256=$fileHashA"
+    file_b_to_a_sha256 = "sender and receiver sha256=$fileHashB"
+    client_reconnect = 'client A reconnected and exchanged a fresh message'
+    node_restart_recovery = 'Node restarted with the same Peer ID and clients recovered'
+    relay_observed = if ($checks.relay_observed -eq 'PASS') { 'relay path observed in diagnostics' } else { 'not applicable to this scenario' }
+    dcutr_direct_upgrade = if ($checks.dcutr_direct_upgrade -eq 'PASS') { 'DCUtR direct upgrade observed in diagnostics' } else { 'not applicable to this scenario' }
+    nickname_conflict = 'duplicate nickname reservation was rejected'
+  }
   $bootstrap = if ($Scenario -eq 'QUIC') { $quicBootstrap } else { $tcpBootstrap }
   [ordered]@{
     schema_version = 3
@@ -51,6 +65,7 @@ function New-NetworkManifest([string]$Scenario, [string]$Path) {
     bootstrap = $bootstrap
     overall = 'PASS'
     checks = $checks
+    check_evidence = $checkEvidence
   } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding UTF8
 }
 
@@ -161,6 +176,16 @@ try {
     & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence (Join-Path $temp 'missing-soak-*.json') -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
+  $missingEvidencePath = Join-Path $temp 'network-test-tcp-missing-evidence.json'
+  $missingEvidence = Get-Content -LiteralPath $networkPaths[0] -Raw | ConvertFrom-Json
+  $missingEvidence.check_evidence.PSObject.Properties.Remove('world_a_to_b')
+  $missingEvidence | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $missingEvidencePath -Encoding UTF8
+  $evidencePoorPaths = @($networkPaths)
+  $evidencePoorPaths[0] = $missingEvidencePath
+  Assert-Fails 'evidence-free PASS rejection' 'missing concrete check_evidence' {
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $evidencePoorPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+  }
+
   $originalNodeBytes = [IO.File]::ReadAllBytes($nodePath)
   $tamperedNodeBytes = [byte[]]::new($originalNodeBytes.Length + 1)
   [Array]::Copy($originalNodeBytes, $tamperedNodeBytes, $originalNodeBytes.Length)
@@ -195,7 +220,7 @@ try {
     & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $mixedSessionPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
-  Write-Host 'OK - packaged Node bytes, exact BUILD_INFO provenance, one coherent test session, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
+  Write-Host 'OK - packaged Node bytes, exact BUILD_INFO provenance, one coherent test session, evidence-rich PASS checks, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

@@ -45,6 +45,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-network-evidence-gate.ps1
 
+      - name: Network report editor self-tests
+        shell: pwsh
+        run: .\scripts\test-network-report-editor.ps1
+
       - name: Internet bootstrap precheck self-tests
         shell: pwsh
         run: .\scripts\test-internet-precheck.ps1
@@ -119,6 +123,7 @@ jobs:
             'public-node.ps1',
             'check-public-node-readiness.ps1',
             'new-network-test-report.ps1',
+            'set-network-test-result.ps1',
             'validate-network-test-report.ps1',
             'check-node-health.ps1',
             'collect-node-soak.ps1',

@@ -4,7 +4,7 @@ This document defines the minimum test set required before closing the first rel
 
 ## 1. Local validation
 
-On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release gate, network-evidence self-tests, strict bootstrap-precheck self-tests, public-Node deployment/readiness self-tests, Node-health self-tests, Node-soak self-tests, project/localization audit, deterministic `npm ci`, TypeScript/Vite build, a locked Rust metadata check, Rust all-target tests and Rust checks for both the application and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`, and pull requests reproduce the production Windows packaging/verification path before merge.
+On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release gate, network-evidence self-tests, network-report-editor self-tests, strict bootstrap-precheck self-tests, public-Node deployment/readiness self-tests, Node-health self-tests, Node-soak validator/collector self-tests, project/localization audit, deterministic `npm ci`, TypeScript/Vite build, a locked Rust metadata check, Rust all-target tests and Rust checks for both the application and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`, and pull requests reproduce the production Windows packaging/verification path before merge.
 
 ## 2. LAN baseline
 
@@ -47,7 +47,7 @@ Before distributing the bootstrap addresses to cross-country testers, run the co
 
 This binds both advertised transports to the same host, port and Peer ID, then binds that Peer ID to the fresh Node-health version/source commit and checks TCP socket reachability. It validates QUIC multiaddr structure but intentionally does not claim a successful QUIC handshake; that evidence must come from the actual Konofix/libp2p QUIC scenario. `-SkipTcpReachability` exists for parser/fixture automation and must not be used as proof that a public Node is Internet-reachable.
 
-A single healthy snapshot is not sufficient for stable promotion. Collect a continuous Node-health history and validate it with `scripts\validate-node-soak.ps1`; see `docs\NODE_SOAK.md`. Schema-v2 Node health carries the exact source commit, and the promotion gate requires that soak history to use the same Node version, exact source commit and bootstrap Peer ID as the real-network evidence.
+A single healthy snapshot is not sufficient for stable promotion. Use `scripts\collect-node-soak.ps1` to capture only health snapshots that pass the strict health validator, then validate the resulting history with `scripts\validate-node-soak.ps1`; see `docs\NODE_SOAK.md`. Schema-v2 Node health carries the exact source commit, and the promotion gate requires that soak history to use the same Node version, exact source commit and bootstrap Peer ID as the real-network evidence.
 
 ## 4. Bootstrap precheck
 
@@ -77,6 +77,18 @@ For Internet scenarios use schema-v3 endpoint metadata. Run the generator from t
 ```
 
 If `BUILD_INFO.json` and Git metadata are unavailable, the generator fails closed instead of creating ambiguous release evidence; `-SourceCommit <40-character SHA>` can be supplied explicitly when the exact verified commit is known.
+
+Do not hand-edit JSON and Markdown independently. Record each observed check with the bundled editor; it updates the authoritative schema-v3 JSON, stores a short per-check evidence note, recomputes `overall`, and regenerates the matching Markdown report:
+
+```powershell
+.\scripts\set-network-test-result.ps1 `
+  -Manifest .\test-results\network-test-cgnat-YYYYMMDD-HHMMSS.json `
+  -Check world_a_to_b `
+  -Result PASS `
+  -Evidence "Message ID/UTC recorded on PC-B"
+```
+
+Once every promotion-critical check for the scenario has passed, use `-Finalize` on the last update (or repeat the last PASS update). Finalization runs the schema-v3 validator before replacing the source files. Previously recorded PASS/FAIL/N/A evidence cannot be changed to a different result unless `-AllowOverwrite` is supplied explicitly, which makes accidental evidence loss harder.
 
 Internet reports are rejected at creation time if countries or network/operator identifiers are missing, countries match, networks match, the two endpoint identifiers normalize to the same value, or the source commit cannot be established. The generated JSON is schema v3. After recording results, validate the evidence set with:
 

@@ -20,6 +20,9 @@ Write-Host "Cargo: $(cargo --version)"
 $root = Split-Path $PSScriptRoot -Parent
 Push-Location $root
 try {
+  if (-not (Test-Path 'package-lock.json' -PathType Leaf)) { throw 'Committed package-lock.json is missing.' }
+  if (-not (Test-Path 'src-tauri\Cargo.lock' -PathType Leaf)) { throw 'Committed src-tauri/Cargo.lock is missing.' }
+
   Write-Host 'Release metadata gate...' -ForegroundColor Yellow
   & '.\scripts\release-gate.ps1'
 
@@ -50,17 +53,20 @@ try {
   npm run build
   if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'Rust all-target tests...' -ForegroundColor Yellow
-  cargo test --manifest-path src-tauri/Cargo.toml --all-targets
-  if ($LASTEXITCODE -ne 0) { throw "cargo test failed with exit code $LASTEXITCODE." }
+  Write-Host 'Rust all-target tests (locked)...' -ForegroundColor Yellow
+  cargo test --manifest-path src-tauri/Cargo.toml --all-targets --locked
+  if ($LASTEXITCODE -ne 0) { throw "cargo test --locked failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'Rust checks: application + Konofix Node...' -ForegroundColor Yellow
-  cargo check --manifest-path src-tauri/Cargo.toml
-  if ($LASTEXITCODE -ne 0) { throw "cargo check failed with exit code $LASTEXITCODE." }
-  cargo check --manifest-path src-tauri/Cargo.toml --bin konofix-node
-  if ($LASTEXITCODE -ne 0) { throw "cargo check --bin konofix-node failed with exit code $LASTEXITCODE." }
+  Write-Host 'Rust checks: application + Konofix Node (locked)...' -ForegroundColor Yellow
+  cargo check --manifest-path src-tauri/Cargo.toml --locked
+  if ($LASTEXITCODE -ne 0) { throw "cargo check --locked failed with exit code $LASTEXITCODE." }
+  cargo check --manifest-path src-tauri/Cargo.toml --bin konofix-node --locked
+  if ($LASTEXITCODE -ne 0) { throw "cargo check --bin konofix-node --locked failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'OK - local preflight matches CI gates, public-Node/bootstrap validation, deterministic frontend install, frontend build, Rust tests and Node checks.' -ForegroundColor Green
+  git diff --exit-code -- package-lock.json src-tauri/Cargo.lock
+  if ($LASTEXITCODE -ne 0) { throw 'Checks modified a committed dependency lockfile.' }
+
+  Write-Host 'OK - local preflight matches CI gates, public-Node/bootstrap validation, deterministic frontend/Rust dependency locks, frontend build, Rust tests and Node checks.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

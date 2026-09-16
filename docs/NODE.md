@@ -13,6 +13,8 @@
 - persistent Peer ID across restarts
 - explicit identity-file location for service/VPS deployments
 - fail-closed identity loading: an unreadable or corrupted existing key is never silently replaced
+- Node-level identity/health/executable path-collision protection even when the deployment launcher is bypassed
+- unique create-new temporary health snapshots with durable writes and cleanup on failure
 - automatic generation of ready-to-use public multiaddresses
 - periodic operational status lines with uptime and connected-peer count
 - optional metadata-only JSON health snapshot for supervisors and monitoring
@@ -74,6 +76,8 @@ If `--identity-file` is omitted, Konofix keeps the compatibility default `%LOCAL
 
 Identity handling is deliberately fail-closed. If an existing identity file cannot be read or decoded, startup stops with an error instead of generating a replacement key. This prevents a damaged file, permission problem, or operator mistake from silently changing the public Node Peer ID and invalidating bootstrap/soak evidence. Back up the identity file and protect it as service state; do not publish or share its contents.
 
+The raw Node independently checks state-path separation in addition to the PowerShell deployment preflight. Identity and health paths must not resolve to the same file, including aliases that become visible after the identity file is created, and neither state path may resolve to the running executable. These checks are performed before the first health write, so a malformed manual command cannot turn telemetry into an identity-key or executable overwrite.
+
 The default status interval is 60 seconds. It can be changed to any value of 10 seconds or more:
 
 ```powershell
@@ -111,7 +115,9 @@ The file is refreshed on every status interval and contains only operational met
 
 CI/repository builds embed the exact 40-character source commit used to produce the Node. A local source tree without usable Git metadata may report `source_commit` as `unknown`; that is accepted for ordinary local health monitoring but cannot satisfy a stable-promotion commit pin.
 
-On a clean Ctrl+C shutdown, `status` is changed to `stopped`. Monitoring should treat an old `timestamp_unix` as a stale or unhealthy process. The snapshot is written through a temporary file before replacement so readers do not normally observe partially written JSON.
+When `--health-file` is supplied, publishing the initial snapshot is part of startup: if the directory cannot be created, the temporary file cannot be written/synced, or the snapshot cannot be published, startup fails instead of silently running without the monitoring evidence the operator requested. Later periodic updates remain observable warnings so a transient monitoring-storage failure does not unnecessarily terminate a healthy network service.
+
+Health updates use a unique create-new temporary file in the destination directory, write and sync the complete JSON, then replace the visible snapshot. The temporary name includes the process ID and a high-resolution nonce instead of using a predictable fixed `.tmp` path, and failed writes are cleaned up. This avoids collisions with custom state files and prevents the writer from truncating an unrelated file. On a clean Ctrl+C shutdown, `status` is changed to `stopped`. Monitoring should treat an old `timestamp_unix` as a stale or unhealthy process.
 
 Konofix includes a strict health validator suitable for Task Scheduler, a VPS supervisor, or an external monitoring job:
 

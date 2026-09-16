@@ -21,7 +21,7 @@
 - added a roadmap-backed README progress bar checked by CI,
 - configured per-ref Windows CI concurrency with superseded-run cancellation,
 - reduced GitHub Actions token exposure by isolating `contents: write` to the post-build release-publication job,
-- switched Windows CI frontend dependency installation from `npm install` to lockfile-enforcing `npm ci`, and enabled the setup-node npm cache; CI now fails instead of silently resolving a dependency graph that disagrees with `package-lock.json`,
+- attempted lockfile-enforced npm CI, detected that the repository does not yet contain `package-lock.json`, and restored the green-compatible install path instead of leaving Windows CI permanently blocked; deterministic npm installs remain pending until a lockfile is committed,
 - expanded cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1

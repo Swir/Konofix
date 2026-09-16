@@ -29,17 +29,24 @@ jobs:
           toolchain: stable
           components: rustfmt
 
+      - name: Prepare isolated Node lockfile
+        shell: bash
+        run: cp src-tauri/Cargo.lock node-linux/Cargo.lock
+
       - name: Locked Rust metadata
-        run: cargo metadata --locked --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 >/dev/null
+        run: cargo metadata --locked --manifest-path node-linux/Cargo.toml --no-deps --format-version 1 >/dev/null
 
       - name: Rust format check
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+        shell: bash
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo fmt --manifest-path node-linux/Cargo.toml -- --check
 
       - name: Headless dependency gate
         shell: bash
         run: |
           set -euo pipefail
-          cargo tree --locked --manifest-path src-tauri/Cargo.toml --target x86_64-unknown-linux-gnu --edges normal,build > node-linux-deps.txt
+          cargo tree --locked --manifest-path node-linux/Cargo.toml --target x86_64-unknown-linux-gnu --edges normal,build > node-linux-deps.txt
           if grep -E '(^|[[:space:]])(tauri|tauri-build|rfd) v' node-linux-deps.txt; then
             echo 'Linux Node dependency graph unexpectedly contains desktop GUI dependencies.' >&2
             grep -E '(^|[[:space:]])(tauri|tauri-build|rfd) v' node-linux-deps.txt >&2 || true
@@ -47,18 +54,18 @@ jobs:
           fi
 
       - name: Konofix Node tests
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --bin konofix-node
+        run: cargo test --locked --manifest-path node-linux/Cargo.toml --bin konofix-node
 
       - name: Build release Linux Node
         env:
           GITHUB_SHA: ${{ github.sha }}
-        run: cargo build --locked --manifest-path src-tauri/Cargo.toml --release --bin konofix-node
+        run: cargo build --locked --manifest-path node-linux/Cargo.toml --release --bin konofix-node
 
       - name: Linux Node smoke test
         shell: bash
         run: |
           set -euo pipefail
-          node_binary='src-tauri/target/release/konofix-node'
+          node_binary='node-linux/target/release/konofix-node'
           test -x "$node_binary"
           "$node_binary" --help | grep -F 'Konofix Node 0.4.2'
           "$node_binary" --help | grep -F -- '--identity-file'
@@ -74,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifact-linux/scripts artifact-linux/docs
-          install -m 0755 src-tauri/target/release/konofix-node artifact-linux/konofix-node
+          install -m 0755 node-linux/target/release/konofix-node artifact-linux/konofix-node
           install -m 0755 scripts/install-public-node-linux.sh artifact-linux/scripts/install-public-node-linux.sh
           cp docs/NODE.md artifact-linux/docs/NODE.md
           cp docs/NODE_SOAK.md artifact-linux/docs/NODE_SOAK.md

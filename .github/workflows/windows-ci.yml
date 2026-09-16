@@ -48,6 +48,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-internet-precheck.ps1
 
+      - name: Public Node deployment self-tests
+        shell: pwsh
+        run: .\scripts\test-public-node.ps1
+
       - name: Node health validator self-tests
         shell: pwsh
         run: .\scripts\test-node-health.ps1
@@ -75,15 +79,12 @@ jobs:
         run: cargo check --manifest-path src-tauri/Cargo.toml --bin konofix-node
 
       - name: Build production Windows app
-        if: github.event_name == 'push'
         run: npm run tauri build
 
       - name: Build production Konofix Node
-        if: github.event_name == 'push'
         run: cargo build --manifest-path src-tauri/Cargo.toml --release --bin konofix-node
 
       - name: Stage Windows test bundle
-        if: github.event_name == 'push'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -100,6 +101,7 @@ jobs:
 
           $testTools = @(
             'internet-test.ps1',
+            'public-node.ps1',
             'new-network-test-report.ps1',
             'validate-network-test-report.ps1',
             'check-node-health.ps1',
@@ -167,7 +169,6 @@ jobs:
           Get-ChildItem artifact -Recurse | Select-Object FullName, Length
 
       - name: Create release ZIP and checksum
-        if: github.event_name == 'push'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -179,7 +180,6 @@ jobs:
           Write-Host "SHA256: $hash"
 
       - name: Verify release artifact integrity
-        if: github.event_name == 'push'
         shell: pwsh
         run: .\scripts\verify-release.ps1
 

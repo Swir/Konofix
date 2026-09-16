@@ -33,6 +33,7 @@ try {
 
   $toolRelativePaths = @(
     'scripts\internet-test.ps1',
+    'scripts\public-node.ps1',
     'scripts\new-network-test-report.ps1',
     'scripts\validate-network-test-report.ps1',
     'scripts\check-node-health.ps1',

@@ -11,15 +11,42 @@
 - GossipSub router for `#WORLD`
 - TCP + QUIC
 - persistent Peer ID across restarts
+- explicit identity-file location for service/VPS deployments
+- fail-closed identity loading: an unreadable or corrupted existing key is never silently replaced
 - automatic generation of ready-to-use public multiaddresses
 - periodic operational status lines with uptime and connected-peer count
 - optional metadata-only JSON health snapshot for supervisors and monitoring
 - exact source-commit provenance embedded into Node health snapshots
 - IPv4, IPv6, and generic DNS bootstrap address generation
+- fail-closed Windows deployment preflight with deterministic JSON output for automation
 
 ## Windows
 
-Run `build-node.bat`, then start:
+Run `build-node.bat`, then start from the source tree, or use the `konofix-node.exe` included in a verified Windows test archive.
+
+### Recommended public deployment preflight
+
+The extracted Windows test archive includes `scripts\public-node.ps1`. Run it before exposing a Node. It validates the host and state paths without starting the process:
+
+```powershell
+.\scripts\public-node.ps1 `
+  -PublicHost node.yourdomain.com `
+  -StateDirectory C:\Konofix `
+  -RequireDnsResolution
+```
+
+Then launch the same validated configuration:
+
+```powershell
+.\scripts\public-node.ps1 `
+  -PublicHost node.yourdomain.com `
+  -StateDirectory C:\Konofix `
+  -Start
+```
+
+The preflight rejects private, loopback, link-local, CGNAT, documentation and other special-use IP literals by default. It also rejects local/single-label/reserved DNS names, refuses identity/health path collisions, pins an explicit persistent identity path and resolves DNS before `-Start`. `-AllowPrivateAddress` is available only for controlled LAN/lab tests. Use `-AsJson` to obtain normalized launch metadata and bootstrap address templates without starting the Node.
+
+The raw binary remains available for manual operation:
 
 ```powershell
 src-tauri\target\release\konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP
@@ -28,13 +55,29 @@ src-tauri\target\release\konofix-node.exe --port 45555 --public-host YOUR_PUBLIC
 A public DNS name is also supported:
 
 ```powershell
-konofix-node.exe --port 45555 --public-host node.example.com
+konofix-node.exe --port 45555 --public-host node.yourdomain.com
 ```
+
+### Stable public identity
+
+A public/community Node should use an explicit identity path on persistent storage. The Peer ID is derived from this key, so preserving the file preserves bootstrap identity across service restarts and redeployments:
+
+```powershell
+konofix-node.exe `
+  --port 45555 `
+  --public-host node.yourdomain.com `
+  --identity-file C:\Konofix\node-identity.key `
+  --health-file C:\Konofix\health.json
+```
+
+If `--identity-file` is omitted, Konofix keeps the compatibility default `%LOCALAPPDATA%\Konofix Chat\node-identity.key`. The Node prints the identity path it actually uses at startup.
+
+Identity handling is deliberately fail-closed. If an existing identity file cannot be read or decoded, startup stops with an error instead of generating a replacement key. This prevents a damaged file, permission problem, or operator mistake from silently changing the public Node Peer ID and invalidating bootstrap/soak evidence. Back up the identity file and protect it as service state; do not publish or share its contents.
 
 The default status interval is 60 seconds. It can be changed to any value of 10 seconds or more:
 
 ```powershell
-konofix-node.exe --port 45555 --public-host node.example.com --status-interval 30
+konofix-node.exe --port 45555 --public-host node.yourdomain.com --status-interval 30
 ```
 
 Status output is intentionally metadata-only:
@@ -48,7 +91,7 @@ It does not include chat messages, room contents, filenames, or transferred data
 For service supervision or a monitoring agent, enable a JSON health snapshot:
 
 ```powershell
-konofix-node.exe --port 45555 --public-host node.example.com --status-interval 30 --health-file C:\Konofix\health.json
+konofix-node.exe --port 45555 --public-host node.yourdomain.com --status-interval 30 --health-file C:\Konofix\health.json
 ```
 
 The file is refreshed on every status interval and contains only operational metadata:
@@ -94,7 +137,7 @@ Open/forward these ports in the router and firewall:
 - TCP 45555
 - UDP 45555
 
-Do not replace or delete `%LOCALAPPDATA%\Konofix Chat\node-identity.key` if the bootstrap address should remain stable. Deleting the file generates a new Peer ID.
+Do not replace or delete the configured identity file if the bootstrap address should remain stable. Deleting a missing/default identity is the only situation in which the Node intentionally creates a new Peer ID; an existing malformed identity fails startup instead of being overwritten.
 
 ## Ready bootstrap address
 
@@ -110,7 +153,7 @@ For DNS names, the Node uses the generic `/dns/...` multiaddr form so the hostna
 
 Paste the `RECOMMENDED` address into **Network settings → Bootstrap**. The client stores it locally.
 
-Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, private IPv4 addresses, and IPv6 unique-local/link-local addresses are not global bootstrap addresses. The Node prints a warning when `--public-host` is an obviously non-public IP literal.
+Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, private IPv4 addresses, and IPv6 unique-local/link-local addresses are not global bootstrap addresses. The Node prints a warning when `--public-host` is an obviously non-public IP literal; the recommended `public-node.ps1` deployment preflight is stricter and rejects those configurations before launch unless the explicit lab override is supplied.
 
 A public IP or DNS name plus reachable TCP and UDP ports are required for a proper Internet test.
 
@@ -118,7 +161,7 @@ A public IP or DNS name plus reachable TCP and UDP ports are required for a prop
 
 A small VPS only needs one Konofix Node process. The long-term goal is to run several independent nodes across different countries and providers so one outage cannot disconnect the entire network.
 
-For a public test node, keep the process supervised by the operating system or a service manager, preserve the identity file, monitor the periodic status line or JSON health snapshot, and verify both TCP and UDP/QUIC reachability from an external network.
+For a public test node, keep the process supervised by the operating system or a service manager, place `--identity-file` on persistent storage, back that file up securely, monitor the periodic status line or JSON health snapshot, and verify both TCP and UDP/QUIC reachability from an external network.
 
 A basic health check can verify that:
 

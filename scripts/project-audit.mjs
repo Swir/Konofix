@@ -64,6 +64,29 @@ if (fs.existsSync(workflowDir)) {
   }
 }
 
+// Keep the npm install policy synchronized with the repository's actual lockfile state.
+// This prevents CI from silently returning to the broken `npm ci`/npm-cache configuration
+// before a real package-lock.json exists.
+const windowsWorkflowPath = '.github/workflows/windows-ci.yml';
+if (fs.existsSync(path.join(root, windowsWorkflowPath))) {
+  const workflow = read(windowsWorkflowPath);
+  const hasNpmLock = fs.existsSync(path.join(root, 'package-lock.json'));
+  const usesNpmCi = /\brun:\s*npm ci(?:\s|$)/m.test(workflow);
+  const usesNpmInstall = /\brun:\s*npm install(?:\s|$)/m.test(workflow);
+  const enablesNpmCache = /^\s*cache:\s*['"]?npm['"]?\s*$/m.test(workflow);
+
+  if (hasNpmLock) {
+    if (!usesNpmCi) fail('package-lock.json exists, but Windows CI is not using npm ci.');
+    if (usesNpmInstall) fail('package-lock.json exists, but Windows CI still contains npm install.');
+    console.log('Frontend dependency policy: lockfile present and npm ci enforced.');
+  } else {
+    if (usesNpmCi) fail('Windows CI uses npm ci without a committed package-lock.json.');
+    if (!usesNpmInstall) fail('Windows CI must use npm install until package-lock.json is committed.');
+    if (enablesNpmCache) fail('Windows CI must not enable setup-node npm cache without package-lock.json.');
+    console.log('Frontend dependency policy: no lockfile; compatible npm install path enforced.');
+  }
+}
+
 const main = read('src/main.ts');
 const polishLiteralCount = (main.match(/[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/g) || []).length;
 console.log(`Runtime localization migration indicator: ${polishLiteralCount} Polish-specific characters remain in src/main.ts.`);

@@ -7,6 +7,7 @@ param(
     [string]$ExpectedNodeVersion = '',
     [string]$ExpectedSourceCommit = '',
     [switch]$RequireSingleBootstrapPeer,
+    [switch]$RequireSingleCampaign,
     [int64]$MaxManifestBytes = 262144
 )
 
@@ -81,8 +82,6 @@ function Convert-StrictManifestJson {
     try {
         $convertCommand = Get-Command ConvertFrom-Json -ErrorAction Stop
         if ($convertCommand.Parameters.ContainsKey('DateKind')) {
-            # PowerShell 7.5+ otherwise converts ISO-8601 JSON strings to DateTime values,
-            # which destroys the original JSON token type before our strict schema check.
             return $Raw | ConvertFrom-Json -DateKind String
         }
         return $Raw | ConvertFrom-Json
@@ -93,6 +92,11 @@ function Convert-StrictManifestJson {
 
 function Test-OrdinalEqual([string]$Left, [string]$Right) {
     return [string]::Equals($Left, $Right, [System.StringComparison]::Ordinal)
+}
+
+function Get-NormalizedDistinctCount {
+    param([object[]]$Values)
+    return @($Values | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } | Sort-Object -Unique).Count
 }
 
 if ($MaxManifestBytes -lt 1024 -or $MaxManifestBytes -gt 1048576) { throw 'MaxManifestBytes must be between 1024 and 1048576.' }
@@ -116,8 +120,6 @@ foreach ($path in $Manifest) {
     $data = Convert-StrictManifestJson -Raw $raw -Path $path
     if ($data -isnot [pscustomobject]) { throw "Network evidence root must be a JSON object: $path" }
 
-    # Keep an explicit schema-v3 fast-fail for the project audit, then apply strict token typing below.
-    # A JSON string "3" can pass this compatibility comparison, but Get-StrictJsonInt64 rejects it.
     if ($data.schema_version -ne 3) { throw "Unsupported schema_version in ${path}: $($data.schema_version). Regenerate evidence with the current tool." }
     $schema = Get-StrictJsonInt64 -Value (Get-RequiredProperty $data 'schema_version' $path) -Field 'schema_version'
     if ($schema -ne 3) { throw "Unsupported schema_version in ${path}: $schema. Regenerate evidence with the current tool." }
@@ -131,6 +133,15 @@ foreach ($path in $Manifest) {
     $clientB = Get-StrictJsonString -Value (Get-RequiredProperty $data 'client_b' $path) -Field 'client_b'
     $bootstrap = Get-StrictJsonString -Value (Get-RequiredProperty $data 'bootstrap' $path) -Field 'bootstrap'
     $overall = Get-StrictJsonString -Value (Get-RequiredProperty $data 'overall' $path) -Field 'overall'
+
+    $campaignId = ''
+    $campaignProperty = $data.PSObject.Properties['campaign_id']
+    if ($null -ne $campaignProperty -and $null -ne $campaignProperty.Value) {
+        $campaignId = Get-StrictJsonString -Value $campaignProperty.Value -Field 'campaign_id'
+        if ($campaignId -cnotmatch '^[0-9a-f]{32}$') { throw "Invalid campaign_id in $path. Use a canonical lowercase 32-character hexadecimal ID." }
+    } elseif ($RequireSingleCampaign) {
+        throw "Stable promotion evidence is missing campaign_id in $path. Regenerate the report with the current campaign-aware tooling."
+    }
 
     if ($allowed -cnotcontains $scenario) { throw "Invalid scenario in ${path}: $scenario" }
     if ($sourceCommit -cnotmatch '^[0-9a-f]{40}$') { throw "Missing or invalid source_commit in $path" }
@@ -149,6 +160,10 @@ foreach ($path in $Manifest) {
     if ($age.TotalMinutes -lt -5) { throw "Evidence timestamp is in the future: $path" }
     if ($MaxAgeDays -gt 0 -and $age.TotalDays -gt $MaxAgeDays) { throw "Evidence is older than $MaxAgeDays days: $path" }
 
+    $clientACountry = ''
+    $clientBCountry = ''
+    $clientANetwork = ''
+    $clientBNetwork = ''
     if ($scenario -ne 'LAN') {
         $clientACountry = Get-StrictJsonString -Value (Get-RequiredProperty $data 'client_a_country' $path) -Field 'client_a_country'
         $clientBCountry = Get-StrictJsonString -Value (Get-RequiredProperty $data 'client_b_country' $path) -Field 'client_b_country'
@@ -198,6 +213,13 @@ foreach ($path in $Manifest) {
         build_version = $buildVersion
         node_version = $nodeVersion
         source_commit = $sourceCommit
+        campaign_id = $campaignId
+        client_a = $clientA
+        client_b = $clientB
+        client_a_country = $clientACountry
+        client_b_country = $clientBCountry
+        client_a_network = $clientANetwork
+        client_b_network = $clientBNetwork
         bootstrap = $bootstrap
         overall = $overall
     }
@@ -217,10 +239,24 @@ if ($sourceCommits.Count -ne 1) { throw "Evidence mixes source commits: $($sourc
 $bootstrapPeerIds = @($reports | ForEach-Object { if ($_.bootstrap -cmatch '/p2p/([^/]+)$') { $Matches[1] } } | Sort-Object -Unique -CaseSensitive)
 if ($RequireSingleBootstrapPeer -and $bootstrapPeerIds.Count -ne 1) { throw "Promotion evidence must target one stable public Node Peer ID; found: $($bootstrapPeerIds -join ', ')" }
 
+$campaignIds = @($reports | Where-Object { -not [string]::IsNullOrWhiteSpace($_.campaign_id) } | ForEach-Object { $_.campaign_id } | Sort-Object -Unique -CaseSensitive)
+if ($RequireSingleCampaign) {
+    if ($reports.Count -eq 0 -or $campaignIds.Count -ne 1 -or @($reports | Where-Object { [string]::IsNullOrWhiteSpace($_.campaign_id) }).Count -ne 0) {
+        throw "Stable promotion evidence must belong to exactly one campaign_id; found: $($campaignIds -join ', ')"
+    }
+    if ((Get-NormalizedDistinctCount @($reports.client_a)) -ne 1) { throw 'Stable promotion campaign mixes Client A endpoint identities.' }
+    if ((Get-NormalizedDistinctCount @($reports.client_b)) -ne 1) { throw 'Stable promotion campaign mixes Client B endpoint identities.' }
+    if ((Get-NormalizedDistinctCount @($reports.client_a_country)) -ne 1) { throw 'Stable promotion campaign mixes Client A countries.' }
+    if ((Get-NormalizedDistinctCount @($reports.client_b_country)) -ne 1) { throw 'Stable promotion campaign mixes Client B countries.' }
+    if ((Get-NormalizedDistinctCount @($reports.client_a_network)) -ne 1) { throw 'Stable promotion campaign mixes Client A networks/operators.' }
+    if ((Get-NormalizedDistinctCount @($reports.client_b_network)) -ne 1) { throw 'Stable promotion campaign mixes Client B networks/operators.' }
+}
+
 Write-Host 'Network evidence gate passed.'
 Write-Host "Client build: $($versions[0])"
 Write-Host "Node build: $($nodeVersions[0])"
 Write-Host "Source commit: $($sourceCommits[0])"
+if ($campaignIds.Count -gt 0) { Write-Host "Campaign ID: $($campaignIds -join ', ')" }
 Write-Host "Passing manifests: $($reports.Count)"
 Write-Host "Scenarios: $((@($reports.scenario | Sort-Object -Unique -CaseSensitive)) -join ', ')"
 if ($bootstrapPeerIds.Count -gt 0) { Write-Host "Bootstrap Peer IDs: $($bootstrapPeerIds -join ', ')" }

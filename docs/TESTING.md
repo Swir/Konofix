@@ -4,7 +4,7 @@ This document defines the minimum test set required before closing the first rel
 
 ## 1. Local validation
 
-On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release gate, network-evidence self-tests, network-report-editor self-tests, strict bootstrap-precheck self-tests, public-Node deployment/readiness self-tests, Node-health self-tests, Node-soak validator/collector self-tests, project/localization audit, deterministic `npm ci`, TypeScript/Vite build, a locked Rust metadata check, Rust all-target tests and Rust checks for both the application and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`, and pull requests reproduce the production Windows packaging/verification path before merge.
+On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release gate, network-evidence self-tests, exact-build promotion-evidence self-tests, network-report-editor self-tests, strict bootstrap-precheck self-tests, public-Node deployment/startup-task/readiness self-tests, Node-health self-tests, Node-soak validator/collector self-tests, project/localization audit, deterministic `npm ci`, TypeScript/Vite build, a locked Rust metadata check, Rust all-target tests and Rust checks for both the application and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`, and pull requests reproduce the production Windows packaging/verification path before merge.
 
 ## 2. LAN baseline
 
@@ -32,6 +32,26 @@ Then start the same configuration:
 
 The preflight rejects private, CGNAT, documentation and other special-use IP literals by default, rejects local/single-label/reserved DNS names, prevents identity/health path collisions, and passes an explicit persistent identity path to the Node. Use `-AllowPrivateAddress` only for controlled lab tests. The raw `konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP_OR_DNS` path remains available for manual operation.
 
+For a Windows public Node that must survive logoff and reboot, preview then install the bundled supervised startup task from an elevated shell:
+
+```powershell
+.\scripts\install-public-node-task.ps1 `
+  -PublicHost node.yourdomain.com `
+  -StateDirectory C:\ProgramData\KonofixNode `
+  -RequireDnsResolution `
+  -ConfigureFirewall
+
+.\scripts\install-public-node-task.ps1 `
+  -PublicHost node.yourdomain.com `
+  -StateDirectory C:\ProgramData\KonofixNode `
+  -RequireDnsResolution `
+  -ConfigureFirewall `
+  -Install `
+  -StartNow
+```
+
+The task runs as SYSTEM at startup, uses a persistent staged Node/launcher, retries failures, and optionally creates only the scoped inbound TCP/UDP firewall rules. `-Uninstall` removes the task/firewall group while deliberately preserving the Node identity and health state.
+
 Expose TCP and UDP 45555. Preserve the configured identity file for a stable Peer ID. Validate enabled health snapshots with `.\scripts\check-node-health.ps1 -Path "C:\Konofix\node-health.json"`; use `-RequirePeer` once clients should be connected.
 
 Before distributing the bootstrap addresses to cross-country testers, run the combined readiness check from a machine that should be able to reach the Node:
@@ -53,7 +73,7 @@ A single healthy snapshot is not sufficient for stable promotion. Use `scripts\c
 
 On every test PC run `.\scripts\internet-test.ps1 -Bootstrap "/ip4/ADDRESS/tcp/45555/p2p/PEER_ID"`. DNS and IPv6 multiaddresses are supported. The precheck uses strict multiaddr parsing: it rejects malformed host/port values, unsupported transports, missing/invalid Peer IDs, extra path segments, UDP addresses that are not explicit `quic-v1`, and TCP addresses carrying QUIC-only segments. TCP reachability must succeed before application-level testing; UDP/QUIC is structurally validated by this script and then verified through libp2p during the real test.
 
-For parser-only validation without touching the network, use `-ValidateOnly`. `-AsJson` prints the normalized parsed address for automation. The Windows test archive includes this script, `public-node.ps1`, `check-public-node-readiness.ps1`, and the evidence/health/soak tools under its `scripts` directory, so a tester or Node operator does not need a source checkout to run the operational test flow.
+For parser-only validation without touching the network, use `-ValidateOnly`. `-AsJson` prints the normalized parsed address for automation. The Windows test archive includes this script, `public-node.ps1`, `install-public-node-task.ps1`, `check-public-node-readiness.ps1`, `check-promotion-evidence.ps1`, and the evidence/health/soak tools under its `scripts` directory, so a tester or Node operator does not need a source checkout to run the operational test flow.
 
 ## 5. Cross-country test
 
@@ -98,6 +118,17 @@ Internet reports are rejected at creation time if countries or network/operator 
 
 The promotion gate requires one consistent client/Node build, one exact source commit, fresh evidence (30 days by default), PASS for all core communication/resilience checks, Relay observation in Relay and CGNAT evidence, DCUtR upgrade in DCUtR evidence, and passing manifests for TCP, QUIC, Relay, DCUtR and CGNAT. Use `-MaxAgeDays` to tighten the freshness window. `overall=PASS` by itself is intentionally insufficient.
 
+Once all five manifests and the Node soak history are complete, bind them to the exact Windows artifact in one command:
+
+```powershell
+.\scripts\check-promotion-evidence.ps1 `
+  -BuildInfoPath .\BUILD_INFO.json `
+  -NetworkEvidence .\test-results\tcp.json,.\test-results\quic.json,.\test-results\relay.json,.\test-results\dcutr.json,.\test-results\cgnat.json `
+  -NodeSoakEvidence .\node-soak\*.json
+```
+
+This preflight first validates the exact `BUILD_INFO.json` version/source commit, then validates every required schema-v3 scenario against that build, extracts the single validated bootstrap Peer ID, and finally requires the Node-soak history to match that same version, source commit and Peer ID while proving peer activity. It cannot replace the real tests; it only prevents mismatched evidence from being promoted after those tests are complete.
+
 Never put identity keys, access tokens, private addresses or other secrets in reports.
 
 ## 8. Nickname reservation test
@@ -114,6 +145,6 @@ A cross-country GitHub test release is build-ready only with green Windows CI, p
 
 Every Windows CI archive includes `BUILD_INFO.json`. It records the exact Git commit, project version, workflow run, SHA-256 and byte size of `konofix-node.exe`, SHA-256 and byte size of every `.exe`/`.msi` installer, hashes/sizes for the bundled operational test scripts, the exact committed frontend lockfile, and the exact committed Rust lockfile. The Node binary embeds the same source commit into its health telemetry. `scripts\verify-release.ps1` extracts the ZIP and cross-checks packaged metadata and both dependency lockfiles against the committed build inputs before the artifact is uploaded.
 
-Stable promotion resolves the target commit from `-ExpectedSourceCommit`, `GITHUB_SHA`, or the clean Git working tree and passes that exact value into both network-evidence and Node-soak validation. This prevents evidence collected for an earlier `0.4.2` commit from being reused for a different `0.4.2` build.
+Stable promotion resolves the target commit from `-ExpectedSourceCommit`, `GITHUB_SHA`, or the clean Git working tree and passes that exact value into both network-evidence and Node-soak validation. The bundled `check-promotion-evidence.ps1` gives remote testers the same exact-build binding using the artifact's verified `BUILD_INFO.json`. This prevents evidence collected for an earlier `0.4.2` commit from being reused for a different `0.4.2` build.
 
 Frontend dependency resolution is deterministic through the committed `package-lock.json` and `npm ci`. Rust dependency resolution is deterministic through committed `src-tauri\Cargo.lock`; CI/local/build helpers use `--locked` validation/build commands, and release verification rejects an archive whose packaged Cargo lockfile differs from the committed build input.

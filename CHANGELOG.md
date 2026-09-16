@@ -38,7 +38,7 @@
 - fixed Windows CI #165 by making dependency-policy detection use Git-tracked lockfile state instead of an untracked `package-lock.json` created by `npm install`,
 - changed no-lockfile CI installation to `npm install --no-audit --no-fund --package-lock=false` so the build workspace cannot manufacture misleading lockfile state,
 - pinned every external GitHub Action in Windows CI to an immutable full commit SHA, disabled persisted checkout credentials, and made the project audit reject future floating Action refs,
-- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 39/44 tasks (89%),
+- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 40/45 tasks (89%),
 - made project audit recompute the active roadmap checklist and reject stale README/ROADMAP percentages or task counts,
 - added multi-snapshot public Node soak validation that rejects identity/version/source-commit drift, restarts, stale samples, monitoring gaps and inconsistent uptime cadence,
 - made stable promotion require Node soak evidence and bind that soak to the exact bootstrap Peer ID used by the validated cross-country network evidence,
@@ -46,6 +46,10 @@
 - aligned `scripts/check.ps1` with the CI preflight path so local checks now run release/network/bootstrap/health/soak gates, project audit, frontend build, Rust all-target tests and application/Node checks,
 - added machine-readable Windows artifact provenance (`BUILD_INFO.json`) with exact commit/version plus SHA-256 and sizes for the Node, Rust resolution record, bundled test tools and every installer,
 - strengthened release verification so provenance, `Cargo.lock`, Node-soak instructions, test-tool hashes and all installer hashes are cross-checked after ZIP extraction before artifact upload,
+- generated a frontend lockfile candidate inside green Windows CI and committed that exact candidate as the canonical `package-lock.json`,
+- switched Windows CI from mutable `npm install` resolution to deterministic `npm ci`, enabled setup-node caching keyed to `package-lock.json`, and removed CI-side lockfile regeneration,
+- extended project audit to validate package-lock schema/root metadata/dependency declarations and to fail if CI drifts away from the committed-lock policy,
+- added the committed frontend lockfile to `BUILD_INFO.json` provenance and release verification, including byte-size/SHA-256 checks against the repository build input,
 - expanded cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1

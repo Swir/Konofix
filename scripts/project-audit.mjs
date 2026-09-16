@@ -19,6 +19,21 @@ const isTracked = (file) => {
     return false;
   }
 };
+const assertDependencyMap = (manifestMap, lockMap, label) => {
+  const expected = manifestMap ?? {};
+  const actual = lockMap ?? {};
+  const expectedKeys = Object.keys(expected).sort();
+  const actualKeys = Object.keys(actual).sort();
+  if (JSON.stringify(expectedKeys) !== JSON.stringify(actualKeys)) {
+    fail(`package-lock.json ${label} keys do not match package.json.`);
+    return;
+  }
+  for (const name of expectedKeys) {
+    if (actual[name] !== expected[name]) {
+      fail(`package-lock.json ${label} entry for ${name} does not match package.json.`);
+    }
+  }
+};
 
 const pkg = JSON.parse(read('package.json'));
 const tauri = JSON.parse(read('src-tauri/tauri.conf.json'));
@@ -133,11 +148,36 @@ if (fs.existsSync(path.join(root, windowsWorkflowPath))) {
   const usesNpmInstall = /\brun:\s*npm install(?:\s|$)/m.test(workflow);
   const disablesGeneratedLock = /\brun:\s*npm install[^\r\n]*--package-lock=false(?:\s|$)/m.test(workflow);
   const enablesNpmCache = /^\s*cache:\s*['"]?npm['"]?\s*$/m.test(workflow);
+  const pinsNpmCacheToLock = /^\s*cache-dependency-path:\s*['"]?package-lock\.json['"]?\s*$/m.test(workflow);
+  const generatesLockCandidate = /Generate frontend lockfile candidate|--package-lock-only/.test(workflow);
 
   if (hasCommittedNpmLock) {
+    let lock;
+    try {
+      lock = JSON.parse(read('package-lock.json'));
+    } catch (error) {
+      fail(`Committed package-lock.json is invalid JSON: ${error.message}`);
+    }
+    if (lock) {
+      if (lock.lockfileVersion !== 3) fail(`package-lock.json lockfileVersion must be 3; found ${lock.lockfileVersion}.`);
+      const lockRoot = lock.packages?.[''];
+      if (!lockRoot) {
+        fail('package-lock.json is missing the root package entry.');
+      } else {
+        if (lockRoot.name !== pkg.name || lockRoot.version !== pkg.version) {
+          fail('package-lock.json root package name/version does not match package.json.');
+        }
+        assertDependencyMap(pkg.dependencies, lockRoot.dependencies, 'dependencies');
+        assertDependencyMap(pkg.devDependencies, lockRoot.devDependencies, 'devDependencies');
+      }
+    }
+
     if (!usesNpmCi) fail('A committed package-lock.json exists, but Windows CI is not using npm ci.');
     if (usesNpmInstall) fail('A committed package-lock.json exists, but Windows CI still contains npm install.');
-    console.log('Frontend dependency policy: committed lockfile present and npm ci enforced.');
+    if (!enablesNpmCache) fail('A committed package-lock.json exists, but setup-node npm caching is not enabled.');
+    if (!pinsNpmCacheToLock) fail('setup-node npm cache must use package-lock.json as cache-dependency-path.');
+    if (generatesLockCandidate) fail('Windows CI must not regenerate a frontend lockfile after package-lock.json is committed.');
+    console.log('Frontend dependency policy: committed lockfile matches package.json; npm ci and lockfile-keyed cache are enforced.');
   } else {
     if (usesNpmCi) fail('Windows CI uses npm ci without a committed package-lock.json.');
     if (!usesNpmInstall) fail('Windows CI must use npm install until package-lock.json is committed.');

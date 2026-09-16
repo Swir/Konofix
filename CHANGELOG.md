@@ -21,11 +21,14 @@
 - added a roadmap-backed README progress bar checked by CI,
 - configured per-ref Windows CI concurrency with superseded-run cancellation,
 - reduced GitHub Actions token exposure by keeping the build/test job read-only,
-- added a project-audit guard that prevents `npm ci` and setup-node npm caching unless a real `package-lock.json` is committed,
+- added a project-audit guard that prevents `npm ci` and setup-node npm caching unless a real committed `package-lock.json` exists,
 - diagnosed Windows CI #161 failing in `setup-node` because the claimed lockfile was not actually present in the repository,
-- restored the verified no-lockfile dependency path (`npm install --no-audit --no-fund`, no setup-node npm cache),
-- removed automatic GitHub Release publication from ordinary pushes so later releases cannot bypass the real public-network readiness gate,
+- restored the verified no-lockfile dependency path and removed automatic GitHub Release publication from ordinary pushes,
 - clarified that the existing `v0.4.2-test1` pre-release is a controlled evidence-gathering preview rather than proof that cross-country/CGNAT gates have passed,
+- fixed Windows CI #165 by making dependency-policy detection use Git-tracked lockfile state instead of an untracked `package-lock.json` created by `npm install`,
+- changed no-lockfile CI installation to `npm install --no-audit --no-fund --package-lock=false` so the build workspace cannot manufacture misleading lockfile state,
+- pinned every external GitHub Action in Windows CI to an immutable full commit SHA, disabled persisted checkout credentials, and made the project audit reject future floating Action refs,
+- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 37/43 tasks (86%),
 - expanded cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1

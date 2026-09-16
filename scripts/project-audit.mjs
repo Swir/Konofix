@@ -1,11 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const root = process.cwd();
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const fail = (message) => {
   console.error(`AUDIT ERROR: ${message}`);
   process.exitCode = 1;
+};
+const isTracked = (file) => {
+  try {
+    execFileSync('git', ['ls-files', '--error-unmatch', '--', file], {
+      cwd: root,
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 const pkg = JSON.parse(read('package.json'));
@@ -60,30 +72,46 @@ if (fs.existsSync(workflowDir)) {
   for (const name of fs.readdirSync(workflowDir)) {
     if (!/\.ya?ml$/i.test(name)) continue;
     const file = `.github/workflows/${name}`;
-    if (polishChars.test(read(file))) fail(`${file} contains Polish-specific characters; CI text must remain English.`);
+    const workflowText = read(file);
+    if (polishChars.test(workflowText)) fail(`${file} contains Polish-specific characters; CI text must remain English.`);
+
+    for (const match of workflowText.matchAll(/^\s*uses:\s*([^\s#]+)(?:\s+#.*)?$/gm)) {
+      const action = match[1];
+      if (action.startsWith('./') || action.startsWith('docker://')) continue;
+      const separator = action.lastIndexOf('@');
+      const actionName = separator > 0 ? action.slice(0, separator) : action;
+      const actionRef = separator > 0 ? action.slice(separator + 1) : '';
+      if (!/^[0-9a-f]{40}$/i.test(actionRef)) {
+        fail(`${file} uses floating GitHub Action ref ${action}; pin ${actionName} to a full commit SHA.`);
+      }
+    }
   }
 }
 
-// Keep the npm install policy synchronized with the repository's actual lockfile state.
-// This prevents CI from silently returning to the broken `npm ci`/npm-cache configuration
-// before a real package-lock.json exists.
+// Keep the npm install policy synchronized with the repository's committed lockfile state.
+// npm install can create an untracked package-lock.json in the CI workspace, so filesystem
+// presence alone is not evidence that a deterministic lockfile is part of the repository.
 const windowsWorkflowPath = '.github/workflows/windows-ci.yml';
 if (fs.existsSync(path.join(root, windowsWorkflowPath))) {
   const workflow = read(windowsWorkflowPath);
-  const hasNpmLock = fs.existsSync(path.join(root, 'package-lock.json'));
+  const hasCommittedNpmLock = isTracked('package-lock.json');
+  const hasWorkingNpmLock = fs.existsSync(path.join(root, 'package-lock.json'));
   const usesNpmCi = /\brun:\s*npm ci(?:\s|$)/m.test(workflow);
   const usesNpmInstall = /\brun:\s*npm install(?:\s|$)/m.test(workflow);
+  const disablesGeneratedLock = /\brun:\s*npm install[^\r\n]*--package-lock=false(?:\s|$)/m.test(workflow);
   const enablesNpmCache = /^\s*cache:\s*['"]?npm['"]?\s*$/m.test(workflow);
 
-  if (hasNpmLock) {
-    if (!usesNpmCi) fail('package-lock.json exists, but Windows CI is not using npm ci.');
-    if (usesNpmInstall) fail('package-lock.json exists, but Windows CI still contains npm install.');
-    console.log('Frontend dependency policy: lockfile present and npm ci enforced.');
+  if (hasCommittedNpmLock) {
+    if (!usesNpmCi) fail('A committed package-lock.json exists, but Windows CI is not using npm ci.');
+    if (usesNpmInstall) fail('A committed package-lock.json exists, but Windows CI still contains npm install.');
+    console.log('Frontend dependency policy: committed lockfile present and npm ci enforced.');
   } else {
     if (usesNpmCi) fail('Windows CI uses npm ci without a committed package-lock.json.');
     if (!usesNpmInstall) fail('Windows CI must use npm install until package-lock.json is committed.');
-    if (enablesNpmCache) fail('Windows CI must not enable setup-node npm cache without package-lock.json.');
-    console.log('Frontend dependency policy: no lockfile; compatible npm install path enforced.');
+    if (!disablesGeneratedLock) fail('No-lockfile Windows CI must pass --package-lock=false so npm install cannot create transient lockfile state.');
+    if (enablesNpmCache) fail('Windows CI must not enable setup-node npm cache without a committed package-lock.json.');
+    if (hasWorkingNpmLock) console.log('Frontend dependency policy: ignoring an untracked/generated package-lock.json; Git-tracked state remains authoritative.');
+    console.log('Frontend dependency policy: no committed lockfile; compatible npm install path enforced.');
   }
 }
 

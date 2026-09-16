@@ -19,17 +19,20 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
       - name: Setup Rust MSVC
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
           targets: x86_64-pc-windows-msvc
+          toolchain: stable
 
       - name: Release metadata gate
         shell: pwsh
@@ -44,7 +47,7 @@ jobs:
         run: .\scripts\test-node-health.ps1
 
       - name: Install frontend dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --no-audit --no-fund --package-lock=false
 
       - name: Project consistency and localization audit
         run: npm run audit
@@ -101,7 +104,7 @@ jobs:
 
       - name: Upload Windows test bundle
         if: github.event_name == 'push'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Konofix-Chat-0.4.2-Windows-${{ github.sha }}
           path: |

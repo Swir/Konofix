@@ -72,6 +72,15 @@ lab_unit="$(bash "$INSTALLER" \
   --print-unit)"
 grep -Fq -- '--public-host 10.0.0.5' <<<"$lab_unit" || fail 'Lab override did not preserve private host.'
 
+boundary_unit="$(bash "$INSTALLER" \
+  --public-host 1.1.1.1 \
+  --port 1024 \
+  --binary "$FAKE_NODE" \
+  --state-dir /var/lib/konofix-port-boundary \
+  --install-dir /usr/local/lib/konofix-port-boundary \
+  --print-unit)"
+grep -Fq -- '--port 1024' <<<"$boundary_unit" || fail 'Lowest supported unprivileged port was not preserved.'
+
 expect_reject 'private address without lab override' \
   --public-host 10.0.0.5 --binary "$FAKE_NODE" --state-dir /var/lib/k1 --install-dir /usr/local/lib/k1 --print-unit
 expect_reject 'CGNAT address without lab override' \
@@ -84,6 +93,8 @@ expect_reject 'single-label hostname' \
   --public-host localhost --binary "$FAKE_NODE" --state-dir /var/lib/k5 --install-dir /usr/local/lib/k5 --print-unit
 expect_reject 'port zero' \
   --public-host 1.1.1.1 --port 0 --binary "$FAKE_NODE" --state-dir /var/lib/k6 --install-dir /usr/local/lib/k6 --print-unit
+expect_reject 'privileged port below service floor' \
+  --public-host 1.1.1.1 --port 1023 --binary "$FAKE_NODE" --state-dir /var/lib/k6b --install-dir /usr/local/lib/k6b --print-unit
 expect_reject 'port above range' \
   --public-host 1.1.1.1 --port 65536 --binary "$FAKE_NODE" --state-dir /var/lib/k7 --install-dir /usr/local/lib/k7 --print-unit
 expect_reject 'status interval below minimum' \

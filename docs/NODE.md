@@ -11,6 +11,8 @@
 - GossipSub router for `#WORLD`
 - TCP + QUIC
 - persistent Peer ID across restarts
+- explicit identity-file location for service/VPS deployments
+- fail-closed identity loading: an unreadable or corrupted existing key is never silently replaced
 - automatic generation of ready-to-use public multiaddresses
 - periodic operational status lines with uptime and connected-peer count
 - optional metadata-only JSON health snapshot for supervisors and monitoring
@@ -30,6 +32,22 @@ A public DNS name is also supported:
 ```powershell
 konofix-node.exe --port 45555 --public-host node.example.com
 ```
+
+### Stable public identity
+
+A public/community Node should use an explicit identity path on persistent storage. The Peer ID is derived from this key, so preserving the file preserves bootstrap identity across service restarts and redeployments:
+
+```powershell
+konofix-node.exe `
+  --port 45555 `
+  --public-host node.example.com `
+  --identity-file C:\Konofix\node-identity.key `
+  --health-file C:\Konofix\health.json
+```
+
+If `--identity-file` is omitted, Konofix keeps the compatibility default `%LOCALAPPDATA%\Konofix Chat\node-identity.key`. The Node prints the identity path it actually uses at startup.
+
+Identity handling is deliberately fail-closed. If an existing identity file cannot be read or decoded, startup stops with an error instead of generating a replacement key. This prevents a damaged file, permission problem, or operator mistake from silently changing the public Node Peer ID and invalidating bootstrap/soak evidence. Back up the identity file and protect it as service state; do not publish or share its contents.
 
 The default status interval is 60 seconds. It can be changed to any value of 10 seconds or more:
 
@@ -94,7 +112,7 @@ Open/forward these ports in the router and firewall:
 - TCP 45555
 - UDP 45555
 
-Do not replace or delete `%LOCALAPPDATA%\Konofix Chat\node-identity.key` if the bootstrap address should remain stable. Deleting the file generates a new Peer ID.
+Do not replace or delete the configured identity file if the bootstrap address should remain stable. Deleting a missing/default identity is the only situation in which the Node intentionally creates a new Peer ID; an existing malformed identity fails startup instead of being overwritten.
 
 ## Ready bootstrap address
 
@@ -118,7 +136,7 @@ A public IP or DNS name plus reachable TCP and UDP ports are required for a prop
 
 A small VPS only needs one Konofix Node process. The long-term goal is to run several independent nodes across different countries and providers so one outage cannot disconnect the entire network.
 
-For a public test node, keep the process supervised by the operating system or a service manager, preserve the identity file, monitor the periodic status line or JSON health snapshot, and verify both TCP and UDP/QUIC reachability from an external network.
+For a public test node, keep the process supervised by the operating system or a service manager, place `--identity-file` on persistent storage, back that file up securely, monitor the periodic status line or JSON health snapshot, and verify both TCP and UDP/QUIC reachability from an external network.
 
 A basic health check can verify that:
 

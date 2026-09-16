@@ -38,7 +38,7 @@
 - fixed Windows CI #165 by making dependency-policy detection use Git-tracked lockfile state instead of an untracked `package-lock.json` created by `npm install`,
 - changed no-lockfile CI installation to `npm install --no-audit --no-fund --package-lock=false` so the build workspace cannot manufacture misleading lockfile state,
 - pinned every external GitHub Action in Windows CI to an immutable full commit SHA, disabled persisted checkout credentials, and made the project audit reject future floating Action refs,
-- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 45/50 tasks (90%),
+- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 46/51 tasks (90%),
 - made project audit recompute the active roadmap checklist and reject stale README/ROADMAP percentages or task counts,
 - added multi-snapshot public Node soak validation that rejects identity/version/source-commit drift, restarts, stale samples, monitoring gaps and inconsistent uptime cadence,
 - made stable promotion require Node soak evidence and bind that soak to the exact bootstrap Peer ID used by the validated cross-country network evidence,
@@ -61,7 +61,11 @@
 - converted the recovered Rust lockfile into an enforced build input: Windows CI/local/build helpers now validate or build with `--locked`, project audit rejects unlocked Cargo resolution, and release verification rejects a packaged Cargo lockfile that differs from committed `src-tauri/Cargo.lock`,
 - added `scripts/check-public-node-readiness.ps1` to bind TCP/QUIC bootstrap addresses to one host/port/Peer ID and a fresh expected Node version/source commit/health identity, with bounded TCP reachability probing and explicit refusal to treat structural QUIC validation as proof of a QUIC handshake,
 - added positive/adversarial public-Node readiness self-tests for identity, host, port, transport, stopped-health and source-commit mismatch cases, wired them into CI/local preflight, and bundled the readiness validator in verified Windows artifacts,
-- expanded public Node operator/testing guidance and release-gate documentation while keeping the stable public-Node and cross-country gates dependent on real evidence.
+- expanded public Node operator/testing guidance and release-gate documentation while keeping the stable public-Node and cross-country gates dependent on real evidence,
+- bound signed GossipSub presence/chat/room/nickname payload identities to the authenticated libp2p source Peer ID and added Rust regression coverage so forged payload identities are dropped,
+- hardened file-transfer control handling by rejecting malformed/duplicate transfer IDs, binding completion/cancel operations to the requesting peer, and validating SHA-256 digest shape before finalization,
+- removed the temporary write-capable one-time hardening workflows after the verified source patch landed, restoring the normal read-only CI surface,
+- added `cargo fmt --check` to Windows CI and the local preflight and install `rustfmt` explicitly in CI so formatting regressions fail before tests/builds.
 
 ## 0.4.1
 

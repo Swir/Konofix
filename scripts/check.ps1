@@ -11,6 +11,7 @@ Need node 'Install Node.js 22+.'
 Need npm 'Install Node.js 22+.'
 Need cargo 'Install Rust with rustup (MSVC toolchain).'
 Need rustc 'Install Rust with rustup (MSVC toolchain).'
+Need rustfmt 'Install rustfmt with: rustup component add rustfmt.'
 
 Write-Host "Node:  $(node --version)"
 Write-Host "npm:   $(npm --version)"
@@ -57,6 +58,10 @@ try {
   cargo metadata --locked --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "cargo metadata --locked failed with exit code $LASTEXITCODE." }
 
+  Write-Host 'Rust format check...' -ForegroundColor Yellow
+  cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+  if ($LASTEXITCODE -ne 0) { throw "cargo fmt --check failed with exit code $LASTEXITCODE." }
+
   Write-Host 'Rust all-target tests...' -ForegroundColor Yellow
   cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
   if ($LASTEXITCODE -ne 0) { throw "cargo test --locked failed with exit code $LASTEXITCODE." }
@@ -67,7 +72,7 @@ try {
   cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-node
   if ($LASTEXITCODE -ne 0) { throw "cargo check --locked --bin konofix-node failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'OK - local preflight matches CI gates, public-Node/bootstrap/readiness validation, deterministic frontend and Rust dependency inputs, frontend build, Rust tests and Node checks.' -ForegroundColor Green
+  Write-Host 'OK - local preflight matches CI gates, public-Node/bootstrap/readiness validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/tests and Node checks.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

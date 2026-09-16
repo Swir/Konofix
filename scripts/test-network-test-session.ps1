@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $target = Join-Path $PSScriptRoot 'new-network-test-session.ps1'
+$validator = Join-Path $PSScriptRoot 'validate-network-test-session.ps1'
 $peer = '12D3KooWQ7N8jFx6tT8hVYpY3iM3x1bqL6ZpH8sR4wC2dA9eF5gK'
 $otherPeer = '12D3KooWR8P9kGy7uU9iWZqZ4jN4y2crM7AqJ9tS5xD3eB8fG6hL'
 $commit = '0123456789abcdef0123456789abcdef01234567'
@@ -61,11 +62,12 @@ try {
 
     Invoke-Session -BuildInfoPath $buildInfoPath -OutputRoot $outputRoot -Name 'valid-session' -Tcp $tcp -Quic $quic
     $sessionRoot = Join-Path $outputRoot 'valid-session'
+    $sessionInfoPath = Join-Path $sessionRoot 'SESSION_INFO.json'
     Assert-True (Test-Path -LiteralPath $sessionRoot -PathType Container) 'Valid session directory was not created.'
     Assert-True (Test-Path -LiteralPath (Join-Path $sessionRoot 'BUILD_INFO.json') -PathType Leaf) 'Exact BUILD_INFO.json was not copied into the session.'
-    Assert-True (Test-Path -LiteralPath (Join-Path $sessionRoot 'SESSION_INFO.json') -PathType Leaf) 'SESSION_INFO.json was not created.'
+    Assert-True (Test-Path -LiteralPath $sessionInfoPath -PathType Leaf) 'SESSION_INFO.json was not created.'
 
-    $session = Get-Content -LiteralPath (Join-Path $sessionRoot 'SESSION_INFO.json') -Raw | ConvertFrom-Json
+    $session = Get-Content -LiteralPath $sessionInfoPath -Raw | ConvertFrom-Json
     Assert-True ([int]$session.schema_version -eq 1) 'Session schema mismatch.'
     Assert-True ([string]$session.build_version -ceq '0.4.2') 'Session build version mismatch.'
     Assert-True ([string]$session.source_commit -ceq $commit) 'Session source commit mismatch.'
@@ -76,6 +78,7 @@ try {
 
     $manifests = @(Get-ChildItem -LiteralPath $sessionRoot -Filter 'network-test-*.json' -File)
     Assert-True ($manifests.Count -eq 5) 'Valid session must contain exactly five network manifests.'
+    $manifestPaths = @($manifests | ForEach-Object FullName)
     $seen = @{}
     foreach ($file in $manifests) {
         $manifest = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
@@ -98,7 +101,50 @@ try {
     }
     $tmpEntries = @(Get-ChildItem -LiteralPath $outputRoot -Force | Where-Object { $_.Name -like '.*.tmp' })
     Assert-True ($tmpEntries.Count -eq 0) 'Successful session left a temporary staging directory.'
-    Write-Host 'PASS: valid exact-build five-scenario session' -ForegroundColor Green
+
+    $copiedBuildInfo = Join-Path $sessionRoot 'BUILD_INFO.json'
+    $copiedBuildHash = (Get-FileHash -LiteralPath $copiedBuildInfo -Algorithm SHA256).Hash.ToLowerInvariant()
+    $nodeHash = (Get-FileHash -LiteralPath (Join-Path $fixtureRoot 'konofix-node.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+    $validated = (& $validator `
+        -SessionInfoPath $sessionInfoPath `
+        -Manifest $manifestPaths `
+        -ExpectedBuildVersion '0.4.2' `
+        -ExpectedNodeVersion '0.4.2' `
+        -ExpectedSourceCommit $commit `
+        -ExpectedBuildInfoSha256 $copiedBuildHash `
+        -ExpectedNodeSha256 $nodeHash `
+        -ExpectedBootstrapPeerId $peer `
+        -AsJson) | ConvertFrom-Json
+    Assert-True ([string]$validated.status -ceq 'PASS') 'Session consistency validator did not return PASS.'
+    Assert-True ([int]$validated.manifest_count -eq 5) 'Session consistency validator did not report five manifests.'
+    Write-Host 'PASS: valid exact-build five-scenario session and session consistency' -ForegroundColor Green
+
+    $tcpManifestPath = ($manifests | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).scenario -ceq 'TCP' } | Select-Object -First 1).FullName
+    $originalTcpManifest = Get-Content -LiteralPath $tcpManifestPath -Raw
+    $mixedEndpoint = $originalTcpManifest | ConvertFrom-Json
+    $mixedEndpoint.client_b_country = 'Germany'
+    $mixedEndpoint | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $tcpManifestPath -Encoding utf8
+    Expect-Fail 'mixed endpoint metadata inside one session' {
+        & $validator -SessionInfoPath $sessionInfoPath -Manifest $manifestPaths | Out-Null
+    }
+    Set-Content -LiteralPath $tcpManifestPath -Value $originalTcpManifest -Encoding utf8
+
+    $wrongBootstrap = $originalTcpManifest | ConvertFrom-Json
+    $wrongBootstrap.bootstrap = "/dns/node.example.org/tcp/45555/p2p/$otherPeer"
+    $wrongBootstrap | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $tcpManifestPath -Encoding utf8
+    Expect-Fail 'manifest bootstrap outside paired session identity' {
+        & $validator -SessionInfoPath $sessionInfoPath -Manifest $manifestPaths | Out-Null
+    }
+    Set-Content -LiteralPath $tcpManifestPath -Value $originalTcpManifest -Encoding utf8
+
+    $originalSessionInfo = Get-Content -LiteralPath $sessionInfoPath -Raw
+    $wrongBuildHash = $originalSessionInfo | ConvertFrom-Json
+    $wrongBuildHash.build_info_sha256 = ('0' * 64)
+    $wrongBuildHash | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $sessionInfoPath -Encoding utf8
+    Expect-Fail 'session BUILD_INFO hash pin mismatch' {
+        & $validator -SessionInfoPath $sessionInfoPath -Manifest $manifestPaths -ExpectedBuildInfoSha256 $copiedBuildHash | Out-Null
+    }
+    Set-Content -LiteralPath $sessionInfoPath -Value $originalSessionInfo -Encoding utf8
 
     $tamperRoot = Join-Path $temp 'tampered-bundle'
     $tamperBuild = New-BuildFixture $tamperRoot

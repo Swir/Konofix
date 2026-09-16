@@ -36,6 +36,7 @@ try {
     'scripts\public-node.ps1',
     'scripts\install-public-node-task.ps1',
     'scripts\check-public-node-readiness.ps1',
+    'scripts\new-network-test-session.ps1',
     'scripts\new-network-test-report.ps1',
     'scripts\set-network-test-result.ps1',
     'scripts\validate-network-test-report.ps1',

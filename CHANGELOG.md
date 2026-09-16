@@ -45,7 +45,7 @@
 - fixed Windows CI #165 by making dependency-policy detection use Git-tracked lockfile state instead of an untracked `package-lock.json` created by `npm install`,
 - changed no-lockfile CI installation to `npm install --no-audit --no-fund --package-lock=false` so the build workspace cannot manufacture misleading lockfile state,
 - pinned every external GitHub Action in Windows CI to an immutable full commit SHA, disabled persisted checkout credentials, and made the project audit reject future floating Action refs,
-- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 52/57 tasks (91%),
+- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 53/58 tasks (91%),
 - made project audit recompute the active roadmap checklist and reject stale README/ROADMAP percentages or task counts,
 - added multi-snapshot public Node soak validation that rejects identity/version/source-commit drift, restarts, stale samples, monitoring gaps and inconsistent uptime cadence,
 - made stable promotion require Node soak evidence and bind that soak to the exact bootstrap Peer ID used by the validated cross-country network evidence,
@@ -78,6 +78,8 @@
 - removed the temporary write-capable one-time hardening workflows after the verified source patch landed, restoring the normal read-only CI surface,
 - added `scripts/new-network-test-session.ps1`, which fail-closes on malformed/tampered `BUILD_INFO.json` or packaged Node bytes, non-independent endpoints and mismatched TCP/QUIC bootstrap identity before atomically creating the complete five-scenario schema-v3 PENDING workspace,
 - added positive/adversarial network-session self-tests, wired them into CI/local preflight, bundled the session creator into verified Windows artifacts and included its hash/size in `BUILD_INFO.json` provenance,
+- added `scripts/validate-network-test-session.ps1` and made stable promotion require one coherent session, rejecting mixed endpoint/country/network metadata, changed exact-build provenance, missing/duplicate scenarios and bootstrap addresses outside the paired TCP/QUIC session identity,
+- strengthened `check-promotion-evidence.ps1` and the source-tree stable release gate so five PASS manifests cannot be assembled from unrelated sessions, and added adversarial promotion/session tests plus Windows-artifact provenance for the validator,
 - added `cargo fmt --check` to Windows CI and the local preflight and install `rustfmt` explicitly in CI so formatting regressions fail before tests/builds.
 
 ## 0.4.1

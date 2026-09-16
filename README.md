@@ -61,7 +61,7 @@ Project checks:
 .\scripts\check.ps1
 ```
 
-GitHub Actions validates TypeScript/Vite, Rust, `konofix-node`, release/network gates, and the production Windows bundle. CI installs frontend dependencies with `npm ci`, enforcing the committed `package-lock.json` instead of silently resolving dependency drift. Superseded runs are cancelled automatically. Build/test steps receive a read-only repository token; release write permission is isolated to the post-build publication job.
+GitHub Actions validates TypeScript/Vite, Rust, `konofix-node`, release/network gates, and the production Windows bundle. The repository does not currently contain a committed `package-lock.json`, so CI intentionally uses `npm install --no-audit --no-fund`; lockfile-enforced `npm ci` remains pending until a real lockfile is committed and verified. Superseded runs are cancelled automatically. Build/test steps receive a read-only repository token; release write permission is isolated to the post-build publication job.
 
 ## Windows build
 

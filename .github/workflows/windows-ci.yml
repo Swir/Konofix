@@ -80,6 +80,10 @@ jobs:
         if: github.event_name == 'push'
         run: cargo build --manifest-path src-tauri/Cargo.toml --release --bin konofix-node
 
+      - name: Generate frontend lockfile candidate
+        if: github.event_name == 'push'
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
       - name: Stage Windows test bundle
         if: github.event_name == 'push'
         shell: pwsh

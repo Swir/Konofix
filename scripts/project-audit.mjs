@@ -101,7 +101,7 @@ for (const file of englishOnlyOperationalFiles) {
 }
 
 const workflowDir = path.join(root, '.github', 'workflows');
-if (fs.existsSync(workflowDir))) {
+if (fs.existsSync(workflowDir)) {
   for (const name of fs.readdirSync(workflowDir)) {
     if (!/\.ya?ml$/i.test(name)) continue;
     const file = `.github/workflows/${name}`;

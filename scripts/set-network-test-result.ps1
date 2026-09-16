@@ -40,6 +40,13 @@ if ($null -eq $data.checks) { throw 'Network test manifest is missing the checks
 $checkProperty = $data.checks.PSObject.Properties[$Check]
 if ($null -eq $checkProperty) { throw "Network test manifest is missing check '$Check'." }
 
+if (($Result -eq 'PASS' -or $Result -eq 'FAIL') -and [string]::IsNullOrWhiteSpace($Evidence)) {
+    throw "Recording $Result for '$Check' requires a non-empty evidence note."
+}
+if ($Result -eq 'PASS' -and $Check -in @('file_a_to_b_sha256','file_b_to_a_sha256') -and $Evidence -cnotmatch '(?i)(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])') {
+    throw "Recording PASS for '$Check' requires the observed 64-character SHA-256 digest in -Evidence."
+}
+
 $oldResult = [string]$checkProperty.Value
 if ($oldResult -notin @('PASS','FAIL','PENDING','N/A')) {
     throw "Network test manifest contains invalid current result '$oldResult' for '$Check'."
@@ -141,7 +148,7 @@ $($rows -join "`n")
 
 Overall: **$($data.overall)**
 
-This Markdown file is regenerated from the schema-v3 JSON manifest by `set-network-test-result.ps1`. Treat the JSON manifest as the authoritative release evidence. Do not include identity keys, tokens, private addresses, or other secrets.
+This Markdown file is regenerated from the schema-v3 JSON manifest by `set-network-test-result.ps1`. Treat the JSON manifest as the authoritative release evidence. Stable promotion requires concrete evidence notes for PASS results, including the observed digest for SHA-256 transfer checks. Do not include identity keys, tokens, private addresses, or other secrets.
 "@
 
 $directory = Split-Path $manifestFull -Parent

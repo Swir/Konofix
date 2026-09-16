@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { t } from './i18n';
 import './style.css';
 
 type ChatMessage = { id: string; kind: string; peer_id?: string; nick: string; room: string; text: string; timestamp: number };
@@ -31,13 +32,13 @@ type FileTransfer = {
 
 const EMPTY_STATUS: NetworkStatus = {
   phase: 'offline', connected_peers: 0, dht_peers: 0, bootstrap_count: 0,
-  nat: 'unknown', listen_addresses: [], detail: 'Rozłączono'
+  nat: 'unknown', listen_addresses: [], detail: 'Disconnected'
 };
 
 const state = {
   nick: '',
   peerId: '',
-  version: '0.4.1',
+  version: '0.4.2',
   room: 'world',
   connected: false,
   peers: new Map<string, PeerInfo>(),
@@ -79,7 +80,6 @@ function saveBootstraps(items: string[]) {
   localStorage.setItem('konofix.bootstraps', JSON.stringify([...new Set(items.map(v => v.trim()).filter(Boolean))]));
 }
 
-
 function creditHtml(): string {
   return `<div class="app-credit">by <strong>Swir</strong><span>•</span><button type="button" data-github-link>GitHub</button></div>`;
 }
@@ -88,7 +88,7 @@ function wireCredit() {
   document.querySelectorAll<HTMLButtonElement>('[data-github-link]').forEach(btn => {
     btn.addEventListener('click', async () => {
       try { await invoke('open_github'); }
-      catch (e) { console.error('Nie udało się otworzyć GitHuba:', e); }
+      catch (e) { console.error(t('credit.openGithubError'), e); }
     });
   });
 }
@@ -101,23 +101,23 @@ function renderLogin() {
         <div>
           <div class="eyebrow">GLOBAL PEER-TO-PEER CHAT</div>
           <h1>Konofix Chat <span>P2P</span></h1>
-          <p>Wchodzisz. Rozmawiasz. Wychodzisz — znikasz z sieci.</p>
+          <p>${esc(t('app.tagline'))}</p>
           <div class="feature-row">
-            <span>◆ bez konta</span><span>◆ bez historii na serwerze</span><span>◆ transfer plików P2P</span>
+            <span>${esc(t('app.noAccount'))}</span><span>${esc(t('app.noServerHistory'))}</span><span>${esc(t('app.p2pFiles'))}</span>
           </div>
         </div>
       </section>
 
       <section class="login-card glass">
         <div class="online-pill"><i></i> P2P ENGINE 0.4</div>
-        <h2>Wejdź do #WORLD</h2>
-        <p class="muted">Wybierz nick. Jest rezerwowany tylko wtedy, gdy jesteś online.</p>
-        <label for="nick">Twój nick</label>
-        <input id="nick" maxlength="24" autocomplete="off" spellcheck="false" placeholder="np. SWIR" />
+        <h2>${esc(t('login.joinWorld'))}</h2>
+        <p class="muted">${esc(t('login.nickHelp'))}</p>
+        <label for="nick">${esc(t('login.nickLabel'))}</label>
+        <input id="nick" maxlength="24" autocomplete="off" spellcheck="false" placeholder="${esc(t('login.nickPlaceholder'))}" />
         <div id="loginError" class="error"></div>
-        <button id="connectBtn" class="primary">Połącz z siecią</button>
-        <button id="loginNetwork" class="link-btn">Zaawansowane ustawienia sieci</button>
-        <div class="privacy-note">🔒 Połączenia są szyfrowane przez libp2p. Nick nie jest kontem.</div>
+        <button id="connectBtn" class="primary">${esc(t('login.connect'))}</button>
+        <button id="loginNetwork" class="link-btn">${esc(t('login.advancedNetwork'))}</button>
+        <div class="privacy-note">${esc(t('login.privacy'))}</div>
       </section>
     </main>
     ${creditHtml()}`;
@@ -137,17 +137,17 @@ async function connect() {
   error.textContent = '';
 
   if (nick.length < 3) {
-    error.textContent = 'Nick musi mieć co najmniej 3 znaki.';
+    error.textContent = t('login.nickTooShort');
     return;
   }
   if (!/^[\p{L}\p{N}_\-.]+$/u.test(nick)) {
-    error.textContent = 'Użyj liter, cyfr, _, - lub kropki.';
+    error.textContent = t('login.nickInvalid');
     return;
   }
 
   const btn = document.querySelector<HTMLButtonElement>('#connectBtn')!;
   btn.disabled = true;
-  btn.textContent = 'Uruchamianie sieci P2P…';
+  btn.textContent = t('login.starting');
 
   try {
     const result = await invoke<{ peer_id: string; nick: string; version: string }>('start_network', {
@@ -159,11 +159,11 @@ async function connect() {
     state.version = result.version;
     state.connected = true;
     renderChat();
-    addSystem('world', `Połączono jako ${state.nick}. Szukam innych peerów…`);
+    addSystem('world', t('login.connectedAs', { nick: state.nick }));
   } catch (e) {
     error.textContent = String(e);
     btn.disabled = false;
-    btn.textContent = 'Połącz z siecią';
+    btn.textContent = t('login.connect');
   }
 }
 
@@ -183,20 +183,20 @@ function renderChat() {
         </div>
 
         <button class="room ${state.room === 'world' ? 'active' : ''}" data-room="world"><span>#</span> WORLD <b>${onlineCount}</b></button>
-        <div class="section-title">POKOJE TYMCZASOWE</div>
+        <div class="section-title">${esc(t('rooms.temporary'))}</div>
         <div id="rooms">${[...state.rooms.values()].filter(r => r.id !== 'world').map(roomButton).join('')}</div>
-        <button id="newRoom" class="ghost wide">＋ Utwórz pokój</button>
+        <button id="newRoom" class="ghost wide">${esc(t('rooms.create'))}</button>
 
         <div class="network-card" id="networkCard">
-          <div class="network-top"><span class="net-dot ${networkClass}"></span><strong>${networkLabel()}</strong><button id="refreshNetwork" title="Odśwież discovery">↻</button></div>
+          <div class="network-top"><span class="net-dot ${networkClass}"></span><strong>${esc(networkLabel())}</strong><button id="refreshNetwork" title="${esc(t('network.refresh'))}">↻</button></div>
           <small>${esc(networkSubtitle())}</small>
         </div>
 
         <div class="sidebar-bottom">
           <div class="me-dot"></div>
           <div class="me-info"><strong>${esc(state.nick)}</strong><span>${shortPeer(state.peerId)}</span></div>
-          <button id="networkSettings" class="icon-btn" title="Sieć P2P">⚙</button>
-          <button id="disconnect" class="icon-btn danger" title="Rozłącz">⏻</button>
+          <button id="networkSettings" class="icon-btn" title="${esc(t('network.settings'))}">⚙</button>
+          <button id="disconnect" class="icon-btn danger" title="${esc(t('network.disconnect'))}">⏻</button>
         </div>
       </aside>
 
@@ -204,31 +204,31 @@ function renderChat() {
         <header class="chat-header">
           <div>
             <h2>${esc(currentRoom.title)}</h2>
-            <span>${state.room === 'world' ? 'Wspólny globalny kanał P2P' : 'Pokój istnieje tylko, gdy jego host jest online'}</span>
+            <span>${esc(state.room === 'world' ? t('rooms.globalChannel') : t('rooms.hostOnly'))}</span>
           </div>
           <div class="header-actions">
-            <span class="live"><i></i>${onlineCount} online</span>
-            <button id="sendFile" class="ghost" ${state.peers.size ? '' : 'disabled'}>📎 Wyślij plik</button>
+            <span class="live"><i></i>${onlineCount} ${esc(t('common.online').toLowerCase())}</span>
+            <button id="sendFile" class="ghost" ${state.peers.size ? '' : 'disabled'}>${esc(t('transfer.sendFile'))}</button>
           </div>
         </header>
 
         <div id="messages" class="messages">
-          ${messages.length ? messages.map(messageHtml).join('') : `<div class="empty"><div>🌐</div><strong>Witaj w ${esc(currentRoom.title)}</strong><span>Napisz pierwszą wiadomość.</span></div>`}
+          ${messages.length ? messages.map(messageHtml).join('') : `<div class="empty"><div>🌐</div><strong>${esc(t('rooms.welcome', { room: currentRoom.title }))}</strong><span>${esc(t('rooms.firstMessage'))}</span></div>`}
         </div>
 
         <footer class="composer">
-          <input id="msg" maxlength="4000" autocomplete="off" placeholder="Napisz wiadomość do ${esc(currentRoom.title)}…" />
-          <button id="send" class="send" title="Wyślij">➤</button>
+          <input id="msg" maxlength="4000" autocomplete="off" placeholder="${esc(t('chat.messageTo', { room: currentRoom.title }))}" />
+          <button id="send" class="send" title="${esc(t('common.send'))}">➤</button>
         </footer>
       </section>
 
       <aside class="users glass">
-        <div class="users-head"><strong>ONLINE</strong><span>${onlineCount}</span></div>
-        <div class="user self"><div class="avatar">${esc(state.nick[0]?.toUpperCase() ?? 'S')}</div><div><strong>${esc(state.nick)}</strong><span>Ty · nick zarezerwowany</span></div></div>
+        <div class="users-head"><strong>${esc(t('common.online'))}</strong><span>${onlineCount}</span></div>
+        <div class="user self"><div class="avatar">${esc(state.nick[0]?.toUpperCase() ?? 'S')}</div><div><strong>${esc(state.nick)}</strong><span>${esc(t('user.selfReserved'))}</span></div></div>
         <div id="peerList">${[...state.peers.values()].sort((a,b) => a.nick.localeCompare(b.nick)).map(peerHtml).join('')}</div>
         <div class="transfer-section">
-          <div class="users-head"><strong>TRANSFERY</strong><span>${transfers.filter(t => activeTransfer(t.status)).length}</span></div>
-          <div class="transfer-list">${transfers.length ? transfers.map(transferHtml).join('') : '<div class="transfer-empty">Brak transferów</div>'}</div>
+          <div class="users-head"><strong>${esc(t('transfer.section'))}</strong><span>${transfers.filter(t => activeTransfer(t.status)).length}</span></div>
+          <div class="transfer-list">${transfers.length ? transfers.map(transferHtml).join('') : `<div class="transfer-empty">${esc(t('transfer.none'))}</div>`}</div>
         </div>
       </aside>
     </main>
@@ -246,7 +246,7 @@ function renderChat() {
   document.querySelector('#networkCard')?.addEventListener('click', showNetworkModal);
   document.querySelector('#refreshNetwork')?.addEventListener('click', async e => {
     e.stopPropagation();
-    try { await invoke('refresh_discovery'); } catch (err) { addSystem(state.room, `Discovery: ${String(err)}`); }
+    try { await invoke('refresh_discovery'); } catch (err) { addSystem(state.room, t('network.discoveryError', { error: String(err) })); }
   });
   const msg = document.querySelector<HTMLInputElement>('#msg')!;
   msg.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) sendMessage(); });
@@ -255,25 +255,25 @@ function renderChat() {
 }
 
 function networkLabel(): string {
-  if (state.status.phase === 'online') return 'P2P ONLINE';
-  if (state.status.phase === 'searching') return 'SZUKAM PEERÓW';
-  return 'P2P OFFLINE';
+  if (state.status.phase === 'online') return t('network.online');
+  if (state.status.phase === 'searching') return t('network.searching');
+  return t('network.offline');
 }
 
 function networkSubtitle(): string {
-  const parts = [`${state.status.connected_peers} połączeń`, `DHT ${state.status.dht_peers}`];
+  const parts = [t('network.connectionsCount', { count: state.status.connected_peers }), `DHT ${state.status.dht_peers}`];
   if (state.status.nat && state.status.nat !== 'unknown') parts.push(`NAT ${state.status.nat}`);
   return parts.join(' · ');
 }
 
 function roomButton(room: RoomInfo): string {
   const mine = room.owner === state.peerId;
-  return `<button class="room ${state.room === room.id ? 'active' : ''}" data-room="${esc(room.id)}"><span>#</span> ${esc(room.title.replace(/^#\s*/, ''))}${mine ? '<em>HOST</em>' : ''}</button>`;
+  return `<button class="room ${state.room === room.id ? 'active' : ''}" data-room="${esc(room.id)}"><span>#</span> ${esc(room.title.replace(/^#\s*/, ''))}${mine ? `<em>${esc(t('common.host'))}</em>` : ''}</button>`;
 }
 
 function peerHtml(peer: PeerInfo): string {
   const initial = peer.nick[0]?.toUpperCase() ?? '?';
-  return `<div class="user"><div class="avatar">${esc(initial)}</div><div><strong>${esc(peer.nick)}</strong><span>${shortPeer(peer.peer_id)}</span></div><button class="mini-file" data-send-peer="${esc(peer.peer_id)}" title="Wyślij plik do ${esc(peer.nick)}">📎</button></div>`;
+  return `<div class="user"><div class="avatar">${esc(initial)}</div><div><strong>${esc(peer.nick)}</strong><span>${shortPeer(peer.peer_id)}</span></div><button class="mini-file" data-send-peer="${esc(peer.peer_id)}" title="${esc(t('transfer.sendFileTo', { nick: peer.nick }))}">📎</button></div>`;
 }
 
 function shortPeer(v: string): string { return v ? `${v.slice(0, 6)}…${v.slice(-4)}` : 'local'; }
@@ -293,20 +293,22 @@ function activeTransfer(status: string): boolean {
 }
 
 function transferStatus(status: string): string {
-  return ({
-    waiting: 'Czeka na akceptację', sending: 'Wysyłanie', receiving: 'Pobieranie', verifying: 'Weryfikacja SHA‑256',
-    completed: 'Gotowe', rejected: 'Odrzucono', failed: 'Błąd', cancelled: 'Anulowano'
-  } as Record<string,string>)[status] || status;
+  const keys = {
+    waiting: 'transfer.waiting', sending: 'transfer.sending', receiving: 'transfer.receiving', verifying: 'transfer.verifying',
+    completed: 'transfer.completed', rejected: 'transfer.rejected', failed: 'transfer.failed', cancelled: 'transfer.cancelled'
+  } as const;
+  const key = keys[status as keyof typeof keys];
+  return key ? t(key) : status;
 }
 
-function transferHtml(t: FileTransfer): string {
-  const pct = Math.max(0, Math.min(100, Number(t.progress) || 0));
-  const icon = t.direction === 'outgoing' ? '↗' : '↙';
-  const cancel = activeTransfer(t.status) ? `<button data-cancel-transfer="${esc(t.transfer_id)}" title="Anuluj">×</button>` : '';
-  const detail = t.error ? `<small class="transfer-error">${esc(t.error)}</small>` : t.path ? `<small title="${esc(t.path)}">${esc(t.path)}</small>` : `<small>${formatBytes(t.transferred)} / ${formatBytes(t.size)}</small>`;
-  return `<div class="transfer-card ${esc(t.status)}">
-    <div class="transfer-title"><span>${icon}</span><strong title="${esc(t.file_name)}">${esc(t.file_name)}</strong>${cancel}</div>
-    <div class="transfer-meta"><span>${esc(t.nick)}</span><b>${esc(transferStatus(t.status))}</b></div>
+function transferHtml(tfr: FileTransfer): string {
+  const pct = Math.max(0, Math.min(100, Number(tfr.progress) || 0));
+  const icon = tfr.direction === 'outgoing' ? '↗' : '↙';
+  const cancel = activeTransfer(tfr.status) ? `<button data-cancel-transfer="${esc(tfr.transfer_id)}" title="${esc(t('common.cancel'))}">×</button>` : '';
+  const detail = tfr.error ? `<small class="transfer-error">${esc(tfr.error)}</small>` : tfr.path ? `<small title="${esc(tfr.path)}">${esc(tfr.path)}</small>` : `<small>${formatBytes(tfr.transferred)} / ${formatBytes(tfr.size)}</small>`;
+  return `<div class="transfer-card ${esc(tfr.status)}">
+    <div class="transfer-title"><span>${icon}</span><strong title="${esc(tfr.file_name)}">${esc(tfr.file_name)}</strong>${cancel}</div>
+    <div class="transfer-meta"><span>${esc(tfr.nick)}</span><b>${esc(transferStatus(tfr.status))}</b></div>
     <div class="progress"><i style="width:${pct.toFixed(1)}%"></i></div>${detail}
   </div>`;
 }
@@ -320,16 +322,16 @@ async function sendMessage() {
   try {
     await invoke('send_message', { room: state.room, text });
   } catch (e) {
-    addSystem(state.room, `Błąd wysyłania: ${String(e)}`);
+    addSystem(state.room, t('chat.sendError', { error: String(e) }));
   }
 }
 
 async function createRoom() {
-  const raw = prompt('Nazwa nowego pokoju (3–32 znaki):');
+  const raw = prompt(t('rooms.newPrompt'));
   if (!raw) return;
   const title = raw.trim().replace(/^#/, '').trim();
   if (!/^[\p{L}\p{N}_\- ]{3,32}$/u.test(title)) {
-    alert('Nieprawidłowa nazwa pokoju.');
+    alert(t('rooms.invalidName'));
     return;
   }
   try {
@@ -351,7 +353,7 @@ function switchRoom(room: string) {
 
 function offerFile() {
   if (!state.peers.size) {
-    alert('Nie ma teraz żadnego innego użytkownika online.');
+    alert(t('transfer.noPeers'));
     return;
   }
   showRecipientModal();
@@ -364,9 +366,9 @@ function showRecipientModal() {
   modal.id = 'recipientModal';
   modal.className = 'modal-wrap';
   modal.innerHTML = `<div class="modal glass compact-modal">
-    <div class="modal-head"><div><span class="eyebrow">P2P FILE TRANSFER</span><h3>Wyślij plik</h3></div><button data-close>×</button></div>
-    <p class="modal-lead">Wybierz użytkownika. Potem otworzy się systemowe okno wyboru pliku.</p>
-    <div class="recipient-list">${peers.map(p => `<button data-recipient="${esc(p.peer_id)}"><span class="avatar">${esc(p.nick[0]?.toUpperCase() ?? '?')}</span><span><strong>${esc(p.nick)}</strong><small>${esc(shortPeer(p.peer_id))}</small></span><b>Wyślij →</b></button>`).join('')}</div>
+    <div class="modal-head"><div><span class="eyebrow">P2P FILE TRANSFER</span><h3>${esc(t('transfer.sendFilePlain'))}</h3></div><button data-close>×</button></div>
+    <p class="modal-lead">${esc(t('transfer.recipientHelp'))}</p>
+    <div class="recipient-list">${peers.map(p => `<button data-recipient="${esc(p.peer_id)}"><span class="avatar">${esc(p.nick[0]?.toUpperCase() ?? '?')}</span><span><strong>${esc(p.nick)}</strong><small>${esc(shortPeer(p.peer_id))}</small></span><b>${esc(t('transfer.sendArrow'))}</b></button>`).join('')}</div>
   </div>`;
   document.body.appendChild(modal);
   const close = () => modal.remove();
@@ -382,18 +384,18 @@ function showRecipientModal() {
 async function sendFileToPeer(peerId: string) {
   const peer = state.peers.get(peerId);
   if (!peer) {
-    alert('Ten użytkownik nie jest już online.');
+    alert(t('transfer.peerOffline'));
     return;
   }
   try {
     const transfer = await invoke<FileTransfer | null>('offer_file', { peerId });
     if (transfer) {
       state.transfers.set(transfer.transfer_id, transfer);
-      addSystem(state.room, `📎 Wysłano ofertę pliku „${transfer.file_name}” do ${peer.nick}.`);
+      addSystem(state.room, t('transfer.offerSent', { file: transfer.file_name, nick: peer.nick }));
       renderChat();
     }
   } catch (e) {
-    alert(`Nie udało się rozpocząć transferu: ${String(e)}`);
+    alert(t('transfer.startError', { error: String(e) }));
   }
 }
 
@@ -414,11 +416,11 @@ function showFileOfferModal(offer: FileOffer) {
   const dangerous = dangerousFile(offer.file_name);
   modal.innerHTML = `<div class="modal glass file-offer-modal">
     <div class="offer-icon">📦</div>
-    <span class="eyebrow">PRZYCHODZĄCY PLIK P2P</span>
-    <h3>${esc(offer.nick)} chce wysłać plik</h3>
+    <span class="eyebrow">${esc(t('transfer.incoming'))}</span>
+    <h3>${esc(t('transfer.wantsToSend', { nick: offer.nick }))}</h3>
     <div class="offer-file"><strong>${esc(offer.file_name)}</strong><span>${formatBytes(offer.size)}</span></div>
-    ${dangerous ? '<div class="danger-note">⚠ To plik wykonywalny lub skrypt. Akceptuj tylko, jeśli ufasz nadawcy. Konofix Chat nigdy nie uruchamia pobranych plików automatycznie.</div>' : '<div class="safe-note">Plik zostanie zapisany do Pobrane\\Konofix Chat dopiero po poprawnej weryfikacji SHA‑256.</div>'}
-    <div class="offer-actions"><button id="rejectOffer" class="ghost">Odrzuć</button><button id="acceptOffer" class="primary compact">Akceptuj</button></div>
+    ${dangerous ? `<div class="danger-note">${esc(t('transfer.dangerous'))}</div>` : `<div class="safe-note">${esc(t('transfer.safe'))}</div>`}
+    <div class="offer-actions"><button id="rejectOffer" class="ghost">${esc(t('transfer.reject'))}</button><button id="acceptOffer" class="primary compact">${esc(t('transfer.accept'))}</button></div>
   </div>`;
   document.body.appendChild(modal);
 
@@ -430,7 +432,7 @@ function showFileOfferModal(offer: FileOffer) {
   modal.querySelector('#acceptOffer')?.addEventListener('click', async () => {
     const btn = modal.querySelector<HTMLButtonElement>('#acceptOffer')!;
     btn.disabled = true;
-    btn.textContent = 'Przygotowuję…';
+    btn.textContent = t('transfer.preparing');
     try {
       const transfer = await invoke<FileTransfer>('accept_file', { transferId: offer.transfer_id });
       state.transfers.set(transfer.transfer_id, transfer);
@@ -483,19 +485,19 @@ function showNetworkModal() {
   modal.className = 'modal-wrap';
   modal.innerHTML = `
     <div class="modal glass">
-      <div class="modal-head"><div><span class="eyebrow">P2P NETWORK</span><h3>Stan sieci</h3></div><button id="closeModal">×</button></div>
+      <div class="modal-head"><div><span class="eyebrow">P2P NETWORK</span><h3>${esc(t('network.status'))}</h3></div><button id="closeModal">×</button></div>
       <div class="stats-grid">
-        <div><span>Połączenia</span><strong>${state.status.connected_peers}</strong></div>
-        <div><span>Peerzy DHT</span><strong>${state.status.dht_peers}</strong></div>
-        <div><span>Bootstrapy</span><strong>${state.status.bootstrap_count || bootstraps.length}</strong></div>
-        <div><span>Relay</span><strong>${state.status.listen_addresses.filter(a => a.includes('/p2p-circuit')).length ? 'AKTYWNY' : 'AUTO'}</strong></div>
+        <div><span>${esc(t('network.connections'))}</span><strong>${state.status.connected_peers}</strong></div>
+        <div><span>${esc(t('network.dhtPeers'))}</span><strong>${state.status.dht_peers}</strong></div>
+        <div><span>${esc(t('network.bootstraps'))}</span><strong>${state.status.bootstrap_count || bootstraps.length}</strong></div>
+        <div><span>Relay</span><strong>${state.status.listen_addresses.filter(a => a.includes('/p2p-circuit')).length ? esc(t('common.active')) : esc(t('common.auto'))}</strong></div>
         <div><span>NAT</span><strong>${esc(state.status.nat)}</strong></div>
       </div>
-      <label>Adres bootstrap peera</label>
-      <div class="inline-form"><input id="bootstrapInput" placeholder="/ip4/.../tcp/.../p2p/12D3KooW..."/><button id="addBootstrap" class="primary compact">Dodaj</button></div>
-      <div class="bootstrap-list">${bootstraps.length ? bootstraps.map(b => `<div><code>${esc(b)}</code><button data-remove-bootstrap="${esc(b)}">×</button></div>`).join('') : '<p>Brak własnych bootstrapów. LAN działa przez mDNS, a aplikacja próbuje też użyć zapamiętanych peerów.</p>'}</div>
-      <div class="listen-block"><span>Moje adresy nasłuchu</span>${state.status.listen_addresses.length ? state.status.listen_addresses.map(a => `<code>${esc(a)}</code>`).join('') : '<small>Pojawią się po uruchomieniu sieci.</small>'}</div>
-      <p class="modal-note">Bootstrap pomaga tylko znaleźć sieć. Nie jest serwerem wiadomości ani magazynem plików.</p>
+      <label>${esc(t('network.bootstrapAddress'))}</label>
+      <div class="inline-form"><input id="bootstrapInput" placeholder="/ip4/.../tcp/.../p2p/12D3KooW..."/><button id="addBootstrap" class="primary compact">${esc(t('common.add'))}</button></div>
+      <div class="bootstrap-list">${bootstraps.length ? bootstraps.map(b => `<div><code>${esc(b)}</code><button data-remove-bootstrap="${esc(b)}">×</button></div>`).join('') : `<p>${esc(t('network.noBootstraps'))}</p>`}</div>
+      <div class="listen-block"><span>${esc(t('network.listenAddresses'))}</span>${state.status.listen_addresses.length ? state.status.listen_addresses.map(a => `<code>${esc(a)}</code>`).join('') : `<small>${esc(t('network.listenPending'))}</small>`}</div>
+      <p class="modal-note">${esc(t('network.bootstrapNote'))}</p>
     </div>`;
   document.body.appendChild(modal);
 
@@ -542,7 +544,7 @@ async function wireEvents() {
     state.rooms.delete(event.payload.room_id);
     if (state.room === event.payload.room_id) {
       state.room = 'world';
-      addSystem('world', 'Pokój został zamknięty, ponieważ host opuścił sieć.');
+      addSystem('world', t('rooms.closed'));
     } else if (state.connected) renderChat();
   });
   await listen<NetworkStatus>('network-status', event => {
@@ -553,20 +555,20 @@ async function wireEvents() {
     if (state.connected) addSystem('world', `⚠ ${event.payload}`);
   });
   await listen<string>('network-error', event => {
-    if (state.connected) addSystem('world', `Błąd sieci: ${event.payload}`);
+    if (state.connected) addSystem('world', t('network.error', { error: event.payload }));
   });
   await listen<{ nick: string }>('nick-conflict', event => {
-    alert(`Nick „${event.payload.nick}” jest już aktywny w sieci. Wybierz inny.`);
+    alert(t('nick.conflict', { nick: event.payload.nick }));
     disconnect();
   });
   await listen<FileOffer>('file-offer', event => showFileOfferModal(event.payload));
   await listen<FileTransfer>('file-transfer', event => {
     state.transfers.set(event.payload.transfer_id, event.payload);
     if (event.payload.status === 'completed') {
-      const dir = event.payload.direction === 'incoming' ? ` Zapisano: ${event.payload.path || 'Pobrane\\Konofix Chat'}` : '';
-      addSystem(state.room, `✅ Transfer „${event.payload.file_name}” zakończony.${dir}`);
+      const saved = event.payload.direction === 'incoming' ? t('transfer.saved', { path: event.payload.path || 'Downloads\\Konofix Chat' }) : '';
+      addSystem(state.room, t('transfer.finished', { file: event.payload.file_name, saved }));
     } else if (['failed', 'rejected'].includes(event.payload.status)) {
-      addSystem(state.room, `⚠ Transfer „${event.payload.file_name}”: ${event.payload.error || transferStatus(event.payload.status)}.`);
+      addSystem(state.room, t('transfer.problem', { file: event.payload.file_name, error: event.payload.error || transferStatus(event.payload.status) }));
     } else if (state.connected) {
       renderChat();
     }

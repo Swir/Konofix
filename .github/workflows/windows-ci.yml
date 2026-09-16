@@ -46,6 +46,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-node-health.ps1
 
+      - name: Node soak stability self-tests
+        shell: pwsh
+        run: .\scripts\test-node-soak.ps1
+
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund --package-lock=false
 
@@ -54,6 +58,9 @@ jobs:
 
       - name: TypeScript + Vite build
         run: npm run build
+
+      - name: Cargo test - all targets
+        run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
 
       - name: Cargo check - Konofix Chat
         run: cargo check --manifest-path src-tauri/Cargo.toml
@@ -80,6 +87,7 @@ jobs:
           Copy-Item 'README.md' 'artifact\README.md'
           Copy-Item 'docs\TESTING.md' 'artifact\TESTING.md'
           Copy-Item 'docs\NODE.md' 'artifact\NODE.md'
+          Copy-Item 'docs\NODE_SOAK.md' 'artifact\NODE_SOAK.md'
           Copy-Item 'docs\RELEASE_0.4.2_TEST1.md' 'artifact\RELEASE_NOTES.md'
           if (Test-Path 'package-lock.json') { Copy-Item 'package-lock.json' 'artifact\package-lock.json' }
           if (Test-Path 'src-tauri\Cargo.lock') { Copy-Item 'src-tauri\Cargo.lock' 'artifact\Cargo.lock' }

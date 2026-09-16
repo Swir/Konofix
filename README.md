@@ -35,6 +35,8 @@ konofix-node.exe --port 45555 --public-host 203.0.113.10
 
 Paste the recommended address into **Network settings → Bootstrap**. A bootstrap helps peers discover the DHT/relay network; it is not a message-history server or file store.
 
+Stable promotion now also requires a continuous public-Node soak history that proves the Node kept one version and Peer ID, did not restart inside the evidence window, produced fresh snapshots without excessive monitoring gaps, and actually observed peer activity. The soak identity is bound to the same bootstrap Peer ID used by the validated cross-country manifests. See `docs/NODE_SOAK.md`.
+
 ## Localization
 
 Konofix Chat detects the operating-system language automatically. The current UI localization layer supports **English, Polish, Norwegian, German, French, Spanish, and Ukrainian**. Unsupported system languages fall back to **English**. Repository documentation, release notes, CI text, and development-facing content are maintained in English.
@@ -61,7 +63,7 @@ Project checks:
 .\scripts\check.ps1
 ```
 
-GitHub Actions validates TypeScript/Vite, Rust, `konofix-node`, release/network gates, and the production Windows bundle. The repository does not currently contain a committed `package-lock.json`, so CI intentionally uses `npm install --no-audit --no-fund --package-lock=false`; the audit derives dependency policy from Git-tracked files instead of transient workspace files, so an npm-generated lockfile cannot masquerade as a committed reproducibility guarantee. Lockfile-enforced `npm ci` remains pending until a real lockfile is committed and verified. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
+GitHub Actions validates TypeScript/Vite, Rust all-target tests and checks, `konofix-node`, release/network/Node-health/Node-soak gates, and the production Windows bundle. The repository does not currently contain a committed `package-lock.json`, so CI intentionally uses `npm install --no-audit --no-fund --package-lock=false`; the audit derives dependency policy from Git-tracked files instead of transient workspace files, so an npm-generated lockfile cannot masquerade as a committed reproducibility guarantee. Lockfile-enforced `npm ci` remains pending until a real lockfile is committed and verified. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
 
 ## Windows build
 
@@ -83,7 +85,7 @@ Run the Node on a publicly reachable computer or VPS:
 konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP
 ```
 
-Open TCP 45555 and UDP 45555. See `docs/NODE.md` for operator details.
+Open TCP 45555 and UDP 45555. See `docs/NODE.md` for operator details and `docs/NODE_SOAK.md` for stable-promotion soak evidence.
 
 Before a client test:
 

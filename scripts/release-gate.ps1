@@ -1,7 +1,13 @@
 param(
   [string[]]$NetworkEvidence = @(),
   [switch]$RequireNetworkEvidence,
-  [int]$NetworkEvidenceMaxAgeDays = 30
+  [int]$NetworkEvidenceMaxAgeDays = 30,
+
+  [string[]]$NodeSoakEvidence = @(),
+  [switch]$RequireNodeSoakEvidence,
+  [int]$NodeSoakMinSpanSeconds = 3600,
+  [int]$NodeSoakMaxGapSeconds = 180,
+  [int]$NodeSoakMaxAgeSeconds = 300
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,12 +41,14 @@ try {
     'src-tauri\icons\icon.ico',
     'src-tauri\src\bin\konofix-node.rs',
     'docs\NODE.md',
+    'docs\NODE_SOAK.md',
     'docs\TESTING.md',
     'docs\RELEASE_0.4.2_TEST1.md',
     'ROADMAP.md',
     'CHANGELOG.md',
     '.github\workflows\windows-ci.yml',
-    'scripts\validate-network-test-report.ps1'
+    'scripts\validate-network-test-report.ps1',
+    'scripts\validate-node-soak.ps1'
   )
 
   foreach ($path in $required) {
@@ -61,6 +69,7 @@ try {
     throw 'Stable promotion requires -NetworkEvidence with schema-v2 PASS manifests.'
   }
 
+  $expectedBootstrapPeer = ''
   if ($NetworkEvidence.Count -gt 0) {
     Write-Host 'Validating real-network promotion evidence...' -ForegroundColor Cyan
     $validatorArgs = @{
@@ -71,13 +80,44 @@ try {
     }
     if ($RequireNetworkEvidence) { $validatorArgs.RequireSingleBootstrapPeer = $true }
 
-    # validate-network-test-report.ps1 is a PowerShell script and reports failure by throwing.
-    # Do not inspect $LASTEXITCODE here: it belongs to native processes and can contain a
-    # stale non-zero value inherited from an earlier command, causing a valid release gate
-    # to fail nondeterministically.
     & (Join-Path $PSScriptRoot 'validate-network-test-report.ps1') @validatorArgs
+
+    if ($RequireNetworkEvidence) {
+      $bootstrapPeers = @()
+      foreach ($manifestPath in $NetworkEvidence) {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $bootstrap = [string]$manifest.bootstrap
+        $match = [regex]::Match($bootstrap, '/p2p/([^/]+)$')
+        if (-not $match.Success) { throw "Promotion evidence has no terminal bootstrap Peer ID: $manifestPath" }
+        $bootstrapPeers += $match.Groups[1].Value
+      }
+      $bootstrapPeers = @($bootstrapPeers | Sort-Object -Unique -CaseSensitive)
+      if ($bootstrapPeers.Count -ne 1) { throw 'Stable promotion evidence must reference exactly one bootstrap Peer ID.' }
+      $expectedBootstrapPeer = $bootstrapPeers[0]
+    }
   } elseif (-not $RequireNetworkEvidence) {
     Write-Host 'Network evidence not requested: pre-release/build gate only.' -ForegroundColor Yellow
+  }
+
+  $soakRequired = $RequireNodeSoakEvidence -or $RequireNetworkEvidence
+  if ($soakRequired -and $NodeSoakEvidence.Count -eq 0) {
+    throw 'Stable promotion requires -NodeSoakEvidence proving continuous public Node stability.'
+  }
+
+  if ($NodeSoakEvidence.Count -gt 0) {
+    Write-Host 'Validating public Node soak evidence...' -ForegroundColor Cyan
+    $soakArgs = @{
+      Snapshot = $NodeSoakEvidence
+      MinSpanSeconds = $NodeSoakMinSpanSeconds
+      MaxGapSeconds = $NodeSoakMaxGapSeconds
+      MaxAgeSeconds = $NodeSoakMaxAgeSeconds
+      ExpectedVersion = $cargoVersion
+    }
+    if (-not [string]::IsNullOrWhiteSpace($expectedBootstrapPeer)) { $soakArgs.ExpectedPeerId = $expectedBootstrapPeer }
+    if ($RequireNetworkEvidence) { $soakArgs.RequirePeerObserved = $true }
+    & (Join-Path $PSScriptRoot 'validate-node-soak.ps1') @soakArgs
+  } elseif (-not $soakRequired) {
+    Write-Host 'Node soak evidence not requested: pre-release/build gate only.' -ForegroundColor Yellow
   }
 
   Write-Host "OK - release gate for Konofix Chat $npmVersion passed." -ForegroundColor Green

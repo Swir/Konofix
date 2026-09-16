@@ -30,6 +30,9 @@
 - pinned every external GitHub Action in Windows CI to an immutable full commit SHA, disabled persisted checkout credentials, and made the project audit reject future floating Action refs,
 - added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 37/43 tasks (86%),
 - made project audit recompute the active roadmap checklist and reject stale README/ROADMAP percentages or task counts,
+- added multi-snapshot public Node soak validation that rejects identity/version drift, restarts, stale samples, monitoring gaps and inconsistent uptime cadence,
+- made stable promotion require Node soak evidence and bind that soak to the exact bootstrap Peer ID used by the validated cross-country network evidence,
+- added adversarial Node soak self-tests to Windows CI, added an all-target Rust test pass, and included the Node soak operator guide in Windows artifacts,
 - expanded cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1

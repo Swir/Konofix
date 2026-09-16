@@ -10,12 +10,14 @@ The isolated manifest is guarded against dependency drift: CI compares its packa
 
 The CI runtime smoke test does more than call `--help`. It launches the release binary, waits for a schema-v2 health snapshot, verifies version and exact embedded source commit, stops the process cleanly, restarts it with the same identity file, and requires the Peer ID to remain unchanged. The systemd installer has its own mutation-free self-tests as a separate gate.
 
+Pull requests stage and verify the same Linux archive shape before merge instead of postponing bundle-integrity checks until a `main` push. `NODE_BUILD_INFO.json` records the exact path, byte size and SHA-256 of every operational file in the archive in addition to source commit/version. The fail-closed verifier checks the outer checksum, inspects TAR members before extraction, rejects unsafe, duplicate, non-regular, missing or unexpected members, binds all recorded sizes and hashes to the exact build, checks executable modes and extracts only after the archive has passed verification. Positive and adversarial self-tests cover tampered content, unexpected inventory, path traversal and wrong commit/version. Only artifact upload remains push-only.
+
 A successful `main` run uploads a Linux x86_64 bundle containing:
 
 - `konofix-node`,
 - `scripts/install-public-node-linux.sh`,
 - Node, soak, and Linux operator documentation,
-- `NODE_BUILD_INFO.json` with exact source commit, version, binary size and SHA-256,
+- `NODE_BUILD_INFO.json` with exact source commit/version plus per-file sizes and SHA-256 hashes,
 - a `.tar.gz` archive and SHA-256 checksum.
 
 The Linux bundle is public-Node infrastructure. It is not the Windows chat client and is not, by itself, proof that real cross-country/CGNAT promotion gates passed.

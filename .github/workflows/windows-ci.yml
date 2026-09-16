@@ -45,6 +45,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-network-evidence-gate.ps1
 
+      - name: Network campaign generator self-tests
+        shell: pwsh
+        run: .\scripts\test-network-campaign.ps1
+
       - name: Promotion evidence preflight self-tests
         shell: pwsh
         run: .\scripts\test-promotion-evidence.ps1
@@ -132,6 +136,7 @@ jobs:
             'install-public-node-task.ps1',
             'check-public-node-readiness.ps1',
             'new-network-test-report.ps1',
+            'new-network-test-campaign.ps1',
             'set-network-test-result.ps1',
             'validate-network-test-report.ps1',
             'check-promotion-evidence.ps1',

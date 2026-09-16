@@ -20,11 +20,12 @@
 - added adversarial network-evidence CI self-tests and wired stable promotion directly to validated real-network evidence,
 - added a roadmap-backed README progress bar checked by CI,
 - configured per-ref Windows CI concurrency with superseded-run cancellation,
-- reduced GitHub Actions token exposure by isolating `contents: write` to the post-build release-publication job,
-- attempted lockfile-enforced npm CI, detected that the repository did not yet contain `package-lock.json`, and restored the green-compatible install path rather than leaving Windows CI blocked,
-- corrected README and ROADMAP dependency-install documentation to match the then-current verified Windows CI configuration,
-- added a project-audit guard that keeps Windows CI dependency installation synchronized with actual lockfile state,
-- detected the newly generated committed `package-lock.json` through that guard and switched Windows CI to deterministic `npm ci --no-audit --no-fund` with setup-node npm caching,
+- reduced GitHub Actions token exposure by keeping the build/test job read-only,
+- added a project-audit guard that prevents `npm ci` and setup-node npm caching unless a real `package-lock.json` is committed,
+- diagnosed Windows CI #161 failing in `setup-node` because the claimed lockfile was not actually present in the repository,
+- restored the verified no-lockfile dependency path (`npm install --no-audit --no-fund`, no setup-node npm cache),
+- removed automatic GitHub Release publication from ordinary pushes so later releases cannot bypass the real public-network readiness gate,
+- clarified that the existing `v0.4.2-test1` pre-release is a controlled evidence-gathering preview rather than proof that cross-country/CGNAT gates have passed,
 - expanded cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1

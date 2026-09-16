@@ -83,6 +83,10 @@ jobs:
             exit 1
           fi
 
+      - name: Linux bundle provenance self-tests
+        shell: bash
+        run: python3 scripts/linux-bundle-provenance.py self-test
+
       - name: Konofix Node tests
         run: cargo test --locked --manifest-path node-linux/Cargo.toml --bin konofix-node
 
@@ -187,10 +191,10 @@ jobs:
         run: bash scripts/test-public-node-linux.sh
 
       - name: Stage Linux Node bundle
-        if: github.event_name == 'push'
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf artifact-linux
           mkdir -p artifact-linux/scripts artifact-linux/docs
           install -m 0755 node-linux/target/release/konofix-node artifact-linux/konofix-node
           install -m 0755 scripts/install-public-node-linux.sh artifact-linux/scripts/install-public-node-linux.sh
@@ -198,35 +202,28 @@ jobs:
           cp docs/NODE_SOAK.md artifact-linux/docs/NODE_SOAK.md
           cp docs/NODE_LINUX.md artifact-linux/docs/NODE_LINUX.md
           version="$(python3 -c 'import json; print(json.load(open("package.json", encoding="utf-8"))["version"])')"
-          bytes="$(stat -c '%s' artifact-linux/konofix-node)"
-          sha256="$(sha256sum artifact-linux/konofix-node | awk '{print $1}')"
-          cat > artifact-linux/NODE_BUILD_INFO.json <<EOF
-          {
-            "schema": 1,
-            "product": "Konofix Node",
-            "platform": "linux-x86_64",
-            "version": "$version",
-            "commit": "${GITHUB_SHA}",
-            "node": {
-              "path": "konofix-node",
-              "bytes": $bytes,
-              "sha256": "$sha256"
-            }
-          }
-          EOF
+          python3 scripts/linux-bundle-provenance.py build-info \
+            --root artifact-linux \
+            --commit "$GITHUB_SHA" \
+            --version "$version"
           tar -C artifact-linux -czf Konofix-Node-0.4.2-Linux-x86_64.tar.gz .
           sha256sum Konofix-Node-0.4.2-Linux-x86_64.tar.gz > Konofix-Node-0.4.2-Linux-x86_64.tar.gz.sha256
 
       - name: Verify Linux Node bundle
-        if: github.event_name == 'push'
         shell: bash
         run: |
           set -euo pipefail
-          tar -tzf Konofix-Node-0.4.2-Linux-x86_64.tar.gz | grep -F './konofix-node'
-          tar -tzf Konofix-Node-0.4.2-Linux-x86_64.tar.gz | grep -F './scripts/install-public-node-linux.sh'
-          tar -tzf Konofix-Node-0.4.2-Linux-x86_64.tar.gz | grep -F './docs/NODE_LINUX.md'
-          tar -tzf Konofix-Node-0.4.2-Linux-x86_64.tar.gz | grep -F './NODE_BUILD_INFO.json'
-          sha256sum -c Konofix-Node-0.4.2-Linux-x86_64.tar.gz.sha256
+          python3 scripts/linux-bundle-provenance.py verify \
+            --archive Konofix-Node-0.4.2-Linux-x86_64.tar.gz \
+            --checksum Konofix-Node-0.4.2-Linux-x86_64.tar.gz.sha256 \
+            --expected-commit "$GITHUB_SHA" \
+            --expected-version 0.4.2
+          verify_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$verify_dir"' EXIT
+          tar -xzf Konofix-Node-0.4.2-Linux-x86_64.tar.gz -C "$verify_dir"
+          test -x "$verify_dir/konofix-node"
+          test -x "$verify_dir/scripts/install-public-node-linux.sh"
+          "$verify_dir/konofix-node" --help | grep -F 'Konofix Node 0.4.2'
 
       - name: Upload Linux Node bundle
         if: github.event_name == 'push'

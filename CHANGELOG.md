@@ -90,7 +90,8 @@
 - added `cargo fmt --check` to Windows CI and the local preflight and install `rustfmt` explicitly in CI so formatting regressions fail before tests/builds,
 - added a headless Linux x86_64 build path for `konofix-node` using an isolated Cargo target that single-sources the production Node implementation, reuses the committed Rust lockfile and rejects Tauri/rfd dependency leakage,
 - added a hardened Linux/systemd public-Node installer plus CI self-tests, Linux operator documentation, release tarball/SHA-256 staging and exact `NODE_BUILD_INFO.json` provenance,
-- strengthened Linux CI with a manifest-parity gate and a real release-binary runtime smoke that validates exact source-commit health provenance and persistent Peer-ID continuity across a clean stop/restart.
+- strengthened Linux CI with a manifest-parity gate and a real release-binary runtime smoke that validates exact source-commit health provenance and persistent Peer-ID continuity across a clean stop/restart,
+- made the Linux systemd installer reject ports below 1024 because the service runs as the unprivileged `konofix` user, and added boundary self-tests proving port 1023 fails while port 1024 remains valid.
 
 ## 0.4.1
 

@@ -79,6 +79,8 @@ For parser-only validation without touching the network, use `-ValidateOnly`. `-
 
 Minimum topology: Client A in country/network A, Client B in a different country and independent network/operator B, and a publicly reachable Node, preferably on a third network. Exchange `#WORLD` messages both ways, discover a room, transfer files both ways and compare SHA-256, reconnect clients, restart Node while preserving Peer ID, then repeat after several minutes.
 
+For every PASS/FAIL observation, record enough concrete evidence to identify what was actually observed without storing secrets. Suitable examples include a message ID plus UTC timestamp, the room name seen by both clients, the public Node Peer ID before/after restart, or a transport diagnostic showing Relay/DCUtR. For file transfers, record the actual full 64-character SHA-256 digest observed on both sender and receiver. Stable promotion rejects bare PASS flags and file-transfer claims without the digest.
+
 ## 6. Transport and NAT matrix
 
 Verify TCP, UDP/QUIC, Circuit Relay, DCUtR/direct upgrade where possible, and the critical CGNAT ↔ public Node ↔ CGNAT topology. Do not infer transport success from general chat success: each required transport gets its own report.
@@ -99,7 +101,7 @@ The session bootstrap fails closed before creating final evidence if the two end
 
 The resulting session directory contains copied `BUILD_INFO.json`, a `SESSION_INFO.json` inventory with the exact version/commit/Node hash/bootstrap identity and hashes of the five initial manifests, plus TCP, QUIC, Relay, DCUtR and CGNAT report pairs. The QUIC scenario starts with the QUIC bootstrap; the remaining scenarios use the paired TCP bootstrap while preserving the same Node Peer ID. Session creation does **not** prove reachability or a transport handshake; both clients still run the real prechecks and scenarios below.
 
-After reports have been edited, `validate-network-test-session.ps1` checks the live manifest set against the immutable session bindings rather than comparing the initial manifest hashes. It rejects mixed endpoint pairs, changed country/network metadata, a different build/commit, a bootstrap outside the paired TCP/QUIC session identity, missing/duplicate scenarios, or a manifest set that no longer matches the session inventory. With `-RequirePassingEvidence`, it also requires the normal schema-v3 evidence gate to pass.
+After reports have been edited, `validate-network-test-session.ps1` checks the live manifest set against the immutable session bindings rather than comparing the initial manifest hashes. It rejects mixed endpoint pairs, changed country/network metadata, a different build/commit, a bootstrap outside the paired TCP/QUIC session identity, missing/duplicate scenarios, or a manifest set that no longer matches the session inventory. With `-RequirePassingEvidence`, it also requires the normal schema-v3 evidence gate to pass, including concrete per-check evidence and full file-transfer digests.
 
 ## 8. Reproducible test report
 
@@ -116,17 +118,23 @@ If a single report is needed independently, use the schema-v3 generator from the
 
 If `BUILD_INFO.json` and Git metadata are unavailable, the generator fails closed instead of creating ambiguous release evidence; `-SourceCommit <40-character SHA>` can be supplied explicitly when the exact verified commit is known.
 
-Do not hand-edit JSON and Markdown independently. Record each observed check with the bundled editor; it updates the authoritative schema-v3 JSON, stores a short per-check evidence note, recomputes `overall`, and regenerates the matching Markdown report:
+Do not hand-edit JSON and Markdown independently. Record each observed check with the bundled editor; it updates the authoritative schema-v3 JSON, stores a short per-check evidence note, recomputes `overall`, and regenerates the matching Markdown report. PASS and FAIL require a non-empty evidence note. File-transfer PASS requires the actual full SHA-256 digest in that note:
 
 ```powershell
 .\scripts\set-network-test-result.ps1 `
   -Manifest .\test-results\network-test-cgnat-YYYYMMDD-HHMMSS.json `
   -Check world_a_to_b `
   -Result PASS `
-  -Evidence "Message ID/UTC recorded on PC-B"
+  -Evidence "Message ID msg-123 received on PC-B at 2026-09-16T18:00:00Z"
+
+.\scripts\set-network-test-result.ps1 `
+  -Manifest .\test-results\network-test-cgnat-YYYYMMDD-HHMMSS.json `
+  -Check file_a_to_b_sha256 `
+  -Result PASS `
+  -Evidence "sender/receiver sha256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 ```
 
-Once every promotion-critical check for the scenario has passed, use `-Finalize` on the last update (or repeat the last PASS update). Finalization runs the schema-v3 validator before replacing the source files. Previously recorded PASS/FAIL/N/A evidence cannot be changed to a different result unless `-AllowOverwrite` is supplied explicitly, which makes accidental evidence loss harder.
+Once every promotion-critical check for the scenario has passed, use `-Finalize` on the last update (or repeat the last PASS update). Finalization runs the schema-v3 validator before replacing the source files. Previously recorded PASS/FAIL/N/A evidence cannot be changed to a different result unless `-AllowOverwrite` is supplied explicitly, which makes accidental evidence loss harder. Rejected evidence updates do not modify the authoritative source manifest.
 
 Internet reports are rejected at creation time if countries or network/operator identifiers are missing, countries match, networks match, the two endpoint identifiers normalize to the same value, or the source commit cannot be established. The generated JSON is schema v3. After recording results, validate the evidence set with:
 
@@ -134,7 +142,7 @@ Internet reports are rejected at creation time if countries or network/operator 
 .\scripts\validate-network-test-report.ps1 -Manifest .\test-results\*.json
 ```
 
-The promotion gate requires one consistent client/Node build, one exact source commit, fresh evidence (30 days by default), PASS for all core communication/resilience checks, Relay observation in Relay and CGNAT evidence, DCUtR upgrade in DCUtR evidence, and passing manifests for TCP, QUIC, Relay, DCUtR and CGNAT. Use `-MaxAgeDays` to tighten the freshness window. `overall=PASS` by itself is intentionally insufficient.
+The promotion gate requires one consistent client/Node build, one exact source commit, fresh evidence (30 days by default), PASS for all core communication/resilience checks, Relay observation in Relay and CGNAT evidence, DCUtR upgrade in DCUtR evidence, and passing manifests for TCP, QUIC, Relay, DCUtR and CGNAT. With the stable-promotion `RequireAllChecks` path, every PASS check must also have a concrete non-empty `check_evidence` string and both file-transfer checks must contain a full 64-character SHA-256 digest. Use `-MaxAgeDays` to tighten the freshness window. `overall=PASS` by itself is intentionally insufficient.
 
 Once all five manifests and the Node soak history are complete, bind them to the exact Windows artifact **and the one session that created them** in one command:
 
@@ -146,7 +154,7 @@ Once all five manifests and the Node soak history are complete, bind them to the
   -NodeSoakEvidence .\node-soak\*.json
 ```
 
-This preflight validates the exact `BUILD_INFO.json` version/source commit and packaged Node bytes, validates every required schema-v3 scenario, requires all five reports to belong to the same session endpoint pair and paired TCP/QUIC bootstrap identity, extracts the single validated bootstrap Peer ID, and finally requires the Node-soak history to match that same version, source commit and Peer ID while proving peer activity. The stable source-tree release gate likewise requires `-NetworkSessionInfo` whenever `-RequireNetworkEvidence` is used. These checks cannot replace the real tests; they prevent unrelated or mismatched evidence from being combined after those tests are complete.
+This preflight validates the exact `BUILD_INFO.json` version/source commit and packaged Node bytes, validates every required schema-v3 scenario, requires all five reports to belong to the same session endpoint pair and paired TCP/QUIC bootstrap identity, requires evidence-rich PASS observations including real file digests, extracts the single validated bootstrap Peer ID, and finally requires the Node-soak history to match that same version, source commit and Peer ID while proving peer activity. The stable source-tree release gate likewise requires `-NetworkSessionInfo` whenever `-RequireNetworkEvidence` is used. These checks cannot replace the real tests; they prevent unrelated, evidence-free or mismatched claims from being combined after those tests are complete.
 
 Never put identity keys, access tokens, private addresses or other secrets in reports.
 
@@ -160,10 +168,10 @@ Test Wi-Fi/LTE loss during transfer, app closure during transfer, Node restart, 
 
 ## 11. Release-stage gate and artifact provenance
 
-A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond the test release additionally requires validated schema-v3 evidence from independent countries/networks for the required transport/NAT scenarios, one coherent `SESSION_INFO.json` binding those five scenarios to the same endpoint pair and TCP/QUIC bootstrap identity, continuous schema-v2 Node-soak evidence bound to the same bootstrap Peer ID/version/source commit, and fixes for issues discovered during those tests.
+A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond the test release additionally requires validated schema-v3 evidence from independent countries/networks for the required transport/NAT scenarios, one coherent `SESSION_INFO.json` binding those five scenarios to the same endpoint pair and TCP/QUIC bootstrap identity, concrete per-PASS observations with full file-transfer SHA-256 digests, continuous schema-v2 Node-soak evidence bound to the same bootstrap Peer ID/version/source commit, and fixes for issues discovered during those tests.
 
 Every Windows CI archive includes `BUILD_INFO.json`. It records the exact Git commit, project version, workflow run, SHA-256 and byte size of `konofix-node.exe`, SHA-256 and byte size of every `.exe`/`.msi` installer, hashes/sizes for the bundled operational test scripts, the exact committed frontend lockfile, and the exact committed Rust lockfile. The Node binary embeds the same source commit into its health telemetry. `scripts\verify-release.ps1` extracts the ZIP and cross-checks packaged metadata and both dependency lockfiles against the committed build inputs before the artifact is uploaded.
 
-Stable promotion resolves the target commit from `-ExpectedSourceCommit`, `GITHUB_SHA`, or the clean Git working tree and passes that exact value into network-evidence, session-consistency and Node-soak validation. The bundled `check-promotion-evidence.ps1` gives remote testers the same exact-build binding using the artifact's verified `BUILD_INFO.json`. This prevents evidence collected for an earlier `0.4.2` commit or a different client pair from being reused for a different `0.4.2` build/session.
+Stable promotion resolves the target commit from `-ExpectedSourceCommit`, `GITHUB_SHA`, or the clean Git working tree and passes that exact value into network-evidence, session-consistency and Node-soak validation. The bundled `check-promotion-evidence.ps1` gives remote testers the same exact-build binding using the artifact's verified `BUILD_INFO.json`. This prevents evidence collected for an earlier `0.4.2` commit, a different client pair or evidence-free PASS claims from being reused for a different `0.4.2` build/session.
 
 Frontend dependency resolution is deterministic through the committed `package-lock.json` and `npm ci`. Rust dependency resolution is deterministic through committed `src-tauri\Cargo.lock`; CI/local/build helpers use `--locked` validation/build commands, and release verification rejects an archive whose packaged Cargo lockfile differs from the committed build input.

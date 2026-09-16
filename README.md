@@ -10,7 +10,7 @@ GitHub: https://github.com/Swir/Konofix
 
 `██████████████████░░ 91%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (51 of 56 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (52 of 57 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -36,7 +36,7 @@ konofix-node.exe --port 45555 --public-host 203.0.113.10
 
 Paste the recommended address into **Network settings → Bootstrap**. A bootstrap helps peers discover the DHT/relay network; it is not a message-history server or file store.
 
-Stable promotion also requires a continuous public-Node soak history that proves the Node kept one version, source commit and Peer ID, did not restart inside the evidence window, produced fresh snapshots without excessive monitoring gaps, and actually observed peer activity. The soak identity is bound to the same bootstrap Peer ID and exact source commit used by the validated cross-country manifests. Public/community deployments can pin identity storage explicitly with `--identity-file`; existing invalid identity files now fail closed instead of being silently replaced with a new Peer ID. A validated soak collector snapshots only health data that passes the same strict health gate, deduplicates unchanged samples, rejects conflicting same-timestamp evidence and is included in verified Windows artifacts. Cross-country testers also get a report editor that updates schema-v3 JSON and Markdown together, protects recorded results from accidental overwrite and can validate a completed scenario before finalizing it. The promotion validator treats schema-v3 JSON as typed evidence rather than coercible PowerShell values, enforces canonical casing and bounds manifest size before parsing. The verified Windows archive now also includes `check-promotion-evidence.ps1`, which joins its exact `BUILD_INFO.json` provenance, all required network manifests and the matching Node-soak history into one fail-closed PASS preflight. See `docs/NODE.md`, `docs/NODE_SOAK.md`, and `docs/TESTING.md`.
+Stable promotion also requires a continuous public-Node soak history that proves the Node kept one version, source commit and Peer ID, did not restart inside the evidence window, produced fresh snapshots without excessive monitoring gaps, and actually observed peer activity. The soak identity is bound to the same bootstrap Peer ID and exact source commit used by the validated cross-country manifests. Public/community deployments can pin identity storage explicitly with `--identity-file`; existing invalid identity files fail closed instead of being silently replaced with a new Peer ID. A validated soak collector snapshots only health data that passes the same strict health gate, deduplicates unchanged samples, rejects conflicting same-timestamp evidence and is included in verified Windows artifacts. Cross-country testers also get report/campaign tooling: `new-network-test-campaign.ps1` creates TCP, QUIC, Relay, DCUtR and CGNAT reports with one shared campaign ID, and stable promotion rejects evidence that mixes campaign IDs, Client A/Client B orientation, countries or networks/operators. The report editor updates schema-v3 JSON and Markdown together, protects recorded results from accidental overwrite and can validate a completed scenario before finalizing it. The promotion validator treats schema-v3 JSON as typed evidence rather than coercible PowerShell values, enforces canonical casing and bounds manifest size before parsing. The verified Windows archive includes `check-promotion-evidence.ps1`, which joins its exact `BUILD_INFO.json` provenance, one coherent network campaign and the matching Node-soak history into one fail-closed PASS preflight. See `docs/NODE.md`, `docs/NODE_SOAK.md`, and `docs/TESTING.md`.
 
 ## Localization
 
@@ -64,9 +64,9 @@ Project checks:
 .\scripts\check.ps1
 ```
 
-GitHub Actions validates TypeScript/Vite, Rust formatting, Rust all-target tests and checks, `konofix-node`, release/network/public-Node/readiness/Node-health/Node-soak gates, exact-build promotion evidence, network-report editing, Node-soak collection, localization/project consistency, and the production Windows bundle. Pull requests to `main` execute the production Tauri build, production Node build, test-bundle staging, ZIP/SHA-256 generation and release-artifact verification before merge; only artifact upload remains restricted to a `main` push. The localization audit requires the typed `MessageKey`/`t()` API, rejects the removed DOM/source-text translator pattern, and fails if Polish UI literals return to `src/main.ts`. Frontend dependencies are pinned by the committed `package-lock.json`; CI and the local preflight use `npm ci --no-audit --no-fund`, with setup-node caching keyed to that exact lockfile. Rust dependencies are pinned by committed `src-tauri/Cargo.lock`; CI/local validation uses `cargo metadata/test/check/build --locked` where applicable, requires `cargo fmt --check`, and the Windows helper verifies the locked graph before Tauri packaging. The project audit verifies both lockfile policies and rejects CI/build-helper drift. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
+GitHub Actions validates TypeScript/Vite, Rust formatting, Rust all-target tests and checks, `konofix-node`, release/network/public-Node/readiness/Node-health/Node-soak gates, exact-build promotion evidence, campaign generation, network-report editing, Node-soak collection, localization/project consistency, and the production Windows bundle. Pull requests to `main` execute the production Tauri build, production Node build, test-bundle staging, ZIP/SHA-256 generation and release-artifact verification before merge; only artifact upload remains restricted to a `main` push. The localization audit requires the typed `MessageKey`/`t()` API, rejects the removed DOM/source-text translator pattern, and fails if Polish UI literals return to `src/main.ts`. Frontend dependencies are pinned by the committed `package-lock.json`; CI and the local preflight use `npm ci --no-audit --no-fund`, with setup-node caching keyed to that exact lockfile. Rust dependencies are pinned by committed `src-tauri/Cargo.lock`; CI/local validation uses `cargo metadata/test/check/build --locked` where applicable, requires `cargo fmt --check`, and the Windows helper verifies the locked graph before Tauri packaging. The project audit verifies both lockfile policies and rejects CI/build-helper drift. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
 
-Each Windows CI archive also carries `BUILD_INFO.json` with the exact commit/version and SHA-256 plus byte size for `konofix-node.exe`, the committed frontend and Rust lockfiles, the bundled test tools and every Windows installer. Release verification requires both packaged lockfiles to match their committed build inputs by size and SHA-256. The Node binary embeds that same source commit in its schema-v2 health snapshots. Real-network evidence is schema v3 and stable promotion rejects evidence, Node health or soak history from any other source commit, preventing two different `0.4.2` builds from being treated as interchangeable.
+Each Windows CI archive also carries `BUILD_INFO.json` with the exact commit/version and SHA-256 plus byte size for `konofix-node.exe`, the committed frontend and Rust lockfiles, the bundled test tools and every Windows installer. Release verification requires both packaged lockfiles to match their committed build inputs by size and SHA-256. The Node binary embeds that same source commit in its schema-v2 health snapshots. Real-network evidence is schema v3 and stable promotion rejects evidence, Node health or soak history from any other source commit; it also requires all transport/NAT manifests to belong to one campaign and one oriented client/network pair, preventing unrelated test sessions or different `0.4.2` builds from being treated as interchangeable.
 
 ## Windows build
 
@@ -98,7 +98,7 @@ For a long-lived public/community Node, the recommended Windows-artifact path is
 
 `-AllowPrivateAddress` exists only for controlled LAN/lab tests. The launcher is included in the verified Windows test archive, so a public Node operator does not need a source checkout.
 
-For a Node that should survive logoff/reboot without keeping an interactive terminal open, the same verified Windows archive now includes a supervised startup-task installer. Preview the exact SYSTEM task, persistent paths and optional firewall changes first, then install from an elevated PowerShell window:
+For a Node that should survive logoff/reboot without keeping an interactive terminal open, the same verified Windows archive includes a supervised startup-task installer. Preview the exact SYSTEM task, persistent paths and optional firewall changes first, then install from an elevated PowerShell window:
 
 ```powershell
 .\scripts\install-public-node-task.ps1 `
@@ -149,16 +149,28 @@ For a single bootstrap precheck you can still run:
 .\scripts\internet-test.ps1 -Bootstrap "/ip4/203.0.113.10/tcp/45555/p2p/12D3KooW..."
 ```
 
-Once the five required Internet manifests and Node-soak snapshots exist, run the bundled exact-build promotion preflight against the `BUILD_INFO.json` from the same extracted Windows archive:
+Create one coherent five-scenario campaign before the real cross-country pass:
+
+```powershell
+.\scripts\new-network-test-campaign.ps1 `
+  -ClientA "PC-A" -ClientACountry "Norway" -ClientANetwork "Operator-A" `
+  -ClientB "PC-B" -ClientBCountry "Poland" -ClientBNetwork "Operator-B" `
+  -BuildVersion "0.4.2" -NodeVersion "0.4.2" `
+  -Bootstrap "/dns/node.yourdomain.com/tcp/45555/p2p/12D3KooW..."
+```
+
+The tool creates PENDING TCP, QUIC, Relay, DCUtR and CGNAT reports under one campaign ID. Do not copy PASS results between campaigns.
+
+Once those five manifests and Node-soak snapshots are complete, run the bundled exact-build promotion preflight against the `BUILD_INFO.json` from the same extracted Windows archive:
 
 ```powershell
 .\scripts\check-promotion-evidence.ps1 `
   -BuildInfoPath .\BUILD_INFO.json `
-  -NetworkEvidence .\test-results\tcp.json,.\test-results\quic.json,.\test-results\relay.json,.\test-results\dcutr.json,.\test-results\cgnat.json `
+  -NetworkEvidence .\test-results\campaign-*\*.json `
   -NodeSoakEvidence .\node-soak\*.json
 ```
 
-It returns PASS only when all required scenarios are valid and fresh and the soak history matches the exact artifact version, source commit and single bootstrap Peer ID.
+It returns PASS only when all required scenarios are valid and fresh, all manifests belong to one campaign/client pair, and the soak history matches the exact artifact version, source commit and single bootstrap Peer ID.
 
 ## Local data
 

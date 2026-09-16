@@ -1,0 +1,290 @@
+name: One-time P2P identity hardening
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    if: github.repository == 'Swir/Konofix'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Rust MSVC
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          targets: x86_64-pc-windows-msvc
+          toolchain: stable
+          components: rustfmt
+
+      - name: Apply fail-closed authenticated-peer binding
+        id: patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @'
+          from pathlib import Path
+
+          path = Path('src-tauri/src/lib.rs')
+          text = path.read_text(encoding='utf-8')
+          marker = 'fn wire_event_matches_source(event: &WireEvent, source: &PeerId) -> bool'
+          if marker in text:
+              print('Security hardening already present; no source mutation required.')
+              Path('security-patch-needed.txt').write_text('false', encoding='utf-8')
+              raise SystemExit(0)
+
+          old = '''#[derive(Debug, Clone, Serialize, Deserialize)]
+          #[serde(tag = "type", rename_all = "snake_case")]
+          enum FileRequest {'''
+          new = '''fn wire_event_claimed_peer_id(event: &WireEvent) -> Option<&str> {
+              match event {
+                  WireEvent::Presence { peer_id, .. }
+                  | WireEvent::Goodbye { peer_id }
+                  | WireEvent::NickClaim { peer_id, .. } => Some(peer_id.as_str()),
+                  WireEvent::Chat(message) => message.peer_id.as_deref(),
+                  WireEvent::RoomCreate(room) => room.owner.as_deref(),
+                  WireEvent::RoomClose { owner, .. } => Some(owner.as_str()),
+              }
+          }
+
+          fn wire_event_matches_source(event: &WireEvent, source: &PeerId) -> bool {
+              let source = source.to_string();
+              wire_event_claimed_peer_id(event)
+                  .map(|claimed| claimed == source)
+                  .unwrap_or(false)
+          }
+
+          #[derive(Debug, Clone, Serialize, Deserialize)]
+          #[serde(tag = "type", rename_all = "snake_case")]
+          enum FileRequest {'''
+          if old not in text:
+              raise SystemExit('Could not locate FileRequest insertion point.')
+          text = text.replace(old, new, 1)
+
+          old = '''                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message { message, .. })) => {
+                      if let Ok(event) = serde_json::from_slice::<WireEvent>(&message.data) {
+                          match event {'''
+          new = '''                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message { message, .. })) => {
+                      let Some(authenticated_source) = message.source else {
+                          let _ = app.emit("network-warning", "Dropped signed-network event without an authenticated source Peer ID.");
+                          continue;
+                      };
+                      if let Ok(event) = serde_json::from_slice::<WireEvent>(&message.data) {
+                          if !wire_event_matches_source(&event, &authenticated_source) {
+                              let _ = app.emit(
+                                  "network-warning",
+                                  format!("Dropped P2P event with forged payload identity from {authenticated_source}."),
+                              );
+                              continue;
+                          }
+                          match event {'''
+          if old not in text:
+              raise SystemExit('Could not locate GossipSub message handler.')
+          text = text.replace(old, new, 1)
+
+          old = '''                                        FileRequest::Offer { transfer_id, file_name, size } => {
+                                              if size > MAX_FILE_SIZE {'''
+          new = '''                                        FileRequest::Offer { transfer_id, file_name, size } => {
+                                              if Uuid::parse_str(&transfer_id).is_err() {
+                                                  let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Rejected { reason: "Invalid transfer ID.".into() });
+                                                  continue;
+                                              }
+                                              if pending_incoming.contains_key(&transfer_id)
+                                                  || incoming.contains_key(&transfer_id)
+                                                  || outgoing.contains_key(&transfer_id)
+                                              {
+                                                  let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Rejected { reason: "Transfer ID is already active.".into() });
+                                                  continue;
+                                              }
+                                              if size > MAX_FILE_SIZE {'''
+          if old not in text:
+              raise SystemExit('Could not locate incoming offer handler.')
+          text = text.replace(old, new, 1)
+
+          old = '''                                        FileRequest::Complete { transfer_id, sha256 } => {
+                                              let response = if let Some(mut transfer) = incoming.remove(&transfer_id) {'''
+          new = '''                                        FileRequest::Complete { transfer_id, sha256 } => {
+                                              let sender_mismatch = incoming
+                                                  .get(&transfer_id)
+                                                  .map(|transfer| transfer.peer != peer)
+                                                  .unwrap_or(false);
+                                              let hash_format_valid = sha256.len() == 64 && sha256.bytes().all(|byte| byte.is_ascii_hexdigit());
+                                              let response = if sender_mismatch {
+                                                  FileResponse::Error { message: "Transfer sender identity mismatch.".into() }
+                                              } else if !hash_format_valid {
+                                                  FileResponse::Error { message: "Invalid SHA-256 digest format.".into() }
+                                              } else if let Some(mut transfer) = incoming.remove(&transfer_id) {'''
+          if old not in text:
+              raise SystemExit('Could not locate incoming completion handler.')
+          text = text.replace(old, new, 1)
+
+          old = '''                                        FileRequest::Cancel { transfer_id } => {
+                                              if let Some(pending) = pending_incoming.remove(&transfer_id) {
+                                                  let _ = pending;
+                                              }
+                                              if let Some(transfer) = incoming.remove(&transfer_id) {
+                                                  let _ = tokio::fs::remove_file(&transfer.temp_path).await;
+                                                  emit_transfer(&app, &file_view_incoming(&transfer_id, &transfer, "cancelled", None, Some("Druga strona anulowała transfer.".into())));
+                                              }
+                                              if let Some(transfer) = outgoing.remove(&transfer_id) {
+                                                  emit_transfer(&app, &file_view_outgoing(&transfer_id, &transfer, "cancelled", None, Some("Druga strona anulowała transfer.".into())));
+                                              }
+                                              let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Ack { received: 0 });
+                                          }'''
+          new = '''                                        FileRequest::Cancel { transfer_id } => {
+                                              let pending_matches = pending_incoming
+                                                  .get(&transfer_id)
+                                                  .map(|transfer| transfer.peer == peer)
+                                                  .unwrap_or(false);
+                                              let incoming_matches = incoming
+                                                  .get(&transfer_id)
+                                                  .map(|transfer| transfer.peer == peer)
+                                                  .unwrap_or(false);
+                                              let outgoing_matches = outgoing
+                                                  .get(&transfer_id)
+                                                  .map(|transfer| transfer.peer == peer)
+                                                  .unwrap_or(false);
+                                              let matched = pending_matches || incoming_matches || outgoing_matches;
+
+                                              if pending_matches {
+                                                  pending_incoming.remove(&transfer_id);
+                                              }
+                                              if incoming_matches {
+                                                  if let Some(transfer) = incoming.remove(&transfer_id) {
+                                                      let _ = tokio::fs::remove_file(&transfer.temp_path).await;
+                                                      emit_transfer(&app, &file_view_incoming(&transfer_id, &transfer, "cancelled", None, Some("Druga strona anulowała transfer.".into())));
+                                                  }
+                                              }
+                                              if outgoing_matches {
+                                                  if let Some(transfer) = outgoing.remove(&transfer_id) {
+                                                      emit_transfer(&app, &file_view_outgoing(&transfer_id, &transfer, "cancelled", None, Some("Druga strona anulowała transfer.".into())));
+                                                  }
+                                              }
+
+                                              let response = if matched {
+                                                  FileResponse::Ack { received: 0 }
+                                              } else {
+                                                  FileResponse::Error { message: "Transfer not found for requesting peer.".into() }
+                                              };
+                                              let _ = swarm.behaviour_mut().file_transfer.send_response(channel, response);
+                                          }'''
+          if old not in text:
+              raise SystemExit('Could not locate inbound cancel handler.')
+          text = text.replace(old, new, 1)
+
+          old = '''pub fn run() {'''
+          new = '''#[cfg(test)]
+          mod authenticated_event_tests {
+              use super::*;
+
+              fn test_peer() -> PeerId {
+                  libp2p::identity::Keypair::generate_ed25519()
+                      .public()
+                      .to_peer_id()
+              }
+
+              #[test]
+              fn wire_event_payload_identity_must_match_authenticated_source() {
+                  let source = test_peer();
+                  let attacker = test_peer();
+                  let source_text = source.to_string();
+                  let events = vec![
+                      WireEvent::Presence { peer_id: source_text.clone(), nick: "alice".into() },
+                      WireEvent::Goodbye { peer_id: source_text.clone() },
+                      WireEvent::NickClaim {
+                          peer_id: source_text.clone(),
+                          nick: "alice".into(),
+                          canonical: "alice".into(),
+                          expires_at: 1,
+                      },
+                      WireEvent::Chat(ChatMessage {
+                          id: "message".into(),
+                          kind: "chat".into(),
+                          peer_id: Some(source_text.clone()),
+                          nick: "alice".into(),
+                          room: "world".into(),
+                          text: "hello".into(),
+                          timestamp: 1,
+                      }),
+                      WireEvent::RoomCreate(RoomInfo {
+                          id: "room".into(),
+                          title: "# room".into(),
+                          owner: Some(source_text.clone()),
+                          users: Some(1),
+                      }),
+                      WireEvent::RoomClose { room_id: "room".into(), owner: source_text.clone() },
+                  ];
+
+                  for event in events {
+                      assert!(wire_event_matches_source(&event, &source));
+                      assert!(!wire_event_matches_source(&event, &attacker));
+                  }
+
+                  let missing_chat_identity = WireEvent::Chat(ChatMessage {
+                      id: "message".into(),
+                      kind: "chat".into(),
+                      peer_id: None,
+                      nick: "alice".into(),
+                      room: "world".into(),
+                      text: "hello".into(),
+                      timestamp: 1,
+                  });
+                  assert!(!wire_event_matches_source(&missing_chat_identity, &source));
+
+                  let missing_room_owner = WireEvent::RoomCreate(RoomInfo {
+                      id: "room".into(),
+                      title: "# room".into(),
+                      owner: None,
+                      users: Some(1),
+                  });
+                  assert!(!wire_event_matches_source(&missing_room_owner, &source));
+              }
+          }
+
+          pub fn run() {'''
+          if old not in text:
+              raise SystemExit('Could not locate test-module insertion point.')
+          text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8')
+          Path('security-patch-needed.txt').write_text('true', encoding='utf-8')
+          print('Applied authenticated GossipSub identity and file-transfer sender hardening.')
+          '@ | python -
+          if ((Get-Content security-patch-needed.txt -Raw).Trim() -eq 'true') {
+            "needed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            "needed=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+      - name: Format Rust source
+        if: steps.patch.outputs.needed == 'true'
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+
+      - name: Verify locked Rust tests
+        if: steps.patch.outputs.needed == 'true'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
+
+      - name: Verify no formatting diff errors
+        if: steps.patch.outputs.needed == 'true'
+        shell: pwsh
+        run: |
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw "git diff --check failed with exit code $LASTEXITCODE." }
+
+      - name: Commit verified security hardening
+        if: steps.patch.outputs.needed == 'true'
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src-tauri/src/lib.rs
+          git commit -m 'security: bind P2P payloads to authenticated peers'
+          git push origin HEAD:main

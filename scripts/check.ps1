@@ -32,6 +32,9 @@ try {
   Write-Host 'Public Node deployment self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-public-node.ps1'
 
+  Write-Host 'Public Node readiness self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-public-node-readiness.ps1'
+
   Write-Host 'Node health validator self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-node-health.ps1'
 
@@ -50,17 +53,21 @@ try {
   npm run build
   if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE." }
 
+  Write-Host 'Rust lockfile metadata gate...' -ForegroundColor Yellow
+  cargo metadata --locked --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "cargo metadata --locked failed with exit code $LASTEXITCODE." }
+
   Write-Host 'Rust all-target tests...' -ForegroundColor Yellow
-  cargo test --manifest-path src-tauri/Cargo.toml --all-targets
-  if ($LASTEXITCODE -ne 0) { throw "cargo test failed with exit code $LASTEXITCODE." }
+  cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
+  if ($LASTEXITCODE -ne 0) { throw "cargo test --locked failed with exit code $LASTEXITCODE." }
 
   Write-Host 'Rust checks: application + Konofix Node...' -ForegroundColor Yellow
-  cargo check --manifest-path src-tauri/Cargo.toml
-  if ($LASTEXITCODE -ne 0) { throw "cargo check failed with exit code $LASTEXITCODE." }
-  cargo check --manifest-path src-tauri/Cargo.toml --bin konofix-node
-  if ($LASTEXITCODE -ne 0) { throw "cargo check --bin konofix-node failed with exit code $LASTEXITCODE." }
+  cargo check --locked --manifest-path src-tauri/Cargo.toml
+  if ($LASTEXITCODE -ne 0) { throw "cargo check --locked failed with exit code $LASTEXITCODE." }
+  cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-node
+  if ($LASTEXITCODE -ne 0) { throw "cargo check --locked --bin konofix-node failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'OK - local preflight matches CI gates, public-Node/bootstrap validation, deterministic frontend install, frontend build, Rust tests and Node checks.' -ForegroundColor Green
+  Write-Host 'OK - local preflight matches CI gates, public-Node/bootstrap/readiness validation, deterministic frontend and Rust dependency inputs, frontend build, Rust tests and Node checks.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

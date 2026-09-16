@@ -34,6 +34,7 @@ try {
   $toolRelativePaths = @(
     'scripts\internet-test.ps1',
     'scripts\public-node.ps1',
+    'scripts\check-public-node-readiness.ps1',
     'scripts\new-network-test-report.ps1',
     'scripts\validate-network-test-report.ps1',
     'scripts\check-node-health.ps1',
@@ -111,6 +112,12 @@ try {
   Assert-True ([int64]$lockMeta.bytes -eq [int64](Get-Item $cargoLock).Length) 'BUILD_INFO.json Cargo.lock size does not match the archive.'
   Assert-Hash -Path $cargoLock -Expected ([string]$lockMeta.sha256) -Label 'Cargo.lock'
 
+  $repoCargoLock = Join-Path $repoRoot 'src-tauri\Cargo.lock'
+  Assert-True (Test-Path $repoCargoLock -PathType Leaf) 'Committed repository src-tauri\Cargo.lock is missing during artifact verification.'
+  Assert-True ([int64](Get-Item $repoCargoLock).Length -eq [int64](Get-Item $cargoLock).Length) 'Packaged Cargo.lock size does not match the committed Rust build input.'
+  $repoCargoLockHash = (Get-FileHash $repoCargoLock -Algorithm SHA256).Hash.ToLowerInvariant()
+  Assert-True ([string]::Equals($repoCargoLockHash, [string]$lockMeta.sha256, [System.StringComparison]::Ordinal)) 'Packaged Cargo.lock does not match the committed Rust build input.'
+
   $installerMetadata = @($buildInfo.installers)
   Assert-True ($installerMetadata.Count -eq $installers.Count) "BUILD_INFO.json installer count mismatch. metadata=$($installerMetadata.Count) archive=$($installers.Count)"
   foreach ($installer in $installers) {
@@ -136,7 +143,7 @@ try {
   $releaseNotes = Get-Content (Join-Path $temp 'RELEASE_NOTES.md') -Raw
   Assert-True ($releaseNotes -match '0\.4\.2 Test 1') 'RELEASE_NOTES.md does not describe the expected test release.'
 
-  Write-Host "OK - ZIP, provenance metadata, Node, frontend/Rust dependency records, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
+  Write-Host "OK - ZIP, provenance metadata, Node, committed frontend/Rust dependency inputs, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
   Write-Host "SHA256: $actual"
   Write-Host "Build commit: $commit"
 } finally {

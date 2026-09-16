@@ -38,14 +38,14 @@
 - fixed Windows CI #165 by making dependency-policy detection use Git-tracked lockfile state instead of an untracked `package-lock.json` created by `npm install`,
 - changed no-lockfile CI installation to `npm install --no-audit --no-fund --package-lock=false` so the build workspace cannot manufacture misleading lockfile state,
 - pinned every external GitHub Action in Windows CI to an immutable full commit SHA, disabled persisted checkout credentials, and made the project audit reject future floating Action refs,
-- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 43/48 tasks (90%),
+- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 45/50 tasks (90%),
 - made project audit recompute the active roadmap checklist and reject stale README/ROADMAP percentages or task counts,
 - added multi-snapshot public Node soak validation that rejects identity/version/source-commit drift, restarts, stale samples, monitoring gaps and inconsistent uptime cadence,
 - made stable promotion require Node soak evidence and bind that soak to the exact bootstrap Peer ID used by the validated cross-country network evidence,
 - added adversarial Node soak self-tests to Windows CI, added an all-target Rust test pass, and included the Node soak operator guide in Windows artifacts,
-- aligned `scripts/check.ps1` with the CI preflight path so local checks run release/network/bootstrap/public-Node/health/soak gates, project audit, deterministic `npm ci`, frontend build, Rust all-target tests and application/Node checks,
-- added machine-readable Windows artifact provenance (`BUILD_INFO.json`) with exact commit/version plus SHA-256 and sizes for the Node, Rust resolution record, bundled test tools and every installer,
-- strengthened release verification so provenance, `Cargo.lock`, Node-soak instructions, test-tool hashes and all installer hashes are cross-checked after ZIP extraction before artifact upload,
+- aligned `scripts/check.ps1` with the CI preflight path so local checks run release/network/bootstrap/public-Node/readiness/health/soak gates, project audit, deterministic `npm ci`, frontend build, locked Rust metadata/tests and application/Node checks,
+- added machine-readable Windows artifact provenance (`BUILD_INFO.json`) with exact commit/version plus SHA-256 and sizes for the Node, dependency lockfiles, bundled test tools and every installer,
+- strengthened release verification so provenance, committed frontend/Rust lockfiles, Node-soak instructions, test-tool hashes and all installer hashes are cross-checked after ZIP extraction before artifact upload,
 - generated a frontend lockfile candidate inside green Windows CI and committed that exact candidate as the canonical `package-lock.json`,
 - switched Windows CI from mutable `npm install` resolution to deterministic `npm ci`, enabled setup-node caching keyed to `package-lock.json`, and removed CI-side lockfile regeneration,
 - extended project audit to validate package-lock schema/root metadata/dependency declarations and to fail if CI drifts away from the committed-lock policy,
@@ -57,7 +57,11 @@
 - changed pull-request Windows CI to execute the production Tauri/Node builds, stage the complete Windows test bundle, create ZIP/SHA-256 and run release-artifact verification before merge; only artifact upload remains push-only,
 - added `scripts/public-node.ps1`, a fail-closed deployment preflight/launcher that rejects obviously non-public IPv4/IPv6 and reserved DNS names by default, validates persistent state-path separation, optionally resolves DNS before launch and emits deterministic JSON configuration for automation,
 - added adversarial public-Node deployment self-tests to Windows CI/local preflight and included the launcher in Windows artifact provenance so remote operators can use the validated flow without cloning the repository,
-- expanded public Node operator guidance and release-gate documentation while keeping the stable public-Node and cross-country gates dependent on real evidence.
+- recovered the exact `src-tauri/Cargo.lock` produced by verified green Windows CI artifact `f33e72f...`, verified its SHA-256 before commit, and removed the temporary write-capable bootstrap workflow immediately after the one-time import,
+- converted the recovered Rust lockfile into an enforced build input: Windows CI/local/build helpers now validate or build with `--locked`, project audit rejects unlocked Cargo resolution, and release verification rejects a packaged Cargo lockfile that differs from committed `src-tauri/Cargo.lock`,
+- added `scripts/check-public-node-readiness.ps1` to bind TCP/QUIC bootstrap addresses to one host/port/Peer ID and a fresh expected Node version/source commit/health identity, with bounded TCP reachability probing and explicit refusal to treat structural QUIC validation as proof of a QUIC handshake,
+- added positive/adversarial public-Node readiness self-tests for identity, host, port, transport, stopped-health and source-commit mismatch cases, wired them into CI/local preflight, and bundled the readiness validator in verified Windows artifacts,
+- expanded public Node operator/testing guidance and release-gate documentation while keeping the stable public-Node and cross-country gates dependent on real evidence.
 
 ## 0.4.1
 

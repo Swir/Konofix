@@ -38,8 +38,10 @@ const assertDependencyMap = (manifestMap, lockMap, label) => {
 const pkg = JSON.parse(read('package.json'));
 const tauri = JSON.parse(read('src-tauri/tauri.conf.json'));
 const cargo = read('src-tauri/Cargo.toml');
+const cargoName = cargo.match(/^name\s*=\s*"([^"]+)"/m)?.[1];
 const cargoVersion = cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
 
+if (!cargoName) fail('Could not read Cargo package name.');
 if (!cargoVersion) fail('Could not read Cargo package version.');
 if (pkg.version !== tauri.version || pkg.version !== cargoVersion) {
   fail(`Version mismatch: package.json=${pkg.version}, tauri.conf.json=${tauri.version}, Cargo.toml=${cargoVersion}`);
@@ -186,6 +188,55 @@ if (fs.existsSync(path.join(root, windowsWorkflowPath))) {
     if (hasWorkingNpmLock) console.log('Frontend dependency policy: ignoring an untracked/generated package-lock.json; Git-tracked state remains authoritative.');
     console.log('Frontend dependency policy: no committed lockfile; compatible npm install path enforced.');
   }
+}
+
+// Rust dependency resolution is a release input, not merely provenance captured after compilation.
+const cargoLockPath = 'src-tauri/Cargo.lock';
+if (!isTracked(cargoLockPath)) {
+  fail('src-tauri/Cargo.lock must be committed so Rust dependency resolution is deterministic.');
+} else {
+  const cargoLock = read(cargoLockPath);
+  if (!/^version\s*=\s*4\s*$/m.test(cargoLock)) {
+    fail('src-tauri/Cargo.lock must use Cargo lockfile format version 4.');
+  }
+  if (cargoName && cargoVersion) {
+    const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rootPackage = new RegExp(`\\[\\[package\\]\\][\\s\\S]*?^name\\s*=\\s*"${escapeRegex(cargoName)}"\\s*$[\\s\\S]*?^version\\s*=\\s*"${escapeRegex(cargoVersion)}"\\s*$`, 'm');
+    if (!rootPackage.test(cargoLock)) {
+      fail(`src-tauri/Cargo.lock does not contain the expected root package ${cargoName} ${cargoVersion}.`);
+    }
+  }
+
+  const lockedCargoCommandFiles = [
+    '.github/workflows/windows-ci.yml',
+    'scripts/check.ps1',
+    'scripts/build-windows.ps1',
+    'build-node.bat',
+  ];
+  for (const file of lockedCargoCommandFiles) {
+    for (const line of read(file).split(/\r?\n/)) {
+      if (/\bcargo\s+(?:metadata|test|check|build)\b/.test(line) && !/--locked\b/.test(line)) {
+        fail(`${file} contains a Rust dependency-resolving Cargo command without --locked: ${line.trim()}`);
+      }
+    }
+  }
+
+  const workflow = read(windowsWorkflowPath);
+  if (!/Rust lockfile metadata gate/.test(workflow) || !/cargo metadata --locked/.test(workflow)) {
+    fail('Windows CI must validate the committed Cargo.lock with cargo metadata --locked before production builds.');
+  }
+  if (!/test-public-node-readiness\.ps1/.test(workflow)) {
+    fail('Windows CI must run public Node readiness adversarial self-tests.');
+  }
+  if (!/'check-public-node-readiness\.ps1'/.test(workflow)) {
+    fail('Windows test artifacts must include the public Node readiness validator.');
+  }
+
+  const verifier = read('scripts/verify-release.ps1');
+  if (!/src-tauri\\Cargo\.lock/.test(verifier) || !/Packaged Cargo\.lock does not match the committed Rust build input/.test(verifier)) {
+    fail('Release verification must bind packaged Cargo.lock to committed src-tauri/Cargo.lock.');
+  }
+  console.log('Rust dependency policy: committed Cargo.lock, --locked resolution and packaged-input verification are enforced.');
 }
 
 const main = read('src/main.ts');

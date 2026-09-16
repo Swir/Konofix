@@ -83,14 +83,14 @@ try {
         & $validator -TcpBootstrap $tcp -QuicBootstrap $tcp -HealthPath $healthPath -SkipTcpReachability -AsJson | Out-Null
     }
 
-    $stopped = [ordered]@{} + $health
-    $stopped.status = 'stopped'
-    $stopped.timestamp_unix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-    $stopped | ConvertTo-Json | Set-Content -LiteralPath $healthPath -Encoding utf8
+    $health.status = 'stopped'
+    $health.timestamp_unix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $health | ConvertTo-Json | Set-Content -LiteralPath $healthPath -Encoding utf8
     Expect-Failure -Contains 'not running' -Action {
         & $validator -TcpBootstrap $tcp -QuicBootstrap $quic -HealthPath $healthPath -ExpectedSourceCommit $sourceCommit -SkipTcpReachability -AsJson | Out-Null
     }
 
+    $health.status = 'running'
     $health.timestamp_unix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $health | ConvertTo-Json | Set-Content -LiteralPath $healthPath -Encoding utf8
     Expect-Failure -Contains 'source commit mismatch' -Action {

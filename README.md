@@ -10,7 +10,7 @@ GitHub: https://github.com/Swir/Konofix
 
 `██████████████████░░ 90%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (43 of 48 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (45 of 50 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -63,9 +63,9 @@ Project checks:
 .\scripts\check.ps1
 ```
 
-GitHub Actions validates TypeScript/Vite, Rust all-target tests and checks, `konofix-node`, release/network/public-Node/Node-health/Node-soak gates, localization/project consistency, and the production Windows bundle. Pull requests to `main` execute the production Tauri build, production Node build, test-bundle staging, ZIP/SHA-256 generation and release-artifact verification before merge; only artifact upload remains restricted to a `main` push. The localization audit requires the typed `MessageKey`/`t()` API, rejects the removed DOM/source-text translator pattern, and fails if Polish UI literals return to `src/main.ts`. Frontend dependencies are pinned by the committed `package-lock.json`; CI and the local preflight use `npm ci --no-audit --no-fund`, with setup-node caching keyed to that exact lockfile. The project audit verifies that the lockfile root package, dependency declarations and CI policy still match `package.json`, rejects a return to `npm install`, and rejects CI-side lockfile regeneration. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
+GitHub Actions validates TypeScript/Vite, Rust all-target tests and checks, `konofix-node`, release/network/public-Node/readiness/Node-health/Node-soak gates, localization/project consistency, and the production Windows bundle. Pull requests to `main` execute the production Tauri build, production Node build, test-bundle staging, ZIP/SHA-256 generation and release-artifact verification before merge; only artifact upload remains restricted to a `main` push. The localization audit requires the typed `MessageKey`/`t()` API, rejects the removed DOM/source-text translator pattern, and fails if Polish UI literals return to `src/main.ts`. Frontend dependencies are pinned by the committed `package-lock.json`; CI and the local preflight use `npm ci --no-audit --no-fund`, with setup-node caching keyed to that exact lockfile. Rust dependencies are pinned by committed `src-tauri/Cargo.lock`; CI/local validation uses `cargo metadata/test/check/build --locked` where applicable, and the Windows helper verifies the locked graph before Tauri packaging. The project audit verifies both lockfile policies and rejects CI/build-helper drift. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
 
-Each Windows CI archive also carries `BUILD_INFO.json` with the exact commit/version and SHA-256 plus byte size for `konofix-node.exe`, the committed frontend lockfile, the captured Rust dependency-resolution record, the bundled test tools and every Windows installer. Release verification requires the packaged `package-lock.json` to match the committed build input byte-for-byte by size and SHA-256. The Node binary embeds that same source commit in its schema-v2 health snapshots. Real-network evidence is schema v3 and stable promotion rejects evidence, Node health or soak history from any other source commit, preventing two different `0.4.2` builds from being treated as interchangeable. The captured `Cargo.lock` records the Rust graph resolved by that build; it is not yet presented as a deterministic Rust build input until a verified `src-tauri/Cargo.lock` is committed and enforced.
+Each Windows CI archive also carries `BUILD_INFO.json` with the exact commit/version and SHA-256 plus byte size for `konofix-node.exe`, the committed frontend and Rust lockfiles, the bundled test tools and every Windows installer. Release verification requires both packaged lockfiles to match their committed build inputs by size and SHA-256. The Node binary embeds that same source commit in its schema-v2 health snapshots. Real-network evidence is schema v3 and stable promotion rejects evidence, Node health or soak history from any other source commit, preventing two different `0.4.2` builds from being treated as interchangeable.
 
 ## Windows build
 
@@ -109,7 +109,20 @@ konofix-node.exe `
 
 Open TCP 45555 and UDP 45555. See `docs/NODE.md` for operator details and `docs/NODE_SOAK.md` for stable-promotion soak evidence.
 
-Before a client test:
+Before a client test, validate both advertised transports against the same Node identity and fresh health snapshot:
+
+```powershell
+.\scripts\check-public-node-readiness.ps1 `
+  -TcpBootstrap "/dns/node.yourdomain.com/tcp/45555/p2p/12D3KooW..." `
+  -QuicBootstrap "/dns/node.yourdomain.com/udp/45555/quic-v1/p2p/12D3KooW..." `
+  -HealthPath "C:\Konofix\node-health.json" `
+  -ExpectedVersion "0.4.2" `
+  -ExpectedSourceCommit "FULL_40_CHARACTER_COMMIT_SHA"
+```
+
+The readiness check verifies strict TCP/QUIC multiaddr structure, same host/port/Peer ID, health identity/version/source commit and TCP socket reachability. It deliberately does **not** claim a successful QUIC handshake; QUIC must still pass the real Konofix/libp2p transport scenario.
+
+For a single bootstrap precheck you can still run:
 
 ```powershell
 .\scripts\internet-test.ps1 -Bootstrap "/ip4/203.0.113.10/tcp/45555/p2p/12D3KooW..."

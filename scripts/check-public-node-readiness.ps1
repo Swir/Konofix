@@ -36,7 +36,7 @@ foreach ($requiredScript in @($internetTest, $healthCheck)) {
 }
 
 function Parse-Bootstrap([string]$Address) {
-    $jsonText = (& $internetTest -Bootstrap $Address -ValidateOnly -AsJson | Out-String).Trim()
+    $jsonText = (& $internetTest -Bootstrap $Address -ValidateOnly -AsJson -RequirePublicHost -RequireDnsResolution | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($jsonText)) {
         throw "Bootstrap validation returned no structured result for: $Address"
     }
@@ -68,6 +68,10 @@ function Test-TcpReachability([string]$HostName, [int]$PortValue, [int]$TimeoutM
 
 $tcp = Parse-Bootstrap $TcpBootstrap
 $quic = Parse-Bootstrap $QuicBootstrap
+
+if (-not $tcp.public_host_validated -or -not $quic.public_host_validated) {
+    throw 'Public Node readiness requires globally routable bootstrap endpoints.'
+}
 
 if ([string]$tcp.transport -cne 'tcp') {
     throw "TcpBootstrap must use TCP; parsed transport is '$($tcp.transport)'."
@@ -113,12 +117,20 @@ if (-not $SkipTcpReachability) {
     $tcpReachable = $true
 }
 
+$resolvedAddresses = @($tcp.resolved_addresses)
+if ($resolvedAddresses.Count -eq 0 -and $tcp.host_protocol -in @('ip4', 'ip6')) {
+    $resolvedAddresses = @([string]$tcp.host)
+}
+
 $result = [ordered]@{
-    schema = 1
+    schema = 2
     ready = $true
     peer_id = [string]$tcp.peer_id
     public_host_protocol = [string]$tcp.host_protocol
     public_host = [string]$tcp.host
+    public_host_validated = $true
+    dns_resolution_checked = [bool]$tcp.dns_resolution_checked
+    resolved_addresses = @($resolvedAddresses)
     port = [int]$tcp.port
     tcp_bootstrap = [string]$tcp.address
     quic_bootstrap = [string]$quic.address
@@ -147,11 +159,15 @@ Write-Host "Uptime:           $($result.uptime_seconds)s"
 Write-Host "Connected peers:  $($result.connected_peers)"
 Write-Host "TCP multiaddr:    $($result.tcp_bootstrap)"
 Write-Host "QUIC multiaddr:   $($result.quic_bootstrap)"
+if ($result.resolved_addresses.Count -gt 0) {
+    Write-Host "Public address(es): $($result.resolved_addresses -join ', ')"
+}
 if ($SkipTcpReachability) {
     Write-Host 'TCP reachability: skipped by request' -ForegroundColor DarkYellow
 } else {
     Write-Host 'TCP reachability: reachable from this tester' -ForegroundColor Green
 }
+Write-Host 'Public-host gate: globally routable endpoint policy passed.' -ForegroundColor Green
 Write-Host 'QUIC structure:   valid and identity-aligned' -ForegroundColor Green
 Write-Host 'QUIC handshake:   not claimed by this PowerShell probe; prove it with the Konofix/libp2p real-network scenario.' -ForegroundColor DarkYellow
-Write-Host 'READY: identity, health, TCP/QUIC endpoint pairing and requested local readiness checks passed.' -ForegroundColor Green
+Write-Host 'READY: public-host policy, identity, health, TCP/QUIC endpoint pairing and requested local readiness checks passed.' -ForegroundColor Green

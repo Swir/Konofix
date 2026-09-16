@@ -73,6 +73,7 @@ try {
     'ROADMAP.md',
     'CHANGELOG.md',
     '.github\workflows\windows-ci.yml',
+    'scripts\new-network-test-campaign.ps1',
     'scripts\validate-network-test-report.ps1',
     'scripts\validate-node-soak.ps1'
   )
@@ -106,7 +107,7 @@ try {
   }
 
   if ($RequireNetworkEvidence -and $NetworkEvidence.Count -eq 0) {
-    throw 'Stable promotion requires -NetworkEvidence with schema-v3 PASS manifests.'
+    throw 'Stable promotion requires -NetworkEvidence with schema-v3 PASS manifests from one campaign.'
   }
 
   $expectedBootstrapPeer = ''
@@ -119,7 +120,11 @@ try {
       ExpectedNodeVersion = $cargoVersion
     }
     if (-not [string]::IsNullOrWhiteSpace($targetSourceCommit)) { $validatorArgs.ExpectedSourceCommit = $targetSourceCommit }
-    if ($RequireNetworkEvidence) { $validatorArgs.RequireSingleBootstrapPeer = $true }
+    if ($RequireNetworkEvidence) {
+      $validatorArgs.RequireSingleBootstrapPeer = $true
+      $validatorArgs.RequireSingleCampaign = $true
+      $validatorArgs.RequireAllChecks = $true
+    }
 
     & (Join-Path $PSScriptRoot 'validate-network-test-report.ps1') @validatorArgs
 

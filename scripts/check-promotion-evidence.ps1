@@ -88,6 +88,37 @@ function Read-BuildInfo([string]$Path) {
   try { return $raw | ConvertFrom-Json } catch { throw "BUILD_INFO is not valid JSON: $($_.Exception.Message)" }
 }
 
+function Resolve-EvidencePaths {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$InputPath,
+    [Parameter(Mandatory = $true)][string]$Label
+  )
+
+  $resolved = @()
+  foreach ($candidate in $InputPath) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+      throw "$Label path cannot be empty or whitespace."
+    }
+
+    if ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($candidate)) {
+      $matches = @(Get-ChildItem -Path $candidate -File -ErrorAction SilentlyContinue | ForEach-Object FullName)
+      if ($matches.Count -eq 0) {
+        throw "$Label wildcard matched no files: $candidate"
+      }
+      $resolved += $matches
+    } else {
+      if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        throw "$Label file is missing: $candidate"
+      }
+      $resolved += (Get-Item -LiteralPath $candidate).FullName
+    }
+  }
+
+  $resolved = @($resolved | Sort-Object -Unique)
+  if ($resolved.Count -eq 0) { throw "$Label requires at least one file." }
+  return $resolved
+}
+
 $scriptRoot = $PSScriptRoot
 $networkValidator = Join-Path $scriptRoot 'validate-network-test-report.ps1'
 $soakValidator = Join-Path $scriptRoot 'validate-node-soak.ps1'
@@ -130,11 +161,11 @@ if (-not [string]::Equals($actualNodeHash, $nodeHash, [StringComparison]::Ordina
   throw "Node binary SHA-256 does not match BUILD_INFO. expected=$nodeHash actual=$actualNodeHash"
 }
 
-if ($NetworkEvidence.Count -eq 0) { throw 'At least one network-evidence manifest is required.' }
-if ($NodeSoakEvidence.Count -eq 0) { throw 'At least one Node-soak snapshot is required.' }
+$resolvedNetworkEvidence = @(Resolve-EvidencePaths -InputPath $NetworkEvidence -Label 'Network evidence')
+$resolvedNodeSoakEvidence = @(Resolve-EvidencePaths -InputPath $NodeSoakEvidence -Label 'Node soak evidence')
 
 & $networkValidator `
-  -Manifest $NetworkEvidence `
+  -Manifest $resolvedNetworkEvidence `
   -RequireAllChecks `
   -MaxAgeDays $NetworkEvidenceMaxAgeDays `
   -ExpectedBuildVersion $version `
@@ -143,7 +174,7 @@ if ($NodeSoakEvidence.Count -eq 0) { throw 'At least one Node-soak snapshot is r
   -RequireSingleBootstrapPeer
 
 $bootstrapPeers = @()
-foreach ($manifestPath in $NetworkEvidence) {
+foreach ($manifestPath in $resolvedNetworkEvidence) {
   $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
   $bootstrap = [string]$manifest.bootstrap
   $match = [regex]::Match($bootstrap, '/p2p/([^/]+)$')
@@ -155,7 +186,7 @@ if ($bootstrapPeers.Count -ne 1) { throw 'Promotion evidence must reference exac
 $bootstrapPeer = $bootstrapPeers[0]
 
 & $soakValidator `
-  -Snapshot $NodeSoakEvidence `
+  -Snapshot $resolvedNodeSoakEvidence `
   -MinSpanSeconds $NodeSoakMinSpanSeconds `
   -MaxGapSeconds $NodeSoakMaxGapSeconds `
   -MaxAgeSeconds $NodeSoakMaxAgeSeconds `
@@ -171,8 +202,8 @@ $result = [ordered]@{
   version = $version
   source_commit = $commit
   bootstrap_peer_id = $bootstrapPeer
-  network_manifest_count = $NetworkEvidence.Count
-  node_soak_snapshot_count = $NodeSoakEvidence.Count
+  network_manifest_count = $resolvedNetworkEvidence.Count
+  node_soak_snapshot_count = $resolvedNodeSoakEvidence.Count
   node_binary_bytes = $actualNodeBytes
   node_binary_sha256 = $actualNodeHash
 }
@@ -186,7 +217,7 @@ Write-Host '=== Konofix Stable Promotion Evidence ===' -ForegroundColor Cyan
 Write-Host "Build version:       $version"
 Write-Host "Source commit:       $commit"
 Write-Host "Bootstrap Peer ID:   $bootstrapPeer"
-Write-Host "Network manifests:   $($NetworkEvidence.Count)"
-Write-Host "Node soak snapshots: $($NodeSoakEvidence.Count)"
+Write-Host "Network manifests:   $($resolvedNetworkEvidence.Count)"
+Write-Host "Node soak snapshots: $($resolvedNodeSoakEvidence.Count)"
 Write-Host "Node SHA-256:        $actualNodeHash"
 Write-Host 'PASS - packaged Node bytes, network scenarios and public-Node soak evidence match the exact verified Windows build.' -ForegroundColor Green

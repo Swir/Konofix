@@ -104,10 +104,11 @@ try {
     $soakPaths += $path
   }
 
+  $soakWildcard = Join-Path $temp 'soak-*.json'
   $result = (& $tool `
     -BuildInfoPath $buildInfoPath `
     -NetworkEvidence $networkPaths `
-    -NodeSoakEvidence $soakPaths `
+    -NodeSoakEvidence $soakWildcard `
     -NodeSoakMinSpanSeconds 180 `
     -NodeSoakMaxGapSeconds 75 `
     -NodeSoakMaxAgeSeconds 60 `
@@ -119,8 +120,12 @@ try {
   Assert-True ($result.source_commit -ceq $sourceCommit) 'Promotion result source commit mismatch.'
   Assert-True ($result.bootstrap_peer_id -ceq $peerId) 'Promotion result bootstrap Peer ID mismatch.'
   Assert-True ($result.network_manifest_count -eq 5) 'Promotion result must report five required network scenarios.'
-  Assert-True ($result.node_soak_snapshot_count -eq 4) 'Promotion result soak snapshot count mismatch.'
+  Assert-True ($result.node_soak_snapshot_count -eq 4) 'Promotion wildcard expansion must resolve all four soak snapshots.'
   Assert-True ($result.node_binary_sha256 -ceq $nodeHash) 'Promotion result Node SHA-256 mismatch.'
+
+  Assert-Fails 'empty wildcard rejection' 'wildcard matched no files' {
+    & $tool -BuildInfoPath $buildInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence (Join-Path $temp 'missing-soak-*.json') -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+  }
 
   $originalNodeBytes = [IO.File]::ReadAllBytes($nodePath)
   $tamperedNodeBytes = [byte[]]::new($originalNodeBytes.Length + 1)
@@ -148,7 +153,7 @@ try {
     & $tool -BuildInfoPath $stringSchema -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
-  Write-Host 'OK - packaged Node bytes, exact BUILD_INFO provenance, all required real-network scenarios and matching public-Node soak evidence are combined into one fail-closed promotion preflight.' -ForegroundColor Green
+  Write-Host 'OK - packaged Node bytes, exact BUILD_INFO provenance, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

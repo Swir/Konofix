@@ -34,11 +34,21 @@ $ipv4 = (& $tool -PublicHost '8.8.8.8' -Port 46666 -StateDirectory $tempState -A
 Assert-True ($ipv4.address_prefix -ceq '/ip4/8.8.8.8') 'IPv4 prefix is wrong.'
 Assert-True ($ipv4.port -eq 46666) 'Custom port was not preserved.'
 
+$mappedPublic = (& $tool -PublicHost '::ffff:8.8.8.8' -StateDirectory $tempState -AsJson) | ConvertFrom-Json
+Assert-True ($mappedPublic.public_host -ceq '8.8.8.8') 'IPv4-mapped IPv6 public literals must normalize to IPv4.'
+Assert-True ($mappedPublic.address_prefix -ceq '/ip4/8.8.8.8') 'IPv4-mapped IPv6 public literals must use an ip4 multiaddr.'
+
+$fqdn = (& $tool -PublicHost 'NODE.GitHub.COM.' -StateDirectory $tempState -AsJson) | ConvertFrom-Json
+Assert-True ($fqdn.public_host -ceq 'node.github.com') 'A trailing DNS root dot must be normalized away.'
+
 $ipv6 = (& $tool -PublicHost '[2606:4700:4700::1111]' -StateDirectory $tempState -AsJson) | ConvertFrom-Json
 Assert-True ($ipv6.address_prefix -ceq '/ip6/2606:4700:4700::1111') 'IPv6 prefix is wrong.'
 
 Assert-Fails 'private IPv4 rejection' 'private, local, CGNAT, documentation, multicast, or otherwise non-public' {
   & $tool -PublicHost '192.168.10.20' -StateDirectory $tempState -AsJson | Out-Null
+}
+Assert-Fails 'IPv4-mapped private IPv6 rejection' 'private, local, CGNAT, documentation, multicast, or otherwise non-public' {
+  & $tool -PublicHost '::ffff:192.168.10.20' -StateDirectory $tempState -AsJson | Out-Null
 }
 Assert-Fails 'CGNAT rejection' 'private, local, CGNAT, documentation, multicast, or otherwise non-public' {
   & $tool -PublicHost '100.64.1.2' -StateDirectory $tempState -AsJson | Out-Null

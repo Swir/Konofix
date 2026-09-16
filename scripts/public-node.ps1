@@ -79,6 +79,9 @@ if ([string]::IsNullOrWhiteSpace($publicHostValue) -or $publicHostValue.Contains
 $parsedIp = $null
 $isIp = [System.Net.IPAddress]::TryParse($publicHostValue, [ref]$parsedIp)
 if ($isIp) {
+  if ($parsedIp.IsIPv4MappedToIPv6) {
+    $parsedIp = $parsedIp.MapToIPv4()
+  }
   $publicHostValue = $parsedIp.ToString()
   if ((Test-NonPublicIp $parsedIp) -and -not $AllowPrivateAddress) {
     throw "Public host '$publicHostValue' is private, local, CGNAT, documentation, multicast, or otherwise non-public. Use -AllowPrivateAddress only for controlled lab testing."
@@ -92,7 +95,7 @@ if ($isIp) {
 } else {
   try {
     $idn = [System.Globalization.IdnMapping]::new()
-    $publicHostValue = $idn.GetAscii($publicHostValue).ToLowerInvariant()
+    $publicHostValue = $idn.GetAscii($publicHostValue).TrimEnd('.').ToLowerInvariant()
   } catch {
     throw "Invalid public DNS name '$PublicHost': $($_.Exception.Message)"
   }

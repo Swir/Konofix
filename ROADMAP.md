@@ -120,6 +120,7 @@ The active milestone currently has 54 of 59 tasks complete. The remaining five t
 - Raw Node state-file safety independently rejects identity/health/executable path collisions, stages health snapshots through unique create-new temporary files with durable writes and cleanup, and fails startup when an explicitly requested initial health snapshot cannot be published.
 - Linux systemd installation canonicalizes state/install paths, rejects root or top-level directories, and rejects equal, nested, lexical-alias or symlink-alias layouts so writable identity/health state cannot overlap the staged Node executable.
 - Linux release bundles are staged and integrity-verified on pull requests before merge; `NODE_BUILD_INFO.json` binds the exact expected archive inventory (Node, installer and operator documentation) to byte sizes and SHA-256 hashes plus source commit/version, while upload remains `main`-only.
+- Linux public-Node systemd execution now uses empty capability sets, device/tmp/proc isolation, hostname/clock/kernel/control-group protections, namespace/realtime/personality/SUID restrictions, native-only syscall ABI, private keyring/IPC lifecycle and exactly one dedicated writable state path; mutation-free installer self-tests enforce the sandbox and write-boundary invariants.
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test

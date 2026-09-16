@@ -6,6 +6,9 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
 use futures::StreamExt;
 use libp2p::{
     autonat, gossipsub, identify, identity,
@@ -61,6 +64,34 @@ fn default_identity_path() -> PathBuf {
         .join("node-identity.key")
 }
 
+#[cfg(unix)]
+fn harden_identity_permissions(path: &Path) -> Result<(), String> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        format!(
+            "Failed to inspect identity file permissions {}: {error}",
+            path.display()
+        )
+    })?;
+    let mut permissions = metadata.permissions();
+    let current_mode = permissions.mode();
+    let protected_mode = current_mode & !0o077;
+    if current_mode != protected_mode {
+        permissions.set_mode(protected_mode);
+        std::fs::set_permissions(path, permissions).map_err(|error| {
+            format!(
+                "Failed to restrict identity file permissions {}: {error}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn harden_identity_permissions(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
 fn decode_identity(path: &Path, data: &[u8]) -> Result<identity::Keypair, String> {
     identity::Keypair::from_protobuf_encoding(data).map_err(|error| {
         format!(
@@ -73,12 +104,32 @@ fn decode_identity(path: &Path, data: &[u8]) -> Result<identity::Keypair, String
 fn load_existing_identity(path: &Path) -> Result<identity::Keypair, String> {
     let data = std::fs::read(path)
         .map_err(|error| format!("Failed to read identity file {}: {error}", path.display()))?;
+    harden_identity_permissions(path)?;
     decode_identity(path, &data)
+}
+
+fn load_identity_after_create_race(path: &Path) -> Result<identity::Keypair, String> {
+    let mut last_error = None;
+    for _ in 0..20 {
+        match load_existing_identity(path) {
+            Ok(key) => return Ok(key),
+            Err(error) => last_error = Some(error),
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    Err(format!(
+        "Identity file {} appeared concurrently but could not be loaded safely: {}",
+        path.display(),
+        last_error.unwrap_or_else(|| "unknown identity load error".into())
+    ))
 }
 
 fn load_or_create_identity(path: &Path) -> Result<identity::Keypair, String> {
     match std::fs::read(path) {
-        Ok(data) => return decode_identity(path, &data),
+        Ok(data) => {
+            harden_identity_permissions(path)?;
+            return decode_identity(path, &data);
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
             return Err(format!(
@@ -102,14 +153,15 @@ fn load_or_create_identity(path: &Path) -> Result<identity::Keypair, String> {
         .to_protobuf_encoding()
         .map_err(|error| format!("Failed to encode generated Node identity: {error}"))?;
 
-    let mut file = match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-    {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let mut file = match options.open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            return load_existing_identity(path)
+            return load_identity_after_create_race(path)
         }
         Err(error) => {
             return Err(format!(
@@ -128,6 +180,7 @@ fn load_or_create_identity(path: &Path) -> Result<identity::Keypair, String> {
         ));
     }
 
+    harden_identity_permissions(path)?;
     Ok(key)
 }
 
@@ -517,9 +570,26 @@ mod tests {
         let original = b"not-a-valid-libp2p-key";
         std::fs::write(&path, original).expect("corrupt fixture should be written");
 
-        let error = load_or_create_identity(&path).expect_err("corrupt identity must fail closed");
+        let error = match load_or_create_identity(&path) {
+            Ok(_) => panic!("corrupt identity must fail closed"),
+            Err(error) => error,
+        };
         assert!(error.contains("refusing to replace"));
         assert_eq!(std::fs::read(&path).expect("fixture should remain"), original);
+        let _ = std::fs::remove_dir_all(path.parent().expect("test path has parent"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn created_identity_is_private_on_unix() {
+        let path = unique_test_path("permissions");
+        load_or_create_identity(&path).expect("identity should be created");
+        let mode = std::fs::metadata(&path)
+            .expect("identity metadata should exist")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode & 0o077, 0, "group/other access must be removed");
         let _ = std::fs::remove_dir_all(path.parent().expect("test path has parent"));
     }
 }

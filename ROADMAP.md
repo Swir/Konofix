@@ -66,19 +66,20 @@
 - [x] Node-health snapshots are size-bounded before JSON parsing, with configurable 1 KiB–1 MiB limits and adversarial CI coverage
 - [x] Node-health numeric fields require real JSON integers; strings, booleans and fractional values cannot be coerced into trusted telemetry
 - [x] Node-health textual fields require real non-empty JSON strings; numbers and booleans cannot be coerced into status, version or Peer ID
-- [x] Node-health status and pinned identity comparisons use ordinal case-sensitive matching, preventing PowerShell's default case-insensitive comparison from weakening status or Peer ID validation
-- [x] explicitly supplied Node version/Peer ID pins fail closed when empty or whitespace, preventing operator mistakes from silently disabling identity pinning
+- [x] Node-health status and pinned identity comparisons use ordinal case-sensitive matching
+- [x] explicitly supplied Node version/Peer ID pins fail closed when empty or whitespace
 - [x] reproducible Markdown + JSON test evidence generator for LAN/TCP/QUIC/Relay/DCUtR/CGNAT scenarios
 - [x] automated network-evidence gate validating PASS manifests, required scenarios and consistent client/Node versions
 - [x] strict evidence schema requiring fresh results and independently identified countries/networks for Internet scenarios
 - [x] scenario-aware evidence checks for Relay, DCUtR and CGNAT instead of accepting an overall PASS alone
 - [x] stable-promotion release gate wired directly to schema-v2 real-network evidence validation
 - [x] promotion evidence bound to the exact target client/Node version and one stable public bootstrap Peer ID
-- [x] CI self-tests for positive evidence plus wrong client/Node versions, same-country/network, stale/future evidence, incomplete core checks, missing Relay/DCUtR/CGNAT proof and mixed bootstrap Peer IDs
-- [x] README progress bar derived from the active roadmap milestone and checked by CI against roadmap completion
-- [x] release gate invokes the PowerShell network-evidence validator deterministically without inheriting stale native-process exit codes
-- [x] Windows CI cancels superseded runs per branch/ref so obsolete commits cannot waste runners or build stale release bundles in parallel
-- [x] Windows build/test job uses a read-only GitHub token; `contents: write` is isolated to a small post-build release-publication job that only consumes the verified artifact
+- [x] CI self-tests for positive evidence plus wrong versions, same-country/network, stale/future evidence, incomplete checks and mixed bootstrap Peer IDs
+- [x] README progress bar derived from the active roadmap milestone and checked by CI
+- [x] release gate invokes the PowerShell network-evidence validator deterministically
+- [x] Windows CI cancels superseded runs per branch/ref
+- [x] Windows build/test job uses a read-only GitHub token; release write permission is isolated to post-build publication
+- [x] Windows CI uses lockfile-enforcing `npm ci` with npm caching so dependency drift from `package-lock.json` fails the build instead of being silently resolved
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test
@@ -88,7 +89,7 @@
 
 ### Test-release gate
 
-A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from the exact release client and Node version, with independent countries and networks/operators recorded and one stable public bootstrap Peer ID across the promotion evidence. `scripts/release-gate.ps1 -RequireNetworkEvidence -NetworkEvidence <manifests>` enforces that promotion requirement directly. Public Node health checks can additionally pin `-ExpectedVersion` and `-ExpectedPeerId`; explicitly supplied pins must be non-empty and non-whitespace so an operator typo cannot silently disable pinning. `-MinUptimeSeconds` can require a continuous stability window, `-MinConnectedPeers` can require a live peer quorum, `-MaxAgeSeconds` is bounded to 10–86400 seconds so stale telemetry cannot be accidentally trusted indefinitely, bounded `-MaxFutureSkewSeconds` makes clock-skew tolerance explicit instead of silently accepting future-dated telemetry, and `-MaxSnapshotBytes` bounds health input to 1 KiB–1 MiB (64 KiB by default) before JSON parsing. Health telemetry rejects non-integer numeric representations and non-string textual representations instead of coercing strings, numbers, booleans or fractional values into trusted fields, uses ordinal case-sensitive matching for trusted textual identity/status checks, and also rejects uptime values greater than the snapshot Unix timestamp because such a process start time would predate the Unix epoch and indicates corrupt or fabricated telemetry. CI executes adversarial self-tests for both network evidence and Node-health validation so regressions in release or infrastructure gates block Windows builds before packaging. Windows CI uses per-ref concurrency and cancels superseded runs so only the newest commit on a branch proceeds through expensive packaging. Build and test steps run with `contents: read`; only the isolated release-publication job receives `contents: write`, after the verified artifact has been produced.
+A test release may be published only when Windows CI is green, production application and Node bundles exist, version/project audits pass, the ZIP and SHA-256 pass verification, instructions are included, and there is a real publicly reachable bootstrap path. Promotion beyond the test release additionally requires fresh schema-v2 machine-readable PASS evidence for the required real-network scenarios from the exact release client and Node version, with independent countries and networks/operators recorded and one stable public bootstrap Peer ID across the promotion evidence. CI uses the committed npm lockfile as an integrity/reproducibility boundary: frontend dependencies are installed with `npm ci`, so lockfile/package metadata disagreement is a hard failure rather than an implicit dependency update.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

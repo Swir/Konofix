@@ -10,7 +10,7 @@ GitHub: https://github.com/Swir/Konofix
 
 `█████████████████░░░ 85%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (33 of 39 tasks complete). It is intentionally not increased by CI runs alone: the remaining real public-Node, cross-country, CGNAT and transport verification work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (34 of 40 tasks complete). It is intentionally not increased by CI runs alone: the remaining real public-Node, cross-country, CGNAT and transport verification work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -33,21 +33,11 @@ This version prepares the project for real cross-network and cross-country tests
 konofix-node.exe --port 45555 --public-host 203.0.113.10
 ```
 
-Example output:
-
-```text
-BOOTSTRAP TCP : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
-BOOTSTRAP QUIC: /ip4/203.0.113.10/udp/45555/quic-v1/p2p/12D3KooW...
-RECOMMENDED   : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
-```
-
 Paste the recommended address into **Network settings → Bootstrap**. A bootstrap helps peers discover the DHT/relay network; it is not a message-history server or file store.
 
 ## Localization
 
-Konofix Chat detects the operating-system language automatically. The current UI localization layer supports **English, Polish, Norwegian, German, French, Spanish, and Ukrainian**. Unsupported system languages fall back to **English**.
-
-Repository documentation, release notes, CI text, and development-facing content are maintained in English.
+Konofix Chat detects the operating-system language automatically. The current UI localization layer supports **English, Polish, Norwegian, German, French, Spanish, and Ukrainian**. Unsupported system languages fall back to **English**. Repository documentation, release notes, CI text, and development-facing content are maintained in English.
 
 ## Architecture
 
@@ -65,15 +55,13 @@ npm install
 npm run tauri dev
 ```
 
-Or use `run-dev.bat`.
-
 Project checks:
 
 ```powershell
 .\scripts\check.ps1
 ```
 
-GitHub Actions additionally validates TypeScript/Vite, the Rust application, `konofix-node`, and the production Windows bundle. Superseded CI runs on the same branch/ref are cancelled automatically so only the newest commit proceeds through expensive Windows packaging. Build/test steps receive a read-only repository token; release write permission is isolated to a small post-build publication job that consumes the verified artifact.
+GitHub Actions validates TypeScript/Vite, Rust, `konofix-node`, release/network gates, and the production Windows bundle. CI installs frontend dependencies with `npm ci`, enforcing the committed `package-lock.json` instead of silently resolving dependency drift. Superseded runs are cancelled automatically. Build/test steps receive a read-only repository token; release write permission is isolated to the post-build publication job.
 
 ## Windows build
 
@@ -81,22 +69,12 @@ GitHub Actions additionally validates TypeScript/Vite, the Rust application, `ko
 .\scripts\build-windows.ps1
 ```
 
-The application bundle is written to:
-
-```text
-src-tauri\target\release\bundle
-```
+The application bundle is written to `src-tauri\target\release\bundle`.
 
 ### Konofix Node
 
 ```powershell
 build-node.bat
-```
-
-Output:
-
-```text
-src-tauri\target\release\konofix-node.exe
 ```
 
 Run the Node on a publicly reachable computer or VPS:

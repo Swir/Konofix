@@ -139,7 +139,10 @@ fn load_or_create_identity(path: &Path) -> Result<identity::Keypair, String> {
         }
     }
 
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent).map_err(|error| {
             format!(
                 "Failed to create identity directory {}: {error}",
@@ -296,7 +299,10 @@ fn is_non_public_ip(host: &str) -> bool {
             ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
         }
         Ok(IpAddr::V6(ip)) => {
-            ip.is_loopback() || ip.is_unspecified() || ip.is_unique_local() || ip.is_unicast_link_local()
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
         }
         Err(_) => false,
     }
@@ -333,7 +339,10 @@ fn write_health_snapshot(
     connected_peers: usize,
     status: &str,
 ) -> Result<(), String> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
@@ -453,7 +462,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = &args.health_file {
         match write_health_snapshot(path, local_peer, started, connected_peers.len(), "running") {
             Ok(()) => println!("Health snapshot: {}", path.display()),
-            Err(error) => eprintln!("WARNING: failed to write health snapshot {}: {error}", path.display()),
+            Err(error) => eprintln!(
+                "WARNING: failed to write health snapshot {}: {error}",
+                path.display()
+            ),
         }
     }
 
@@ -521,7 +533,10 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir()
-            .join(format!("konofix-node-{label}-{}-{nonce}", std::process::id()))
+            .join(format!(
+                "konofix-node-{label}-{}-{nonce}",
+                std::process::id()
+            ))
             .join("node-identity.key")
     }
 
@@ -545,11 +560,8 @@ mod tests {
 
     #[test]
     fn rejects_empty_identity_file() {
-        let error = parse_args_from(vec![
-            "--identity-file".to_string(),
-            "   ".to_string(),
-        ])
-        .expect_err("empty identity path must fail");
+        let error = parse_args_from(vec!["--identity-file".to_string(), "   ".to_string()])
+            .expect_err("empty identity path must fail");
         assert!(error.contains("Identity file path cannot be empty"));
     }
 
@@ -575,7 +587,10 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.contains("refusing to replace"));
-        assert_eq!(std::fs::read(&path).expect("fixture should remain"), original);
+        assert_eq!(
+            std::fs::read(&path).expect("fixture should remain"),
+            original
+        );
         let _ = std::fs::remove_dir_all(path.parent().expect("test path has parent"));
     }
 

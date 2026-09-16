@@ -2,7 +2,7 @@ use std::{
     collections::HashSet,
     io::Write,
     net::IpAddr,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -184,12 +184,7 @@ fn load_or_create_identity(path: &Path) -> Result<identity::Keypair, String> {
     Ok(key)
 }
 
-fn comparable_path(path: &Path) -> Result<PathBuf, String> {
-    if path.exists() {
-        return std::fs::canonicalize(path)
-            .map_err(|error| format!("Failed to resolve state path {}: {error}", path.display()));
-    }
-
+fn lexically_normalize_absolute(path: &Path) -> Result<PathBuf, String> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -198,15 +193,62 @@ fn comparable_path(path: &Path) -> Result<PathBuf, String> {
             .join(path)
     };
 
-    if let (Some(parent), Some(name)) = (absolute.parent(), absolute.file_name()) {
-        if parent.exists() {
-            if let Ok(resolved_parent) = std::fs::canonicalize(parent) {
-                return Ok(resolved_parent.join(name));
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = normalized.pop();
             }
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::Normal(part) => normalized.push(part),
         }
     }
+    Ok(normalized)
+}
 
-    Ok(absolute)
+fn comparable_path(path: &Path) -> Result<PathBuf, String> {
+    let normalized = lexically_normalize_absolute(path)?;
+    if normalized.exists() {
+        return std::fs::canonicalize(&normalized).map_err(|error| {
+            format!(
+                "Failed to resolve state path {}: {error}",
+                normalized.display()
+            )
+        });
+    }
+
+    // Resolve the nearest existing ancestor so aliases through directory symlinks/junctions
+    // are still detected even when the final state file has not been created yet.
+    let mut cursor = normalized.as_path();
+    let mut suffix = Vec::new();
+    while !cursor.exists() {
+        let name = cursor.file_name().ok_or_else(|| {
+            format!(
+                "Could not resolve a parent for state path {}",
+                normalized.display()
+            )
+        })?;
+        suffix.push(name.to_os_string());
+        cursor = cursor.parent().ok_or_else(|| {
+            format!(
+                "Could not resolve a parent for state path {}",
+                normalized.display()
+            )
+        })?;
+    }
+
+    let mut resolved = std::fs::canonicalize(cursor).map_err(|error| {
+        format!(
+            "Failed to resolve state path ancestor {}: {error}",
+            cursor.display()
+        )
+    })?;
+    for part in suffix.iter().rev() {
+        resolved.push(part);
+    }
+    Ok(resolved)
 }
 
 #[cfg(windows)]
@@ -722,12 +764,32 @@ mod tests {
     }
 
     #[test]
+    fn rejects_lexically_aliased_identity_health_collision() {
+        let identity = unique_test_path("state-alias");
+        let dir = identity.parent().expect("test path has parent");
+        std::fs::create_dir_all(dir).expect("test directory should be created");
+        std::fs::write(&identity, b"placeholder").expect("fixture should be written");
+        let health_alias = dir
+            .join("not-created")
+            .join("..")
+            .join(identity.file_name().expect("identity has a file name"));
+
+        let error = validate_state_paths(&identity, Some(&health_alias))
+            .expect_err("lexical identity/health alias must fail closed");
+        assert!(error.contains("same path"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn health_snapshot_uses_safe_unique_temp_and_replaces_existing_snapshot() {
         let identity = unique_test_path("health-write");
         let dir = identity.parent().expect("test path has parent");
         std::fs::create_dir_all(dir).expect("test directory should be created");
         let health = dir.join("node-health.json");
+        let legacy_fixed_temp = health.with_extension("tmp");
         std::fs::write(&health, b"old-snapshot").expect("old snapshot should be written");
+        std::fs::write(&legacy_fixed_temp, b"unrelated-state")
+            .expect("legacy temp collision sentinel should be written");
 
         let key = identity::Keypair::generate_ed25519();
         let peer = key.public().to_peer_id();
@@ -740,6 +802,10 @@ mod tests {
         assert_eq!(json["status"], "running");
         assert_eq!(json["connected_peers"], 3);
         assert_eq!(json["peer_id"], peer.to_string());
+        assert_eq!(
+            std::fs::read(&legacy_fixed_temp).expect("unrelated state must survive"),
+            b"unrelated-state"
+        );
 
         let leftovers = std::fs::read_dir(dir)
             .expect("test directory should be readable")

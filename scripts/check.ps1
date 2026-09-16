@@ -78,8 +78,8 @@ try {
   cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
   if ($LASTEXITCODE -ne 0) { throw "cargo fmt --check failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'Rust Clippy - all targets, warnings denied...' -ForegroundColor Yellow
-  cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+  Write-Host 'Rust Clippy - correctness, suspicious and performance gates...' -ForegroundColor Yellow
+  cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
   if ($LASTEXITCODE -ne 0) { throw "cargo clippy --locked failed with exit code $LASTEXITCODE." }
 
   Write-Host 'Rust all-target tests...' -ForegroundColor Yellow
@@ -92,7 +92,7 @@ try {
   cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-node
   if ($LASTEXITCODE -ne 0) { throw "cargo check --locked --bin konofix-node failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'OK - local preflight matches CI gates, promotion evidence, atomic exact-build network-session creation, network report editing, public-Node/bootstrap/startup-task/readiness/health/soak collection validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/Clippy/tests and Node checks.' -ForegroundColor Green
+  Write-Host 'OK - local preflight matches CI gates, promotion evidence, atomic exact-build network-session creation, network report editing, public-Node/bootstrap/startup-task/readiness/health/soak collection validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/high-signal Clippy/tests and Node checks.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

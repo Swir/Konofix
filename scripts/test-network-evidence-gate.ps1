@@ -7,6 +7,8 @@ if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) { throw 'Network ev
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("konofix-evidence-selftest-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 $sourceCommit = '0123456789abcdef0123456789abcdef01234567'
+$fileHashA = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+$fileHashB = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
 
 function New-TestManifest([string]$Scenario, [string]$Path) {
     $checks = [ordered]@{
@@ -17,11 +19,23 @@ function New-TestManifest([string]$Scenario, [string]$Path) {
     }
     if ($Scenario -eq 'Relay' -or $Scenario -eq 'CGNAT') { $checks.relay_observed = 'PASS' }
     if ($Scenario -eq 'DCUtR') { $checks.dcutr_direct_upgrade = 'PASS' }
+    $checkEvidence = [ordered]@{
+        world_a_to_b = 'message id msg-a observed on client B at 2026-09-16T18:00:00Z'
+        world_b_to_a = 'message id msg-b observed on client A at 2026-09-16T18:00:01Z'
+        room_discovery = 'room test-room visible on both clients'
+        file_a_to_b_sha256 = "sender and receiver sha256=$fileHashA"
+        file_b_to_a_sha256 = "sender and receiver sha256=$fileHashB"
+        client_reconnect = 'client A rejoined and exchanged message msg-reconnect'
+        node_restart_recovery = 'same Node Peer ID restored after restart'
+        relay_observed = if ($checks.relay_observed -eq 'PASS') { 'relay path observed in transport diagnostics' } else { 'not applicable to this scenario' }
+        dcutr_direct_upgrade = if ($checks.dcutr_direct_upgrade -eq 'PASS') { 'DCUtR direct upgrade observed in transport diagnostics' } else { 'not applicable to this scenario' }
+        nickname_conflict = 'duplicate nickname rejected during synchronized reservation check'
+    }
     $manifest = [ordered]@{
         schema_version = 3; created_utc = [DateTimeOffset]::UtcNow.ToString('o'); scenario = $Scenario
         build_version = '0.4.2'; node_version = '0.4.2'; source_commit = $sourceCommit; client_a = 'selftest-a'; client_b = 'selftest-b'
         client_a_country = 'PL'; client_b_country = 'NO'; client_a_network = 'selftest-net-a'; client_b_network = 'selftest-net-b'
-        bootstrap = '/dns/konofix.example.test/tcp/4001/p2p/12D3KooWSelfTestPeer123456789'; overall = 'PASS'; checks = $checks
+        bootstrap = '/dns/konofix.example.test/tcp/4001/p2p/12D3KooWSelfTestPeer123456789'; overall = 'PASS'; checks = $checks; check_evidence = $checkEvidence
     }
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $Path -Encoding UTF8
 }
@@ -118,6 +132,21 @@ try {
 
     $cgnatMissing = New-MutatedManifest $paths[4] 'cgnat-relay-missing.json' { param($d) $d.checks.relay_observed = 'N/A' }
     Assert-Rejected { & $validator -Manifest $cgnatMissing -RequiredScenario CGNAT } 'CGNAT PASS without relay proof'
+
+    $missingCheckEvidence = New-MutatedManifest $paths[0] 'missing-check-evidence.json' { param($d) $d.PSObject.Properties.Remove('check_evidence') }
+    Assert-Rejected { & $validator -Manifest $missingCheckEvidence -RequiredScenario TCP -RequireAllChecks } 'promotion PASS without check_evidence object'
+
+    $blankCheckEvidence = New-MutatedManifest $paths[0] 'blank-check-evidence.json' { param($d) $d.check_evidence.world_a_to_b = '   ' }
+    Assert-Rejected { & $validator -Manifest $blankCheckEvidence -RequiredScenario TCP -RequireAllChecks } 'promotion PASS with blank evidence note'
+
+    $numericCheckEvidence = New-MutatedManifest $paths[0] 'numeric-check-evidence.json' { param($d) $d.check_evidence.world_a_to_b = 42 }
+    Assert-Rejected { & $validator -Manifest $numericCheckEvidence -RequiredScenario TCP -RequireAllChecks } 'promotion PASS with non-string evidence note'
+
+    $missingFileDigest = New-MutatedManifest $paths[0] 'missing-file-digest.json' { param($d) $d.check_evidence.file_a_to_b_sha256 = 'sender and receiver hashes matched' }
+    Assert-Rejected { & $validator -Manifest $missingFileDigest -RequiredScenario TCP -RequireAllChecks } 'file PASS without explicit SHA-256 digest'
+
+    $shortFileDigest = New-MutatedManifest $paths[0] 'short-file-digest.json' { param($d) $d.check_evidence.file_b_to_a_sha256 = 'sha256=deadbeef' }
+    Assert-Rejected { & $validator -Manifest $shortFileDigest -RequiredScenario TCP -RequireAllChecks } 'file PASS with malformed SHA-256 digest'
 
     $mixedBootstrap = @($paths)
     $mixedBootstrap[1] = New-MutatedManifest $paths[1] 'other-bootstrap.json' { param($d) $d.bootstrap = '/dns/konofix.example.test/tcp/4001/p2p/12D3KooWAnotherPeer987654321' }

@@ -14,6 +14,7 @@ $ErrorActionPreference = 'Stop'
 $allowed = @('LAN','TCP','QUIC','Relay','DCUtR','CGNAT')
 $requiredChecks = @('world_a_to_b','world_b_to_a','room_discovery','file_a_to_b_sha256','file_b_to_a_sha256','client_reconnect','node_restart_recovery','relay_observed','dcutr_direct_upgrade','nickname_conflict')
 $coreChecks = @('world_a_to_b','world_b_to_a','room_discovery','file_a_to_b_sha256','file_b_to_a_sha256','client_reconnect','node_restart_recovery','nickname_conflict')
+$shaEvidenceChecks = @('file_a_to_b_sha256','file_b_to_a_sha256')
 $allowedResults = @('PASS','FAIL','PENDING','N/A')
 
 function Get-StrictJsonInt64 {
@@ -190,6 +191,24 @@ foreach ($path in $Manifest) {
             if ($requiredChecks -cnotcontains $property.Name) { throw "Unknown check_evidence key '$($property.Name)' in $path" }
             $evidenceText = Get-StrictJsonString -Value $property.Value -Field "check_evidence.$($property.Name)" -AllowEmpty
             if ($evidenceText.Length -gt 2000) { throw "Evidence note for '$($property.Name)' exceeds 2000 characters in $path" }
+        }
+    }
+
+    if ($RequireAllChecks) {
+        if ($null -eq $checkEvidenceProperty -or $null -eq $checkEvidenceProperty.Value -or $checkEvidenceProperty.Value -isnot [pscustomobject]) {
+            throw "Stable promotion requires a check_evidence object in $path"
+        }
+        foreach ($name in $requiredChecks) {
+            if ([string]$checks.$name -cne 'PASS') { continue }
+            $evidenceProperty = $checkEvidenceProperty.Value.PSObject.Properties[$name]
+            if ($null -eq $evidenceProperty -or $null -eq $evidenceProperty.Value) {
+                throw "Stable promotion PASS '$name' is missing concrete check_evidence in $path"
+            }
+            $evidenceText = Get-StrictJsonString -Value $evidenceProperty.Value -Field "check_evidence.$name"
+            if ($evidenceText.Length -gt 2000) { throw "Evidence note for '$name' exceeds 2000 characters in $path" }
+            if ($shaEvidenceChecks -ccontains $name -and $evidenceText -cnotmatch '(?i)(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])') {
+                throw "Stable promotion PASS '$name' must include the observed 64-character SHA-256 digest in check_evidence: $path"
+            }
         }
     }
 

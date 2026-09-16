@@ -38,7 +38,7 @@
 - fixed Windows CI #165 by making dependency-policy detection use Git-tracked lockfile state instead of an untracked `package-lock.json` created by `npm install`,
 - changed no-lockfile CI installation to `npm install --no-audit --no-fund --package-lock=false` so the build workspace cannot manufacture misleading lockfile state,
 - pinned every external GitHub Action in Windows CI to an immutable full commit SHA, disabled persisted checkout credentials, and made the project audit reject future floating Action refs,
-- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 40/45 tasks (89%),
+- added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 41/46 tasks (89%),
 - made project audit recompute the active roadmap checklist and reject stale README/ROADMAP percentages or task counts,
 - added multi-snapshot public Node soak validation that rejects identity/version/source-commit drift, restarts, stale samples, monitoring gaps and inconsistent uptime cadence,
 - made stable promotion require Node soak evidence and bind that soak to the exact bootstrap Peer ID used by the validated cross-country network evidence,
@@ -50,7 +50,11 @@
 - switched Windows CI from mutable `npm install` resolution to deterministic `npm ci`, enabled setup-node caching keyed to `package-lock.json`, and removed CI-side lockfile regeneration,
 - extended project audit to validate package-lock schema/root metadata/dependency declarations and to fail if CI drifts away from the committed-lock policy,
 - added the committed frontend lockfile to `BUILD_INFO.json` provenance and release verification, including byte-size/SHA-256 checks against the repository build input,
-- expanded cross-country testing documentation and release-gate guidance.
+- added `konofix-node --identity-file` so public/community deployments can place the persistent Peer-ID key on explicit service storage instead of depending on the interactive-user profile,
+- changed Node identity loading to fail closed when an existing key is unreadable or malformed, preventing silent Peer-ID rotation and invalidation of bootstrap/soak evidence,
+- made first-time identity creation use create-new semantics and durable flush, handling a concurrent creator by loading the winning identity instead of overwriting it,
+- added Rust regression tests for explicit identity-path parsing, empty-path rejection, Peer-ID persistence and corrupted-key preservation,
+- expanded public Node operator documentation, cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1
 

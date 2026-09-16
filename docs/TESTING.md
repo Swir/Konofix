@@ -4,7 +4,7 @@ This document defines the minimum test set required before closing the first rel
 
 ## 1. Local validation
 
-On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release gate, network-evidence self-tests, exact-build promotion-evidence self-tests, network-report-editor self-tests, strict bootstrap-precheck self-tests, public-Node deployment/startup-task/readiness self-tests, Node-health self-tests, Node-soak validator/collector self-tests, project/localization audit, deterministic `npm ci`, TypeScript/Vite build, a locked Rust metadata check, Rust all-target tests and Rust checks for both the application and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`, and pull requests reproduce the production Windows packaging/verification path before merge.
+On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release gate, network-evidence self-tests, network-campaign-generator self-tests, exact-build promotion-evidence self-tests, network-report-editor self-tests, strict bootstrap-precheck self-tests, public-Node deployment/startup-task/readiness self-tests, Node-health self-tests, Node-soak validator/collector self-tests, project/localization audit, deterministic `npm ci`, TypeScript/Vite build, a locked Rust metadata check, Rust all-target tests and Rust checks for both the application and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`, and pull requests reproduce the production Windows packaging/verification path before merge.
 
 ## 2. LAN baseline
 
@@ -73,36 +73,39 @@ A single healthy snapshot is not sufficient for stable promotion. Use `scripts\c
 
 On every test PC run `.\scripts\internet-test.ps1 -Bootstrap "/ip4/ADDRESS/tcp/45555/p2p/PEER_ID"`. DNS and IPv6 multiaddresses are supported. The precheck uses strict multiaddr parsing: it rejects malformed host/port values, unsupported transports, missing/invalid Peer IDs, extra path segments, UDP addresses that are not explicit `quic-v1`, and TCP addresses carrying QUIC-only segments. TCP reachability must succeed before application-level testing; UDP/QUIC is structurally validated by this script and then verified through libp2p during the real test.
 
-For parser-only validation without touching the network, use `-ValidateOnly`. `-AsJson` prints the normalized parsed address for automation. The Windows test archive includes this script, `public-node.ps1`, `install-public-node-task.ps1`, `check-public-node-readiness.ps1`, `check-promotion-evidence.ps1`, and the evidence/health/soak tools under its `scripts` directory, so a tester or Node operator does not need a source checkout to run the operational test flow.
+For parser-only validation without touching the network, use `-ValidateOnly`. `-AsJson` prints the normalized parsed address for automation. The Windows test archive includes this script, `public-node.ps1`, `install-public-node-task.ps1`, `check-public-node-readiness.ps1`, `new-network-test-campaign.ps1`, `check-promotion-evidence.ps1`, and the evidence/health/soak tools under its `scripts` directory, so a tester or Node operator does not need a source checkout to run the operational test flow.
 
 ## 5. Cross-country test
 
 Minimum topology: Client A in country/network A, Client B in a different country and independent network/operator B, and a publicly reachable Node, preferably on a third network. Exchange `#WORLD` messages both ways, discover a room, transfer files both ways and compare SHA-256, reconnect clients, restart Node while preserving Peer ID, then repeat after several minutes.
 
+Keep the same physical/logical Client A and Client B orientation for the complete promotion campaign. Do not swap A/B roles between scenarios and do not reuse a campaign ID after changing either endpoint, country, network/operator, target source commit or public Node identity.
+
 ## 6. Transport and NAT matrix
 
 Verify TCP, UDP/QUIC, Circuit Relay, DCUtR/direct upgrade where possible, and the critical CGNAT ↔ public Node ↔ CGNAT topology. Do not infer transport success from general chat success: each required transport gets its own report.
 
-## 7. Reproducible test report
+## 7. Reproducible test campaign and reports
 
-For Internet scenarios use schema-v3 endpoint metadata. Run the generator from the extracted Windows test bundle so it automatically reads the exact `commit` from `BUILD_INFO.json`:
+For a promotion candidate, generate all five required Internet reports as one campaign. Run the campaign generator from the extracted Windows test bundle so every report receives one shared `campaign_id` and the exact source commit can be resolved from `BUILD_INFO.json`:
 
 ```powershell
-.\scripts\new-network-test-report.ps1 `
-  -Scenario CGNAT `
+.\scripts\new-network-test-campaign.ps1 `
   -ClientA "PC-A" -ClientACountry "Norway" -ClientANetwork "Operator-A LTE" `
   -ClientB "PC-B" -ClientBCountry "Poland" -ClientBNetwork "Operator-B LTE" `
   -BuildVersion "0.4.2" -NodeVersion "0.4.2" `
   -Bootstrap "/dns/node.yourdomain.com/tcp/45555/p2p/PEER_ID"
 ```
 
-If `BUILD_INFO.json` and Git metadata are unavailable, the generator fails closed instead of creating ambiguous release evidence; `-SourceCommit <40-character SHA>` can be supplied explicitly when the exact verified commit is known.
+The generator creates one dedicated `campaign-<id>` directory containing PENDING TCP, QUIC, Relay, DCUtR and CGNAT JSON/Markdown reports. It never invents PASS results. A supplied `-CampaignId` must be a canonical lowercase 32-character hexadecimal ID; normally let the tool generate it. If generation fails part-way, the incomplete campaign directory is removed instead of leaving ambiguous evidence behind.
 
-Do not hand-edit JSON and Markdown independently. Record each observed check with the bundled editor; it updates the authoritative schema-v3 JSON, stores a short per-check evidence note, recomputes `overall`, and regenerates the matching Markdown report:
+For a one-off diagnostic report outside stable promotion, `new-network-test-report.ps1` remains available. It also emits a campaign ID automatically, or accepts the campaign ID created by the campaign generator. If `BUILD_INFO.json` and Git metadata are unavailable, report generation fails closed instead of creating ambiguous release evidence; `-SourceCommit <40-character SHA>` can be supplied explicitly when the exact verified commit is known.
+
+Do not hand-edit JSON and Markdown independently. Record each observed check with the bundled editor; it updates the authoritative schema-v3 JSON, preserves its campaign ID, stores a short per-check evidence note, recomputes `overall`, and regenerates the matching Markdown report:
 
 ```powershell
 .\scripts\set-network-test-result.ps1 `
-  -Manifest .\test-results\network-test-cgnat-YYYYMMDD-HHMMSS.json `
+  -Manifest .\test-results\campaign-ID\network-test-cgnat-YYYYMMDD-HHMMSS.json `
   -Check world_a_to_b `
   -Result PASS `
   -Evidence "Message ID/UTC recorded on PC-B"
@@ -110,24 +113,26 @@ Do not hand-edit JSON and Markdown independently. Record each observed check wit
 
 Once every promotion-critical check for the scenario has passed, use `-Finalize` on the last update (or repeat the last PASS update). Finalization runs the schema-v3 validator before replacing the source files. Previously recorded PASS/FAIL/N/A evidence cannot be changed to a different result unless `-AllowOverwrite` is supplied explicitly, which makes accidental evidence loss harder.
 
-Internet reports are rejected at creation time if countries or network/operator identifiers are missing, countries match, networks match, the two endpoint identifiers normalize to the same value, or the source commit cannot be established. The generated JSON is schema v3. After recording results, validate the evidence set with:
+Internet reports are rejected at creation time if countries or network/operator identifiers are missing, countries match, networks match, the two endpoint identifiers normalize to the same value, or the source commit cannot be established. After recording results, validate the evidence set with:
 
 ```powershell
-.\scripts\validate-network-test-report.ps1 -Manifest .\test-results\*.json
+.\scripts\validate-network-test-report.ps1 `
+  -Manifest .\test-results\campaign-ID\*.json `
+  -RequireSingleCampaign
 ```
 
-The promotion gate requires one consistent client/Node build, one exact source commit, fresh evidence (30 days by default), PASS for all core communication/resilience checks, Relay observation in Relay and CGNAT evidence, DCUtR upgrade in DCUtR evidence, and passing manifests for TCP, QUIC, Relay, DCUtR and CGNAT. Use `-MaxAgeDays` to tighten the freshness window. `overall=PASS` by itself is intentionally insufficient.
+The stable promotion gate requires one consistent client/Node build, one exact source commit, one campaign ID, one oriented Client A/Client B pair, consistent country/network metadata, fresh evidence (30 days by default), PASS for all core communication/resilience checks, Relay observation in Relay and CGNAT evidence, DCUtR upgrade in DCUtR evidence, and passing manifests for TCP, QUIC, Relay, DCUtR and CGNAT. It also requires one stable public Node Peer ID. Mixing PASS files from different campaigns or swapping clients between scenarios is rejected even when versions and source commits match. `overall=PASS` by itself is intentionally insufficient.
 
-Once all five manifests and the Node soak history are complete, bind them to the exact Windows artifact in one command:
+Once the campaign manifests and Node soak history are complete, bind them to the exact Windows artifact in one command:
 
 ```powershell
 .\scripts\check-promotion-evidence.ps1 `
   -BuildInfoPath .\BUILD_INFO.json `
-  -NetworkEvidence .\test-results\tcp.json,.\test-results\quic.json,.\test-results\relay.json,.\test-results\dcutr.json,.\test-results\cgnat.json `
+  -NetworkEvidence .\test-results\campaign-ID\*.json `
   -NodeSoakEvidence .\node-soak\*.json
 ```
 
-This preflight first validates the exact `BUILD_INFO.json` version/source commit, then validates every required schema-v3 scenario against that build, extracts the single validated bootstrap Peer ID, and finally requires the Node-soak history to match that same version, source commit and Peer ID while proving peer activity. It cannot replace the real tests; it only prevents mismatched evidence from being promoted after those tests are complete.
+This preflight validates the exact `BUILD_INFO.json` version/source commit and packaged Node hash/size, validates every required schema-v3 scenario as one coherent campaign, extracts the single validated bootstrap Peer ID, and finally requires the Node-soak history to match that same version, source commit and Peer ID while proving peer activity. Its PASS output includes the campaign ID so the promoted evidence set remains identifiable. It cannot replace the real tests; it only prevents mismatched evidence from being promoted after those tests are complete.
 
 Never put identity keys, access tokens, private addresses or other secrets in reports.
 
@@ -141,10 +146,10 @@ Test Wi-Fi/LTE loss during transfer, app closure during transfer, Node restart, 
 
 ## 10. Release-stage gate and artifact provenance
 
-A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond the test release additionally requires validated schema-v3 evidence from independent countries/networks for the required transport/NAT scenarios, continuous schema-v2 Node-soak evidence bound to the same bootstrap Peer ID/version/source commit, and fixes for issues discovered during those tests.
+A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond the test release additionally requires validated schema-v3 evidence from one coherent campaign on independent countries/networks for the required transport/NAT scenarios, continuous schema-v2 Node-soak evidence bound to the same bootstrap Peer ID/version/source commit, and fixes for issues discovered during those tests.
 
-Every Windows CI archive includes `BUILD_INFO.json`. It records the exact Git commit, project version, workflow run, SHA-256 and byte size of `konofix-node.exe`, SHA-256 and byte size of every `.exe`/`.msi` installer, hashes/sizes for the bundled operational test scripts, the exact committed frontend lockfile, and the exact committed Rust lockfile. The Node binary embeds the same source commit into its health telemetry. `scripts\verify-release.ps1` extracts the ZIP and cross-checks packaged metadata and both dependency lockfiles against the committed build inputs before the artifact is uploaded.
+Every Windows CI archive includes `BUILD_INFO.json`. It records the exact Git commit, project version, workflow run, SHA-256 and byte size of `konofix-node.exe`, SHA-256 and byte size of every `.exe`/`.msi` installer, hashes/sizes for the bundled operational test scripts, the exact committed frontend lockfile, and the exact committed Rust lockfile. The Node binary embeds the same source commit into its health telemetry. `scripts\verify-release.ps1` extracts the ZIP and cross-checks packaged metadata, the campaign generator and both dependency lockfiles against the committed build inputs before the artifact is uploaded.
 
-Stable promotion resolves the target commit from `-ExpectedSourceCommit`, `GITHUB_SHA`, or the clean Git working tree and passes that exact value into both network-evidence and Node-soak validation. The bundled `check-promotion-evidence.ps1` gives remote testers the same exact-build binding using the artifact's verified `BUILD_INFO.json`. This prevents evidence collected for an earlier `0.4.2` commit from being reused for a different `0.4.2` build.
+Stable promotion resolves the target commit from `-ExpectedSourceCommit`, `GITHUB_SHA`, or the clean Git working tree and passes that exact value into both network-evidence and Node-soak validation. The bundled `check-promotion-evidence.ps1` gives remote testers the same exact-build binding using the artifact's verified `BUILD_INFO.json`. Campaign binding additionally prevents five individually valid manifests from unrelated sessions from being combined into one promotion decision.
 
 Frontend dependency resolution is deterministic through the committed `package-lock.json` and `npm ci`. Rust dependency resolution is deterministic through committed `src-tauri\Cargo.lock`; CI/local/build helpers use `--locked` validation/build commands, and release verification rejects an archive whose packaged Cargo lockfile differs from the committed build input.

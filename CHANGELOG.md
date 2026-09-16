@@ -29,6 +29,7 @@
 - changed no-lockfile CI installation to `npm install --no-audit --no-fund --package-lock=false` so the build workspace cannot manufacture misleading lockfile state,
 - pinned every external GitHub Action in Windows CI to an immutable full commit SHA, disabled persisted checkout credentials, and made the project audit reject future floating Action refs,
 - added the roadmap progress bar directly to `ROADMAP.md` and synchronized active milestone progress at 37/43 tasks (86%),
+- made project audit recompute the active roadmap checklist and reject stale README/ROADMAP percentages or task counts,
 - expanded cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1

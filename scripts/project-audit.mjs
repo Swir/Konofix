@@ -50,6 +50,34 @@ for (const file of docs) {
   if (polishChars.test(text)) fail(`${file} contains Polish-specific characters; repository documentation must remain English.`);
 }
 
+const roadmapText = read('ROADMAP.md');
+const readmeText = read('README.md');
+const milestoneStart = roadmapText.indexOf('## 0.4.2 — Real Internet Test');
+if (milestoneStart < 0) {
+  fail('Could not locate the active 0.4.2 Real Internet Test milestone in ROADMAP.md.');
+} else {
+  const milestoneEnd = roadmapText.indexOf('\n## 0.5.0', milestoneStart);
+  const milestone = roadmapText.slice(milestoneStart, milestoneEnd < 0 ? undefined : milestoneEnd);
+  const completedTasks = (milestone.match(/^- \[[xX]\] /gm) || []).length;
+  const openTasks = (milestone.match(/^- \[ \] /gm) || []).length;
+  const totalTasks = completedTasks + openTasks;
+
+  if (totalTasks === 0) {
+    fail('The active roadmap milestone contains no checklist tasks.');
+  } else {
+    const progressPercent = Math.round((completedTasks / totalTasks) * 100);
+    const progressSummary = `Real Internet Test milestone: ${progressPercent}% complete`;
+    const taskSummary = `${completedTasks} of ${totalTasks} tasks complete`;
+
+    if (!readmeText.includes(progressSummary)) fail(`README.md progress must say "${progressSummary}".`);
+    if (!roadmapText.includes(progressSummary)) fail(`ROADMAP.md progress must say "${progressSummary}".`);
+    if (!readmeText.includes(taskSummary)) fail(`README.md task count must say "${taskSummary}".`);
+    if (!roadmapText.includes(taskSummary)) fail(`ROADMAP.md task count must say "${taskSummary}".`);
+
+    console.log(`Roadmap progress consistency: ${completedTasks}/${totalTasks} (${progressPercent}%).`);
+  }
+}
+
 const englishOnlyOperationalFiles = ['src-tauri/src/bin/konofix-node.rs'];
 for (const name of fs.readdirSync(root)) {
   if (/\.bat$/i.test(name)) englishOnlyOperationalFiles.push(name);

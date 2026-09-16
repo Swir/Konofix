@@ -23,6 +23,7 @@
 - reduced GitHub Actions token exposure by isolating `contents: write` to the post-build release-publication job,
 - attempted lockfile-enforced npm CI, detected that the repository does not yet contain `package-lock.json`, and restored the green-compatible install path instead of leaving Windows CI permanently blocked; deterministic npm installs remain pending until a lockfile is committed,
 - corrected README and ROADMAP dependency-install documentation so it matches the verified green Windows CI configuration instead of claiming a nonexistent lockfile boundary,
+- added a project-audit guard that keeps Windows CI dependency installation synchronized with actual lockfile state and rejects `npm ci` or setup-node npm caching when `package-lock.json` is absent,
 - expanded cross-country testing documentation and release-gate guidance.
 
 ## 0.4.1

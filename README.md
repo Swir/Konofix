@@ -10,7 +10,7 @@ GitHub: https://github.com/Swir/Konofix
 
 `██████████████████░░ 89%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (39 of 44 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (40 of 45 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -50,10 +50,10 @@ The client network stack includes TCP, QUIC, Noise/Yamux, GossipSub, mDNS, Kadem
 
 ## Development
 
-Requirements: Windows 11, Node.js 20+, and Rust MSVC.
+Requirements: Windows 11, Node.js 22+, and Rust MSVC.
 
 ```powershell
-npm install
+npm ci
 npm run tauri dev
 ```
 
@@ -63,9 +63,9 @@ Project checks:
 .\scripts\check.ps1
 ```
 
-GitHub Actions validates TypeScript/Vite, Rust all-target tests and checks, `konofix-node`, release/network/Node-health/Node-soak gates, localization/project consistency, and the production Windows bundle. The localization audit requires the typed `MessageKey`/`t()` API, rejects the removed DOM/source-text translator pattern, and fails if Polish UI literals return to `src/main.ts`. The repository does not currently contain a committed `package-lock.json`, so CI intentionally uses `npm install --no-audit --no-fund --package-lock=false`; the audit derives dependency policy from Git-tracked files instead of transient workspace files, so an npm-generated lockfile cannot masquerade as a committed reproducibility guarantee. Lockfile-enforced `npm ci` remains pending until a real lockfile is committed and verified. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
+GitHub Actions validates TypeScript/Vite, Rust all-target tests and checks, `konofix-node`, release/network/Node-health/Node-soak gates, localization/project consistency, and the production Windows bundle. The localization audit requires the typed `MessageKey`/`t()` API, rejects the removed DOM/source-text translator pattern, and fails if Polish UI literals return to `src/main.ts`. Frontend dependencies are now pinned by the committed `package-lock.json`; CI uses `npm ci --no-audit --no-fund` and setup-node caching keyed to that exact lockfile. The project audit verifies that the lockfile root package, dependency declarations and CI policy still match `package.json`, rejects a return to `npm install`, and rejects CI-side lockfile regeneration. GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, superseded runs are cancelled automatically, and build/test steps receive a read-only repository token. Ordinary pushes do not publish GitHub Releases; publication remains a deliberate gate after public-network readiness is demonstrated.
 
-Each Windows CI archive also carries `BUILD_INFO.json` with the exact commit/version and SHA-256 plus byte size for `konofix-node.exe` and every Windows installer. The Node binary embeds that same source commit in its schema-v2 health snapshots. Real-network evidence is schema v3 and stable promotion rejects evidence, Node health or soak history from any other source commit, preventing two different `0.4.2` builds from being treated as interchangeable. `scripts/verify-release.ps1` cross-checks packaged provenance against the extracted archive and verifies the captured `Cargo.lock` before upload. The lockfile currently records the Rust graph resolved by that build; it is not presented as a deterministic build input until a verified `src-tauri/Cargo.lock` is committed and enforced.
+Each Windows CI archive also carries `BUILD_INFO.json` with the exact commit/version and SHA-256 plus byte size for `konofix-node.exe`, the committed frontend lockfile, the captured Rust dependency-resolution record, the bundled test tools and every Windows installer. Release verification requires the packaged `package-lock.json` to match the committed build input byte-for-byte by size and SHA-256. The Node binary embeds that same source commit in its schema-v2 health snapshots. Real-network evidence is schema v3 and stable promotion rejects evidence, Node health or soak history from any other source commit, preventing two different `0.4.2` builds from being treated as interchangeable. The captured `Cargo.lock` records the Rust graph resolved by that build; it is not yet presented as a deterministic Rust build input until a verified `src-tauri/Cargo.lock` is committed and enforced.
 
 ## Windows build
 

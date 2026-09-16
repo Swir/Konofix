@@ -10,7 +10,7 @@ GitHub: https://github.com/Swir/Konofix
 
 `██████████████████░░ 90%`
 
-The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (43 of 48 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
+The percentage is calculated from the checked tasks in the active `0.4.2 — Real Internet Test` roadmap milestone (44 of 49 tasks complete). It is intentionally not increased by CI runs alone: the remaining public-Node, cross-country, CGNAT, transport and real-world-fix work must actually pass before the milestone can reach 100%.
 
 ## Core principles
 
@@ -35,7 +35,7 @@ konofix-node.exe --port 45555 --public-host 203.0.113.10
 
 Paste the recommended address into **Network settings → Bootstrap**. A bootstrap helps peers discover the DHT/relay network; it is not a message-history server or file store.
 
-Stable promotion also requires a continuous public-Node soak history that proves the Node kept one version, source commit and Peer ID, did not restart inside the evidence window, produced fresh snapshots without excessive monitoring gaps, and actually observed peer activity. The soak identity is bound to the same bootstrap Peer ID and exact source commit used by the validated cross-country manifests. Public/community deployments can pin identity storage explicitly with `--identity-file`; existing invalid identity files now fail closed instead of being silently replaced with a new Peer ID. See `docs/NODE.md` and `docs/NODE_SOAK.md`.
+Stable promotion also requires a continuous public-Node soak history that proves the Node kept one version, source commit and Peer ID, did not restart inside the evidence window, produced fresh snapshots without excessive monitoring gaps, and actually observed peer activity. The soak identity is bound to the same bootstrap Peer ID and exact source commit used by the validated cross-country manifests. Public/community deployments can pin identity storage explicitly with `--identity-file`; existing invalid identity files now fail closed instead of being silently replaced with a new Peer ID. The Node itself also refuses identity/health/executable path collisions, uses unique create-new temporary health files, and treats failure to publish the initial explicitly requested health snapshot as a startup failure. See `docs/NODE.md` and `docs/NODE_SOAK.md`.
 
 ## Localization
 
@@ -106,6 +106,8 @@ konofix-node.exe `
   --identity-file C:\Konofix\node-identity.key `
   --health-file C:\Konofix\health.json
 ```
+
+Even when the raw binary is used, it independently rejects identity/health/executable path collisions. When `--health-file` is supplied, the initial health snapshot must be created successfully before startup continues; periodic updates use unique create-new temporary files before replacement.
 
 Open TCP 45555 and UDP 45555. See `docs/NODE.md` for operator details and `docs/NODE_SOAK.md` for stable-promotion soak evidence.
 

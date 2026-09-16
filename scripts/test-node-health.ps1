@@ -25,7 +25,7 @@ try {
 
     foreach ($case in @(
         @{Name='unsupported schema';Overrides=@{schema=2}}, @{Name='string schema';Overrides=@{schema='1'}},
-        @{Name='stopped node';Overrides=@{status='stopped'}}, @{Name='numeric status';Overrides=@{status=1}}, @{Name='boolean status';Overrides=@{status=$true}}, @{Name='whitespace status';Overrides=@{status='   '}},
+        @{Name='stopped node';Overrides=@{status='stopped'}}, @{Name='uppercase running status';Overrides=@{status='RUNNING'}}, @{Name='numeric status';Overrides=@{status=1}}, @{Name='boolean status';Overrides=@{status=$true}}, @{Name='whitespace status';Overrides=@{status='   '}},
         @{Name='empty version';Overrides=@{version=''}}, @{Name='numeric version';Overrides=@{version=42}}, @{Name='boolean version';Overrides=@{version=$true}}, @{Name='whitespace version';Overrides=@{version='   '}},
         @{Name='empty peer id';Overrides=@{peer_id=''}}, @{Name='numeric peer id';Overrides=@{peer_id=123}}, @{Name='boolean peer id';Overrides=@{peer_id=$false}}, @{Name='whitespace peer id';Overrides=@{peer_id='   '}},
         @{Name='negative uptime';Overrides=@{uptime_seconds=-1}}, @{Name='string uptime';Overrides=@{uptime_seconds='120'}},
@@ -35,7 +35,7 @@ try {
     )) { $path=Write-Snapshot ($case.Name -replace ' ','-') $case.Overrides; Expect-Reject $case.Name { & $checker -Path $path -MaxAgeSeconds 120 } }
 
     Expect-Reject 'too-small maximum age argument' { & $checker -Path $valid -MaxAgeSeconds 9 }; Expect-Reject 'excessive maximum age argument' { & $checker -Path $valid -MaxAgeSeconds 86401 }; Expect-Pass 'maximum supported freshness window accepted' { & $checker -Path $valid -MaxAgeSeconds 86400 }
-    Expect-Reject 'wrong expected version' { & $checker -Path $valid -ExpectedVersion '9.9.9' }; Expect-Reject 'wrong expected Peer ID' { & $checker -Path $valid -ExpectedPeerId '12D3KooWWrongPeer' }
+    Expect-Reject 'wrong expected version' { & $checker -Path $valid -ExpectedVersion '9.9.9' }; Expect-Reject 'case-changed expected version' { & $checker -Path $valid -ExpectedVersion '0.4.2'.ToUpperInvariant() }; Expect-Reject 'wrong expected Peer ID' { & $checker -Path $valid -ExpectedPeerId '12D3KooWWrongPeer' }; Expect-Reject 'case-changed expected Peer ID' { & $checker -Path $valid -ExpectedPeerId '12d3KooWTestPeerId' }
     Expect-Reject 'negative minimum uptime argument' { & $checker -Path $valid -MinUptimeSeconds -1 }; Expect-Reject 'insufficient stability uptime' { & $checker -Path $valid -MinUptimeSeconds 121 }; Expect-Pass 'minimum stability uptime satisfied' { & $checker -Path $valid -MinUptimeSeconds 120 }
     Expect-Reject 'negative minimum peer quorum argument' { & $checker -Path $valid -MinConnectedPeers -1 }; Expect-Pass 'minimum peer quorum satisfied' { & $checker -Path $valid -MinConnectedPeers 2 }; Expect-Reject 'insufficient peer quorum' { & $checker -Path $valid -MinConnectedPeers 3 }
     Expect-Reject 'negative future skew argument' { & $checker -Path $valid -MaxFutureSkewSeconds -1 }; Expect-Reject 'excessive future skew argument' { & $checker -Path $valid -MaxFutureSkewSeconds 301 }

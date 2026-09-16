@@ -176,14 +176,18 @@ try {
     & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence (Join-Path $temp 'missing-soak-*.json') -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
-  $missingEvidencePath = Join-Path $temp 'network-test-tcp-missing-evidence.json'
-  $missingEvidence = Get-Content -LiteralPath $networkPaths[0] -Raw | ConvertFrom-Json
-  $missingEvidence.check_evidence.PSObject.Properties.Remove('world_a_to_b')
-  $missingEvidence | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $missingEvidencePath -Encoding UTF8
-  $evidencePoorPaths = @($networkPaths)
-  $evidencePoorPaths[0] = $missingEvidencePath
-  Assert-Fails 'evidence-free PASS rejection' 'missing concrete check_evidence' {
-    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $evidencePoorPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+  # Mutate the same session-owned manifest in place so the test reaches the evidence-quality
+  # validator instead of being rejected earlier by session-inventory/path consistency.
+  $tcpOriginal = Get-Content -LiteralPath $networkPaths[0] -Raw
+  try {
+    $missingEvidence = $tcpOriginal | ConvertFrom-Json
+    $missingEvidence.check_evidence.PSObject.Properties.Remove('world_a_to_b')
+    $missingEvidence | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $networkPaths[0] -Encoding UTF8
+    Assert-Fails 'evidence-free PASS rejection' 'missing concrete check_evidence' {
+      & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+    }
+  } finally {
+    Set-Content -LiteralPath $networkPaths[0] -Value $tcpOriginal -Encoding UTF8 -NoNewline
   }
 
   $originalNodeBytes = [IO.File]::ReadAllBytes($nodePath)

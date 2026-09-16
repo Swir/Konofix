@@ -139,7 +139,10 @@ fn load_or_create_identity(path: &Path) -> Result<identity::Keypair, String> {
         }
     }
 
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent).map_err(|error| {
             format!(
                 "Failed to create identity directory {}: {error}",
@@ -405,7 +408,10 @@ fn is_non_public_ip(host: &str) -> bool {
             ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
         }
         Ok(IpAddr::V6(ip)) => {
-            ip.is_loopback() || ip.is_unspecified() || ip.is_unique_local() || ip.is_unicast_link_local()
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
         }
         Err(_) => false,
     }
@@ -444,10 +450,7 @@ fn unique_health_temp_path(path: &Path) -> Result<PathBuf, String> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    Ok(path.with_file_name(format!(
-        "{file_name}.tmp-{}-{nonce}",
-        std::process::id()
-    )))
+    Ok(path.with_file_name(format!("{file_name}.tmp-{}-{nonce}", std::process::id())))
 }
 
 fn write_health_snapshot(
@@ -457,7 +460,10 @@ fn write_health_snapshot(
     connected_peers: usize,
     status: &str,
 ) -> Result<(), String> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent).map_err(|error| {
             format!(
                 "Failed to create health directory {}: {error}",
@@ -489,7 +495,10 @@ fn write_health_snapshot(
         )
     })?;
 
-    if let Err(error) = temp_file.write_all(&payload).and_then(|_| temp_file.sync_all()) {
+    if let Err(error) = temp_file
+        .write_all(&payload)
+        .and_then(|_| temp_file.sync_all())
+    {
         drop(temp_file);
         let _ = std::fs::remove_file(&temp_path);
         return Err(format!(
@@ -692,7 +701,10 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir()
-            .join(format!("konofix-node-{label}-{}-{nonce}", std::process::id()))
+            .join(format!(
+                "konofix-node-{label}-{}-{nonce}",
+                std::process::id()
+            ))
             .join("node-identity.key")
     }
 
@@ -716,11 +728,8 @@ mod tests {
 
     #[test]
     fn rejects_empty_identity_file() {
-        let error = parse_args_from(vec![
-            "--identity-file".to_string(),
-            "   ".to_string(),
-        ])
-        .expect_err("empty identity path must fail");
+        let error = parse_args_from(vec!["--identity-file".to_string(), "   ".to_string()])
+            .expect_err("empty identity path must fail");
         assert!(error.contains("Identity file path cannot be empty"));
     }
 
@@ -746,7 +755,10 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.contains("refusing to replace"));
-        assert_eq!(std::fs::read(&path).expect("fixture should remain"), original);
+        assert_eq!(
+            std::fs::read(&path).expect("fixture should remain"),
+            original
+        );
         let _ = std::fs::remove_dir_all(path.parent().expect("test path has parent"));
     }
 
@@ -797,7 +809,8 @@ mod tests {
             .expect("health snapshot should be replaced");
 
         let text = std::fs::read_to_string(&health).expect("health snapshot should be readable");
-        let json: serde_json::Value = serde_json::from_str(&text).expect("health snapshot should be JSON");
+        let json: serde_json::Value =
+            serde_json::from_str(&text).expect("health snapshot should be JSON");
         assert_eq!(json["schema"], 2);
         assert_eq!(json["status"], "running");
         assert_eq!(json["connected_peers"], 3);

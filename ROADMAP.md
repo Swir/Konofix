@@ -87,7 +87,7 @@ The active milestone currently has 54 of 59 tasks complete. The remaining five t
 - [x] release gate invokes the PowerShell network-evidence validator deterministically
 - [x] Windows CI cancels superseded runs per branch/ref
 - [x] Windows build/test job uses a read-only GitHub token
-- [x] project audit prevents `npm ci`/npm-cache activation unless a real committed frontend lockfile exists
+- [x] project audit prevents `npm ci`/npm-cache activation unless a real committed `package-lock.json` exists
 - [x] automatic GitHub Release publication removed from ordinary pushes; release publication remains gated by real public-network readiness
 - [x] dependency audit derives lockfile state from Git tracking, and no-lockfile CI suppresses transient `package-lock.json` generation
 - [x] GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, and CI audit rejects floating action refs
@@ -119,6 +119,7 @@ The active milestone currently has 54 of 59 tasks complete. The remaining five t
 - Linux systemd installation rejects privileged ports below 1024 because the service intentionally runs as the unprivileged `konofix` user; boundary behavior is covered by installer self-tests instead of depending on host-specific capabilities or sysctls.
 - Raw Node state-file safety independently rejects identity/health/executable path collisions, stages health snapshots through unique create-new temporary files with durable writes and cleanup, and fails startup when an explicitly requested initial health snapshot cannot be published.
 - Linux systemd installation canonicalizes state/install paths, rejects root or top-level directories, and rejects equal, nested, lexical-alias or symlink-alias layouts so writable identity/health state cannot overlap the staged Node executable.
+- Linux release bundles are staged and integrity-verified on pull requests before merge; `NODE_BUILD_INFO.json` binds the exact expected archive inventory (Node, installer and operator documentation) to byte sizes and SHA-256 hashes plus source commit/version, while upload remains `main`-only.
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test

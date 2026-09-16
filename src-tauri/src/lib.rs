@@ -111,13 +111,19 @@ fn peer_cache_path() -> Option<PathBuf> {
 }
 
 fn load_peer_cache() -> PeerCacheFile {
-    let Some(path) = peer_cache_path() else { return PeerCacheFile::default(); };
-    let Ok(data) = std::fs::read(path) else { return PeerCacheFile::default(); };
+    let Some(path) = peer_cache_path() else {
+        return PeerCacheFile::default();
+    };
+    let Ok(data) = std::fs::read(path) else {
+        return PeerCacheFile::default();
+    };
     serde_json::from_slice(&data).unwrap_or_default()
 }
 
 fn save_peer_cache(cache: &PeerCacheFile) {
-    let Some(path) = peer_cache_path() else { return; };
+    let Some(path) = peer_cache_path() else {
+        return;
+    };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -127,14 +133,19 @@ fn save_peer_cache(cache: &PeerCacheFile) {
 }
 
 fn remember_peer_address(cache: &mut PeerCacheFile, peer: PeerId, address: &Multiaddr) {
-    if address.iter().any(|p| matches!(p, libp2p::multiaddr::Protocol::Memory(_))) {
+    if address
+        .iter()
+        .any(|p| matches!(p, libp2p::multiaddr::Protocol::Memory(_)))
+    {
         return;
     }
     let entry = cache.peers.entry(peer.to_string()).or_default();
     let value = address.to_string();
     if !entry.contains(&value) {
         entry.push(value);
-        if entry.len() > 8 { entry.remove(0); }
+        if entry.len() > 8 {
+            entry.remove(0);
+        }
     }
     if cache.peers.len() > 128 {
         if let Some(key) = cache.peers.keys().next().cloned() {
@@ -146,11 +157,18 @@ fn remember_peer_address(cache: &mut PeerCacheFile, peer: PeerId, address: &Mult
 fn add_cached_peers_to_swarm(swarm: &mut libp2p::Swarm<Behaviour>, cache: &PeerCacheFile) -> usize {
     let mut added = 0usize;
     for (peer_raw, addresses) in &cache.peers {
-        let Ok(peer) = peer_raw.parse::<PeerId>() else { continue; };
+        let Ok(peer) = peer_raw.parse::<PeerId>() else {
+            continue;
+        };
         for addr_raw in addresses {
-            let Ok(addr) = addr_raw.parse::<Multiaddr>() else { continue; };
+            let Ok(addr) = addr_raw.parse::<Multiaddr>() else {
+                continue;
+            };
             swarm.behaviour_mut().kad.add_address(&peer, addr.clone());
-            swarm.behaviour_mut().file_transfer.add_address(&peer, addr.clone());
+            swarm
+                .behaviour_mut()
+                .file_transfer
+                .add_address(&peer, addr.clone());
             let mut full = addr;
             full.push(libp2p::multiaddr::Protocol::P2p(peer.clone()));
             let _ = swarm.dial(full);
@@ -182,6 +200,24 @@ enum WireEvent {
         room_id: String,
         owner: String,
     },
+}
+
+fn wire_event_claimed_peer_id(event: &WireEvent) -> Option<&str> {
+    match event {
+        WireEvent::Presence { peer_id, .. }
+        | WireEvent::Goodbye { peer_id }
+        | WireEvent::NickClaim { peer_id, .. } => Some(peer_id.as_str()),
+        WireEvent::Chat(message) => message.peer_id.as_deref(),
+        WireEvent::RoomCreate(room) => room.owner.as_deref(),
+        WireEvent::RoomClose { owner, .. } => Some(owner.as_str()),
+    }
+}
+
+fn wire_event_matches_source(event: &WireEvent, source: &PeerId) -> bool {
+    let source = source.to_string();
+    wire_event_claimed_peer_id(event)
+        .map(|claimed| claimed == source.as_str())
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -426,7 +462,10 @@ fn safe_filename(raw: &str) -> String {
             }
         })
         .collect::<String>();
-    name = name.trim().trim_end_matches(|c| c == '.' || c == ' ').to_string();
+    name = name
+        .trim()
+        .trim_end_matches(|c| c == '.' || c == ' ')
+        .to_string();
     if name.is_empty() || name == "." || name == ".." {
         name = "konofix-file.bin".into();
     }
@@ -440,7 +479,28 @@ fn safe_filename(raw: &str) -> String {
         .to_ascii_uppercase();
     if matches!(
         stem.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL" | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9" | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
     ) {
         name = format!("_{name}");
     }
@@ -472,15 +532,28 @@ fn unique_download_path(dir: &Path, file_name: &str) -> PathBuf {
             format!("{stem} ({n})")
         };
         let candidate = dir.join(candidate_name);
-        let candidate_basename = candidate.file_name().and_then(|v| v.to_str()).unwrap_or("file");
-        if !candidate.exists() && !candidate.with_file_name(format!("{candidate_basename}.konofixpart")).exists() {
+        let candidate_basename = candidate
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or("file");
+        if !candidate.exists()
+            && !candidate
+                .with_file_name(format!("{candidate_basename}.konofixpart"))
+                .exists()
+        {
             return candidate;
         }
     }
     dir.join(format!("{}-{}", Uuid::new_v4(), safe))
 }
 
-fn file_view_outgoing(id: &str, t: &OutgoingTransfer, status: &str, path: Option<String>, error: Option<String>) -> FileTransferView {
+fn file_view_outgoing(
+    id: &str,
+    t: &OutgoingTransfer,
+    status: &str,
+    path: Option<String>,
+    error: Option<String>,
+) -> FileTransferView {
     FileTransferView {
         transfer_id: id.to_string(),
         direction: "outgoing".into(),
@@ -489,14 +562,24 @@ fn file_view_outgoing(id: &str, t: &OutgoingTransfer, status: &str, path: Option
         file_name: t.file_name.clone(),
         size: t.size,
         transferred: t.sent,
-        progress: if t.size == 0 { 100.0 } else { (t.sent as f64 / t.size as f64) * 100.0 },
+        progress: if t.size == 0 {
+            100.0
+        } else {
+            (t.sent as f64 / t.size as f64) * 100.0
+        },
         status: status.into(),
         path,
         error,
     }
 }
 
-fn file_view_incoming(id: &str, t: &IncomingTransfer, status: &str, path: Option<String>, error: Option<String>) -> FileTransferView {
+fn file_view_incoming(
+    id: &str,
+    t: &IncomingTransfer,
+    status: &str,
+    path: Option<String>,
+    error: Option<String>,
+) -> FileTransferView {
     FileTransferView {
         transfer_id: id.to_string(),
         direction: "incoming".into(),
@@ -505,7 +588,11 @@ fn file_view_incoming(id: &str, t: &IncomingTransfer, status: &str, path: Option
         file_name: t.file_name.clone(),
         size: t.size,
         transferred: t.received,
-        progress: if t.size == 0 { 100.0 } else { (t.received as f64 / t.size as f64) * 100.0 },
+        progress: if t.size == 0 {
+            100.0
+        } else {
+            (t.received as f64 / t.size as f64) * 100.0
+        },
         status: status.into(),
         path,
         error,
@@ -524,12 +611,7 @@ async fn start_network(
     state: State<'_, AppState>,
 ) -> Result<StartResult, String> {
     let nick = validate_nick(&nick)?;
-    if state
-        .tx
-        .lock()
-        .map_err(|_| "Błąd blokady stanu")?
-        .is_some()
-    {
+    if state.tx.lock().map_err(|_| "Błąd blokady stanu")?.is_some() {
         return Err("Sieć jest już uruchomiona.".into());
     }
 
@@ -540,7 +622,9 @@ async fn start_network(
     let nick_for_task = nick.clone();
     let bootstrap_list = bootstrap_sources(bootstraps.unwrap_or_default());
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = network_task(nick_for_task, bootstrap_list, app.clone(), rx, ready_tx).await {
+        if let Err(err) =
+            network_task(nick_for_task, bootstrap_list, app.clone(), rx, ready_tx).await
+        {
             let _ = app.emit("network-error", err);
         }
     });
@@ -563,7 +647,11 @@ async fn start_network(
 }
 
 #[tauri::command]
-async fn send_message(room: String, text: String, state: State<'_, AppState>) -> Result<(), String> {
+async fn send_message(
+    room: String,
+    text: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let text = text.trim().to_string();
     if text.is_empty() {
         return Ok(());
@@ -644,7 +732,10 @@ async fn refresh_discovery(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn offer_file(peer_id: String, state: State<'_, AppState>) -> Result<Option<FileTransferView>, String> {
+async fn offer_file(
+    peer_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<FileTransferView>, String> {
     let tx = state
         .tx
         .lock()
@@ -652,9 +743,13 @@ async fn offer_file(peer_id: String, state: State<'_, AppState>) -> Result<Optio
         .clone()
         .ok_or("Najpierw połącz się z siecią.")?;
 
-    let path = tokio::task::spawn_blocking(|| rfd::FileDialog::new().set_title("Wyślij plik przez Konofix Chat").pick_file())
-        .await
-        .map_err(|e| format!("Błąd okna wyboru pliku: {e}"))?;
+    let path = tokio::task::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Wyślij plik przez Konofix Chat")
+            .pick_file()
+    })
+    .await
+    .map_err(|e| format!("Błąd okna wyboru pliku: {e}"))?;
     let Some(path) = path else {
         return Ok(None);
     };
@@ -692,7 +787,10 @@ async fn offer_file(peer_id: String, state: State<'_, AppState>) -> Result<Optio
 }
 
 #[tauri::command]
-async fn accept_file(transfer_id: String, state: State<'_, AppState>) -> Result<FileTransferView, String> {
+async fn accept_file(
+    transfer_id: String,
+    state: State<'_, AppState>,
+) -> Result<FileTransferView, String> {
     let tx = state
         .tx
         .lock()
@@ -706,7 +804,9 @@ async fn accept_file(transfer_id: String, state: State<'_, AppState>) -> Result<
     })
     .await
     .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
-    reply_rx.await.map_err(|_| "Brak odpowiedzi modułu transferu.".to_string())?
+    reply_rx
+        .await
+        .map_err(|_| "Brak odpowiedzi modułu transferu.".to_string())?
 }
 
 #[tauri::command]
@@ -724,7 +824,9 @@ async fn reject_file(transfer_id: String, state: State<'_, AppState>) -> Result<
     })
     .await
     .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
-    reply_rx.await.map_err(|_| "Brak odpowiedzi modułu transferu.".to_string())?
+    reply_rx
+        .await
+        .map_err(|_| "Brak odpowiedzi modułu transferu.".to_string())?
 }
 
 #[tauri::command]
@@ -742,7 +844,9 @@ async fn cancel_file(transfer_id: String, state: State<'_, AppState>) -> Result<
     })
     .await
     .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
-    reply_rx.await.map_err(|_| "Brak odpowiedzi modułu transferu.".to_string())?
+    reply_rx
+        .await
+        .map_err(|_| "Brak odpowiedzi modułu transferu.".to_string())?
 }
 
 #[tauri::command]
@@ -766,7 +870,10 @@ fn add_bootstrap_to_swarm(swarm: &mut libp2p::Swarm<Behaviour>, raw: &str) -> Re
 
     let full_addr = addr.clone();
     addr.pop();
-    swarm.behaviour_mut().kad.add_address(&peer_id, addr.clone());
+    swarm
+        .behaviour_mut()
+        .kad
+        .add_address(&peer_id, addr.clone());
     swarm
         .behaviour_mut()
         .autonat
@@ -780,13 +887,19 @@ fn add_bootstrap_to_swarm(swarm: &mut libp2p::Swarm<Behaviour>, raw: &str) -> Re
 }
 
 fn try_listen_via_relay(swarm: &mut libp2p::Swarm<Behaviour>, raw: &str) -> Result<(), String> {
-    let mut addr: Multiaddr = raw.trim().parse().map_err(|e| format!("Nieprawidłowy relay: {e}"))?;
+    let mut addr: Multiaddr = raw
+        .trim()
+        .parse()
+        .map_err(|e| format!("Nieprawidłowy relay: {e}"))?;
     match addr.iter().last() {
         Some(libp2p::multiaddr::Protocol::P2p(_)) => {}
         _ => return Err("Adres relay musi kończyć się /p2p/<PeerId>.".into()),
     }
     addr.push(libp2p::multiaddr::Protocol::P2pCircuit);
-    swarm.listen_on(addr).map(|_| ()).map_err(|e| format!("Nie udało się utworzyć rezerwacji relay: {e}"))
+    swarm
+        .listen_on(addr)
+        .map(|_| ())
+        .map_err(|e| format!("Nie udało się utworzyć rezerwacji relay: {e}"))
 }
 
 fn publish(swarm: &mut libp2p::Swarm<Behaviour>, topic: &gossipsub::IdentTopic, event: &WireEvent) {
@@ -923,16 +1036,13 @@ async fn send_next_chunk(
     };
 
     if let Some(sha256) = complete_hash {
-        let request_id = swarm
-            .behaviour_mut()
-            .file_transfer
-            .send_request(
-                &peer,
-                FileRequest::Complete {
-                    transfer_id: transfer_id.to_string(),
-                    sha256,
-                },
-            );
+        let request_id = swarm.behaviour_mut().file_transfer.send_request(
+            &peer,
+            FileRequest::Complete {
+                transfer_id: transfer_id.to_string(),
+                sha256,
+            },
+        );
         outbound_requests.insert(
             request_id,
             OutboundMeta {
@@ -941,20 +1051,20 @@ async fn send_next_chunk(
             },
         );
         if let Some(t) = outgoing.get(transfer_id) {
-            emit_transfer(app, &file_view_outgoing(transfer_id, t, "verifying", None, None));
+            emit_transfer(
+                app,
+                &file_view_outgoing(transfer_id, t, "verifying", None, None),
+            );
         }
     } else {
-        let request_id = swarm
-            .behaviour_mut()
-            .file_transfer
-            .send_request(
-                &peer,
-                FileRequest::Chunk {
-                    transfer_id: transfer_id.to_string(),
-                    offset,
-                    data,
-                },
-            );
+        let request_id = swarm.behaviour_mut().file_transfer.send_request(
+            &peer,
+            FileRequest::Chunk {
+                transfer_id: transfer_id.to_string(),
+                offset,
+                data,
+            },
+        );
         outbound_requests.insert(
             request_id,
             OutboundMeta {
@@ -1013,11 +1123,8 @@ async fn network_task(
             kad_config.set_replication_interval(Some(Duration::from_secs(20)));
             kad_config.set_provider_publication_interval(Some(Duration::from_secs(25)));
             kad_config.set_provider_record_ttl(Some(Duration::from_secs(75)));
-            let kad = kad::Behaviour::with_config(
-                local_peer,
-                MemoryStore::new(local_peer),
-                kad_config,
-            );
+            let kad =
+                kad::Behaviour::with_config(local_peer, MemoryStore::new(local_peer), kad_config);
 
             let identify = identify::Behaviour::new(
                 identify::Config::new("/konofix/4.0".into(), key.public())
@@ -1026,8 +1133,8 @@ async fn network_task(
                     .with_push_listen_addr_updates(true),
             );
 
-            let rr_cfg = request_response::Config::default()
-                .with_request_timeout(Duration::from_secs(300));
+            let rr_cfg =
+                request_response::Config::default().with_request_timeout(Duration::from_secs(300));
             let file_transfer = request_response::cbor::Behaviour::<FileRequest, FileResponse>::new(
                 [(
                     StreamProtocol::new(FILE_PROTOCOL),
@@ -1081,7 +1188,10 @@ async fn network_task(
     let mut peer_cache = load_peer_cache();
     let cached_dials = add_cached_peers_to_swarm(&mut swarm, &peer_cache);
     if cached_dials > 0 {
-        let _ = app.emit("network-log", format!("Załadowano {cached_dials} zapamiętanych adresów P2P."));
+        let _ = app.emit(
+            "network-log",
+            format!("Załadowano {cached_dials} zapamiętanych adresów P2P."),
+        );
     }
 
     let mut bootstrap_count = 0usize;
@@ -1092,7 +1202,7 @@ async fn network_task(
                 if let Err(err) = try_listen_via_relay(&mut swarm, address) {
                     let _ = app.emit("network-log", format!("Relay rezerwacja: {err}"));
                 }
-            },
+            }
             Err(err) => {
                 let _ = app.emit("network-warning", format!("Bootstrap pominięty: {err}"));
             }
@@ -1106,7 +1216,10 @@ async fn network_task(
         .behaviour_mut()
         .kad
         .start_providing(world_provider_key());
-    swarm.behaviour_mut().kad.get_providers(world_provider_key());
+    swarm
+        .behaviour_mut()
+        .kad
+        .get_providers(world_provider_key());
     swarm
         .behaviour_mut()
         .kad
@@ -1123,7 +1236,8 @@ async fn network_task(
     let mut outgoing: HashMap<String, OutgoingTransfer> = HashMap::new();
     let mut pending_incoming: HashMap<String, PendingIncomingOffer> = HashMap::new();
     let mut incoming: HashMap<String, IncomingTransfer> = HashMap::new();
-    let mut outbound_requests: HashMap<request_response::OutboundRequestId, OutboundMeta> = HashMap::new();
+    let mut outbound_requests: HashMap<request_response::OutboundRequestId, OutboundMeta> =
+        HashMap::new();
 
     publish_presence(&mut swarm, &world, &peer_id, &nick);
     publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical);
@@ -1414,7 +1528,18 @@ async fn network_task(
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message { message, .. })) => {
+                    let Some(authenticated_source) = message.source.as_ref() else {
+                        let _ = app.emit("network-warning", "Dropped P2P event without an authenticated source Peer ID.");
+                        continue;
+                    };
                     if let Ok(event) = serde_json::from_slice::<WireEvent>(&message.data) {
+                        if !wire_event_matches_source(&event, authenticated_source) {
+                            let _ = app.emit(
+                                "network-warning",
+                                format!("Dropped P2P event with forged payload identity from {authenticated_source}."),
+                            );
+                            continue;
+                        }
                         match event {
                             WireEvent::Presence { peer_id: remote_id, nick: remote_nick } => {
                                 if remote_id != peer_id {
@@ -1475,6 +1600,17 @@ async fn network_task(
                                 request_response::Message::Request { request, channel, .. } => {
                                     match request {
                                         FileRequest::Offer { transfer_id, file_name, size } => {
+                                            if Uuid::parse_str(&transfer_id).is_err() {
+                                                let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Rejected { reason: "Invalid transfer ID.".into() });
+                                                continue;
+                                            }
+                                            if pending_incoming.contains_key(&transfer_id)
+                                                || incoming.contains_key(&transfer_id)
+                                                || outgoing.contains_key(&transfer_id)
+                                            {
+                                                let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Rejected { reason: "Transfer ID is already active.".into() });
+                                                continue;
+                                            }
                                             if size > MAX_FILE_SIZE {
                                                 let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Rejected { reason: "Plik przekracza limit 32 GiB.".into() });
                                                 continue;
@@ -1527,7 +1663,16 @@ async fn network_task(
                                             let _ = swarm.behaviour_mut().file_transfer.send_response(channel, response);
                                         }
                                         FileRequest::Complete { transfer_id, sha256 } => {
-                                            let response = if let Some(mut transfer) = incoming.remove(&transfer_id) {
+                                            let sender_mismatch = incoming
+                                                .get(&transfer_id)
+                                                .map(|transfer| transfer.peer != peer)
+                                                .unwrap_or(false);
+                                            let hash_format_valid = sha256.len() == 64 && sha256.bytes().all(|byte| byte.is_ascii_hexdigit());
+                                            let response = if sender_mismatch {
+                                                FileResponse::Error { message: "Transfer sender identity mismatch.".into() }
+                                            } else if !hash_format_valid {
+                                                FileResponse::Error { message: "Invalid SHA-256 digest format.".into() }
+                                            } else if let Some(mut transfer) = incoming.remove(&transfer_id) {
                                                 let local_hash = hex::encode(transfer.hasher.clone().finalize());
                                                 let valid = transfer.received == transfer.size && local_hash.eq_ignore_ascii_case(&sha256);
                                                 let temp_path = transfer.temp_path.clone();
@@ -1564,17 +1709,50 @@ async fn network_task(
                                             let _ = swarm.behaviour_mut().file_transfer.send_response(channel, response);
                                         }
                                         FileRequest::Cancel { transfer_id } => {
-                                            if let Some(pending) = pending_incoming.remove(&transfer_id) {
-                                                let _ = pending;
+
+                                            let pending_matches = pending_incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);
+
+                                            let incoming_matches = incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);
+
+                                            let outgoing_matches = outgoing.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);
+
+                                            let matched = pending_matches || incoming_matches || outgoing_matches;
+
+                                            if pending_matches { pending_incoming.remove(&transfer_id); }
+
+                                            if incoming_matches {
+
+                                                if let Some(transfer) = incoming.remove(&transfer_id) {
+
+                                                    let _ = tokio::fs::remove_file(&transfer.temp_path).await;
+
+                                                    emit_transfer(&app, &file_view_incoming(&transfer_id, &transfer, "cancelled", None, Some("Druga strona anulowała transfer.".into())));
+
+                                                }
+
                                             }
-                                            if let Some(transfer) = incoming.remove(&transfer_id) {
-                                                let _ = tokio::fs::remove_file(&transfer.temp_path).await;
-                                                emit_transfer(&app, &file_view_incoming(&transfer_id, &transfer, "cancelled", None, Some("Druga strona anulowała transfer.".into())));
+
+                                            if outgoing_matches {
+
+                                                if let Some(transfer) = outgoing.remove(&transfer_id) {
+
+                                                    emit_transfer(&app, &file_view_outgoing(&transfer_id, &transfer, "cancelled", None, Some("Druga strona anulowała transfer.".into())));
+
+                                                }
+
                                             }
-                                            if let Some(transfer) = outgoing.remove(&transfer_id) {
-                                                emit_transfer(&app, &file_view_outgoing(&transfer_id, &transfer, "cancelled", None, Some("Druga strona anulowała transfer.".into())));
-                                            }
-                                            let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Ack { received: 0 });
+
+                                            let response = if matched {
+
+                                                FileResponse::Ack { received: 0 }
+
+                                            } else {
+
+                                                FileResponse::Error { message: "Transfer not found for requesting peer.".into() }
+
+                                            };
+
+                                            let _ = swarm.behaviour_mut().file_transfer.send_response(channel, response);
                                         }
                                     }
                                 }
@@ -1715,6 +1893,79 @@ fn open_github() -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     {
         Err(format!("Otwórz w przeglądarce: {URL}"))
+    }
+}
+
+#[cfg(test)]
+mod authenticated_event_tests {
+    use super::*;
+
+    fn test_peer() -> PeerId {
+        libp2p::identity::Keypair::generate_ed25519()
+            .public()
+            .to_peer_id()
+    }
+
+    #[test]
+    fn wire_event_payload_identity_must_match_authenticated_source() {
+        let source = test_peer();
+        let attacker = test_peer();
+        let source_text = source.to_string();
+        let events = vec![
+            WireEvent::Presence {
+                peer_id: source_text.clone(),
+                nick: "alice".into(),
+            },
+            WireEvent::Goodbye {
+                peer_id: source_text.clone(),
+            },
+            WireEvent::NickClaim {
+                peer_id: source_text.clone(),
+                nick: "alice".into(),
+                canonical: "alice".into(),
+                expires_at: 1,
+            },
+            WireEvent::Chat(ChatMessage {
+                id: "message".into(),
+                kind: "chat".into(),
+                peer_id: Some(source_text.clone()),
+                nick: "alice".into(),
+                room: "world".into(),
+                text: "hello".into(),
+                timestamp: 1,
+            }),
+            WireEvent::RoomCreate(RoomInfo {
+                id: "room".into(),
+                title: "# room".into(),
+                owner: Some(source_text.clone()),
+                users: Some(1),
+            }),
+            WireEvent::RoomClose {
+                room_id: "room".into(),
+                owner: source_text.clone(),
+            },
+        ];
+        for event in events {
+            assert!(wire_event_matches_source(&event, &source));
+            assert!(!wire_event_matches_source(&event, &attacker));
+        }
+        let missing_chat_identity = WireEvent::Chat(ChatMessage {
+            id: "message".into(),
+            kind: "chat".into(),
+            peer_id: None,
+            nick: "alice".into(),
+            room: "world".into(),
+            text: "hello".into(),
+            timestamp: 1,
+        });
+        assert!(!wire_event_matches_source(&missing_chat_identity, &source));
+        let missing_room_owner = WireEvent::RoomCreate(RoomInfo {
+            id: "room".into(),
+            title: "# room".into(),
+            owner: None,
+            users: Some(1),
+        });
+        assert!(!wire_event_matches_source(&missing_room_owner, &source));
     }
 }
 

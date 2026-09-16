@@ -10,6 +10,7 @@ param(
     [string]$BuildVersion = 'unknown',
     [string]$NodeVersion = 'unknown',
     [string]$SourceCommit = '',
+    [string]$CampaignId = '',
     [string]$OutputDirectory = 'test-results',
     [string]$Notes = ''
 )
@@ -50,6 +51,19 @@ function Get-CanonicalSourceCommit {
     throw 'Could not determine the exact source commit. Run this tool from the verified Windows test bundle containing BUILD_INFO.json or pass -SourceCommit explicitly.'
 }
 
+function Get-CanonicalCampaignId {
+    param([string]$ExplicitCampaignId)
+
+    if ([string]::IsNullOrWhiteSpace($ExplicitCampaignId)) {
+        return [Guid]::NewGuid().ToString('N').ToLowerInvariant()
+    }
+    $candidate = $ExplicitCampaignId.Trim().ToLowerInvariant()
+    if ($candidate -cnotmatch '^[0-9a-f]{32}$') {
+        throw 'CampaignId must be a canonical lowercase 32-character hexadecimal identifier.'
+    }
+    return $candidate
+}
+
 if ($Bootstrap -notmatch '^/(ip4|ip6|dns|dns4|dns6)/.+/p2p/[A-Za-z0-9]+$') {
     throw 'Bootstrap must be a complete libp2p multiaddress ending in /p2p/<PeerId>.'
 }
@@ -63,6 +77,7 @@ if ($Scenario -ne 'LAN') {
 }
 
 $resolvedCommit = Get-CanonicalSourceCommit -ExplicitCommit $SourceCommit
+$resolvedCampaignId = Get-CanonicalCampaignId -ExplicitCampaignId $CampaignId
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $now = [DateTimeOffset]::UtcNow
 $stamp = $now.ToString('yyyyMMdd-HHmmss')
@@ -78,7 +93,7 @@ $checks = [ordered]@{
 }
 
 $manifest = [ordered]@{
-    schema_version = 3; created_utc = $now.ToString('o'); scenario = $Scenario
+    schema_version = 3; campaign_id = $resolvedCampaignId; created_utc = $now.ToString('o'); scenario = $Scenario
     build_version = $BuildVersion; node_version = $NodeVersion; source_commit = $resolvedCommit
     client_a = $ClientA; client_b = $ClientB
     client_a_country = $ClientACountry; client_b_country = $ClientBCountry
@@ -91,6 +106,7 @@ $body = @"
 # Konofix Network Test Report
 
 - UTC: $($now.ToString('u'))
+- Campaign ID: ``$resolvedCampaignId``
 - Scenario: $Scenario
 - Build version: $BuildVersion
 - Node version: $NodeVersion
@@ -105,6 +121,7 @@ $body = @"
 
 - [ ] Windows build version recorded
 - [ ] Exact source commit matches BUILD_INFO.json
+- [ ] Campaign ID is shared by every required Internet scenario
 - [ ] Public Node health check passed for the same source commit
 - [ ] Bootstrap precheck passed from Client A
 - [ ] Bootstrap precheck passed from Client B
@@ -135,4 +152,5 @@ Record PASS/FAIL and enough evidence to reproduce failures. Keep the JSON manife
 Set-Content -LiteralPath $markdownPath -Value $body -Encoding UTF8
 Write-Host "Created network test report: $markdownPath"
 Write-Host "Created network test manifest: $jsonPath"
+Write-Host "Evidence campaign ID: $resolvedCampaignId"
 Write-Host "Evidence source commit: $resolvedCommit"

@@ -25,6 +25,16 @@ METADATA_NAME = "NODE_BUILD_INFO.json"
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 MAX_METADATA_BYTES = 64 * 1024
+MAX_ARCHIVE_BYTES = 320 * 1024 * 1024
+MAX_MEMBER_COUNT = 32
+FILE_SIZE_LIMITS = {
+    "konofix-node": 256 * 1024 * 1024,
+    "scripts/install-public-node-linux.sh": 2 * 1024 * 1024,
+    "docs/NODE.md": 4 * 1024 * 1024,
+    "docs/NODE_SOAK.md": 4 * 1024 * 1024,
+    "docs/NODE_LINUX.md": 4 * 1024 * 1024,
+}
+MAX_UNCOMPRESSED_BYTES = sum(FILE_SIZE_LIMITS.values()) + MAX_METADATA_BYTES
 
 
 class VerificationError(RuntimeError):
@@ -47,13 +57,18 @@ def describe_file(root: Path, relative: str) -> dict[str, object]:
     path = root / relative
     if not path.is_file():
         raise VerificationError(f"Required Linux bundle file is missing: {relative}")
-    data = path.read_bytes()
-    if not data:
+    size = path.stat().st_size
+    if size <= 0:
         raise VerificationError(f"Required Linux bundle file is empty: {relative}")
+    limit = FILE_SIZE_LIMITS[relative]
+    if size > limit:
+        raise VerificationError(
+            f"Required Linux bundle file exceeds its safety limit: {relative} ({size} > {limit} bytes)"
+        )
     return {
         "path": relative,
-        "bytes": len(data),
-        "sha256": sha256_bytes(data),
+        "bytes": size,
+        "sha256": sha256_file(path),
     }
 
 
@@ -124,18 +139,37 @@ def parse_checksum(checksum_path: Path, archive_path: Path) -> str:
     return digest
 
 
-def read_member_bytes(archive: tarfile.TarFile, member: tarfile.TarInfo, limit: int | None = None) -> bytes:
-    if limit is not None and member.size > limit:
+def read_member_bytes(archive: tarfile.TarFile, member: tarfile.TarInfo, limit: int) -> bytes:
+    if member.size > limit:
         raise VerificationError(f"Archive member is too large: {member.name}")
     extracted = archive.extractfile(member)
     if extracted is None:
         raise VerificationError(f"Unable to read archive member: {member.name}")
-    data = extracted.read((limit + 1) if limit is not None else -1)
-    if limit is not None and len(data) > limit:
+    data = extracted.read(limit + 1)
+    if len(data) > limit:
         raise VerificationError(f"Archive member is too large: {member.name}")
     if len(data) != member.size:
         raise VerificationError(f"Archive member size changed while reading: {member.name}")
     return data
+
+
+def sha256_member(archive: tarfile.TarFile, member: tarfile.TarInfo, limit: int) -> str:
+    if member.size > limit:
+        raise VerificationError(f"Archive member is too large: {member.name}")
+    extracted = archive.extractfile(member)
+    if extracted is None:
+        raise VerificationError(f"Unable to read archive member: {member.name}")
+    digest = hashlib.sha256()
+    remaining = member.size
+    while remaining:
+        chunk = extracted.read(min(1024 * 1024, remaining))
+        if not chunk:
+            raise VerificationError(f"Archive member size changed while reading: {member.name}")
+        digest.update(chunk)
+        remaining -= len(chunk)
+    if extracted.read(1):
+        raise VerificationError(f"Archive member exceeded its declared size: {member.name}")
+    return digest.hexdigest()
 
 
 def validate_metadata(metadata: object, expected_commit: str, expected_version: str) -> dict[str, dict[str, object]]:
@@ -169,6 +203,8 @@ def validate_metadata(metadata: object, expected_commit: str, expected_version: 
         digest = entry.get("sha256")
         if type(size) is not int or size <= 0:
             raise VerificationError(f"Invalid byte size for {relative}.")
+        if size > FILE_SIZE_LIMITS[relative]:
+            raise VerificationError(f"Recorded byte size exceeds safety limit for {relative}.")
         if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
             raise VerificationError(f"Invalid SHA-256 for {relative}.")
         by_path[relative] = entry
@@ -186,6 +222,12 @@ def verify_bundle(archive_path: Path, checksum_path: Path, expected_commit: str,
     if not archive_path.is_file() or not checksum_path.is_file():
         raise VerificationError("Linux archive or checksum file is missing.")
 
+    archive_size = archive_path.stat().st_size
+    if archive_size <= 0 or archive_size > MAX_ARCHIVE_BYTES:
+        raise VerificationError(
+            f"Linux archive size is outside the safety envelope: {archive_size} bytes."
+        )
+
     expected_archive_digest = parse_checksum(checksum_path, archive_path)
     actual_archive_digest = sha256_file(archive_path)
     if actual_archive_digest != expected_archive_digest:
@@ -193,9 +235,23 @@ def verify_bundle(archive_path: Path, checksum_path: Path, expected_commit: str,
 
     files: dict[str, tarfile.TarInfo] = {}
     seen_dirs: set[str] = set()
+    seen_members: set[str] = set()
+    member_count = 0
+    total_uncompressed = 0
+    expected_inventory = set(EXPECTED_FILES) | {METADATA_NAME}
+
     with tarfile.open(archive_path, "r:gz") as archive:
-        for member in archive.getmembers():
+        for member in archive:
+            member_count += 1
+            if member_count > MAX_MEMBER_COUNT:
+                raise VerificationError("Linux bundle contains too many archive members.")
+
             normalized = normalize_member_name(member.name)
+            member_key = normalized or "<archive-root>"
+            if member_key in seen_members:
+                raise VerificationError(f"Linux bundle contains a duplicate member: {member.name}")
+            seen_members.add(member_key)
+
             if not normalized:
                 if not member.isdir():
                     raise VerificationError("Archive root entry must be a directory.")
@@ -207,11 +263,19 @@ def verify_bundle(archive_path: Path, checksum_path: Path, expected_commit: str,
                 continue
             if not member.isfile():
                 raise VerificationError(f"Linux bundle contains a non-regular member: {normalized}")
-            if normalized in files:
-                raise VerificationError(f"Linux bundle contains a duplicate file: {normalized}")
+            if normalized not in expected_inventory:
+                raise VerificationError(f"Unexpected file in Linux bundle: {normalized}")
+
+            member_limit = MAX_METADATA_BYTES if normalized == METADATA_NAME else FILE_SIZE_LIMITS[normalized]
+            if member.size <= 0 or member.size > member_limit:
+                raise VerificationError(
+                    f"Linux bundle member size is outside the safety envelope: {normalized} ({member.size} bytes)"
+                )
+            total_uncompressed += member.size
+            if total_uncompressed > MAX_UNCOMPRESSED_BYTES:
+                raise VerificationError("Linux bundle uncompressed payload exceeds the safety envelope.")
             files[normalized] = member
 
-        expected_inventory = set(EXPECTED_FILES) | {METADATA_NAME}
         if set(files) != expected_inventory:
             missing = sorted(expected_inventory - set(files))
             extra = sorted(set(files) - expected_inventory)
@@ -230,8 +294,7 @@ def verify_bundle(archive_path: Path, checksum_path: Path, expected_commit: str,
             member = files[relative]
             if member.size != entry["bytes"]:
                 raise VerificationError(f"Byte-size mismatch for {relative}.")
-            data = read_member_bytes(archive, member)
-            if sha256_bytes(data) != entry["sha256"]:
+            if sha256_member(archive, member, FILE_SIZE_LIMITS[relative]) != entry["sha256"]:
                 raise VerificationError(f"SHA-256 mismatch for {relative}.")
 
         for executable in ("konofix-node", "scripts/install-public-node-linux.sh"):
@@ -313,6 +376,23 @@ def run_self_test() -> None:
         unsafe_sum = root / "unsafe.tar.gz.sha256"
         write_checksum(unsafe, unsafe_sum)
         expect_failure("archive path traversal", lambda: verify_bundle(unsafe, unsafe_sum, commit, version))
+
+        stage, _, _ = make_fixture(root / "duplicate-case", commit, version)
+        duplicate = root / "duplicate.tar.gz"
+        with tarfile.open(duplicate, "w:gz") as handle:
+            handle.add(stage, arcname=".")
+            duplicate_dir = tarfile.TarInfo("./docs")
+            duplicate_dir.type = tarfile.DIRTYPE
+            duplicate_dir.mode = 0o755
+            handle.addfile(duplicate_dir)
+        duplicate_sum = root / "duplicate.tar.gz.sha256"
+        write_checksum(duplicate, duplicate_sum)
+        expect_failure("duplicate archive member", lambda: verify_bundle(duplicate, duplicate_sum, commit, version))
+
+        oversized = root / "oversized.tar.gz"
+        with oversized.open("wb") as handle:
+            handle.truncate(MAX_ARCHIVE_BYTES + 1)
+        expect_failure("oversized archive", lambda: verify_bundle(oversized, checksum, commit, version))
 
         expect_failure("wrong source commit", lambda: verify_bundle(archive, checksum, "b" * 40, version))
         expect_failure("wrong version", lambda: verify_bundle(archive, checksum, commit, "9.9.9"))

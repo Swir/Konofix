@@ -81,6 +81,21 @@ boundary_unit="$(bash "$INSTALLER" \
   --print-unit)"
 grep -Fq -- '--port 1024' <<<"$boundary_unit" || fail 'Lowest supported unprivileged port was not preserved.'
 
+canonical_unit="$(bash "$INSTALLER" \
+  --public-host 1.1.1.1 \
+  --binary "$FAKE_NODE" \
+  --state-dir /var/lib/konofix-path/../konofix-canonical-state \
+  --install-dir /usr/local/lib/konofix-path/../konofix-canonical-bin \
+  --print-unit)"
+grep -Fq 'ReadWritePaths=/var/lib/konofix-canonical-state' <<<"$canonical_unit" || fail 'State path was not canonicalized.'
+grep -Fq 'ExecStart=/usr/local/lib/konofix-canonical-bin/konofix-node' <<<"$canonical_unit" || fail 'Install path was not canonicalized.'
+if grep -Fq '/..' <<<"$canonical_unit"; then
+  fail 'Generated unit must not retain parent-directory aliases.'
+fi
+
+mkdir -p "$TMP/alias-target"
+ln -s "$TMP/alias-target" "$TMP/state-link"
+
 expect_reject 'private address without lab override' \
   --public-host 10.0.0.5 --binary "$FAKE_NODE" --state-dir /var/lib/k1 --install-dir /usr/local/lib/k1 --print-unit
 expect_reject 'CGNAT address without lab override' \
@@ -105,6 +120,20 @@ expect_reject 'unsafe install path' \
   --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /var/lib/k10 --install-dir '/usr/local/lib/bad path' --print-unit
 expect_reject 'state/install collision' \
   --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /var/lib/same --install-dir /var/lib/same --print-unit
+expect_reject 'lexical state/install collision' \
+  --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /var/lib/konofix-alias/../same --install-dir /var/lib/same --print-unit
+expect_reject 'symlink-resolved state/install collision' \
+  --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir "$TMP/state-link" --install-dir "$TMP/alias-target" --print-unit
+expect_reject 'state directory inside install directory' \
+  --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /opt/konofix/service/state --install-dir /opt/konofix/service --print-unit
+expect_reject 'install directory inside state directory' \
+  --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /opt/konofix/service --install-dir /opt/konofix/service/bin --print-unit
+expect_reject 'filesystem root as state directory' \
+  --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir / --install-dir /usr/local/lib/k-root --print-unit
+expect_reject 'top-level state directory' \
+  --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /var --install-dir /usr/local/lib/k-var --print-unit
+expect_reject 'top-level install directory' \
+  --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /var/lib/k-usr --install-dir /usr --print-unit
 expect_reject 'missing binary' \
   --public-host 1.1.1.1 --binary "$TMP/missing" --state-dir /var/lib/k11 --install-dir /usr/local/lib/k11 --print-unit
 expect_reject 'start-now without install' \

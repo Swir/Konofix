@@ -95,7 +95,9 @@
 - hardened the raw Node against identity/health/executable state-path collisions so health telemetry cannot overwrite the persistent Peer-ID key or running binary even when the higher-level launcher is bypassed,
 - replaced the fixed health `.tmp` staging name with unique create-new temporary files, durable writes and cleanup on failure, preventing custom-path collisions and accidental truncation of unrelated state,
 - made an explicitly requested initial `--health-file` snapshot a fail-closed startup contract while keeping later transient monitoring-write failures observable as warnings,
-- added Rust regression tests for direct and lexical state-path collision rejection plus safe health-snapshot replacement/cleanup.
+- added Rust regression tests for direct and lexical state-path collision rejection plus safe health-snapshot replacement/cleanup,
+- canonicalized Linux public-Node state/install paths before systemd unit generation and reject root/top-level, equal, nested, lexical-alias and symlink-alias layouts so writable identity/health state cannot overlap the staged executable,
+- extended Linux installer self-tests with canonical rendering plus adversarial root, nesting, lexical-alias and symlink-alias path cases.
 
 ## 0.4.1
 

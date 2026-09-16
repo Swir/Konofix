@@ -41,6 +41,8 @@ Options:
 
 The service runs as the unprivileged 'konofix' user, so the installer deliberately rejects
 privileged ports below 1024 instead of relying on host-specific capabilities/sysctls.
+State and install paths are canonicalized, must be dedicated non-top-level directories, and
+must not overlap; this keeps writable Node state separated from the staged executable.
 The installer never edits a firewall. Public deployments must allow the selected TCP and UDP
 port in the VPS/provider firewall and any host firewall before Internet testing.
 EOF
@@ -78,7 +80,20 @@ done
 [[ "$INSTALL_DIR" == /* ]] || fail "Install directory must be an absolute path."
 [[ "$STATE_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "State directory contains unsupported characters."
 [[ "$INSTALL_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "Install directory contains unsupported characters."
+command -v realpath >/dev/null 2>&1 || fail "realpath is required for safe path validation."
+STATE_DIR="$(realpath -m -- "$STATE_DIR")"
+INSTALL_DIR="$(realpath -m -- "$INSTALL_DIR")"
+[[ "$STATE_DIR" != "/" ]] || fail "State directory must not be the filesystem root."
+[[ "$INSTALL_DIR" != "/" ]] || fail "Install directory must not be the filesystem root."
+[[ "${STATE_DIR#/}" == */* ]] || fail "State directory must be a dedicated subdirectory, not a top-level system directory."
+[[ "${INSTALL_DIR#/}" == */* ]] || fail "Install directory must be a dedicated subdirectory, not a top-level system directory."
 [[ "$STATE_DIR" != "$INSTALL_DIR" ]] || fail "State and install directories must be different."
+case "$STATE_DIR/" in
+  "$INSTALL_DIR/"*) fail "State directory must not be inside the install directory." ;;
+esac
+case "$INSTALL_DIR/" in
+  "$STATE_DIR/"*) fail "Install directory must not be inside the state directory." ;;
+esac
 ((START_NOW == 0 || DO_INSTALL == 1)) || fail "--start-now requires --install."
 ((DO_UNINSTALL == 0 || DO_INSTALL == 0)) || fail "--install and --uninstall are mutually exclusive."
 

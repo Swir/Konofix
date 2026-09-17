@@ -191,7 +191,7 @@ expect_reject 'top-level state directory' \
 expect_reject 'top-level install directory' \
   --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /var/lib/k-usr --install-dir /usr --print-unit
 expect_reject 'missing binary' \
-  --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /var/lib/k11 --install-dir /usr/local/lib/k11 --print-unit
+  --public-host 1.1.1.1 --binary "$TMP/missing" --state-dir /var/lib/k11 --install-dir /usr/local/lib/k11 --print-unit
 expect_reject 'start-now without install' \
   --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /var/lib/k12 --install-dir /usr/local/lib/k12 --start-now
 

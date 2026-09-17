@@ -35,6 +35,18 @@ const runChecker = (name, content, expectedSuccess, heroContent = canonicalHero)
   console.log(`PASS: ${name} -> ${expectedSuccess ? 'accepted' : 'rejected'}`);
 };
 
+const mutateSvgRoot = (hero, mutate) => {
+  const rootTag = hero.match(/<svg\b[^>]*>/i)?.[0];
+  if (!rootTag) {
+    throw new Error('Canonical README hero is missing its SVG root tag.');
+  }
+  const mutated = mutate(rootTag);
+  if (mutated === rootTag) {
+    throw new Error('SVG root mutation did not change the canonical root tag.');
+  }
+  return hero.replace(rootTag, mutated);
+};
+
 try {
   runChecker('canonical', canonical, true);
   runChecker('windows-crlf', canonical.replace(/\r?\n/g, '\r\n'), true);
@@ -54,12 +66,28 @@ try {
     false,
   );
   runChecker('missing-local-hero-file', canonical, false, null);
-  runChecker(
-    'invalid-hero-geometry',
-    canonical,
-    false,
-    canonicalHero.replace('width="1200"', 'width="1199"'),
+
+  const invalidRootWidth = mutateSvgRoot(canonicalHero, (rootTag) =>
+    rootTag.replace('width="1200"', 'width="1199"'),
   );
+  runChecker('invalid-hero-root-width', canonical, false, invalidRootWidth);
+
+  const invalidRootHeight = mutateSvgRoot(canonicalHero, (rootTag) =>
+    rootTag.replace('height="320"', 'height="319"'),
+  );
+  runChecker('invalid-hero-root-height', canonical, false, invalidRootHeight);
+
+  const invalidRootViewBox = mutateSvgRoot(canonicalHero, (rootTag) =>
+    rootTag.replace('viewBox="0 0 1200 320"', 'viewBox="0 0 1199 320"'),
+  );
+  runChecker('invalid-hero-root-viewbox', canonical, false, invalidRootViewBox);
+
+  const decoyChildGeometry = invalidRootWidth.replace(
+    '</svg>',
+    '<rect width="1200" height="320" data-decoy="root-geometry-must-not-match-child" /></svg>',
+  );
+  runChecker('child-geometry-cannot-satisfy-root-policy', canonical, false, decoyChildGeometry);
+
   runChecker(
     'missing-hero-accessibility-title',
     canonical,

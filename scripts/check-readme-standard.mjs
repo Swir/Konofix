@@ -47,11 +47,23 @@ if (!fs.existsSync(HERO_PATH)) {
   }
 
   const hero = heroBytes.toString('utf8');
+  const svgRoot = hero.match(/<svg\b[^>]*>/i)?.[0] ?? null;
+  if (!svgRoot) {
+    fail(`${HERO_PATH} must contain an SVG root element.`);
+  } else {
+    const rootRequirements = [
+      [/\bwidth=["']1200["']/i, 'root width="1200"'],
+      [/\bheight=["']320["']/i, 'root height="320"'],
+      [/\bviewBox=["']0 0 1200 320["']/i, 'root viewBox="0 0 1200 320"'],
+    ];
+    for (const [pattern, description] of rootRequirements) {
+      if (!pattern.test(svgRoot)) {
+        fail(`${HERO_PATH} must contain ${description}.`);
+      }
+    }
+  }
+
   const heroRequirements = [
-    [/<svg\b/i, 'an SVG root element'],
-    [/\bwidth=["']1200["']/i, 'width="1200"'],
-    [/\bheight=["']320["']/i, 'height="320"'],
-    [/\bviewBox=["']0 0 1200 320["']/i, 'viewBox="0 0 1200 320"'],
     [/<title\b[^>]*>[^<]+<\/title>/i, 'an accessible <title>'],
     [/<desc\b[^>]*>[^<]+<\/desc>/i, 'an accessible <desc>'],
     [/#02050A/i, 'the SWIR dark background token #02050A'],
@@ -129,5 +141,5 @@ if (!/v0\.4\.2-test1/.test(readme) || !/prerelease/i.test(readme)) {
 }
 
 if (!process.exitCode) {
-  console.log(`SWIR README PRO v2: ${README_PATH} passes marker, local-hero safety/branding, information architecture, keyword, progress-truthfulness and footer checks.`);
+  console.log(`SWIR README PRO v2: ${README_PATH} passes marker, root-hero geometry, local-hero safety/branding, information architecture, keyword, progress-truthfulness and footer checks.`);
 }

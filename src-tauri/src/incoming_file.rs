@@ -157,8 +157,8 @@ mod tests {
 
     impl TestDir {
         fn new() -> Self {
-            let path = std::env::temp_dir()
-                .join(format!("konofix-file-reservation-{}", Uuid::new_v4()));
+            let path =
+                std::env::temp_dir().join(format!("konofix-file-reservation-{}", Uuid::new_v4()));
             std::fs::create_dir_all(&path).expect("create reservation test directory");
             Self(path)
         }
@@ -227,21 +227,17 @@ mod tests {
         let injected = Arc::new(Mutex::new(false));
         let injected_for_hook = Arc::clone(&injected);
 
-        let reservation = reserve_incoming_file_with_hook(
-            dir.path(),
-            "race.txt",
-            4,
-            move |final_path, _| {
+        let reservation =
+            reserve_incoming_file_with_hook(dir.path(), "race.txt", 4, move |final_path, _| {
                 let mut injected = injected_for_hook.lock().expect("lock injection flag");
                 if !*injected {
                     std::fs::write(final_path, b"other-process")?;
                     *injected = true;
                 }
                 Ok(())
-            },
-        )
-        .await
-        .expect("retry reservation");
+            })
+            .await
+            .expect("retry reservation");
 
         assert_eq!(
             std::fs::read(dir.path().join("race.txt")).expect("read competing final"),

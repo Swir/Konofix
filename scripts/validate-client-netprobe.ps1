@@ -112,6 +112,7 @@ Assert-Ordinal (Get-RequiredString $session 'node_version' 'SESSION_INFO') $vers
 Assert-Ordinal (Get-RequiredString $session 'source_commit' 'SESSION_INFO') $commit 'SESSION_INFO source_commit does not match BUILD_INFO.'
 
 $actualBuildInfoHash = (Get-FileHash -LiteralPath $buildInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$actualSessionInfoHash = (Get-FileHash -LiteralPath $sessionInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
 Assert-Ordinal (Get-RequiredString $session 'build_info_sha256' 'SESSION_INFO') $actualBuildInfoHash 'SESSION_INFO build_info_sha256 does not match BUILD_INFO.'
 $peerId = Get-RequiredString $session 'bootstrap_peer_id' 'SESSION_INFO'
 $tcpBootstrap = Get-RequiredString $session 'tcp_bootstrap' 'SESSION_INFO'
@@ -166,6 +167,7 @@ foreach ($path in $resolvedEvidence) {
     Assert-Ordinal (Get-RequiredString $data 'build_version' $path) $version "Client netprobe evidence build_version mismatch: $path"
     Assert-Ordinal (Get-RequiredString $data 'source_commit' $path) $commit "Client netprobe evidence source_commit mismatch: $path"
     Assert-Ordinal (Get-RequiredString $data 'build_info_sha256' $path) $actualBuildInfoHash "Client netprobe evidence BUILD_INFO hash mismatch: $path"
+    Assert-Ordinal (Get-RequiredString $data 'session_info_sha256' $path) $actualSessionInfoHash "Client netprobe evidence SESSION_INFO hash mismatch: $path"
     Assert-Ordinal (Get-RequiredString $data 'netprobe_sha256' $path) $actualNetprobeHash "Client netprobe evidence netprobe hash mismatch: $path"
     Assert-Ordinal (Get-RequiredString $data 'bootstrap_peer_id' $path) $peerId "Client netprobe evidence bootstrap Peer ID mismatch: $path"
     Assert-Ordinal (Get-RequiredString $data 'tcp_bootstrap' $path) $tcpBootstrap "Client netprobe evidence TCP bootstrap mismatch: $path"
@@ -198,6 +200,7 @@ $result = [ordered]@{
     version = $version
     source_commit = $commit
     bootstrap_peer_id = $peerId
+    session_info_sha256 = $actualSessionInfoHash
     netprobe_sha256 = $actualNetprobeHash
     evidence_count = $resolvedEvidence.Count
     client_roles = @($rolesSeen | Sort-Object)
@@ -213,6 +216,7 @@ if ($AsJson) {
 Write-Host '=== Konofix client Netprobe evidence ===' -ForegroundColor Cyan
 Write-Host "Build:      $version / $commit"
 Write-Host "Peer ID:    $peerId"
+Write-Host "Session:    $actualSessionInfoHash"
 Write-Host "Clients:    $($result.client_roles -join ', ')"
 Write-Host "Netprobe:   $actualNetprobeHash"
-Write-Host 'PASS - exact-build Noise-authenticated TCP and QUIC-v1 probes match the test session.' -ForegroundColor Green
+Write-Host 'PASS - exact-build Noise-authenticated TCP and QUIC-v1 probes match the exact test session.' -ForegroundColor Green

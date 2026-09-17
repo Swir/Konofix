@@ -48,38 +48,60 @@ for (const script of requiredPowerShellGates) {
   }
 }
 
-const workflowCargoChecks = new Set(
-  [...workflow.matchAll(/^\s*run:\s*(cargo check --locked[^\r\n]+)$/gm)].map((match) => match[1].trim()),
-);
-const localCargoChecks = new Set(
-  [...localCheck.matchAll(/^\s*(cargo check --locked[^\r\n]+)$/gm)].map((match) => match[1].trim()),
+const normalizeSourceCommand = (raw) => raw.trim().replace(/\s+\|\s+Out-Null\s*$/i, '').trim();
+const isSourcePreflightCommand = (command) => (
+  command.startsWith('npm ci ')
+  || command === 'npm run audit'
+  || command === 'npm run build'
+  || command.startsWith('cargo metadata ')
+  || command.startsWith('cargo fmt ')
+  || command.startsWith('cargo clippy ')
+  || command.startsWith('cargo test ')
+  || command.startsWith('cargo check ')
 );
 
-if (workflowCargoChecks.size < 3) {
-  fail(`Expected at least three locked cargo check commands in Windows CI; found ${workflowCargoChecks.size}.`);
-}
+const workflowSourceCommands = new Set(
+  [...workflow.matchAll(/^\s*run:\s*([^\r\n]+)$/gm)]
+    .map((match) => normalizeSourceCommand(match[1]))
+    .filter(isSourcePreflightCommand),
+);
+const localSourceCommands = new Set(
+  localCheck
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .map(normalizeSourceCommand)
+    .filter(isSourcePreflightCommand),
+);
 
-for (const command of workflowCargoChecks) {
-  if (!localCargoChecks.has(command)) {
-    fail(`scripts/check.ps1 is missing Windows CI Rust check: ${command}`);
+for (const command of workflowSourceCommands) {
+  if (!localSourceCommands.has(command)) {
+    fail(`scripts/check.ps1 is missing Windows CI source command: ${command}`);
   }
 }
-for (const command of localCargoChecks) {
-  if (!workflowCargoChecks.has(command)) {
-    fail(`scripts/check.ps1 contains a locked Rust check that Windows CI does not run: ${command}`);
+for (const command of localSourceCommands) {
+  if (!workflowSourceCommands.has(command)) {
+    fail(`scripts/check.ps1 contains a source command that Windows CI does not run: ${command}`);
   }
 }
 
-const requiredTargets = [
+const requiredSourceCommands = [
+  'npm ci --no-audit --no-fund',
+  'npm run audit',
+  'npm run build',
+  'cargo metadata --locked --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1',
+  'cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check',
+  'cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf',
+  'cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets',
   'cargo check --locked --manifest-path src-tauri/Cargo.toml',
   'cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-node',
   'cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-netprobe',
 ];
-for (const command of requiredTargets) {
-  if (!workflowCargoChecks.has(command)) fail(`Windows CI is missing required Rust check: ${command}`);
-  if (!localCargoChecks.has(command)) fail(`scripts/check.ps1 is missing required Rust check: ${command}`);
+for (const command of requiredSourceCommands) {
+  if (!workflowSourceCommands.has(command)) fail(`Windows CI is missing required source command: ${command}`);
+  if (!localSourceCommands.has(command)) fail(`scripts/check.ps1 is missing required source command: ${command}`);
 }
 
 if (!process.exitCode) {
-  console.log(`Local/Windows CI preflight parity: ${requiredPowerShellGates.length} PowerShell gates and ${workflowCargoChecks.size} locked Cargo checks aligned.`);
+  console.log(`Local/Windows CI preflight parity: ${requiredPowerShellGates.length} PowerShell gates and ${workflowSourceCommands.size} source commands aligned.`);
 }

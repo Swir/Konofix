@@ -9,6 +9,8 @@ New-Item -ItemType Directory -Force -Path $temp | Out-Null
 $peerId = '12D3KooWSoakSelfTestStablePeer123456789'
 $version = '0.4.2'
 $sourceCommit = '0123456789abcdef0123456789abcdef01234567'
+$nodeHash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+$buildInfoHash = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 function Write-Snapshot([string]$Path, [int64]$Timestamp, [int64]$Uptime, [int64]$Peers) {
@@ -21,6 +23,9 @@ function Write-Snapshot([string]$Path, [int64]$Timestamp, [int64]$Uptime, [int64
         uptime_seconds = $Uptime
         connected_peers = $Peers
         timestamp_unix = $Timestamp
+        evidence_binding_schema = 1
+        node_binary_sha256 = $nodeHash
+        build_info_sha256 = $buildInfoHash
     } | ConvertTo-Json | Set-Content -LiteralPath $Path -Encoding UTF8
 }
 
@@ -63,8 +68,8 @@ try {
         $script:paths += $path
     }
 
-    & $validator -Snapshot $paths -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedVersion $version -ExpectedPeerId $peerId -ExpectedSourceCommit $sourceCommit -RequirePeerObserved
-    Write-Host 'Positive Node soak self-test passed.'
+    & $validator -Snapshot $paths -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedVersion $version -ExpectedPeerId $peerId -ExpectedSourceCommit $sourceCommit -ExpectedNodeSha256 $nodeHash -ExpectedBuildInfoSha256 $buildInfoHash -RequirePeerObserved
+    Write-Host 'Positive exact-build-bound Node soak self-test passed.'
 
     $changedPeer = Copy-MutatedSet 'changed-peer' { param($set) Mutate-Json $set[2] { param($d) $d.peer_id = '12D3KooWChangedPeer987654321' } }
     Assert-Rejected { & $validator -Snapshot $changedPeer -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 } 'Peer ID changed during soak'
@@ -74,6 +79,20 @@ try {
 
     $changedCommit = Copy-MutatedSet 'changed-commit' { param($set) Mutate-Json $set[1] { param($d) $d.source_commit = '89abcdef0123456789abcdef0123456789abcdef' } }
     Assert-Rejected { & $validator -Snapshot $changedCommit -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 } 'source commit changed during soak'
+
+    $changedNodeHash = Copy-MutatedSet 'changed-node-hash' { param($set) Mutate-Json $set[2] { param($d) $d.node_binary_sha256 = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' } }
+    Assert-Rejected { & $validator -Snapshot $changedNodeHash -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedNodeSha256 $nodeHash -ExpectedBuildInfoSha256 $buildInfoHash } 'Node binary hash changed during soak'
+
+    $changedBuildInfoHash = Copy-MutatedSet 'changed-build-info-hash' { param($set) Mutate-Json $set[0] { param($d) $d.build_info_sha256 = 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' } }
+    Assert-Rejected { & $validator -Snapshot $changedBuildInfoHash -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedNodeSha256 $nodeHash -ExpectedBuildInfoSha256 $buildInfoHash } 'BUILD_INFO hash changed during soak'
+
+    $missingBinding = Copy-MutatedSet 'missing-binding' { param($set) $d = Get-Content $set[1] -Raw | ConvertFrom-Json; $d.PSObject.Properties.Remove('node_binary_sha256'); $d | ConvertTo-Json | Set-Content -LiteralPath $set[1] -Encoding UTF8 }
+    Assert-Rejected { & $validator -Snapshot $missingBinding -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedNodeSha256 $nodeHash -ExpectedBuildInfoSha256 $buildInfoHash } 'missing exact-build binding field'
+
+    $mixedBinding = Copy-MutatedSet 'mixed-binding' { param($set) $d = Get-Content $set[3] -Raw | ConvertFrom-Json; foreach ($name in @('evidence_binding_schema','node_binary_sha256','build_info_sha256')) { $d.PSObject.Properties.Remove($name) }; $d | ConvertTo-Json | Set-Content -LiteralPath $set[3] -Encoding UTF8 }
+    Assert-Rejected { & $validator -Snapshot $mixedBinding -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 } 'mixed bound and unbound snapshots'
+
+    Assert-Rejected { & $validator -Snapshot $paths -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedNodeSha256 $nodeHash } 'partial exact-build expectation'
 
     $unknownCommit = Copy-MutatedSet 'unknown-commit' { param($set) foreach ($p in $set) { Mutate-Json $p { param($d) $d.source_commit = 'unknown' } } }
     Assert-Rejected { & $validator -Snapshot $unknownCommit -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedSourceCommit $sourceCommit } 'unknown source commit cannot satisfy promotion pin'

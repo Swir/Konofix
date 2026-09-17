@@ -13,9 +13,13 @@ const localCheckPath = process.env.KONOFIX_PARITY_LOCAL_CHECK ?? 'scripts/check.
 const workflow = read(workflowPath);
 const localCheck = read(localCheckPath);
 
-// These are source/preflight gates that must be runnable both by Windows CI and
-// by contributors before opening a PR. Build-only artifact/runtime steps are
-// intentionally excluded because scripts/check.ps1 is a source preflight.
+// scripts/check.ps1 is a source preflight, not a production packaging/runtime
+// driver. Every single-line repository PowerShell gate in Windows CI must be
+// mirrored locally unless it is explicitly classified here as runtime-only.
+const runtimeOnlyPowerShellGates = new Set([
+  'test-node-runtime.ps1',
+  'verify-release.ps1',
+]);
 const requiredPowerShellGates = [
   'release-gate.ps1',
   'test-network-evidence-gate.ps1',
@@ -32,8 +36,11 @@ const requiredPowerShellGates = [
   'test-node-soak-collector.ps1',
 ];
 
-const workflowPowerShellGates = new Set(
+const workflowPowerShellScripts = new Set(
   [...workflow.matchAll(/^\s*run:\s*\.\/scripts\/([^\s'"`]+\.ps1)\s*$/gm)].map((match) => match[1]),
+);
+const workflowPowerShellGates = new Set(
+  [...workflowPowerShellScripts].filter((script) => !runtimeOnlyPowerShellGates.has(script)),
 );
 const localPowerShellGates = new Set(
   [...localCheck.matchAll(/^\s*&\s+['"]\.\/scripts\/([^'"]+\.ps1)['"]\s*$/gm)].map((match) => match[1]),
@@ -45,6 +52,16 @@ for (const script of requiredPowerShellGates) {
   }
   if (!localPowerShellGates.has(script)) {
     fail(`scripts/check.ps1 is missing Windows CI preflight gate ${script}.`);
+  }
+}
+for (const script of workflowPowerShellGates) {
+  if (!localPowerShellGates.has(script)) {
+    fail(`scripts/check.ps1 is missing Windows CI PowerShell preflight gate ${script}.`);
+  }
+}
+for (const script of localPowerShellGates) {
+  if (!workflowPowerShellGates.has(script)) {
+    fail(`scripts/check.ps1 contains a PowerShell gate that Windows CI does not run: ${script}`);
   }
 }
 
@@ -103,5 +120,5 @@ for (const command of requiredSourceCommands) {
 }
 
 if (!process.exitCode) {
-  console.log(`Local/Windows CI preflight parity: ${requiredPowerShellGates.length} PowerShell gates and ${workflowSourceCommands.size} source commands aligned.`);
+  console.log(`Local/Windows CI preflight parity: ${workflowPowerShellGates.size} PowerShell gates and ${workflowSourceCommands.size} source commands aligned.`);
 }

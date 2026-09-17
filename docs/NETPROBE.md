@@ -11,9 +11,11 @@ For the supplied direct Node multiaddr, Netprobe requires all of the following b
 - a Noise-authenticated libp2p connection to the exact Peer ID at the end of the multiaddr;
 - Identify metadata from that same Peer ID;
 - protocol version exactly `/konofix/4.0`;
-- an agent beginning with `Konofix-Node/`;
+- an agent version exactly matching `Konofix-Node/<netprobe version>`, preventing an exact-build probe from silently accepting an older or newer Node build;
 - a successful libp2p Ping round trip;
 - completion before the bounded timeout.
+
+The target grammar is fail-closed: only one host component followed by exactly TCP or UDP/QUIC-v1 and one terminal `/p2p/<PeerId>` is accepted. Relay paths, ambiguous multiple-host addresses and additional encapsulation protocols are rejected rather than being treated as direct-transport evidence.
 
 The emitted JSON includes the selected transport, target address, expected and observed Peer IDs, Node protocol/agent metadata, RTT, elapsed time, tool version, exact source commit and timestamp.
 

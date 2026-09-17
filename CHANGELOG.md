@@ -2,6 +2,7 @@
 
 ## 0.4.2
 
+- bound promotion-quality public-Node soak history to the exact verified Windows artifact: the collector now verifies `konofix-node.exe` size/SHA-256 against `BUILD_INFO.json`, stamps each validated soak sample with Node/BUILD_INFO hashes, the soak validator rejects missing/mixed/drifting artifact bindings, and the final promotion preflight requires those hashes to match the packaged Node before PASS; adversarial collector/validator/promotion self-tests cover tampered, partial and mismatched bindings without adding Real Internet Test milestone credit,
 - hardened coherent network-session validation so every supplied TCP/QUIC/Relay/DCUtR/CGNAT manifest must reside beside its `SESSION_INFO.json`; cross-directory copies with otherwise matching names/metadata are rejected and covered by adversarial self-tests, without changing the 54/59 Real Internet Test milestone,
 - upgraded Vite to 8.3.0 after full Windows and Linux PR CI verification; the production TypeScript/Vite build, Rust gates, Windows packaging and release-artifact verification remained green, and this toolchain maintenance does not add Real Internet Test credit,
 - upgraded dual-client Netprobe evidence to schema 2 with session-scoped privacy-preserving Windows-host and default-route-network SHA-256 fingerprints; stable promotion now rejects legacy evidence and same-host/same-network Client A/B captures while retaining schema-1 readability for non-promotion diagnostics, without claiming real-network milestone credit,

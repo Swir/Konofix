@@ -164,7 +164,7 @@ Then create the complete five-scenario exact-build workspace from the extracted 
   -QuicBootstrap "/dns/node.yourdomain.com/udp/45555/quic-v1/p2p/PEER_ID"
 ```
 
-The stable-promotion evidence path requires TCP, QUIC, Relay, DCUtR and CGNAT scenario manifests from one coherent session, exact artifact/source provenance, independently identified clients and networks, concrete per-check evidence, file-transfer SHA-256 observations, and a matching continuous Node soak history. Session validation also rejects cross-directory manifest substitution.
+The stable-promotion evidence path requires TCP, QUIC, Relay, DCUtR and CGNAT scenario manifests from one coherent session, exact artifact/source provenance, authenticated direct TCP+QUIC Netprobe records from both independent client contexts, concrete per-check evidence, file-transfer SHA-256 observations, and a continuous Node soak history sealed to the same exact Node binary and `BUILD_INFO.json` hashes. Session validation also rejects cross-directory manifest substitution.
 
 Run the final evidence preflight with the `BUILD_INFO.json` from that same verified archive:
 
@@ -173,10 +173,11 @@ Run the final evidence preflight with the `BUILD_INFO.json` from that same verif
   -BuildInfoPath .\BUILD_INFO.json `
   -SessionInfoPath .\test-results\konofix-real-network-...\SESSION_INFO.json `
   -NetworkEvidence .\test-results\konofix-real-network-...\network-test-*.json `
+  -ClientNetprobeEvidence .\test-results\konofix-real-network-...\client-*-netprobe.json `
   -NodeSoakEvidence .\node-soak\*.json
 ```
 
-See [`docs/TESTING.md`](docs/TESTING.md) for the full controlled test matrix.
+See [`docs/TESTING.md`](docs/TESTING.md), [`docs/CLIENT_NETPROBE_EVIDENCE.md`](docs/CLIENT_NETPROBE_EVIDENCE.md), and [`docs/NODE_SOAK.md`](docs/NODE_SOAK.md) for the controlled test and promotion-evidence flow.
 
 ## Architecture
 

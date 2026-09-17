@@ -18,8 +18,13 @@ updates:
         update-types:
           - "major"
 
+  # Keep the desktop and isolated headless Node manifests on one update surface.
+  # The Linux Node CI parity gate requires shared production dependencies to
+  # stay aligned, so Dependabot must update both manifests in the same run.
   - package-ecosystem: "cargo"
-    directory: "/src-tauri"
+    directories:
+      - "/src-tauri"
+      - "/node-linux"
     schedule:
       interval: "weekly"
       day: "monday"

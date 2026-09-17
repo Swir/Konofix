@@ -267,9 +267,10 @@ jobs:
             }
           }
 
-          function Write-ZipChecksum([string]$ZipPath, [string]$ChecksumPath) {
+          function Write-ZipChecksum([string]$ZipPath, [string]$ChecksumPath, [string]$RecordedName = '') {
             $hash = (Get-FileHash $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $ZipPath" | Set-Content $ChecksumPath -Encoding ascii
+            if ([string]::IsNullOrWhiteSpace($RecordedName)) { $RecordedName = [IO.Path]::GetFileName($ZipPath) }
+            "$hash  $RecordedName" | Set-Content $ChecksumPath -Encoding ascii
           }
 
           function Expect-VerifyFailure([string]$Label, [string]$EntryName, [string]$ExpectedPattern, [string]$Content = 'tamper-test') {
@@ -295,6 +296,29 @@ jobs:
             }
           }
 
+          function Expect-ChecksumNameFailure {
+            $badZip = Join-Path $env:RUNNER_TEMP ("konofix-" + [guid]::NewGuid().ToString('N') + '.zip')
+            $badChecksum = "$badZip.sha256"
+            Copy-Item $sourceZip $badZip -Force
+            try {
+              Write-ZipChecksum -ZipPath $badZip -ChecksumPath $badChecksum -RecordedName 'different-release.zip'
+              $rejected = $false
+              try {
+                & .\scripts\verify-release.ps1 -ZipPath $badZip -ChecksumPath $badChecksum | Out-Null
+              } catch {
+                if ($_.Exception.Message -notmatch 'names a different archive') {
+                  throw "checksum filename binding: verifier rejected the checksum for an unexpected reason: $($_.Exception.Message)"
+                }
+                $rejected = $true
+              }
+              if (-not $rejected) { throw 'checksum filename binding: verifier accepted a checksum naming a different archive.' }
+              Write-Host 'Expected rejection passed: checksum filename binding'
+            } finally {
+              Remove-Item $badZip, $badChecksum -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+          Expect-ChecksumNameFailure
           Expect-VerifyFailure -Label 'unexpected file inventory' -EntryName 'UNEXPECTED.txt' -ExpectedPattern 'inventory'
           Expect-VerifyFailure -Label 'parent-directory traversal entry' -EntryName '../escape.txt' -ExpectedPattern 'unsafe|parent-directory'
           Expect-VerifyFailure -Label 'reserved Windows device alias' -EntryName 'NUL.txt' -ExpectedPattern 'reserved Windows device'

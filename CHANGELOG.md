@@ -43,6 +43,7 @@
 - added strict `scripts/check-node-health.ps1` validation and adversarial CI coverage,
 - hardened Node health validation with version/Peer ID pinning, uptime, quorum, freshness, clock-skew and bounded snapshot-size gates,
 - require Node-health numeric fields to be genuine JSON integers and textual fields to be genuine non-empty JSON strings,
+- use ordinal case-sensitive status/version/Peer ID comparisons and fail closed on explicitly empty identity pins,
 - upgraded Node health snapshots to schema v2 with an embedded exact source commit and added optional fail-closed `ExpectedSourceCommit` validation,
 - upgraded real-network evidence to schema v3 with an exact 40-character source commit, automatically derived from verified `BUILD_INFO.json` or Git when possible,
 - bound stable-promotion network evidence and Node soak history to the exact target source commit in addition to the client/Node versions and bootstrap Peer ID,

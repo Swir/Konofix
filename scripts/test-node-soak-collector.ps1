@@ -49,6 +49,14 @@ function Assert-Rejected([scriptblock]$Action, [string]$Name) {
     if (-not $rejected) { throw "Negative Node soak collector self-test was accepted unexpectedly: $Name" }
 }
 
+function Write-BuildVariant([string]$Name, [scriptblock]$Mutation) {
+    $variantPath = Join-Path $temp $Name
+    $variant = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json
+    & $Mutation $variant
+    $variant | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $variantPath -Encoding utf8
+    return $variantPath
+}
+
 try {
     New-Item -ItemType Directory -Force -Path $temp | Out-Null
     $nodeBytes = [byte[]]::new(2048)
@@ -103,12 +111,39 @@ try {
     Assert-Rejected { Invoke-Collector } 'Node binary does not match BUILD_INFO'
     [IO.File]::WriteAllBytes($nodePath, $originalNodeBytes)
 
-    $wrongBuildInfo = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json
-    $wrongBuildInfo.commit = '89abcdef0123456789abcdef0123456789abcdef'
-    $wrongBuildPath = Join-Path $temp 'BUILD_INFO-wrong.json'
-    $wrongBuildInfo | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $wrongBuildPath -Encoding utf8
+    $wrongBuildInfo = Write-BuildVariant 'BUILD_INFO-wrong-commit.json' { param($b) $b.commit = '89abcdef0123456789abcdef0123456789abcdef' }
     Write-Health -Timestamp ($now + 2) -Uptime 1002 -Peers 1
-    Assert-Rejected { Invoke-Collector @{ BuildInfoPath = $wrongBuildPath } } 'health source commit does not match BUILD_INFO'
+    Assert-Rejected { Invoke-Collector @{ BuildInfoPath = $wrongBuildInfo } } 'health source commit does not match BUILD_INFO'
+
+    $stringSchema = Write-BuildVariant 'BUILD_INFO-string-schema.json' { param($b) $b.schema = '2' }
+    Assert-Rejected { Invoke-Collector @{ BuildInfoPath = $stringSchema } } 'string-coerced BUILD_INFO schema'
+
+    $wrongSchema = Write-BuildVariant 'BUILD_INFO-wrong-schema.json' { param($b) $b.schema = 1 }
+    Assert-Rejected { Invoke-Collector @{ BuildInfoPath = $wrongSchema } } 'unsupported BUILD_INFO schema'
+
+    $wrongProduct = Write-BuildVariant 'BUILD_INFO-wrong-product.json' { param($b) $b.product = 'Other Product' }
+    Assert-Rejected { Invoke-Collector @{ BuildInfoPath = $wrongProduct } } 'wrong BUILD_INFO product'
+
+    $wrongNodePath = Write-BuildVariant 'BUILD_INFO-wrong-node-path.json' { param($b) $b.node.path = 'other-node.exe' }
+    Assert-Rejected { Invoke-Collector @{ BuildInfoPath = $wrongNodePath } } 'wrong BUILD_INFO Node path'
+
+    $stringBytes = Write-BuildVariant 'BUILD_INFO-string-bytes.json' { param($b) $b.node.bytes = [string]$b.node.bytes }
+    Assert-Rejected { Invoke-Collector @{ BuildInfoPath = $stringBytes } } 'string-coerced BUILD_INFO node bytes'
+
+    $zeroBytes = Write-BuildVariant 'BUILD_INFO-zero-bytes.json' { param($b) $b.node.bytes = 0 }
+    Assert-Rejected { Invoke-Collector @{ BuildInfoPath = $zeroBytes } } 'non-positive BUILD_INFO node bytes'
+
+    $upperHash = Write-BuildVariant 'BUILD_INFO-upper-hash.json' { param($b) $b.node.sha256 = ([string]$b.node.sha256).ToUpperInvariant() }
+    Assert-Rejected { Invoke-Collector @{ BuildInfoPath = $upperHash } } 'non-canonical uppercase BUILD_INFO Node SHA-256'
+
+    $arrayBuildInfo = Join-Path $temp 'BUILD_INFO-array.json'
+    '[{"schema":2}]' | Set-Content -LiteralPath $arrayBuildInfo -Encoding utf8
+    Assert-Rejected { Invoke-Collector @{ BuildInfoPath = $arrayBuildInfo } } 'non-object BUILD_INFO root'
+
+    $oversizedBuildInfo = Join-Path $temp 'BUILD_INFO-oversized.json'
+    $padding = 'x' * 270000
+    [ordered]@{ schema = 2; product = 'Konofix Chat'; version = $version; commit = $sourceCommit; padding = $padding } | ConvertTo-Json -Compress | Set-Content -LiteralPath $oversizedBuildInfo -Encoding utf8
+    Assert-Rejected { Invoke-Collector @{ BuildInfoPath = $oversizedBuildInfo } } 'oversized BUILD_INFO before JSON parsing'
 
     '{broken-json' | Set-Content -LiteralPath $health -Encoding utf8
     Assert-Rejected { Invoke-Collector } 'malformed health JSON'

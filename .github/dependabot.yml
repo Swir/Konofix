@@ -48,6 +48,11 @@ updates:
     open-pull-requests-limit: 5
     rebase-strategy: "auto"
     groups:
-      github-actions:
+      # Major Action runtime changes (for example Node runtime jumps) are
+      # intentionally reviewed one at a time just like application toolchains.
+      github-actions-minor-patch:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"

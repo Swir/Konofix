@@ -202,11 +202,26 @@ export function validateSvg(svg, label) {
   if ((svg.match(/<svg\b/g) || []).length !== 1 || (svg.match(/<\/svg>/g) || []).length !== 1) throw new Error(`${label}: SVG must contain exactly one root element.`);
 }
 
+function progressAlt(progress, compact) {
+  const scopeLabel = progress.scope.replace(/^\d+(?:\.\d+){2}\s+—\s+/, '');
+  const kind = compact ? 'compact progress' : 'progress';
+  const measurement = progress.total === 0
+    ? 'N/A'
+    : `${progress.completed} of ${progress.total} verified tasks, ${progress.percentText}, ${progress.status.toLowerCase()}`;
+  const releaseGate = compact ? '' : '; release readiness is a separate gate';
+  return `${progress.project} ${scopeLabel} ${kind} — ${measurement}${releaseGate}`;
+}
+
 export function validateEmbeddings(readmeText, roadmapText, progress) {
   const readmePath = 'src="assets/readme/progress-card.svg"';
   const roadmapPath = 'src="assets/readme/progress-mini.svg"';
   if (!readmeText.includes(readmePath)) throw new Error('README.md must embed assets/readme/progress-card.svg near project status.');
   if (!roadmapText.includes(roadmapPath)) throw new Error('ROADMAP.md must embed assets/readme/progress-mini.svg near its authoritative status dashboard.');
+
+  const readmeAlt = `alt="${escapeXml(progressAlt(progress, false))}"`;
+  const roadmapAlt = `alt="${escapeXml(progressAlt(progress, true))}"`;
+  if (!readmeText.includes(readmeAlt)) throw new Error('README.md progress-card alt text is stale or inconsistent with authoritative progress.');
+  if (!roadmapText.includes(roadmapAlt)) throw new Error('ROADMAP.md progress-mini alt text is stale or inconsistent with authoritative progress.');
 
   const fallback = progress.total === 0
     ? 'Verified checklist fraction: N/A.'

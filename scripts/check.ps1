@@ -28,6 +28,9 @@ try {
   Write-Host 'Network evidence validator self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-network-evidence-gate.ps1'
 
+  Write-Host 'Client public-node Netprobe evidence self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-client-netprobe-evidence.ps1'
+
   Write-Host 'Promotion evidence preflight self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-promotion-evidence.ps1'
 
@@ -86,13 +89,15 @@ try {
   cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
   if ($LASTEXITCODE -ne 0) { throw "cargo test --locked failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'Rust checks: application + Konofix Node...' -ForegroundColor Yellow
+  Write-Host 'Rust checks: application + Konofix Node + Konofix Netprobe...' -ForegroundColor Yellow
   cargo check --locked --manifest-path src-tauri/Cargo.toml
   if ($LASTEXITCODE -ne 0) { throw "cargo check --locked failed with exit code $LASTEXITCODE." }
   cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-node
   if ($LASTEXITCODE -ne 0) { throw "cargo check --locked --bin konofix-node failed with exit code $LASTEXITCODE." }
+  cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-netprobe
+  if ($LASTEXITCODE -ne 0) { throw "cargo check --locked --bin konofix-netprobe failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'OK - local preflight matches CI gates, promotion evidence, atomic exact-build network-session creation, network report editing, public-Node/bootstrap/startup-task/readiness/health/soak collection validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/high-signal Clippy/tests and Node checks.' -ForegroundColor Green
+  Write-Host 'OK - local preflight matches CI source gates, promotion evidence, dual-client Netprobe evidence, atomic exact-build network-session creation, network report editing, public-Node/bootstrap/startup-task/readiness/health/soak collection validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/high-signal Clippy/tests and application/Node/Netprobe checks.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

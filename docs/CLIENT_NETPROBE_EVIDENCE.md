@@ -17,6 +17,10 @@ A passing probe requires all of the following from the remote endpoint:
 
 The resulting client evidence also records the test-session client ID, country and network/operator, the exact `BUILD_INFO.json` hash, the Netprobe SHA-256, bootstrap Peer ID, transport targets and the raw machine-readable probe results.
 
+Client evidence schema 2 additionally carries two **session-scoped privacy-preserving fingerprints**. The host fingerprint is derived from Windows MachineGuid, while the network-context fingerprint is derived from the active default-route context (network profile, gateways, DNS servers and local address prefixes). Both are SHA-256 hashed with the exact `SESSION_INFO.json` hash before they are written. Raw MachineGuid, gateway, profile, DNS and address-prefix values are never stored in the evidence file. Stable promotion rejects evidence when Client A and Client B have the same host fingerprint or the same default-route network fingerprint.
+
+These fingerprints are an anti-accidental-reuse gate, not hardware remote attestation. They make it much harder to mistakenly collect both roles on the same Windows installation or network while keeping raw local identifiers out of the evidence bundle. They do not make manually forged evidence cryptographically impossible.
+
 ## Prepare one coherent real-network session
 
 Create the session once from the verified Windows test bundle. The two clients must identify different endpoints, countries and networks/operators. Both bootstrap addresses must describe the same public host, port and Node Peer ID.
@@ -43,11 +47,11 @@ On the machine recorded as Client A:
   -Client A
 ```
 
-The command performs strict public-bootstrap validation, verifies the packaged Netprobe bytes, runs authenticated TCP and QUIC-v1 probes, validates the resulting JSON, and writes `client-a-netprobe.json`. Existing evidence is never silently overwritten.
+The command performs strict public-bootstrap validation, verifies the packaged Netprobe bytes, captures the session-scoped host/network fingerprints, runs authenticated TCP and QUIC-v1 probes, validates the resulting JSON, and writes `client-a-netprobe.json`. Existing evidence is never silently overwritten. Capture fails closed if Windows MachineGuid or a usable active default-route context cannot be inspected; weak fallback identity is not accepted for stable-promotion evidence.
 
 ## Capture Client B evidence
 
-On the independently networked machine recorded as Client B:
+On the **different Windows machine and independent network** recorded as Client B:
 
 ```powershell
 .\scripts\capture-client-netprobe.ps1 `
@@ -55,7 +59,7 @@ On the independently networked machine recorded as Client B:
   -Client B
 ```
 
-Return `client-b-netprobe.json` to the same evidence directory used for the promotion check.
+Return `client-b-netprobe.json` to the same evidence directory used for the promotion check. Do not collect Client B on the Client A machine, through the same local default-route network, or by merely changing the descriptive country/operator fields in `SESSION_INFO.json`.
 
 ## Validate both clients together
 
@@ -67,11 +71,13 @@ Return `client-b-netprobe.json` to the same evidence directory used for the prom
   -RequireBothClients
 ```
 
-The validator fails closed on missing/duplicate client roles, stale evidence, wrong client metadata, mismatched build/source provenance, a modified Netprobe binary, wrong bootstrap addresses, wrong Peer ID, wrong protocol/agent, wrong transport, malformed timestamps, or incomplete probe results.
+The validator fails closed on missing/duplicate client roles, stale evidence, wrong client metadata, mismatched build/source provenance, a modified Netprobe binary, wrong bootstrap addresses, wrong Peer ID, wrong protocol/agent, wrong transport, malformed timestamps, incomplete probe results, legacy schema-1 evidence used for stable promotion, malformed context hashes, identical host fingerprints, or identical default-route network fingerprints.
+
+Schema-1 client evidence remains readable for non-promotion diagnostics, but `-RequireBothClients` deliberately requires schema 2 so old captures cannot silently satisfy the stronger independence gate.
 
 ## Stable-promotion gate
 
-The final promotion preflight now requires the two client Netprobe evidence files in addition to the five real-network scenario manifests and the public-Node soak history:
+The final promotion preflight requires the two client Netprobe evidence files in addition to the five real-network scenario manifests and the public-Node soak history:
 
 ```powershell
 .\scripts\check-promotion-evidence.ps1 `
@@ -82,8 +88,10 @@ The final promotion preflight now requires the two client Netprobe evidence file
   -NodeSoakEvidence ".\test-results\soak-*.json"
 ```
 
-Stable promotion requires exactly one Client A record and one Client B record, with authenticated direct TCP **and** QUIC-v1 evidence tied to the same exact build, session and public Node Peer ID.
+Stable promotion requires exactly one Client A record and one Client B record, authenticated direct TCP **and** QUIC-v1 evidence tied to the same exact build/session/public Node Peer ID, different session-scoped Windows-host fingerprints, and different session-scoped default-route network fingerprints.
 
 ## Important boundary
 
-Client Netprobe evidence proves authenticated direct transport reachability and the remote Konofix protocol identity. It does **not** prove Relay use, DCUtR upgrade behavior, CGNAT traversal, chat/file-transfer correctness, or long-running Node stability. Those remain separate required real-network scenario manifests and Node-soak evidence. CI/local loopback Netprobe PASS results likewise do not count as independent-country evidence.
+Client Netprobe evidence proves authenticated direct transport reachability and the remote Konofix protocol identity. The new host/network fingerprints add a fail-closed consistency check against accidentally reusing one Windows installation or one default-route network for both client roles. They do **not** prove geographic location, identify a carrier, provide hardware remote attestation, or independently prove that a network is CGNAT.
+
+Relay use, DCUtR upgrade behavior, CGNAT traversal, chat/file-transfer correctness, and long-running Node stability remain separate required real-network scenario manifests and Node-soak evidence. CI/local loopback Netprobe PASS results likewise do not count as independent-country evidence.

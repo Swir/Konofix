@@ -9,6 +9,10 @@ $peer = '12D3KooW9tHTtS3inCZiYykw4u5G4frbjVFqhkmJX12gSNCVeH3e'
 $otherPeer = 'QmNQa1FSTXNHmrjjfgUW3Px3Vkke4oKiFWdigWkYSux2Pi'
 $tcp = "/ip4/8.8.8.8/tcp/45555/p2p/$peer"
 $quic = "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$peer"
+$hostA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+$hostB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+$networkA = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+$networkB = 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
 
 function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
@@ -49,8 +53,10 @@ function Write-Evidence([string]$Role, [string]$Path, [string]$BuildInfoHash, [s
     $clientId = if ($Role -ceq 'A') { 'client-a-selftest' } else { 'client-b-selftest' }
     $country = if ($Role -ceq 'A') { 'PL' } else { 'NO' }
     $network = if ($Role -ceq 'A') { 'network-a' } else { 'network-b' }
+    $hostFingerprint = if ($Role -ceq 'A') { $hostA } else { $hostB }
+    $networkFingerprint = if ($Role -ceq 'A') { $networkA } else { $networkB }
     [ordered]@{
-        schema_version = 1
+        schema_version = 2
         created_utc = [DateTimeOffset]::UtcNow.ToString('o')
         product = 'Konofix Chat'
         client_role = $Role
@@ -65,6 +71,11 @@ function Write-Evidence([string]$Role, [string]$Path, [string]$BuildInfoHash, [s
         bootstrap_peer_id = $peer
         tcp_bootstrap = $tcp
         quic_bootstrap = $quic
+        context_schema = 1
+        host_fingerprint_method = 'windows-machine-guid-session-sha256-v1'
+        host_fingerprint = $hostFingerprint
+        network_fingerprint_method = 'windows-default-route-session-sha256-v1'
+        network_fingerprint = $networkFingerprint
         tcp_probe = New-Probe -Transport 'tcp' -Target $tcp
         quic_probe = New-Probe -Transport 'quic-v1' -Target $quic
     } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Path -Encoding UTF8
@@ -117,7 +128,10 @@ try {
     $result = (& $tool -Evidence @($a,$b) -SessionInfoPath $sessionPath -BuildInfoPath $buildInfoPath -RequireBothClients -AsJson) | ConvertFrom-Json
     Assert-True ($result.status -ceq 'PASS') 'Expected client probe validator PASS.'
     Assert-True ($result.evidence_count -eq 2) 'Expected exactly two client evidence records.'
+    Assert-True ($result.context_evidence_count -eq 2) 'Expected exactly two context-bound evidence records.'
     Assert-True ($result.authenticated_tcp -eq $true -and $result.authenticated_quic_v1 -eq $true) 'Expected both authenticated transport flags.'
+    Assert-True ($result.distinct_hosts -eq $true) 'Expected distinct host fingerprints.'
+    Assert-True ($result.distinct_network_contexts -eq $true) 'Expected distinct network fingerprints.'
     Assert-True ($result.session_info_sha256 -ceq $sessionInfoHash) 'SESSION_INFO hash mismatch in validator result.'
     Assert-True ($result.netprobe_sha256 -ceq $netprobeHash) 'Netprobe hash mismatch in validator result.'
 
@@ -129,6 +143,41 @@ try {
     Copy-Item -LiteralPath $a -Destination $duplicate
     Assert-Fails 'duplicate role rejection' 'Duplicate client netprobe evidence role' {
         & $tool -Evidence @($a,$duplicate) -SessionInfoPath $sessionPath -BuildInfoPath $buildInfoPath -RequireBothClients | Out-Null
+    }
+
+    $legacy = Join-Path $temp 'client-a-legacy.json'
+    $legacyData = Get-Content -LiteralPath $a -Raw | ConvertFrom-Json
+    $legacyData.schema_version = 1
+    foreach ($name in @('context_schema','host_fingerprint_method','host_fingerprint','network_fingerprint_method','network_fingerprint')) {
+        $legacyData.PSObject.Properties.Remove($name)
+    }
+    $legacyData | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $legacy -Encoding UTF8
+    Assert-Fails 'legacy evidence stable gate' 'schema 2' {
+        & $tool -Evidence @($legacy,$b) -SessionInfoPath $sessionPath -BuildInfoPath $buildInfoPath -RequireBothClients | Out-Null
+    }
+
+    $sameHost = Join-Path $temp 'client-b-same-host.json'
+    $sameHostData = Get-Content -LiteralPath $b -Raw | ConvertFrom-Json
+    $sameHostData.host_fingerprint = $hostA
+    $sameHostData | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $sameHost -Encoding UTF8
+    Assert-Fails 'same physical host rejection' 'distinct Windows hosts' {
+        & $tool -Evidence @($a,$sameHost) -SessionInfoPath $sessionPath -BuildInfoPath $buildInfoPath -RequireBothClients | Out-Null
+    }
+
+    $sameNetwork = Join-Path $temp 'client-b-same-network.json'
+    $sameNetworkData = Get-Content -LiteralPath $b -Raw | ConvertFrom-Json
+    $sameNetworkData.network_fingerprint = $networkA
+    $sameNetworkData | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $sameNetwork -Encoding UTF8
+    Assert-Fails 'same default-route network rejection' 'distinct default-route network contexts' {
+        & $tool -Evidence @($a,$sameNetwork) -SessionInfoPath $sessionPath -BuildInfoPath $buildInfoPath -RequireBothClients | Out-Null
+    }
+
+    $badFingerprint = Join-Path $temp 'client-b-invalid-fingerprint.json'
+    $badFingerprintData = Get-Content -LiteralPath $b -Raw | ConvertFrom-Json
+    $badFingerprintData.host_fingerprint = 'ABC123'
+    $badFingerprintData | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $badFingerprint -Encoding UTF8
+    Assert-Fails 'non-canonical host fingerprint rejection' 'canonical lowercase SHA-256' {
+        & $tool -Evidence @($a,$badFingerprint) -SessionInfoPath $sessionPath -BuildInfoPath $buildInfoPath -RequireBothClients | Out-Null
     }
 
     $replayedSession = Join-Path $temp 'SESSION_INFO-replayed.json'

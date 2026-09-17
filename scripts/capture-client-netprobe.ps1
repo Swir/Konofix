@@ -38,6 +38,108 @@ function Get-RequiredInt64($Object, [string]$Name, [string]$Label) {
     try { return [Convert]::ToInt64($value) } catch { throw "$Label field '$Name' is outside the signed 64-bit range." }
 }
 
+function Get-Sha256Text([string]$Text) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($Text)
+        $hash = $sha.ComputeHash($bytes)
+        return (($hash | ForEach-Object { $_.ToString('x2') }) -join '')
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-SessionHostFingerprint([string]$SessionHash) {
+    Assert-True ($env:OS -ceq 'Windows_NT') 'Client context capture currently requires Windows.'
+    try {
+        $machineGuid = [string](Get-ItemPropertyValue -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name MachineGuid -ErrorAction Stop)
+    } catch {
+        throw "Cannot read the Windows MachineGuid needed for session-scoped host separation evidence: $($_.Exception.Message)"
+    }
+    Assert-True (-not [string]::IsNullOrWhiteSpace($machineGuid)) 'Windows MachineGuid is empty; refusing to create weak host-separation evidence.'
+    return Get-Sha256Text "$SessionHash|konofix-host-v1|$($machineGuid.Trim().ToLowerInvariant())"
+}
+
+function Get-Ipv4Prefix([string]$Address) {
+    $parts = $Address.Split('.')
+    if ($parts.Count -ne 4) { return '' }
+    return "$($parts[0]).$($parts[1]).$($parts[2]).0/24"
+}
+
+function Get-Ipv6Prefix64([string]$Address) {
+    $parsed = [Net.IPAddress]::None
+    if (-not [Net.IPAddress]::TryParse($Address, [ref]$parsed) -or $parsed.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetworkV6) {
+        return ''
+    }
+    $bytes = $parsed.GetAddressBytes()
+    $prefix = ($bytes[0..7] | ForEach-Object { $_.ToString('x2') }) -join ''
+    return "$prefix/64"
+}
+
+function Get-SessionNetworkFingerprint([string]$SessionHash) {
+    foreach ($commandName in @('Get-NetRoute','Get-NetIPConfiguration')) {
+        Assert-True ($null -ne (Get-Command $commandName -ErrorAction SilentlyContinue)) "Required Windows network cmdlet is unavailable: $commandName"
+    }
+
+    $routes = @()
+    try {
+        $routes = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop |
+            Where-Object { $_.State -ne 'Invalid' } |
+            Sort-Object RouteMetric, InterfaceMetric, ifIndex)
+    } catch {}
+    if ($routes.Count -eq 0) {
+        try {
+            $routes = @(Get-NetRoute -DestinationPrefix '::/0' -ErrorAction Stop |
+                Where-Object { $_.State -ne 'Invalid' } |
+                Sort-Object RouteMetric, InterfaceMetric, ifIndex)
+        } catch {}
+    }
+    Assert-True ($routes.Count -gt 0) 'No active default route was found; cannot prove an independent client network context.'
+
+    $interfaceIndex = [int]$routes[0].ifIndex
+    try {
+        $config = Get-NetIPConfiguration -InterfaceIndex $interfaceIndex -ErrorAction Stop
+    } catch {
+        throw "Cannot inspect the active default-route interface needed for network-separation evidence: $($_.Exception.Message)"
+    }
+
+    $parts = [Collections.Generic.List[string]]::new()
+    if ($null -ne $config.NetProfile -and -not [string]::IsNullOrWhiteSpace([string]$config.NetProfile.Name)) {
+        $parts.Add("profile=$(([string]$config.NetProfile.Name).Trim().ToLowerInvariant())")
+    }
+    foreach ($gateway in @($config.IPv4DefaultGateway, $config.IPv6DefaultGateway)) {
+        foreach ($entry in @($gateway)) {
+            if ($null -ne $entry -and -not [string]::IsNullOrWhiteSpace([string]$entry.NextHop)) {
+                $parts.Add("gateway=$(([string]$entry.NextHop).Trim().ToLowerInvariant())")
+            }
+        }
+    }
+    if ($null -ne $config.DNSServer) {
+        foreach ($server in @($config.DNSServer.ServerAddresses)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$server)) {
+                $parts.Add("dns=$(([string]$server).Trim().ToLowerInvariant())")
+            }
+        }
+    }
+    foreach ($entry in @($config.IPv4Address)) {
+        if ($null -ne $entry -and -not [string]::IsNullOrWhiteSpace([string]$entry.IPAddress)) {
+            $prefix = Get-Ipv4Prefix ([string]$entry.IPAddress)
+            if (-not [string]::IsNullOrWhiteSpace($prefix)) { $parts.Add("ipv4-prefix=$prefix") }
+        }
+    }
+    foreach ($entry in @($config.IPv6Address)) {
+        if ($null -ne $entry -and -not [string]::IsNullOrWhiteSpace([string]$entry.IPAddress)) {
+            $prefix = Get-Ipv6Prefix64 ([string]$entry.IPAddress)
+            if (-not [string]::IsNullOrWhiteSpace($prefix)) { $parts.Add("ipv6-prefix=$prefix") }
+        }
+    }
+
+    $canonicalParts = @($parts | Sort-Object -Unique -CaseSensitive)
+    Assert-True ($canonicalParts.Count -gt 0) 'The active default route exposed no stable network context; refusing to create weak network-separation evidence.'
+    $canonical = $canonicalParts -join '|'
+    return Get-Sha256Text "$SessionHash|konofix-network-v1|$canonical"
+}
+
 function Invoke-Netprobe([string]$NetprobePath, [string]$Target, [int]$Timeout) {
     $output = @(& $NetprobePath --timeout $Timeout $Target 2>&1)
     $exitCode = $LASTEXITCODE
@@ -110,6 +212,11 @@ Assert-True (Test-Path -LiteralPath $internetTest -PathType Leaf) "Required boot
 & $internetTest -Bootstrap $tcpBootstrap -ValidateOnly -RequirePublicHost -RequireDnsResolution | Out-Null
 & $internetTest -Bootstrap $quicBootstrap -ValidateOnly -RequirePublicHost -RequireDnsResolution | Out-Null
 
+# These fingerprints are salted by the exact SESSION_INFO hash before being written.
+# Raw MachineGuid, gateway, profile, DNS and address-prefix material never leaves the client.
+$hostFingerprint = Get-SessionHostFingerprint $actualSessionInfoHash
+$networkFingerprint = Get-SessionNetworkFingerprint $actualSessionInfoHash
+
 Write-Host "Running exact-build authenticated TCP probe from Client $Client ($clientId)..." -ForegroundColor Cyan
 $tcpProbe = Invoke-Netprobe -NetprobePath $netprobePath -Target $tcpBootstrap -Timeout $TimeoutSeconds
 Write-Host "Running exact-build authenticated QUIC-v1 probe from Client $Client ($clientId)..." -ForegroundColor Cyan
@@ -124,7 +231,7 @@ $outputDirectory = Split-Path $outputFullPath -Parent
 New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
 
 $evidence = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     created_utc = [DateTimeOffset]::UtcNow.ToString('o')
     product = 'Konofix Chat'
     client_role = $Client
@@ -139,6 +246,11 @@ $evidence = [ordered]@{
     bootstrap_peer_id = $peerId
     tcp_bootstrap = $tcpBootstrap
     quic_bootstrap = $quicBootstrap
+    context_schema = 1
+    host_fingerprint_method = 'windows-machine-guid-session-sha256-v1'
+    host_fingerprint = $hostFingerprint
+    network_fingerprint_method = 'windows-default-route-session-sha256-v1'
+    network_fingerprint = $networkFingerprint
     tcp_probe = $tcpProbe
     quic_probe = $quicProbe
 }
@@ -160,3 +272,4 @@ Write-Host "PASS - Client $Client authenticated the configured public Node over 
 Write-Host "Evidence: $outputFullPath"
 Write-Host "Peer ID:  $peerId"
 Write-Host "Netprobe: $actualNetprobeHash"
+Write-Host 'Session-scoped host/network separation fingerprints were captured without storing raw host/network identifiers.'

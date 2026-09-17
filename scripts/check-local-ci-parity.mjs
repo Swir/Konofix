@@ -6,8 +6,12 @@ const fail = (message) => {
   process.exitCode = 1;
 };
 
-const workflow = read('.github/workflows/windows-ci.yml');
-const localCheck = read('scripts/check.ps1');
+// Overrides are used only by the adversarial fixture self-test. Normal audit
+// runs always read the repository's real Windows workflow and local preflight.
+const workflowPath = process.env.KONOFIX_PARITY_WORKFLOW ?? '.github/workflows/windows-ci.yml';
+const localCheckPath = process.env.KONOFIX_PARITY_LOCAL_CHECK ?? 'scripts/check.ps1';
+const workflow = read(workflowPath);
+const localCheck = read(localCheckPath);
 
 // These are source/preflight gates that must be runnable both by Windows CI and
 // by contributors before opening a PR. Build-only artifact/runtime steps are

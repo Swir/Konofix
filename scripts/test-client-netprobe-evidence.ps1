@@ -5,7 +5,8 @@ New-Item -ItemType Directory -Force -Path $temp | Out-Null
 
 $version = '0.4.2'
 $commit = '0123456789abcdef0123456789abcdef01234567'
-$peer = '12D3KooWClientProbeSelfTestPeer123456789'
+$peer = '12D3KooW9tHTtS3inCZiYykw4u5G4frbjVFqhkmJX12gSNCVeH3e'
+$otherPeer = 'QmNQa1FSTXNHmrjjfgUW3Px3Vkke4oKiFWdigWkYSux2Pi'
 $tcp = "/ip4/8.8.8.8/tcp/45555/p2p/$peer"
 $quic = "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$peer"
 
@@ -138,9 +139,28 @@ try {
         & $tool -Evidence @($a,$b) -SessionInfoPath $replayedSession -BuildInfoPath $buildInfoPath -RequireBothClients | Out-Null
     }
 
+    $wrongIdentitySession = Join-Path $temp 'SESSION_INFO-wrong-identity.json'
+    $wrongIdentity = Get-Content -LiteralPath $sessionPath -Raw | ConvertFrom-Json
+    $wrongIdentity.bootstrap_peer_id = $otherPeer
+    $wrongIdentity | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $wrongIdentitySession -Encoding UTF8
+    Assert-Fails 'session bootstrap identity mismatch' 'does not match TCP bootstrap Peer ID' {
+        & $tool -Evidence @($a,$b) -SessionInfoPath $wrongIdentitySession -BuildInfoPath $buildInfoPath -RequireBothClients | Out-Null
+    }
+
+    $malformedIdentitySession = Join-Path $temp 'SESSION_INFO-malformed-identity.json'
+    $malformedIdentity = Get-Content -LiteralPath $sessionPath -Raw | ConvertFrom-Json
+    $fakePeer = '12D3KooWClientProbeSelfTestPeer123456789'
+    $malformedIdentity.bootstrap_peer_id = $fakePeer
+    $malformedIdentity.tcp_bootstrap = "/ip4/8.8.8.8/tcp/45555/p2p/$fakePeer"
+    $malformedIdentity.quic_bootstrap = "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$fakePeer"
+    $malformedIdentity | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $malformedIdentitySession -Encoding UTF8
+    Assert-Fails 'shape-only fake Peer ID rejection' 'not a supported libp2p identity/sha2-256 multihash' {
+        & $tool -Evidence @($a,$b) -SessionInfoPath $malformedIdentitySession -BuildInfoPath $buildInfoPath -RequireBothClients | Out-Null
+    }
+
     $tampered = Join-Path $temp 'client-a-tampered.json'
     $bad = Get-Content -LiteralPath $a -Raw | ConvertFrom-Json
-    $bad.tcp_probe.observed_peer_id = '12D3KooWWrongPeer12345678901234567890'
+    $bad.tcp_probe.observed_peer_id = $otherPeer
     $bad | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $tampered -Encoding UTF8
     Assert-Fails 'authenticated peer mismatch' 'observed_peer_id mismatch' {
         & $tool -Evidence @($tampered,$b) -SessionInfoPath $sessionPath -BuildInfoPath $buildInfoPath -RequireBothClients | Out-Null

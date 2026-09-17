@@ -118,6 +118,18 @@ $peerId = Get-RequiredString $session 'bootstrap_peer_id' 'SESSION_INFO'
 $tcpBootstrap = Get-RequiredString $session 'tcp_bootstrap' 'SESSION_INFO'
 $quicBootstrap = Get-RequiredString $session 'quic_bootstrap' 'SESSION_INFO'
 
+# The evidence validator is also a trust boundary. Do not rely only on the capture
+# helper having prevalidated these addresses: imported/offline evidence must carry
+# structurally valid public bootstraps and real libp2p Peer ID multihashes too.
+$internetTest = Join-Path $PSScriptRoot 'internet-test.ps1'
+Assert-True (Test-Path -LiteralPath $internetTest -PathType Leaf) "Required bootstrap validator is missing: $internetTest"
+$tcpParsed = (& $internetTest -Bootstrap $tcpBootstrap -ValidateOnly -RequirePublicHost -AsJson) | ConvertFrom-Json
+$quicParsed = (& $internetTest -Bootstrap $quicBootstrap -ValidateOnly -RequirePublicHost -AsJson) | ConvertFrom-Json
+Assert-Ordinal ([string]$tcpParsed.peer_id) $peerId 'SESSION_INFO bootstrap_peer_id does not match TCP bootstrap Peer ID.'
+Assert-Ordinal ([string]$quicParsed.peer_id) $peerId 'SESSION_INFO bootstrap_peer_id does not match QUIC bootstrap Peer ID.'
+Assert-Ordinal ([string]$tcpParsed.transport) 'tcp' 'SESSION_INFO tcp_bootstrap must use TCP.'
+Assert-Ordinal ([string]$quicParsed.transport) 'quic-v1' 'SESSION_INFO quic_bootstrap must use QUIC-v1.'
+
 $netprobeMeta = $buildInfo.PSObject.Properties['netprobe'].Value
 Assert-True ($netprobeMeta -is [pscustomobject]) 'BUILD_INFO is missing netprobe metadata.'
 $netprobeRelativePath = Get-RequiredString $netprobeMeta 'path' 'BUILD_INFO.netprobe'

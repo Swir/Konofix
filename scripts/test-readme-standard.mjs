@@ -11,10 +11,10 @@ const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-readme-policy-')
 const runChecker = (name, content, expectedSuccess) => {
   const fixture = path.join(tempRoot, `${name}.md`);
   fs.writeFileSync(fixture, content, 'utf8');
-  const result = spawnSync(process.execPath, [checker], {
+  const result = spawnSync(process.execPath, [checker, fixture], {
     cwd: root,
     encoding: 'utf8',
-    env: { ...process.env, KONOFIX_README_PATH: fixture },
+    env: process.env,
   });
   const succeeded = result.status === 0;
   if (succeeded !== expectedSuccess) {

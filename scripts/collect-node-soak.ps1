@@ -36,6 +36,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $validator = Join-Path $PSScriptRoot 'check-node-health.ps1'
+$maxBuildInfoBytes = 262144
 if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) {
     throw "Node health validator not found: $validator"
 }
@@ -54,6 +55,29 @@ function Get-RequiredString($Object, [string]$Name, [string]$Label) {
         throw "$Label is missing required string field '$Name'."
     }
     return [string]$property.Value
+}
+
+function Get-RequiredInt64($Object, [string]$Name, [string]$Label) {
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        throw "$Label is missing required integer field '$Name'."
+    }
+    $value = $property.Value
+    $typeCode = [System.Type]::GetTypeCode($value.GetType())
+    $integralTypes = @(
+        [System.TypeCode]::SByte, [System.TypeCode]::Byte,
+        [System.TypeCode]::Int16, [System.TypeCode]::UInt16,
+        [System.TypeCode]::Int32, [System.TypeCode]::UInt32,
+        [System.TypeCode]::Int64, [System.TypeCode]::UInt64
+    )
+    if ($typeCode -notin $integralTypes) {
+        throw "$Label field '$Name' must be a JSON integer."
+    }
+    try {
+        return [Convert]::ToInt64($value, [Globalization.CultureInfo]::InvariantCulture)
+    } catch {
+        throw "$Label field '$Name' is outside the supported signed 64-bit integer range."
+    }
 }
 
 $healthFull = Get-FullPath $HealthFile 'health file'
@@ -81,16 +105,30 @@ if ($bindingRequested) {
     $nodeBinaryFull = Get-FullPath $NodeBinaryPath 'Node binary'
     if (-not (Test-Path -LiteralPath $buildInfoFull -PathType Leaf)) { throw "BUILD_INFO file not found: $buildInfoFull" }
     if (-not (Test-Path -LiteralPath $nodeBinaryFull -PathType Leaf)) { throw "Node binary not found: $nodeBinaryFull" }
-    try { $buildInfo = Get-Content -LiteralPath $buildInfoFull -Raw | ConvertFrom-Json } catch { throw "BUILD_INFO is not valid JSON: $($_.Exception.Message)" }
+
+    $buildInfoItem = Get-Item -LiteralPath $buildInfoFull
+    if ($buildInfoItem.Length -le 0) { throw "BUILD_INFO file is empty: $buildInfoFull" }
+    if ($buildInfoItem.Length -gt $maxBuildInfoBytes) { throw "BUILD_INFO exceeds the maximum allowed size of $maxBuildInfoBytes bytes: $buildInfoFull" }
+    $buildInfoRaw = Get-Content -LiteralPath $buildInfoFull -Raw
+    if (-not $buildInfoRaw.TrimStart().StartsWith('{', [StringComparison]::Ordinal)) { throw 'BUILD_INFO root must be a JSON object.' }
+    try { $buildInfo = $buildInfoRaw | ConvertFrom-Json } catch { throw "BUILD_INFO is not valid JSON: $($_.Exception.Message)" }
     if ($buildInfo -isnot [pscustomobject]) { throw 'BUILD_INFO root must be a JSON object.' }
+
+    $buildSchema = Get-RequiredInt64 $buildInfo 'schema' 'BUILD_INFO'
+    if ($buildSchema -ne 2) { throw "Exact-build soak capture requires BUILD_INFO schema 2; found schema $buildSchema." }
+    $buildProduct = Get-RequiredString $buildInfo 'product' 'BUILD_INFO'
+    if ($buildProduct -cne 'Konofix Chat') { throw "Unexpected BUILD_INFO product: $buildProduct" }
     $buildVersion = Get-RequiredString $buildInfo 'version' 'BUILD_INFO'
     $buildCommit = Get-RequiredString $buildInfo 'commit' 'BUILD_INFO'
     if ($buildCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'BUILD_INFO commit must be a canonical lowercase 40-character Git SHA.' }
     if ($null -eq $buildInfo.node -or $buildInfo.node -isnot [pscustomobject]) { throw 'BUILD_INFO node metadata must be a JSON object.' }
+    $recordedNodePath = Get-RequiredString $buildInfo.node 'path' 'BUILD_INFO node metadata'
+    if ($recordedNodePath -cne 'konofix-node.exe') { throw "Unexpected BUILD_INFO node path: $recordedNodePath" }
     $expectedNodeHash = Get-RequiredString $buildInfo.node 'sha256' 'BUILD_INFO node metadata'
     if ($expectedNodeHash -cnotmatch '^[0-9a-f]{64}$') { throw 'BUILD_INFO node.sha256 must be a canonical lowercase SHA-256.' }
-    if ($null -eq $buildInfo.node.bytes) { throw 'BUILD_INFO node metadata is missing bytes.' }
-    try { $expectedNodeBytes = [Convert]::ToInt64($buildInfo.node.bytes, [Globalization.CultureInfo]::InvariantCulture) } catch { throw 'BUILD_INFO node.bytes must be a signed 64-bit integer.' }
+    $expectedNodeBytes = Get-RequiredInt64 $buildInfo.node 'bytes' 'BUILD_INFO node metadata'
+    if ($expectedNodeBytes -le 0) { throw 'BUILD_INFO node.bytes must be positive.' }
+
     $nodeItem = Get-Item -LiteralPath $nodeBinaryFull
     if ([int64]$nodeItem.Length -ne $expectedNodeBytes) { throw "Node binary size does not match BUILD_INFO (expected=$expectedNodeBytes actual=$($nodeItem.Length))." }
     $actualNodeHash = (Get-FileHash -LiteralPath $nodeBinaryFull -Algorithm SHA256).Hash.ToLowerInvariant()

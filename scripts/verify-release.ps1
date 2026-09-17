@@ -133,6 +133,7 @@ try {
   )
   $required = @(
     'konofix-node.exe',
+    'konofix-netprobe.exe',
     'README.md',
     'TESTING.md',
     'NODE.md',
@@ -150,6 +151,8 @@ try {
 
   $node = Join-Path $temp 'konofix-node.exe'
   Assert-True ((Get-Item $node).Length -gt 1MB) 'konofix-node.exe appears to be an incomplete build.'
+  $netprobe = Join-Path $temp 'konofix-netprobe.exe'
+  Assert-True ((Get-Item $netprobe).Length -gt 1MB) 'konofix-netprobe.exe appears to be an incomplete build.'
 
   $bundle = Join-Path $temp 'bundle'
   Assert-True (Test-Path $bundle -PathType Container) 'Windows application bundle directory is missing.'
@@ -181,6 +184,12 @@ try {
   Assert-True ([string]::Equals([string]$nodeMeta.path, 'konofix-node.exe', [System.StringComparison]::Ordinal)) 'BUILD_INFO.json Node path is invalid.'
   Assert-True ([int64]$nodeMeta.bytes -eq [int64](Get-Item $node).Length) 'BUILD_INFO.json Node size does not match the archive.'
   Assert-Hash -Path $node -Expected ([string]$nodeMeta.sha256) -Label 'Konofix Node'
+
+  $netprobeMeta = $buildInfo.netprobe
+  Assert-True ($null -ne $netprobeMeta) 'BUILD_INFO.json is missing Netprobe metadata.'
+  Assert-True ([string]::Equals([string]$netprobeMeta.path, 'konofix-netprobe.exe', [System.StringComparison]::Ordinal)) 'BUILD_INFO.json Netprobe path is invalid.'
+  Assert-True ([int64]$netprobeMeta.bytes -eq [int64](Get-Item $netprobe).Length) 'BUILD_INFO.json Netprobe size does not match the archive.'
+  Assert-Hash -Path $netprobe -Expected ([string]$netprobeMeta.sha256) -Label 'Konofix Netprobe'
 
   $frontendLock = Join-Path $temp 'package-lock.json'
   $frontendLockMeta = $buildInfo.frontend_lock
@@ -267,7 +276,7 @@ try {
   $releaseNotes = Get-Content (Join-Path $temp 'RELEASE_NOTES.md') -Raw
   Assert-True ($releaseNotes -match '0\.4\.2 Test 1') 'RELEASE_NOTES.md does not describe the expected test release.'
 
-  Write-Host "OK - ZIP safety budgets, complete sealed file inventory, provenance metadata, Node, committed frontend/Rust dependency inputs, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
+  Write-Host "OK - ZIP safety budgets, complete sealed file inventory, provenance metadata, Node + Netprobe, committed frontend/Rust dependency inputs, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
   Write-Host "SHA256: $actual"
   Write-Host "Build commit: $commit"
 } finally {

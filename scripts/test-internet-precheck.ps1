@@ -54,10 +54,10 @@ Expect-Pass 'DNS TCP structure' "/dns/node.example.org/tcp/45555/p2p/$peer"
 Expect-Pass 'DNS4 QUIC structure' "/dns4/node.example.org/udp/45555/quic-v1/p2p/$peer"
 Expect-Pass 'DNS6 QUIC structure' "/dns6/node.example.org/udp/45555/quic-v1/p2p/$peer"
 
-# Production/public evidence must use globally routable endpoints.
+# Production/public evidence must use globally routable endpoints and normal public DNS namespaces.
 Expect-PassStrict 'global IPv4 TCP' "/ip4/8.8.8.8/tcp/45555/p2p/$peer"
 Expect-PassStrict 'global IPv6 TCP' "/ip6/2606:4700:4700::1111/tcp/45555/p2p/$peer"
-Expect-PassStrict 'public FQDN structure' "/dns/node.example.org/tcp/45555/p2p/$peer"
+Expect-PassStrict 'public FQDN structure' "/dns/node.konofix.net/tcp/45555/p2p/$peer"
 Expect-FailStrict 'RFC1918 IPv4' "/ip4/10.1.2.3/tcp/45555/p2p/$peer"
 Expect-FailStrict 'CGNAT IPv4' "/ip4/100.64.1.2/tcp/45555/p2p/$peer"
 Expect-FailStrict 'loopback IPv4' "/ip4/127.0.0.1/tcp/45555/p2p/$peer"
@@ -77,8 +77,13 @@ Expect-FailStrict 'single-label DNS' "/dns/localhost/tcp/45555/p2p/$peer"
 Expect-FailStrict 'reserved .local DNS' "/dns/node.local/tcp/45555/p2p/$peer"
 Expect-FailStrict 'reserved .test DNS' "/dns/node.test/tcp/45555/p2p/$peer"
 Expect-FailStrict 'reserved .example DNS' "/dns/node.example/tcp/45555/p2p/$peer"
+Expect-FailStrict 'reserved example.com documentation domain' "/dns/node.example.com/tcp/45555/p2p/$peer"
+Expect-FailStrict 'reserved example.net documentation domain' "/dns/node.example.net/tcp/45555/p2p/$peer"
+Expect-FailStrict 'reserved example.org documentation domain' "/dns/node.example.org/tcp/45555/p2p/$peer"
+Expect-FailStrict 'special-use .alt DNS' "/dns/node.alt/tcp/45555/p2p/$peer"
 Expect-FailStrict 'private-use .internal DNS' "/dns/node.internal/tcp/45555/p2p/$peer"
 Expect-FailStrict 'special-use home.arpa DNS' "/dns/node.home.arpa/tcp/45555/p2p/$peer"
+Expect-FailStrict 'special-use resolver.arpa DNS' "/dns/node.resolver.arpa/tcp/45555/p2p/$peer"
 Expect-FailStrict 'special-use .onion DNS' "/dns/node.onion/tcp/45555/p2p/$peer"
 
 try {

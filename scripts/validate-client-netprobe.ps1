@@ -15,6 +15,14 @@ function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
 }
 
+function ConvertFrom-JsonPreserveStrings([string]$Json) {
+    $command = Get-Command ConvertFrom-Json -ErrorAction Stop
+    if ($command.Parameters.ContainsKey('DateKind')) {
+        return $Json | ConvertFrom-Json -DateKind String
+    }
+    return $Json | ConvertFrom-Json
+}
+
 function Read-BoundedJson([string]$Path, [int64]$MaxBytes, [string]$Label) {
     Assert-True (Test-Path -LiteralPath $Path -PathType Leaf) "$Label is missing: $Path"
     $item = Get-Item -LiteralPath $Path
@@ -22,7 +30,7 @@ function Read-BoundedJson([string]$Path, [int64]$MaxBytes, [string]$Label) {
     Assert-True ($item.Length -le $MaxBytes) "$Label exceeds the maximum supported size of $MaxBytes bytes: $Path"
     $raw = Get-Content -LiteralPath $Path -Raw
     Assert-True ($raw.TrimStart().StartsWith('{', [StringComparison]::Ordinal)) "$Label root must be a JSON object: $Path"
-    try { return $raw | ConvertFrom-Json } catch { throw "$Label is not valid JSON: $Path`n$($_.Exception.Message)" }
+    try { return ConvertFrom-JsonPreserveStrings -Json $raw } catch { throw "$Label is not valid JSON: $Path`n$($_.Exception.Message)" }
 }
 
 function Get-RequiredString($Object, [string]$Name, [string]$Label) {

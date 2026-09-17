@@ -87,6 +87,51 @@ if (chunkStart < 0) {
   }
 }
 
+const completeStart = text.indexOf('FileRequest::Complete { transfer_id, sha256 } => {');
+if (completeStart < 0) {
+  fail('file completion request handler is missing.');
+} else {
+  const completeEnd = text.indexOf('FileRequest::Cancel { transfer_id } => {', completeStart);
+  const complete = text.slice(completeStart, completeEnd > completeStart ? completeEnd : completeStart + 12000);
+  const markers = [
+    'let sender_mismatch = incoming',
+    '.map(|transfer| transfer.peer != peer)',
+    'let response = if sender_mismatch {',
+    '} else if !hash_format_valid {',
+    '} else if let Some(mut transfer) = incoming.remove(&transfer_id) {',
+    'FileResponse::Error { message: "Transfer nie istnieje.".into() }',
+  ];
+  let cursor = -1;
+  for (const marker of markers) {
+    const next = complete.indexOf(marker, cursor + 1);
+    if (next < 0 || next <= cursor) {
+      fail(`completion must authenticate ownership and fail closed for expired/unknown transfer state. Missing/out-of-order marker: ${marker}`);
+      break;
+    }
+    cursor = next;
+  }
+  if (complete.includes('incoming.insert(')) {
+    fail('late Complete handling must never recreate incoming transfer state.');
+  }
+}
+
+const cancelStart = text.indexOf('FileRequest::Cancel { transfer_id } => {');
+if (cancelStart < 0) {
+  fail('file cancellation request handler is missing.');
+} else {
+  const cancelEnd = text.indexOf('request_response::Message::Response', cancelStart);
+  const cancel = text.slice(cancelStart, cancelEnd > cancelStart ? cancelEnd : cancelStart + 8000);
+  for (const [needle, message] of [
+    ['pending_incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false)', 'cancel must authenticate pending-offer ownership before removal.'],
+    ['incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false)', 'cancel must authenticate accepted-transfer ownership before removal.'],
+    ['outgoing.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false)', 'cancel must authenticate outgoing-transfer ownership before removal.'],
+    ['let matched = pending_matches || incoming_matches || outgoing_matches;', 'cancel must track whether any peer-owned state matched.'],
+    ['FileResponse::Error { message: "Transfer not found for requesting peer.".into() }', 'late or unrelated Cancel must fail closed without deleting unrelated state.'],
+  ]) {
+    if (!cancel.includes(needle)) fail(message);
+  }
+}
+
 requireOrdered([
   'let expired_incoming: Vec<String> = incoming',
   'incoming_transfer_is_expired(transfer.last_activity, now)',
@@ -116,5 +161,5 @@ if (connectionStart < 0) {
 }
 
 if (!process.exitCode) {
-  console.log('File-transfer liveness policy: bounded WAN-safe TTL, successful-write-only lease refresh, zero-byte rejection, periodic reclamation and peer-scoped disconnect cleanup are enforced.');
+  console.log('File-transfer liveness policy: bounded WAN-safe TTL, successful-write-only lease refresh, zero-byte rejection, fail-closed late Complete/Cancel handling, periodic reclamation and peer-scoped disconnect cleanup are enforced.');
 }

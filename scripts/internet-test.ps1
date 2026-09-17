@@ -106,6 +106,92 @@ function Test-ReservedPublicDnsName([string]$HostName) {
   return $false
 }
 
+function ConvertFrom-Base58([string]$Value) {
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    throw 'Base58 value cannot be empty.'
+  }
+
+  $alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+  $decoded = [System.Collections.Generic.List[byte]]::new()
+
+  foreach ($character in $Value.ToCharArray()) {
+    $digit = $alphabet.IndexOf($character)
+    if ($digit -lt 0) {
+      throw "Invalid base58 character '$character'."
+    }
+
+    $carry = [int]$digit
+    for ($i = $decoded.Count - 1; $i -ge 0; $i--) {
+      $value = ([int]$decoded[$i] * 58) + $carry
+      $decoded[$i] = [byte]($value -band 0xFF)
+      $carry = [Math]::Floor($value / 256)
+    }
+    while ($carry -gt 0) {
+      $decoded.Insert(0, [byte]($carry -band 0xFF))
+      $carry = [Math]::Floor($carry / 256)
+    }
+  }
+
+  $leadingZeros = 0
+  while ($leadingZeros -lt $Value.Length -and $Value[$leadingZeros] -eq '1') {
+    $leadingZeros++
+  }
+
+  $result = [byte[]]::new($leadingZeros + $decoded.Count)
+  for ($i = 0; $i -lt $decoded.Count; $i++) {
+    $result[$leadingZeros + $i] = $decoded[$i]
+  }
+  return $result
+}
+
+function Read-UnsignedVarint([byte[]]$Bytes, [ref]$Offset) {
+  [uint64]$value = 0
+  $shift = 0
+  for ($i = 0; $i -lt 10; $i++) {
+    if ($Offset.Value -ge $Bytes.Length) {
+      throw 'Truncated unsigned varint.'
+    }
+    $current = [byte]$Bytes[$Offset.Value]
+    $Offset.Value++
+    if ($shift -ge 64 -and ($current -band 0x7F) -ne 0) {
+      throw 'Unsigned varint is too large.'
+    }
+    $value = $value -bor ([uint64]($current -band 0x7F) -shl $shift)
+    if (($current -band 0x80) -eq 0) {
+      return $value
+    }
+    $shift += 7
+  }
+  throw 'Unsigned varint is too long.'
+}
+
+function Test-Libp2pPeerId([string]$PeerId) {
+  try {
+    # PeerId::from_multihash accepts sha2-256 multihashes and short identity
+    # multihashes. Decode enough of the multihash envelope here so malformed
+    # base58-looking strings cannot enter release/readiness evidence as Peer IDs.
+    $bytes = @(ConvertFrom-Base58 -Value $PeerId)
+    if ($bytes.Count -lt 3 -or $bytes.Count -gt 64) { return $false }
+
+    $offset = 0
+    [uint64]$code = Read-UnsignedVarint -Bytes ([byte[]]$bytes) -Offset ([ref]$offset)
+    [uint64]$digestLength = Read-UnsignedVarint -Bytes ([byte[]]$bytes) -Offset ([ref]$offset)
+    if ($digestLength -ne [uint64]($bytes.Count - $offset)) { return $false }
+
+    if ($code -eq 0) {
+      # libp2p inlines public-key multihashes only while the digest is small.
+      return $digestLength -gt 0 -and $digestLength -le 42
+    }
+    if ($code -eq 0x12) {
+      # sha2-256 Peer IDs carry exactly one 32-byte digest.
+      return $digestLength -eq 32
+    }
+    return $false
+  } catch {
+    return $false
+  }
+}
+
 function Resolve-PublicDnsAddresses([string]$HostProtocol, [string]$HostName) {
   try {
     $resolved = @([System.Net.Dns]::GetHostAddresses($HostName))
@@ -191,7 +277,10 @@ function Parse-KonofixBootstrap([string]$Address) {
   }
 
   if ([string]::IsNullOrWhiteSpace($peerId) -or $peerId -notmatch '^[1-9A-HJ-NP-Za-km-z]{20,128}$') {
-    throw 'Peer ID is missing or is not a valid base58-style libp2p Peer ID.'
+    throw 'Peer ID is missing or is not valid base58btc text.'
+  }
+  if (-not (Test-Libp2pPeerId -PeerId $peerId)) {
+    throw 'Peer ID is not a supported libp2p identity/sha2-256 multihash.'
   }
 
   [pscustomobject]@{
@@ -260,7 +349,7 @@ if (-not $ValidateOnly) {
 }
 
 if (-not $AsJson) {
-  Write-Host 'OK: bootstrap multiaddr structure and Peer ID passed strict validation.' -ForegroundColor Green
+  Write-Host 'OK: bootstrap multiaddr structure and libp2p Peer ID passed strict validation.' -ForegroundColor Green
   if ($ValidateOnly) {
     Write-Host 'INFO: reachability was intentionally skipped.' -ForegroundColor DarkYellow
   } else {

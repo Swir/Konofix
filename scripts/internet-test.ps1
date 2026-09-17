@@ -152,7 +152,9 @@ function Read-UnsignedVarint([byte[]]$Bytes, [ref]$Offset) {
       throw 'Truncated unsigned varint.'
     }
     $current = [byte]$Bytes[$Offset.Value]
-    $Offset.Value++
+    # Avoid post-increment here: PowerShell writes the old value to the success
+    # pipeline, which would turn the function result into an array plus $value.
+    $Offset.Value = [int]$Offset.Value + 1
     if ($shift -ge 64 -and ($current -band 0x7F) -ne 0) {
       throw 'Unsigned varint is too large.'
     }

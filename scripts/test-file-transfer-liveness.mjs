@@ -84,8 +84,8 @@ const cases = [
   },
   {
     name: 'cancel accepted-state peer ownership inverted',
-    source: 'incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false)',
-    replacement: 'incoming.get(&transfer_id).map(|transfer| transfer.peer != peer).unwrap_or(false)',
+    source: 'let incoming_matches = incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);',
+    replacement: 'let incoming_matches = incoming.get(&transfer_id).map(|transfer| transfer.peer != peer).unwrap_or(false);',
     expected: 'cancel must authenticate accepted-transfer ownership',
   },
   {

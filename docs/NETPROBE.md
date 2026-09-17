@@ -44,7 +44,9 @@ A direct address is required. Relay addresses containing `/p2p-circuit` are deli
 
 `scripts/test-node-runtime.ps1` starts the production release-built Node, validates exact-build health telemetry, restarts it with the same persistent identity, then runs Netprobe against the restarted process over both loopback TCP and loopback QUIC-v1. The staged Windows bundle repeats the same smoke after provenance metadata has been generated.
 
-This catches regressions where the process starts and writes a healthy JSON file but one of the real libp2p transports, authenticated identity negotiation, Identify protocol or Ping path is broken.
+Linux CI reuses the same Rust Netprobe implementation through the isolated headless Cargo target. It unit-tests and release-builds the probe without Tauri/WebKit dependencies, starts the release Node twice with one persistent identity, then requires independent authenticated TCP and QUIC-v1 Netprobe PASS evidence from the second process. The Linux smoke selects a port that is available for both TCP and UDP before launch so the QUIC gate is not weakened by a TCP-only free-port check.
+
+These checks catch regressions where the process starts and writes a healthy JSON file but one of the real libp2p transports, authenticated identity negotiation, Identify protocol or Ping path is broken.
 
 ## Real-Internet evidence boundary
 

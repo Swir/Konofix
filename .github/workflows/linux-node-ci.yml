@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -90,10 +90,13 @@ jobs:
       - name: Konofix Node tests
         run: cargo test --locked --manifest-path node-linux/Cargo.toml --bin konofix-node
 
-      - name: Build release Linux Node
+      - name: Konofix Netprobe tests
+        run: cargo test --locked --manifest-path node-linux/Cargo.toml --bin konofix-netprobe
+
+      - name: Build release Linux Node and Netprobe
         env:
           GITHUB_SHA: ${{ github.sha }}
-        run: cargo build --locked --manifest-path node-linux/Cargo.toml --release --bin konofix-node
+        run: cargo build --locked --manifest-path node-linux/Cargo.toml --release --bin konofix-node --bin konofix-netprobe
 
       - name: Linux Node runtime smoke
         shell: bash
@@ -102,10 +105,13 @@ jobs:
         run: |
           set -euo pipefail
           node_binary="$GITHUB_WORKSPACE/node-linux/target/release/konofix-node"
+          probe_binary="$GITHUB_WORKSPACE/node-linux/target/release/konofix-netprobe"
           test -x "$node_binary"
+          test -x "$probe_binary"
           "$node_binary" --help | grep -F 'Konofix Node 0.4.2'
           "$node_binary" --help | grep -F -- '--identity-file'
           "$node_binary" --help | grep -F -- '--health-file'
+          "$probe_binary" --help | grep -F 'Konofix Netprobe 0.4.2'
 
           runtime_dir="$(mktemp -d)"
           identity="$runtime_dir/node-identity.key"
@@ -121,6 +127,29 @@ jobs:
             rm -rf -- "$runtime_dir"
           }
           trap cleanup EXIT
+
+          free_dual_port() {
+            python3 - <<'PY'
+          import socket
+
+          for _ in range(64):
+              tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+              udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+              try:
+                  tcp.bind(("0.0.0.0", 0))
+                  port = tcp.getsockname()[1]
+                  try:
+                      udp.bind(("0.0.0.0", port))
+                  except OSError:
+                      continue
+                  print(port)
+                  raise SystemExit(0)
+              finally:
+                  tcp.close()
+                  udp.close()
+          raise SystemExit("Could not find a port free for both TCP and UDP/QUIC")
+          PY
+          }
 
           wait_for_health() {
             local expected_peer="${1:-}"
@@ -159,7 +188,41 @@ jobs:
             return 1
           }
 
-          port=$((40000 + RANDOM % 15000))
+          validate_probe() {
+            local transport="$1"
+            local evidence_path="$2"
+            local expected_peer="$3"
+            EXPECTED_TRANSPORT="$transport" EXPECTED_PEER="$expected_peer" python3 - "$evidence_path" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          expected = {
+              "schema": 1,
+              "status": "pass",
+              "tool": "konofix-netprobe",
+              "version": "0.4.2",
+              "source_commit": os.environ["EXPECTED_SOURCE_COMMIT"],
+              "transport": os.environ["EXPECTED_TRANSPORT"],
+              "expected_peer_id": os.environ["EXPECTED_PEER"],
+              "observed_peer_id": os.environ["EXPECTED_PEER"],
+              "protocol_version": "/konofix/4.0",
+              "agent_version": "Konofix-Node/0.4.2",
+          }
+          for key, value in expected.items():
+              if payload.get(key) != value:
+                  raise SystemExit(f"Netprobe evidence mismatch for {key}: {payload.get(key)!r} != {value!r}")
+          for key in ("rtt_micros", "elapsed_millis", "timestamp_unix"):
+              value = payload.get(key)
+              if type(value) is not int or value < 0:
+                  raise SystemExit(f"Netprobe evidence has invalid {key}: {value!r}")
+          PY
+          }
+
+          port="$(free_dual_port)"
           "$node_binary" --port "$port" --status-interval 10 --identity-file "$identity" --health-file "$health" >"$log" 2>&1 &
           pid=$!
           wait_for_health
@@ -177,14 +240,22 @@ jobs:
 
           : >"$log"
           rm -f -- "$health"
-          port=$((55000 + RANDOM % 9000))
+          port="$(free_dual_port)"
           "$node_binary" --port "$port" --status-interval 10 --identity-file "$identity" --health-file "$health" >"$log" 2>&1 &
           pid=$!
           wait_for_health "$first_peer"
+
+          tcp_evidence="$runtime_dir/netprobe-tcp.json"
+          quic_evidence="$runtime_dir/netprobe-quic.json"
+          "$probe_binary" --timeout 20 "/ip4/127.0.0.1/tcp/$port/p2p/$first_peer" >"$tcp_evidence"
+          validate_probe tcp "$tcp_evidence" "$first_peer"
+          "$probe_binary" --timeout 20 "/ip4/127.0.0.1/udp/$port/quic-v1/p2p/$first_peer" >"$quic_evidence"
+          validate_probe quic-v1 "$quic_evidence" "$first_peer"
+
           kill -INT "$pid"
           wait "$pid"
           pid=''
-          echo "Linux runtime smoke PASS: exact source provenance and persistent Peer ID $first_peer"
+          echo "Linux runtime smoke PASS: exact source provenance, persistent Peer ID $first_peer, authenticated TCP and QUIC-v1 libp2p probes"
 
       - name: Linux systemd installer self-tests
         shell: bash

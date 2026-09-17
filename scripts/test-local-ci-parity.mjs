@@ -75,6 +75,21 @@ try {
   const workflowMissingFixture = writeFixture('windows-ci-missing-node.yml', workflowMissingNodeCheck);
   expectFail('Windows CI cannot silently drop a required Rust target', workflowMissingFixture, localFixture);
 
+  const localMissingTests = removeLineContaining(
+    localSource,
+    'cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets',
+  );
+  const localMissingTestsFixture = writeFixture('check-missing-cargo-tests.ps1', localMissingTests);
+  expectFail('local preflight cannot silently drop all-target Rust tests', workflowFixture, localMissingTestsFixture);
+
+  const workflowMissingFrontendBuild = removeLineContaining(workflowSource, 'run: npm run build');
+  const workflowMissingFrontendBuildFixture = writeFixture('windows-ci-missing-frontend-build.yml', workflowMissingFrontendBuild);
+  expectFail('Windows CI cannot silently drop the frontend production build', workflowMissingFrontendBuildFixture, localFixture);
+
+  const localExtraSourceGate = `${localSource}\ncargo check --locked --manifest-path src-tauri/Cargo.toml --bin imaginary-target\n`;
+  const localExtraSourceGateFixture = writeFixture('check-extra-source-gate.ps1', localExtraSourceGate);
+  expectFail('local preflight cannot drift to an unmirrored source command', workflowFixture, localExtraSourceGateFixture);
+
   console.log('Local/Windows CI parity adversarial self-tests: PASS');
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });

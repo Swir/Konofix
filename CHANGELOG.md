@@ -2,6 +2,11 @@
 
 ## 0.4.2
 
+- hardened authenticated GossipSub input validation beyond source-Peer-ID binding: malformed peer IDs/nicknames, inconsistent nickname claims, invalid or oversized chat payloads, reserved `world` room mutation, malformed room identifiers/titles and implausible room counts are now dropped before application state is mutated,
+- added Rust adversarial regression coverage for malformed authenticated wire events while preserving the 54/59 real-network milestone until public cross-country evidence exists,
+- hardened incoming P2P file-offer admission against slot-exhaustion abuse: each remote peer may hold only one unanswered offer, stale offers expire automatically after 45 seconds, and expired request/response channels are released instead of occupying receiver capacity indefinitely,
+- synchronized the desktop UX with backend offer expiry: incoming-file dialogs now explain the timeout, close when the authenticated P2P offer expires, and surface a localized status message instead of leaving a stale Accept button,
+- added Rust regression tests for per-peer/global admission limits and the pending-offer TTL boundary; the real-network milestone remains unchanged because this is a local security hardening change rather than public-network evidence,
 - added exact-build client Netprobe capture and validation for real public-Node tests: Client A and Client B must each authenticate the configured Node over direct TCP and QUIC-v1, and stable promotion now binds both evidence records to one `SESSION_INFO.json`, exact `BUILD_INFO.json` hash, source commit, Netprobe SHA-256, client country/network metadata and bootstrap Peer ID,
 - hardened the new client Netprobe evidence validator against PowerShell 7.5+ ISO-8601 auto-conversion by preserving JSON date strings before strict schema/type validation; positive and adversarial Windows CI self-tests cover the exact-build dual-client gate without claiming real-network milestone credit,
 - extended the isolated Linux headless target with the same `konofix-netprobe` implementation used by Windows, adding release-build unit coverage and authenticated TCP + QUIC-v1 runtime probes after persistent-identity restart without claiming any real-Internet milestone credit,

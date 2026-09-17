@@ -16,6 +16,7 @@ type NetworkStatus = {
   detail: string;
 };
 type FileOffer = { transfer_id: string; peer_id: string; nick: string; file_name: string; size: number };
+type FileOfferExpired = { transfer_id: string; peer_id: string };
 type FileTransfer = {
   transfer_id: string;
   direction: 'incoming' | 'outgoing';
@@ -420,6 +421,7 @@ function showFileOfferModal(offer: FileOffer) {
     <h3>${esc(t('transfer.wantsToSend', { nick: offer.nick }))}</h3>
     <div class="offer-file"><strong>${esc(offer.file_name)}</strong><span>${formatBytes(offer.size)}</span></div>
     ${dangerous ? `<div class="danger-note">${esc(t('transfer.dangerous'))}</div>` : `<div class="safe-note">${esc(t('transfer.safe'))}</div>`}
+    <div class="safe-note">${esc(t('transfer.offerExpiryNote'))}</div>
     <div class="offer-actions"><button id="rejectOffer" class="ghost">${esc(t('transfer.reject'))}</button><button id="acceptOffer" class="primary compact">${esc(t('transfer.accept'))}</button></div>
   </div>`;
   document.body.appendChild(modal);
@@ -562,6 +564,12 @@ async function wireEvents() {
     disconnect();
   });
   await listen<FileOffer>('file-offer', event => showFileOfferModal(event.payload));
+  await listen<FileOfferExpired>('file-offer-expired', event => {
+    const modal = document.querySelector(`#file-offer-${CSS.escape(event.payload.transfer_id)}`);
+    if (!modal) return;
+    modal.remove();
+    if (state.connected) addSystem(state.room, t('transfer.offerExpired'));
+  });
   await listen<FileTransfer>('file-transfer', event => {
     state.transfers.set(event.payload.transfer_id, event.payload);
     if (event.payload.status === 'completed') {

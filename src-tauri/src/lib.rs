@@ -16,7 +16,7 @@ use libp2p::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
@@ -49,6 +49,40 @@ const DEFAULT_BOOTSTRAPS: &[&str] = &[];
 #[derive(Default)]
 struct AppState {
     tx: Mutex<Option<mpsc::Sender<NetworkCommand>>>,
+}
+
+fn install_network_sender(
+    state: &AppState,
+    tx: mpsc::Sender<NetworkCommand>,
+) -> Result<(), String> {
+    let mut guard = state.tx.lock().map_err(|_| "Błąd blokady stanu")?;
+    if guard.is_some() {
+        return Err("Sieć jest już uruchomiona.".into());
+    }
+    *guard = Some(tx);
+    Ok(())
+}
+
+fn clear_network_sender_if_current(
+    state: &AppState,
+    task_tx: &mpsc::Sender<NetworkCommand>,
+) -> Result<bool, String> {
+    let mut guard = state.tx.lock().map_err(|_| "Błąd blokady stanu")?;
+    let owns_current_session = guard
+        .as_ref()
+        .is_some_and(|current| current.same_channel(task_tx));
+    if owns_current_session {
+        guard.take();
+    }
+    Ok(owns_current_session)
+}
+
+fn take_network_sender(state: &AppState) -> Result<Option<mpsc::Sender<NetworkCommand>>, String> {
+    Ok(state
+        .tx
+        .lock()
+        .map_err(|_| "Błąd blokady stanu")?
+        .take())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -667,13 +701,11 @@ async fn start_network(
     state: State<'_, AppState>,
 ) -> Result<StartResult, String> {
     let nick = validate_nick(&nick)?;
-    if state.tx.lock().map_err(|_| "Błąd blokady stanu")?.is_some() {
-        return Err("Sieć jest już uruchomiona.".into());
-    }
-
     let (tx, rx) = mpsc::channel(128);
-    *state.tx.lock().map_err(|_| "Błąd blokady stanu")? = Some(tx);
+    install_network_sender(state.inner(), tx.clone())?;
 
+    let task_tx = tx.clone();
+    let startup_tx = tx;
     let (ready_tx, ready_rx) = oneshot::channel();
     let nick_for_task = nick.clone();
     let bootstrap_list = bootstrap_sources(bootstraps.unwrap_or_default());
@@ -681,13 +713,20 @@ async fn start_network(
         if let Err(err) =
             network_task(nick_for_task, bootstrap_list, app.clone(), rx, ready_tx).await
         {
-            let _ = app.emit("network-error", err);
+            let app_state = app.state::<AppState>();
+            if clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false) {
+                let _ = app.emit("network-error", err);
+            }
         }
     });
 
-    let ready_result = ready_rx
-        .await
-        .map_err(|_| "Nie udało się uruchomić warstwy P2P.".to_string())?;
+    let ready_result = match ready_rx.await {
+        Ok(result) => result,
+        Err(_) => {
+            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);
+            return Err("Nie udało się uruchomić warstwy P2P.".to_string());
+        }
+    };
 
     match ready_result {
         Ok(peer_id) => Ok(StartResult {
@@ -696,7 +735,7 @@ async fn start_network(
             version: env!("CARGO_PKG_VERSION").to_string(),
         }),
         Err(err) => {
-            let _ = state.tx.lock().map(|mut guard| guard.take());
+            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);
             Err(err)
         }
     }
@@ -907,7 +946,7 @@ async fn cancel_file(transfer_id: String, state: State<'_, AppState>) -> Result<
 
 #[tauri::command]
 async fn disconnect_network(state: State<'_, AppState>) -> Result<(), String> {
-    let tx = state.tx.lock().map_err(|_| "Błąd blokady stanu")?.take();
+    let tx = take_network_sender(state.inner())?;
     if let Some(tx) = tx {
         let _ = tx.send(NetworkCommand::Stop).await;
     }
@@ -2049,6 +2088,68 @@ fn open_github() -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     {
         Err(format!("Otwórz w przeglądarce: {URL}"))
+    }
+}
+
+#[cfg(test)]
+mod network_session_state_tests {
+    use super::*;
+
+    #[test]
+    fn a_task_can_clear_only_the_sender_it_owns() {
+        let state = AppState::default();
+        let (first_tx, _first_rx) = mpsc::channel(1);
+        let (second_tx, _second_rx) = mpsc::channel(1);
+
+        install_network_sender(&state, first_tx.clone()).expect("first session should install");
+        assert!(!clear_network_sender_if_current(&state, &second_tx)
+            .expect("foreign cleanup should be observable"));
+        let stored = state
+            .tx
+            .lock()
+            .expect("state lock")
+            .as_ref()
+            .expect("first session should remain")
+            .clone();
+        assert!(stored.same_channel(&first_tx));
+
+        assert!(clear_network_sender_if_current(&state, &first_tx)
+            .expect("owning cleanup should succeed"));
+        assert!(state.tx.lock().expect("state lock").is_none());
+    }
+
+    #[test]
+    fn overlapping_start_is_rejected_and_cleanup_allows_reconnect() {
+        let state = AppState::default();
+        let (first_tx, _first_rx) = mpsc::channel(1);
+        let (second_tx, _second_rx) = mpsc::channel(1);
+
+        install_network_sender(&state, first_tx.clone()).expect("first session should install");
+        assert!(install_network_sender(&state, second_tx.clone()).is_err());
+        assert!(clear_network_sender_if_current(&state, &first_tx).expect("cleanup should work"));
+        install_network_sender(&state, second_tx.clone()).expect("reconnect should install");
+
+        let stored = state
+            .tx
+            .lock()
+            .expect("state lock")
+            .as_ref()
+            .expect("second session should be active")
+            .clone();
+        assert!(stored.same_channel(&second_tx));
+    }
+
+    #[test]
+    fn explicit_sender_take_is_idempotent() {
+        let state = AppState::default();
+        let (tx, _rx) = mpsc::channel(1);
+        install_network_sender(&state, tx).expect("session should install");
+        assert!(take_network_sender(&state)
+            .expect("first take should work")
+            .is_some());
+        assert!(take_network_sender(&state)
+            .expect("second take should work")
+            .is_none());
     }
 }
 

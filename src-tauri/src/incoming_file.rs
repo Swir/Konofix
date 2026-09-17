@@ -1,4 +1,7 @@
-use std::{io::ErrorKind, path::{Path, PathBuf}};
+use std::{
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 
 use tokio::fs::{self, File, OpenOptions};
 
@@ -40,11 +43,7 @@ fn temp_path_for(final_path: &Path) -> PathBuf {
 }
 
 async fn remove_owned_temp(path: &Path) {
-    match fs::remove_file(path).await {
-        Ok(()) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(_) => {}
-    }
+    let _ = fs::remove_file(path).await;
 }
 
 async fn reserve_incoming_file_with_hook<F>(
@@ -158,7 +157,8 @@ mod tests {
 
     impl TestDir {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("konofix-file-reservation-{}", Uuid::new_v4()));
+            let path = std::env::temp_dir()
+                .join(format!("konofix-file-reservation-{}", Uuid::new_v4()));
             std::fs::create_dir_all(&path).expect("create reservation test directory");
             Self(path)
         }
@@ -184,9 +184,15 @@ mod tests {
             .await
             .expect("reserve alternate path");
 
-        assert_eq!(std::fs::read(&sentinel).expect("read sentinel"), b"sentinel");
         assert_eq!(
-            reservation.final_path.file_name().and_then(|value| value.to_str()),
+            std::fs::read(&sentinel).expect("read sentinel"),
+            b"sentinel"
+        );
+        assert_eq!(
+            reservation
+                .final_path
+                .file_name()
+                .and_then(|value| value.to_str()),
             Some("report (1).txt")
         );
         assert_ne!(reservation.temp_path, sentinel);
@@ -242,7 +248,10 @@ mod tests {
             b"other-process"
         );
         assert_eq!(
-            reservation.final_path.file_name().and_then(|value| value.to_str()),
+            reservation
+                .final_path
+                .file_name()
+                .and_then(|value| value.to_str()),
             Some("race (1).txt")
         );
         assert!(!dir.path().join("race.txt.konofixpart").exists());
@@ -262,7 +271,10 @@ mod tests {
             .expect_err("reservation must exhaust");
 
         assert!(error.contains("1 próbach"));
-        assert_eq!(std::fs::read(&sentinel).expect("read occupied partial"), b"do-not-touch");
+        assert_eq!(
+            std::fs::read(&sentinel).expect("read occupied partial"),
+            b"do-not-touch"
+        );
     }
 
     #[tokio::test]
@@ -278,7 +290,10 @@ mod tests {
             .expect_err("commit must refuse overwrite");
 
         assert!(error.contains("nie został nadpisany"));
-        assert_eq!(std::fs::read(&final_path).expect("read existing final"), b"existing");
+        assert_eq!(
+            std::fs::read(&final_path).expect("read existing final"),
+            b"existing"
+        );
         assert!(!temp_path.exists());
     }
 
@@ -293,7 +308,10 @@ mod tests {
             .await
             .expect("commit reserved file");
 
-        assert_eq!(std::fs::read(&final_path).expect("read final payload"), b"verified-payload");
+        assert_eq!(
+            std::fs::read(&final_path).expect("read final payload"),
+            b"verified-payload"
+        );
         assert!(!temp_path.exists());
     }
 }

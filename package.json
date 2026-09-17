@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "audit": "node scripts/project-audit.mjs && node scripts/check-dependabot-config.mjs && node scripts/check-typescript-compat.mjs && node scripts/test-readme-standard.mjs && node scripts/check-readme-standard.mjs",
+    "audit": "node scripts/project-audit.mjs && node scripts/check-dependabot-config.mjs && node scripts/check-typescript-compat.mjs && node scripts/test-readme-standard.mjs && node scripts/check-readme-standard.mjs && node scripts/test-local-ci-parity.mjs && node scripts/check-local-ci-parity.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"

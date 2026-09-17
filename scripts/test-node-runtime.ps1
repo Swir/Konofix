@@ -57,14 +57,27 @@ if (-not (Test-Path -LiteralPath $healthValidator -PathType Leaf)) {
     throw "Node health validator not found: $healthValidator"
 }
 
-function Get-FreeTcpPort {
-    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
-    try {
-        $listener.Start()
-        return ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
-    } finally {
-        $listener.Stop()
+function Get-FreeTcpUdpPort {
+    for ($attempt = 0; $attempt -lt 64; $attempt++) {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $udp = $null
+        try {
+            $listener.Start()
+            $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+            try {
+                $endpoint = [System.Net.IPEndPoint]::new([System.Net.IPAddress]::Loopback, $port)
+                $udp = [System.Net.Sockets.UdpClient]::new($endpoint)
+                return $port
+            } catch [System.Net.Sockets.SocketException] {
+                continue
+            }
+        } finally {
+            if ($null -ne $udp) { $udp.Dispose() }
+            $listener.Stop()
+        }
     }
+
+    throw 'Could not reserve a loopback port that is free for both TCP and UDP/QUIC.'
 }
 
 function Get-ExpectedSourceCommit {
@@ -98,7 +111,7 @@ function Start-SmokeNode {
         [Parameter(Mandatory = $true)][string]$IdentityPath
     )
 
-    $port = Get-FreeTcpPort
+    $port = Get-FreeTcpUdpPort
     $arguments = @(
         '--port', [string]$port,
         '--public-host', '127.0.0.1',

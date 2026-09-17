@@ -45,7 +45,10 @@ function Expect-FailStrict([string]$Name, [string]$Address) {
   Write-Host "PASS (public rejected): $Name" -ForegroundColor Green
 }
 
-$peer = '12D3KooWQ7N8jFx6tT8hVYpY3iM3x1bqL6ZpH8sR4wC2dA9eF5gK'
+# Canonical libp2p forms used by Konofix: inline identity multihash (12D3KooW...)
+# and sha2-256 multihash (Qm...). These fixtures are structurally valid multihashes.
+$peer = '12D3KooW9tHTtS3inCZiYykw4u5G4frbjVFqhkmJX12gSNCVeH3e'
+$shaPeer = 'QmNQa1FSTXNHmrjjfgUW3Px3Vkke4oKiFWdigWkYSux2Pi'
 
 # Structural parsing remains useful for documentation/lab fixtures.
 Expect-Pass 'IPv4 TCP structure' "/ip4/203.0.113.10/tcp/45555/p2p/$peer"
@@ -53,6 +56,7 @@ Expect-Pass 'IPv6 TCP structure' "/ip6/2001:db8::10/tcp/45555/p2p/$peer"
 Expect-Pass 'DNS TCP structure' "/dns/node.example.org/tcp/45555/p2p/$peer"
 Expect-Pass 'DNS4 QUIC structure' "/dns4/node.example.org/udp/45555/quic-v1/p2p/$peer"
 Expect-Pass 'DNS6 QUIC structure' "/dns6/node.example.org/udp/45555/quic-v1/p2p/$peer"
+Expect-Pass 'sha2-256 Peer ID structure' "/ip4/203.0.113.10/tcp/45555/p2p/$shaPeer"
 
 # Production/public evidence must use globally routable endpoints and normal public DNS namespaces.
 Expect-PassStrict 'global IPv4 TCP' "/ip4/8.8.8.8/tcp/45555/p2p/$peer"
@@ -105,6 +109,10 @@ Expect-Fail 'IPv6 passed as ip4' "/ip4/2001:db8::10/tcp/45555/p2p/$peer"
 Expect-Fail 'invalid DNS label' "/dns/-node.example.org/tcp/45555/p2p/$peer"
 Expect-Fail 'missing p2p marker' "/dns/node.example.org/tcp/45555/peer/$peer"
 Expect-Fail 'invalid Peer ID alphabet' '/dns/node.example.org/tcp/45555/p2p/O0Il-not-base58'
+Expect-Fail 'base58-looking but empty multihash' '/dns/node.example.org/tcp/45555/p2p/11111111111111111111'
+Expect-Fail 'unsupported multihash code' '/dns/node.example.org/tcp/45555/p2p/S5RBetKNu6cNYakr8cdRVHUYqGj4oY2zKiSksm6MmQ9sQL'
+Expect-Fail 'wrong sha2-256 digest length' '/dns/node.example.org/tcp/45555/p2p/6PDjCUMmLhERUfKxFnbWedea1WLk9GK1inM69ep3Gfcb2'
+Expect-Fail 'oversized identity multihash' '/dns/node.example.org/tcp/45555/p2p/1Eyy4V7W7v82Q6mMR35aptENGzRkm2pVwhH7uyH12tde4Kkp53AvFF2JiYpcp'
 Expect-Fail 'extra TCP segment' "/dns/node.example.org/tcp/45555/p2p/$peer/extra"
 Expect-Fail 'extra QUIC segment' "/dns/node.example.org/udp/45555/quic-v1/p2p/$peer/extra"
 

@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $target = Join-Path $PSScriptRoot 'new-network-test-session.ps1'
 $validator = Join-Path $PSScriptRoot 'validate-network-test-session.ps1'
-$peer = '12D3KooWQ7N8jFx6tT8hVYpY3iM3x1bqL6ZpH8sR4wC2dA9eF5gK'
-$otherPeer = '12D3KooWR8P9kGy7uU9iWZqZ4jN4y2crM7AqJ9tS5xD3eB8fG6hL'
+$peer = '12D3KooW9tHTtS3inCZiYykw4u5G4frbjVFqhkmJX12gSNCVeH3e'
+$otherPeer = 'QmNQa1FSTXNHmrjjfgUW3Px3Vkke4oKiFWdigWkYSux2Pi'
 $commit = '0123456789abcdef0123456789abcdef01234567'
 
 function Assert-True([bool]$Condition, [string]$Message) {

@@ -2,6 +2,7 @@
 
 ## 0.4.2
 
+- hardened bootstrap Peer ID handling to decode base58btc and validate the libp2p multihash envelope (`identity` or `sha2-256`) before readiness/session/evidence workflows; malformed, truncated, unsupported-code, wrong-digest-length and oversized-inline identities now fail closed, and promotion/session/readiness self-tests use canonical valid identities so the stricter boundary is exercised end-to-end without adding Real Internet Test credit,
 - added scheduled Dependabot coverage for npm, Cargo and GitHub Actions, separating major dependency upgrades from grouped minor/patch maintenance and keeping update queues bounded so supply-chain drift is surfaced through reviewable pull requests,
 - added a repository security policy for private vulnerability reporting, safe report contents and supported pre-release scope; security maintenance remains independent of the 54/59 Real Internet Test evidence milestone,
 - hardened authenticated GossipSub input validation beyond source-Peer-ID binding: malformed peer IDs/nicknames, inconsistent nickname claims, invalid or oversized chat payloads, reserved `world` room mutation, malformed room identifiers/titles and implausible room counts are now dropped before application state is mutated,

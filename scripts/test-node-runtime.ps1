@@ -1,5 +1,6 @@
 param(
     [string]$NodePath = '',
+    [string]$ProbePath = '',
     [int]$StartupTimeoutSeconds = 30
 )
 
@@ -28,14 +29,29 @@ if ($artifactMode) {
     if ([string]::IsNullOrWhiteSpace($NodePath)) {
         $NodePath = Join-Path $projectRoot ([string]$buildInfo.node.path)
     }
-} elseif ([string]::IsNullOrWhiteSpace($NodePath)) {
-    $NodePath = Join-Path $projectRoot 'src-tauri\target\release\konofix-node.exe'
+    if ([string]::IsNullOrWhiteSpace($ProbePath)) {
+        if ($null -eq $buildInfo.netprobe -or [string]::IsNullOrWhiteSpace([string]$buildInfo.netprobe.path)) {
+            throw 'BUILD_INFO.json is missing Konofix Netprobe provenance metadata.'
+        }
+        $ProbePath = Join-Path $projectRoot ([string]$buildInfo.netprobe.path)
+    }
+} else {
+    if ([string]::IsNullOrWhiteSpace($NodePath)) {
+        $NodePath = Join-Path $projectRoot 'src-tauri\target\release\konofix-node.exe'
+    }
+    if ([string]::IsNullOrWhiteSpace($ProbePath)) {
+        $ProbePath = Join-Path $projectRoot 'src-tauri\target\release\konofix-netprobe.exe'
+    }
 }
 
 if (-not (Test-Path -LiteralPath $NodePath -PathType Leaf)) {
     throw "Konofix Node executable not found: $NodePath"
 }
+if (-not (Test-Path -LiteralPath $ProbePath -PathType Leaf)) {
+    throw "Konofix Netprobe executable not found: $ProbePath"
+}
 $node = (Resolve-Path -LiteralPath $NodePath).Path
+$probe = (Resolve-Path -LiteralPath $ProbePath).Path
 $healthValidator = Join-Path $PSScriptRoot 'check-node-health.ps1'
 if (-not (Test-Path -LiteralPath $healthValidator -PathType Leaf)) {
     throw "Node health validator not found: $healthValidator"
@@ -90,7 +106,11 @@ function Start-SmokeNode {
         '--health-file', $HealthPath,
         '--identity-file', $IdentityPath
     )
-    return Start-Process -FilePath $node -ArgumentList $arguments -PassThru -WindowStyle Hidden
+    $process = Start-Process -FilePath $node -ArgumentList $arguments -PassThru -WindowStyle Hidden
+    return [pscustomobject]@{
+        Process = $process
+        Port = $port
+    }
 }
 
 function Stop-SmokeNode {
@@ -135,6 +155,63 @@ function Wait-RunningSnapshot {
     throw "Timed out waiting for a running Konofix Node health snapshot.$suffix"
 }
 
+function Invoke-TransportProbe {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('tcp', 'quic-v1')][string]$Transport,
+        [Parameter(Mandatory = $true)][int]$Port,
+        [Parameter(Mandatory = $true)][string]$PeerId,
+        [Parameter(Mandatory = $true)][string]$ExpectedVersion,
+        [Parameter(Mandatory = $true)][string]$ExpectedCommit
+    )
+
+    $target = if ($Transport -ceq 'tcp') {
+        "/ip4/127.0.0.1/tcp/$Port/p2p/$PeerId"
+    } else {
+        "/ip4/127.0.0.1/udp/$Port/quic-v1/p2p/$PeerId"
+    }
+
+    $output = @(& $probe --timeout 20 $target 2>&1)
+    $exitCode = $LASTEXITCODE
+    $text = ($output | ForEach-Object { [string]$_ }) -join "`n"
+    if ($exitCode -ne 0) {
+        throw "Konofix Netprobe $Transport failed with exit code $exitCode. Output: $text"
+    }
+
+    try {
+        $evidence = $text | ConvertFrom-Json
+    } catch {
+        throw "Konofix Netprobe $Transport returned invalid JSON: $($_.Exception.Message). Output: $text"
+    }
+
+    if ([int]$evidence.schema -ne 1 -or [string]$evidence.status -cne 'pass') {
+        throw "Konofix Netprobe $Transport returned an unsupported or non-PASS evidence record."
+    }
+    if ([string]$evidence.transport -cne $Transport) {
+        throw "Konofix Netprobe transport mismatch: expected '$Transport', got '$($evidence.transport)'."
+    }
+    if ([string]$evidence.expected_peer_id -cne $PeerId -or [string]$evidence.observed_peer_id -cne $PeerId) {
+        throw "Konofix Netprobe Peer ID mismatch for $Transport."
+    }
+    if ([string]$evidence.protocol_version -cne '/konofix/4.0') {
+        throw "Konofix Netprobe observed unexpected protocol version '$($evidence.protocol_version)'."
+    }
+    if ([string]$evidence.agent_version -cne "Konofix-Node/$ExpectedVersion") {
+        throw "Konofix Netprobe observed unexpected Node agent '$($evidence.agent_version)'."
+    }
+    if ([string]$evidence.version -cne $ExpectedVersion) {
+        throw "Konofix Netprobe build version mismatch: expected '$ExpectedVersion', got '$($evidence.version)'."
+    }
+    if ([string]$evidence.source_commit -cne $ExpectedCommit) {
+        throw "Konofix Netprobe source commit mismatch: expected '$ExpectedCommit', got '$($evidence.source_commit)'."
+    }
+    if ([int64]$evidence.rtt_micros -lt 0 -or [int64]$evidence.elapsed_millis -lt 0) {
+        throw "Konofix Netprobe returned invalid timing evidence for $Transport."
+    }
+
+    Write-Host "PASS: authenticated libp2p $Transport probe reached Peer ID $PeerId (RTT $($evidence.rtt_micros) us)." -ForegroundColor Green
+    return $evidence
+}
+
 if ($artifactMode) {
     $expectedVersion = [string]$buildInfo.version
     $expectedNodeHash = [string]$buildInfo.node.sha256
@@ -144,6 +221,15 @@ if ($artifactMode) {
     $actualNodeHash = (Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant()
     if (-not [string]::Equals($expectedNodeHash, $actualNodeHash, [System.StringComparison]::Ordinal)) {
         throw "Node SHA-256 mismatch: BUILD_INFO expected '$expectedNodeHash', got '$actualNodeHash'."
+    }
+
+    $expectedProbeHash = [string]$buildInfo.netprobe.sha256
+    if ($expectedProbeHash -cnotmatch '^[0-9a-f]{64}$') {
+        throw 'BUILD_INFO.json contains an invalid Netprobe SHA-256 digest.'
+    }
+    $actualProbeHash = (Get-FileHash -LiteralPath $probe -Algorithm SHA256).Hash.ToLowerInvariant()
+    if (-not [string]::Equals($expectedProbeHash, $actualProbeHash, [System.StringComparison]::Ordinal)) {
+        throw "Netprobe SHA-256 mismatch: BUILD_INFO expected '$expectedProbeHash', got '$actualProbeHash'."
     }
 } else {
     $packagePath = Join-Path $projectRoot 'package.json'
@@ -169,9 +255,14 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "konofix-node.exe --help failed with exit code $LASTEXITCODE."
     }
+    & $probe --help | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "konofix-netprobe.exe --help failed with exit code $LASTEXITCODE."
+    }
 
     Write-Host 'Node runtime smoke: first production-binary start...' -ForegroundColor Yellow
-    $firstProcess = Start-SmokeNode -HealthPath $healthFirst -IdentityPath $identityPath
+    $firstRun = Start-SmokeNode -HealthPath $healthFirst -IdentityPath $identityPath
+    $firstProcess = $firstRun.Process
     $first = Wait-RunningSnapshot -HealthPath $healthFirst -Process $firstProcess
 
     & $healthValidator `
@@ -193,7 +284,9 @@ try {
     $firstProcess = $null
 
     Write-Host 'Node runtime smoke: restart with the same persistent identity...' -ForegroundColor Yellow
-    $secondProcess = Start-SmokeNode -HealthPath $healthSecond -IdentityPath $identityPath
+    $secondRun = Start-SmokeNode -HealthPath $healthSecond -IdentityPath $identityPath
+    $secondProcess = $secondRun.Process
+    $secondPort = [int]$secondRun.Port
     $second = Wait-RunningSnapshot -HealthPath $healthSecond -Process $secondProcess
 
     if (-not [string]::Equals($firstPeerId, [string]$second.peer_id, [System.StringComparison]::Ordinal)) {
@@ -213,8 +306,14 @@ try {
         -ExpectedPeerId $firstPeerId `
         -ExpectedSourceCommit $expectedCommit | Out-Null
 
+    Write-Host 'Node runtime smoke: authenticated TCP libp2p probe...' -ForegroundColor Yellow
+    Invoke-TransportProbe -Transport tcp -Port $secondPort -PeerId $firstPeerId -ExpectedVersion $expectedVersion -ExpectedCommit $expectedCommit | Out-Null
+
+    Write-Host 'Node runtime smoke: authenticated QUIC-v1 libp2p probe...' -ForegroundColor Yellow
+    Invoke-TransportProbe -Transport quic-v1 -Port $secondPort -PeerId $firstPeerId -ExpectedVersion $expectedVersion -ExpectedCommit $expectedCommit | Out-Null
+
     $mode = if ($artifactMode) { 'release-bundle' } else { 'repository-build' }
-    Write-Host "PASS: $mode konofix-node.exe started twice, emitted valid exact-build health telemetry, and preserved Peer ID $firstPeerId." -ForegroundColor Green
+    Write-Host "PASS: $mode Node started twice, preserved Peer ID $firstPeerId, and completed exact-build authenticated TCP + QUIC-v1 libp2p probes." -ForegroundColor Green
 } finally {
     Stop-SmokeNode -Process $firstProcess
     Stop-SmokeNode -Process $secondProcess

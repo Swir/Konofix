@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 
-const README_PATH = process.env.KONOFIX_README_PATH || 'README.md';
+const README_PATH = process.argv[2] || 'README.md';
 const STANDARD_MARKER = '<!-- SWIR-README-STANDARD:v1 -->';
 const readme = fs.readFileSync(README_PATH, 'utf8');
 

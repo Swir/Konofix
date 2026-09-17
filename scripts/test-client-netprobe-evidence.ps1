@@ -44,7 +44,7 @@ function New-Probe([string]$Transport, [string]$Target) {
     }
 }
 
-function Write-Evidence([string]$Role, [string]$Path, [string]$BuildInfoHash, [string]$NetprobeHash) {
+function Write-Evidence([string]$Role, [string]$Path, [string]$BuildInfoHash, [string]$SessionInfoHash, [string]$NetprobeHash) {
     $clientId = if ($Role -ceq 'A') { 'client-a-selftest' } else { 'client-b-selftest' }
     $country = if ($Role -ceq 'A') { 'PL' } else { 'NO' }
     $network = if ($Role -ceq 'A') { 'network-a' } else { 'network-b' }
@@ -59,6 +59,7 @@ function Write-Evidence([string]$Role, [string]$Path, [string]$BuildInfoHash, [s
         build_version = $version
         source_commit = $commit
         build_info_sha256 = $BuildInfoHash
+        session_info_sha256 = $SessionInfoHash
         netprobe_sha256 = $NetprobeHash
         bootstrap_peer_id = $peer
         tcp_bootstrap = $tcp
@@ -105,16 +106,18 @@ try {
         manifests = @()
         notes = 'client netprobe validator fixture'
     } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $sessionPath -Encoding UTF8
+    $sessionInfoHash = (Get-FileHash -LiteralPath $sessionPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
     $a = Join-Path $temp 'client-a-netprobe.json'
     $b = Join-Path $temp 'client-b-netprobe.json'
-    Write-Evidence -Role A -Path $a -BuildInfoHash $buildInfoHash -NetprobeHash $netprobeHash
-    Write-Evidence -Role B -Path $b -BuildInfoHash $buildInfoHash -NetprobeHash $netprobeHash
+    Write-Evidence -Role A -Path $a -BuildInfoHash $buildInfoHash -SessionInfoHash $sessionInfoHash -NetprobeHash $netprobeHash
+    Write-Evidence -Role B -Path $b -BuildInfoHash $buildInfoHash -SessionInfoHash $sessionInfoHash -NetprobeHash $netprobeHash
 
     $result = (& $tool -Evidence @($a,$b) -SessionInfoPath $sessionPath -BuildInfoPath $buildInfoPath -RequireBothClients -AsJson) | ConvertFrom-Json
     Assert-True ($result.status -ceq 'PASS') 'Expected client probe validator PASS.'
     Assert-True ($result.evidence_count -eq 2) 'Expected exactly two client evidence records.'
     Assert-True ($result.authenticated_tcp -eq $true -and $result.authenticated_quic_v1 -eq $true) 'Expected both authenticated transport flags.'
+    Assert-True ($result.session_info_sha256 -ceq $sessionInfoHash) 'SESSION_INFO hash mismatch in validator result.'
     Assert-True ($result.netprobe_sha256 -ceq $netprobeHash) 'Netprobe hash mismatch in validator result.'
 
     Assert-Fails 'single-client stable gate' 'exactly two' {
@@ -125,6 +128,14 @@ try {
     Copy-Item -LiteralPath $a -Destination $duplicate
     Assert-Fails 'duplicate role rejection' 'Duplicate client netprobe evidence role' {
         & $tool -Evidence @($a,$duplicate) -SessionInfoPath $sessionPath -BuildInfoPath $buildInfoPath -RequireBothClients | Out-Null
+    }
+
+    $replayedSession = Join-Path $temp 'SESSION_INFO-replayed.json'
+    Copy-Item -LiteralPath $sessionPath -Destination $replayedSession
+    Add-Content -LiteralPath $replayedSession -Value ''
+    Assert-True ((Get-FileHash -LiteralPath $replayedSession -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sessionInfoHash) 'Replay fixture must have a distinct SESSION_INFO hash.'
+    Assert-Fails 'cross-session replay rejection' 'SESSION_INFO hash mismatch' {
+        & $tool -Evidence @($a,$b) -SessionInfoPath $replayedSession -BuildInfoPath $buildInfoPath -RequireBothClients | Out-Null
     }
 
     $tampered = Join-Path $temp 'client-a-tampered.json'

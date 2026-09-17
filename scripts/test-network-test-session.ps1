@@ -128,6 +128,16 @@ try {
     Write-Host 'PASS: valid exact-build five-scenario session, public endpoint policy and session consistency' -ForegroundColor Green
 
     $tcpManifestPath = ($manifests | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).scenario -ceq 'TCP' } | Select-Object -First 1).FullName
+
+    $foreignRoot = Join-Path $temp 'foreign-session-fragment'
+    New-Item -ItemType Directory -Path $foreignRoot | Out-Null
+    $foreignTcpPath = Join-Path $foreignRoot ([IO.Path]::GetFileName($tcpManifestPath))
+    Copy-Item -LiteralPath $tcpManifestPath -Destination $foreignTcpPath
+    $foreignManifestPaths = @($manifestPaths | Where-Object { $_ -cne $tcpManifestPath }) + $foreignTcpPath
+    Expect-Fail 'manifest copied outside its SESSION_INFO directory' {
+        & $validator -SessionInfoPath $sessionInfoPath -Manifest $foreignManifestPaths | Out-Null
+    }
+
     $originalTcpManifest = Get-Content -LiteralPath $tcpManifestPath -Raw
     $mixedEndpoint = $originalTcpManifest | ConvertFrom-Json
     $mixedEndpoint.client_b_country = 'Germany'

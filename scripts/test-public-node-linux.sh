@@ -84,7 +84,7 @@ if grep -Eq '^ReadWritePaths=.*(/usr|/etc|/home)(/|$)' <<<"$unit"; then
 fi
 
 preview="$(bash "$INSTALLER" \
-  --public-host node.example.net \
+  --public-host 1.0.0.1 \
   --binary "$FAKE_NODE" \
   --state-dir /var/lib/konofix-preview \
   --install-dir /usr/local/lib/konofix-preview)"
@@ -128,10 +128,42 @@ expect_reject 'private address without lab override' \
   --public-host 10.0.0.5 --binary "$FAKE_NODE" --state-dir /var/lib/k1 --install-dir /usr/local/lib/k1 --print-unit
 expect_reject 'CGNAT address without lab override' \
   --public-host 100.64.0.1 --binary "$FAKE_NODE" --state-dir /var/lib/k2 --install-dir /usr/local/lib/k2 --print-unit
+expect_reject 'protocol-assignment address without lab override' \
+  --public-host 192.0.0.8 --binary "$FAKE_NODE" --state-dir /var/lib/k2a --install-dir /usr/local/lib/k2a --print-unit
 expect_reject 'documentation address without lab override' \
   --public-host 203.0.113.10 --binary "$FAKE_NODE" --state-dir /var/lib/k3 --install-dir /usr/local/lib/k3 --print-unit
+expect_reject 'deprecated relay-anycast address without lab override' \
+  --public-host 192.88.99.1 --binary "$FAKE_NODE" --state-dir /var/lib/k3a --install-dir /usr/local/lib/k3a --print-unit
+expect_reject 'benchmark address without lab override' \
+  --public-host 198.18.0.1 --binary "$FAKE_NODE" --state-dir /var/lib/k3b --install-dir /usr/local/lib/k3b --print-unit
+expect_reject 'reserved high IPv4 address without lab override' \
+  --public-host 240.0.0.1 --binary "$FAKE_NODE" --state-dir /var/lib/k3c --install-dir /usr/local/lib/k3c --print-unit
+expect_reject 'documentation IPv6 without lab override' \
+  --public-host 2001:db8::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3d --install-dir /usr/local/lib/k3d --print-unit
+expect_reject 'benchmark IPv6 without lab override' \
+  --public-host 2001:2::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3e --install-dir /usr/local/lib/k3e --print-unit
+expect_reject 'ORCHIDv1 IPv6 without lab override' \
+  --public-host 2001:10::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3f --install-dir /usr/local/lib/k3f --print-unit
+expect_reject 'ORCHIDv2 IPv6 without lab override' \
+  --public-host 2001:20::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3g --install-dir /usr/local/lib/k3g --print-unit
+expect_reject 'ULA IPv6 without lab override' \
+  --public-host fd00::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3h --install-dir /usr/local/lib/k3h --print-unit
 expect_reject 'reserved DNS suffix' \
   --public-host node.example --binary "$FAKE_NODE" --state-dir /var/lib/k4 --install-dir /usr/local/lib/k4 --print-unit
+expect_reject 'IANA example.com documentation namespace' \
+  --public-host node.example.com --binary "$FAKE_NODE" --state-dir /var/lib/k4a --install-dir /usr/local/lib/k4a --print-unit
+expect_reject 'IANA example.net documentation namespace' \
+  --public-host node.example.net --binary "$FAKE_NODE" --state-dir /var/lib/k4a2 --install-dir /usr/local/lib/k4a2 --print-unit
+expect_reject 'IANA example.org documentation namespace' \
+  --public-host node.example.org --binary "$FAKE_NODE" --state-dir /var/lib/k4a3 --install-dir /usr/local/lib/k4a3 --print-unit
+expect_reject 'private internal namespace' \
+  --public-host bootstrap.internal --binary "$FAKE_NODE" --state-dir /var/lib/k4b --install-dir /usr/local/lib/k4b --print-unit
+expect_reject 'onion special-use namespace' \
+  --public-host relay.onion --binary "$FAKE_NODE" --state-dir /var/lib/k4c --install-dir /usr/local/lib/k4c --print-unit
+expect_reject 'home.arpa special-use namespace' \
+  --public-host router.home.arpa --binary "$FAKE_NODE" --state-dir /var/lib/k4d --install-dir /usr/local/lib/k4d --print-unit
+expect_reject 'alt special-use namespace' \
+  --public-host resolver.alt --binary "$FAKE_NODE" --state-dir /var/lib/k4e --install-dir /usr/local/lib/k4e --print-unit
 expect_reject 'single-label hostname' \
   --public-host localhost --binary "$FAKE_NODE" --state-dir /var/lib/k5 --install-dir /usr/local/lib/k5 --print-unit
 expect_reject 'port zero' \

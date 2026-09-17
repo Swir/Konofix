@@ -22,37 +22,93 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-function Test-NonPublicIp([System.Net.IPAddress]$Address) {
-  $bytes = $Address.GetAddressBytes()
-  if ($Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
-    $a = [int]$bytes[0]
-    $b = [int]$bytes[1]
-    $c = [int]$bytes[2]
+function Test-IpInCidr([System.Net.IPAddress]$Address, [string]$Network, [int]$PrefixLength) {
+  $networkAddress = [System.Net.IPAddress]::Parse($Network)
+  if ($Address.AddressFamily -ne $networkAddress.AddressFamily) { return $false }
 
-    if ($a -eq 0 -or $a -eq 10 -or $a -eq 127) { return $true }
-    if ($a -eq 100 -and $b -ge 64 -and $b -le 127) { return $true }
-    if ($a -eq 169 -and $b -eq 254) { return $true }
-    if ($a -eq 172 -and $b -ge 16 -and $b -le 31) { return $true }
-    if ($a -eq 192 -and $b -eq 0 -and $c -eq 0) { return $true }
-    if ($a -eq 192 -and $b -eq 0 -and $c -eq 2) { return $true }
-    if ($a -eq 192 -and $b -eq 168) { return $true }
-    if ($a -eq 198 -and ($b -eq 18 -or $b -eq 19)) { return $true }
-    if ($a -eq 198 -and $b -eq 51 -and $c -eq 100) { return $true }
-    if ($a -eq 203 -and $b -eq 0 -and $c -eq 113) { return $true }
-    if ($a -ge 224) { return $true }
-    return $false
+  $addressBytes = $Address.GetAddressBytes()
+  $networkBytes = $networkAddress.GetAddressBytes()
+  $bitCount = $addressBytes.Length * 8
+  if ($PrefixLength -lt 0 -or $PrefixLength -gt $bitCount) {
+    throw "Invalid CIDR prefix length $PrefixLength for $Network."
   }
 
+  $fullBytes = [Math]::Floor($PrefixLength / 8)
+  for ($i = 0; $i -lt $fullBytes; $i++) {
+    if ($addressBytes[$i] -ne $networkBytes[$i]) { return $false }
+  }
+
+  $remainingBits = $PrefixLength % 8
+  if ($remainingBits -eq 0) { return $true }
+  $mask = [byte](0xFF -band (0xFF -shl (8 - $remainingBits)))
+  return (($addressBytes[$fullBytes] -band $mask) -eq ($networkBytes[$fullBytes] -band $mask))
+}
+
+function Test-GloballyRoutableIp([System.Net.IPAddress]$Address) {
+  if ($Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+    foreach ($blocked in @(
+      @('0.0.0.0', 8),
+      @('10.0.0.0', 8),
+      @('100.64.0.0', 10),
+      @('127.0.0.0', 8),
+      @('169.254.0.0', 16),
+      @('172.16.0.0', 12),
+      @('192.0.0.0', 24),
+      @('192.0.2.0', 24),
+      @('192.88.99.0', 24),
+      @('192.168.0.0', 16),
+      @('198.18.0.0', 15),
+      @('198.51.100.0', 24),
+      @('203.0.113.0', 24),
+      @('224.0.0.0', 4),
+      @('240.0.0.0', 4)
+    )) {
+      if (Test-IpInCidr -Address $Address -Network ([string]$blocked[0]) -PrefixLength ([int]$blocked[1])) {
+        return $false
+      }
+    }
+    return $true
+  }
+
+  if ($Address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetworkV6) {
+    return $false
+  }
+  if ($Address.IsIPv4MappedToIPv6) {
+    return Test-GloballyRoutableIp ($Address.MapToIPv4())
+  }
   if ($Address.Equals([System.Net.IPAddress]::IPv6Any) -or
       $Address.Equals([System.Net.IPAddress]::IPv6Loopback) -or
       $Address.IsIPv6LinkLocal -or
       $Address.IsIPv6SiteLocal -or
       $Address.IsIPv6Multicast) {
-    return $true
+    return $false
   }
 
-  if (([int]$bytes[0] -band 0xfe) -eq 0xfc) { return $true }
-  if ($bytes.Length -ge 4 -and $bytes[0] -eq 0x20 -and $bytes[1] -eq 0x01 -and $bytes[2] -eq 0x0d -and $bytes[3] -eq 0xb8) { return $true }
+  if (-not (Test-IpInCidr -Address $Address -Network '2000::' -PrefixLength 3)) { return $false }
+  foreach ($blocked in @(
+    @('2001:2::', 48),
+    @('2001:db8::', 32),
+    @('2001:10::', 28),
+    @('2001:20::', 28)
+  )) {
+    if (Test-IpInCidr -Address $Address -Network ([string]$blocked[0]) -PrefixLength ([int]$blocked[1])) {
+      return $false
+    }
+  }
+  return $true
+}
+
+function Test-ReservedPublicDnsName([string]$HostName) {
+  $normalized = $HostName.TrimEnd('.').ToLowerInvariant()
+  foreach ($suffix in @(
+    'localhost', 'local', 'invalid', 'test', 'example',
+    'example.com', 'example.net', 'example.org',
+    'onion', 'alt', 'arpa', 'internal'
+  )) {
+    if ($normalized -eq $suffix -or $normalized.EndsWith('.' + $suffix, [System.StringComparison]::Ordinal)) {
+      return $true
+    }
+  }
   return $false
 }
 
@@ -83,7 +139,7 @@ if ($isIp) {
     $parsedIp = $parsedIp.MapToIPv4()
   }
   $publicHostValue = $parsedIp.ToString()
-  if ((Test-NonPublicIp $parsedIp) -and -not $AllowPrivateAddress) {
+  if (-not (Test-GloballyRoutableIp $parsedIp) -and -not $AllowPrivateAddress) {
     throw "Public host '$publicHostValue' is private, local, CGNAT, documentation, multicast, or otherwise non-public. Use -AllowPrivateAddress only for controlled lab testing."
   }
   if ($parsedIp.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
@@ -103,9 +159,8 @@ if ($isIp) {
     throw "Invalid public DNS name: $PublicHost"
   }
   $labels = @($publicHostValue.Split('.', [System.StringSplitOptions]::RemoveEmptyEntries))
-  $reservedDnsSuffixes = @('.localhost', '.local', '.invalid', '.test', '.example')
-  if ($labels.Count -lt 2 -or $publicHostValue -ceq 'localhost' -or @($reservedDnsSuffixes | Where-Object { $publicHostValue.EndsWith($_, [System.StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) {
-    throw "Public DNS name '$publicHostValue' is local, single-label, or reserved for testing/documentation."
+  if ($labels.Count -lt 2 -or (Test-ReservedPublicDnsName $publicHostValue)) {
+    throw "Public DNS name '$publicHostValue' is local, single-label, or reserved for testing/documentation/private/special use."
   }
   $addressPrefix = "/dns/$publicHostValue"
   $isDns = $true
@@ -167,9 +222,10 @@ if ($isDns -and ($Start -or $RequireDnsResolution)) {
   if ($resolved.Count -eq 0) {
     throw "Public DNS name '$publicHostValue' resolved to no addresses."
   }
-  $publicResolved = @($resolved | Where-Object { -not (Test-NonPublicIp $_) })
-  if ($publicResolved.Count -eq 0 -and -not $AllowPrivateAddress) {
-    throw "Public DNS name '$publicHostValue' resolves only to private, local, or special-use addresses."
+  $nonPublicResolved = @($resolved | Where-Object { -not (Test-GloballyRoutableIp $_) })
+  if ($nonPublicResolved.Count -gt 0 -and -not $AllowPrivateAddress) {
+    $joined = ($nonPublicResolved | ForEach-Object { $_.ToString() }) -join ', '
+    throw "Public DNS name '$publicHostValue' resolves to non-public address(es): $joined"
   }
 }
 

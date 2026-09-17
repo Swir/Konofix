@@ -31,6 +31,8 @@ A public Node needs a globally reachable IP address or DNS name and the same por
 
 The installer never modifies a firewall. Allow the selected TCP and UDP port in the VPS/provider firewall and, when present, the host firewall. Do not claim QUIC success merely because UDP is allowed; the real QUIC scenario still has to pass the Konofix/libp2p test campaign.
 
+The Linux deployment preflight uses the same fail-closed public-host policy as the Windows readiness/evidence tooling. Literal addresses must be globally routable, while DNS names must be public-looking FQDNs and cannot live below special/private-use namespaces such as `localhost`, `.local`, `.test`, `.example`, `example.com`, `example.net`, `example.org`, `.onion`, `.alt`, `.arpa`, or `.internal`. With `--require-dns-resolution`, every compatible DNS answer must also be globally routable.
+
 ## Preview the service first
 
 Extract the verified Linux bundle, then run the installer without `--install`:
@@ -50,7 +52,7 @@ Preview mode performs validation and prints the exact systemd unit without chang
 - state and install directories are not equal, nested, lexical aliases or symlink aliases of each other,
 - neither state nor install storage resolves to `/` or a top-level system directory such as `/var` or `/usr`,
 - literal IP addresses are globally routable unless the explicit lab override is used,
-- DNS names use public-looking fully qualified syntax,
+- DNS names use public-looking fully qualified syntax and reject special/private-use namespaces,
 - `--require-dns-resolution` resolves the DNS name and rejects non-global answers.
 
 Canonical path validation is deliberate: the service grants write access only to the state directory while the staged executable belongs in a separate read-only system location. Inputs containing `.`/`..` components or symlink aliases are normalized before the unit is generated, so alternate spellings cannot bypass that separation.

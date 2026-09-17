@@ -132,10 +132,30 @@ if not host or "/" in host or any(ch.isspace() for ch in host):
     print(f"ERROR: invalid public host: {raw}", file=sys.stderr)
     raise SystemExit(2)
 
+blocked_v4 = tuple(ipaddress.ip_network(value) for value in (
+    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+    "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24",
+    "192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24",
+    "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+))
+public_v6 = ipaddress.ip_network("2000::/3")
+blocked_v6 = tuple(ipaddress.ip_network(value) for value in (
+    "2001:2::/48", "2001:db8::/32", "2001:10::/28", "2001:20::/28",
+))
+
+def is_public_evidence_address(ip: ipaddress._BaseAddress) -> bool:
+    if isinstance(ip, ipaddress.IPv4Address):
+        return not any(ip in network for network in blocked_v4)
+    if ip.ipv4_mapped is not None:
+        return is_public_evidence_address(ip.ipv4_mapped)
+    if ip.is_unspecified or ip.is_loopback or ip.is_link_local or ip.is_multicast:
+        return False
+    return ip in public_v6 and not any(ip in network for network in blocked_v6)
+
 def require_global(address: str) -> None:
     ip = ipaddress.ip_address(address)
-    if not allow_private and not ip.is_global:
-        print(f"ERROR: address is not globally routable: {ip}", file=sys.stderr)
+    if not allow_private and not is_public_evidence_address(ip):
+        print(f"ERROR: address is not globally routable under the Konofix evidence policy: {ip}", file=sys.stderr)
         raise SystemExit(3)
 
 try:
@@ -145,7 +165,12 @@ except ValueError:
     if len(lower) > 253 or "." not in lower or not re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", lower):
         print(f"ERROR: invalid public DNS name: {host}", file=sys.stderr)
         raise SystemExit(4)
-    if lower.endswith((".local", ".localhost", ".invalid", ".test", ".example")):
+    reserved_suffixes = (
+        "localhost", "local", "invalid", "test", "example",
+        "example.com", "example.net", "example.org",
+        "onion", "alt", "arpa", "internal",
+    )
+    if any(lower == suffix or lower.endswith("." + suffix) for suffix in reserved_suffixes):
         print(f"ERROR: reserved/non-public DNS name: {host}", file=sys.stderr)
         raise SystemExit(5)
     if require_dns:

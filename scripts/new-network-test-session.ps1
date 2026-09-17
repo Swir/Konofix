@@ -39,13 +39,15 @@ function Read-BoundedJson([string]$Path, [int64]$MaxBytes, [string]$Label) {
 }
 
 function Parse-Bootstrap([string]$Address, [string]$InternetTestPath) {
-    $jsonText = (& $InternetTestPath -Bootstrap $Address -ValidateOnly -AsJson | Out-String).Trim()
+    $jsonText = (& $InternetTestPath -Bootstrap $Address -ValidateOnly -AsJson -RequirePublicHost -RequireDnsResolution | Out-String).Trim()
     Assert-True (-not [string]::IsNullOrWhiteSpace($jsonText)) "Bootstrap validation returned no structured result for: $Address"
     try {
-        return $jsonText | ConvertFrom-Json
+        $parsed = $jsonText | ConvertFrom-Json
     } catch {
         throw "Bootstrap validation returned invalid JSON for '$Address': $($_.Exception.Message)"
     }
+    Assert-True ([bool]$parsed.public_host_validated) "Bootstrap did not pass the globally-routable public-host policy: $Address"
+    return $parsed
 }
 
 $bundleRoot = Split-Path $PSScriptRoot -Parent
@@ -175,7 +177,7 @@ try {
     Move-Item -LiteralPath $stagingDirectory -Destination $finalDirectory
     Write-Host '=== Konofix real-network test session ===' -ForegroundColor Cyan
     Write-Host "PASS: exact build $version / $sourceCommit and packaged Node bytes verified." -ForegroundColor Green
-    Write-Host "PASS: paired TCP/QUIC bootstrap host, port and Peer ID verified: $($tcp.peer_id)" -ForegroundColor Green
+    Write-Host "PASS: globally-routable paired TCP/QUIC bootstrap host, port and Peer ID verified: $($tcp.peer_id)" -ForegroundColor Green
     Write-Host "Created five PENDING scenario manifests atomically under: $finalDirectory" -ForegroundColor Green
     Write-Host 'Next: run bootstrap reachability from both clients, execute each scenario, and record observations with set-network-test-result.ps1.' -ForegroundColor Yellow
 } catch {

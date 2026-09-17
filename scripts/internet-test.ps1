@@ -1,11 +1,136 @@
+[CmdletBinding()]
 param(
   [Parameter(Mandatory=$true)]
   [string]$Bootstrap,
   [switch]$ValidateOnly,
-  [switch]$AsJson
+  [switch]$AsJson,
+  [switch]$RequirePublicHost,
+  [switch]$RequireDnsResolution
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Test-IpInCidr([System.Net.IPAddress]$Address, [string]$Network, [int]$PrefixLength) {
+  $networkAddress = [System.Net.IPAddress]::Parse($Network)
+  if ($Address.AddressFamily -ne $networkAddress.AddressFamily) { return $false }
+
+  $addressBytes = $Address.GetAddressBytes()
+  $networkBytes = $networkAddress.GetAddressBytes()
+  $bitCount = $addressBytes.Length * 8
+  if ($PrefixLength -lt 0 -or $PrefixLength -gt $bitCount) {
+    throw "Invalid CIDR prefix length $PrefixLength for $Network."
+  }
+
+  $fullBytes = [Math]::Floor($PrefixLength / 8)
+  for ($i = 0; $i -lt $fullBytes; $i++) {
+    if ($addressBytes[$i] -ne $networkBytes[$i]) { return $false }
+  }
+
+  $remainingBits = $PrefixLength % 8
+  if ($remainingBits -eq 0) { return $true }
+  $mask = [byte](0xFF -band (0xFF -shl (8 - $remainingBits)))
+  return (($addressBytes[$fullBytes] -band $mask) -eq ($networkBytes[$fullBytes] -band $mask))
+}
+
+function Test-GloballyRoutableIp([System.Net.IPAddress]$Address) {
+  if ($Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+    foreach ($blocked in @(
+      @('0.0.0.0', 8),
+      @('10.0.0.0', 8),
+      @('100.64.0.0', 10),
+      @('127.0.0.0', 8),
+      @('169.254.0.0', 16),
+      @('172.16.0.0', 12),
+      @('192.0.0.0', 24),
+      @('192.0.2.0', 24),
+      @('192.88.99.0', 24),
+      @('192.168.0.0', 16),
+      @('198.18.0.0', 15),
+      @('198.51.100.0', 24),
+      @('203.0.113.0', 24),
+      @('224.0.0.0', 4),
+      @('240.0.0.0', 4)
+    )) {
+      if (Test-IpInCidr -Address $Address -Network ([string]$blocked[0]) -PrefixLength ([int]$blocked[1])) {
+        return $false
+      }
+    }
+    return $true
+  }
+
+  if ($Address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetworkV6) {
+    return $false
+  }
+  if ($Address.IsIPv4MappedToIPv6) {
+    return Test-GloballyRoutableIp ($Address.MapToIPv4())
+  }
+  if ($Address.Equals([System.Net.IPAddress]::IPv6Any) -or
+      $Address.Equals([System.Net.IPAddress]::IPv6Loopback) -or
+      $Address.IsIPv6LinkLocal -or
+      $Address.IsIPv6SiteLocal -or
+      $Address.IsIPv6Multicast) {
+    return $false
+  }
+
+  # Public evidence deliberately accepts only IPv6 global-unicast space and excludes
+  # documentation/benchmark/ORCHID special-use ranges that sit inside 2000::/3.
+  if (-not (Test-IpInCidr -Address $Address -Network '2000::' -PrefixLength 3)) { return $false }
+  foreach ($blocked in @(
+    @('2001:2::', 48),
+    @('2001:db8::', 32),
+    @('2001:10::', 28),
+    @('2001:20::', 28)
+  )) {
+    if (Test-IpInCidr -Address $Address -Network ([string]$blocked[0]) -PrefixLength ([int]$blocked[1])) {
+      return $false
+    }
+  }
+  return $true
+}
+
+function Test-ReservedPublicDnsName([string]$HostName) {
+  $normalized = $HostName.TrimEnd('.').ToLowerInvariant()
+
+  # Public-node evidence deliberately rejects DNS namespaces designated for
+  # documentation, private/local use, alternate resolution, onion services or
+  # DNS protocol infrastructure. IANA special-use status applies to subdomains too.
+  foreach ($suffix in @(
+    'localhost', 'local', 'invalid', 'test', 'example',
+    'example.com', 'example.net', 'example.org',
+    'onion', 'alt', 'arpa', 'internal'
+  )) {
+    if ($normalized -eq $suffix -or $normalized.EndsWith('.' + $suffix, [System.StringComparison]::Ordinal)) {
+      return $true
+    }
+  }
+  return $false
+}
+
+function Resolve-PublicDnsAddresses([string]$HostProtocol, [string]$HostName) {
+  try {
+    $resolved = @([System.Net.Dns]::GetHostAddresses($HostName))
+  } catch {
+    throw "DNS bootstrap host '$HostName' could not be resolved: $($_.Exception.GetBaseException().Message)"
+  }
+
+  if ($HostProtocol -eq 'dns4') {
+    $resolved = @($resolved | Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork })
+  } elseif ($HostProtocol -eq 'dns6') {
+    $resolved = @($resolved | Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetworkV6 })
+  }
+
+  if ($resolved.Count -eq 0) {
+    throw "DNS bootstrap host '$HostName' returned no addresses compatible with '$HostProtocol'."
+  }
+
+  $nonPublic = @($resolved | Where-Object { -not (Test-GloballyRoutableIp $_) })
+  if ($nonPublic.Count -gt 0) {
+    $joined = ($nonPublic | ForEach-Object { $_.ToString() }) -join ', '
+    throw "DNS bootstrap host '$HostName' resolves to non-public address(es): $joined"
+  }
+
+  return @($resolved | ForEach-Object { $_.ToString() } | Sort-Object -Unique)
+}
 
 function Parse-KonofixBootstrap([string]$Address) {
   $value = $Address.Trim()
@@ -80,14 +205,46 @@ function Parse-KonofixBootstrap([string]$Address) {
 }
 
 $parsed = Parse-KonofixBootstrap $Bootstrap
+$resolvedAddresses = @()
+$strictPublicValidation = $RequirePublicHost -or $RequireDnsResolution
+
+if ($strictPublicValidation) {
+  if ($parsed.host_protocol -in @('ip4', 'ip6')) {
+    $parsedIp = [System.Net.IPAddress]::Parse([string]$parsed.host)
+    if (-not (Test-GloballyRoutableIp $parsedIp)) {
+      throw "Bootstrap IP '$($parsed.host)' is not globally routable and cannot be used as public-node evidence."
+    }
+    $resolvedAddresses = @([string]$parsed.host)
+  } else {
+    if ([string]$parsed.host -notmatch '\.') {
+      throw "DNS bootstrap host '$($parsed.host)' must be a fully-qualified public hostname for public-node evidence."
+    }
+    if (Test-ReservedPublicDnsName ([string]$parsed.host)) {
+      throw "DNS bootstrap host '$($parsed.host)' uses a reserved/private/special-use suffix and cannot be used as public-node evidence."
+    }
+    if ($RequireDnsResolution) {
+      $resolvedAddresses = @(Resolve-PublicDnsAddresses -HostProtocol ([string]$parsed.host_protocol) -HostName ([string]$parsed.host))
+    }
+  }
+}
+
+$parsed | Add-Member -NotePropertyName public_host_validated -NotePropertyValue ([bool]$strictPublicValidation) -Force
+$parsed | Add-Member -NotePropertyName dns_resolution_checked -NotePropertyValue ([bool]($RequireDnsResolution -and $parsed.host_protocol -in @('dns', 'dns4', 'dns6'))) -Force
+$parsed | Add-Member -NotePropertyName resolved_addresses -NotePropertyValue @($resolvedAddresses) -Force
 
 if ($AsJson) {
-  $parsed | ConvertTo-Json -Compress
+  $parsed | ConvertTo-Json -Depth 4 -Compress
 } else {
   Write-Host '=== Konofix Chat 0.4.2 - INTERNET PRECHECK ===' -ForegroundColor Cyan
   Write-Host "Bootstrap: $($parsed.address)"
   Write-Host "Host: $($parsed.host)  Port: $($parsed.port)  Transport: $($parsed.transport)" -ForegroundColor Yellow
   Write-Host "Peer ID: $($parsed.peer_id)" -ForegroundColor DarkGray
+  if ($strictPublicValidation) {
+    Write-Host 'Public-host policy: globally routable endpoint required.' -ForegroundColor Green
+  }
+  if ($resolvedAddresses.Count -gt 0) {
+    Write-Host "Resolved public address(es): $($resolvedAddresses -join ', ')" -ForegroundColor DarkGray
+  }
 }
 
 if (-not $ValidateOnly) {

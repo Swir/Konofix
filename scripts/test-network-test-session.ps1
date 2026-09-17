@@ -57,8 +57,8 @@ try {
     $fixtureRoot = Join-Path $temp 'bundle'
     $buildInfoPath = New-BuildFixture $fixtureRoot
     $outputRoot = Join-Path $temp 'results'
-    $tcp = "/dns/node.example.org/tcp/45555/p2p/$peer"
-    $quic = "/dns/node.example.org/udp/45555/quic-v1/p2p/$peer"
+    $tcp = "/ip4/8.8.8.8/tcp/45555/p2p/$peer"
+    $quic = "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$peer"
 
     Invoke-Session -BuildInfoPath $buildInfoPath -OutputRoot $outputRoot -Name 'valid-session' -Tcp $tcp -Quic $quic
     $sessionRoot = Join-Path $outputRoot 'valid-session'
@@ -116,8 +116,10 @@ try {
         -ExpectedBootstrapPeerId $peer `
         -AsJson) | ConvertFrom-Json
     Assert-True ([string]$validated.status -ceq 'PASS') 'Session consistency validator did not return PASS.'
+    Assert-True ([int]$validated.schema -eq 2) 'Session consistency validator schema mismatch.'
+    Assert-True ([bool]$validated.public_host_validated) 'Session consistency validator did not record public-host validation.'
     Assert-True ([int]$validated.manifest_count -eq 5) 'Session consistency validator did not report five manifests.'
-    Write-Host 'PASS: valid exact-build five-scenario session and session consistency' -ForegroundColor Green
+    Write-Host 'PASS: valid exact-build five-scenario session, public endpoint policy and session consistency' -ForegroundColor Green
 
     $tcpManifestPath = ($manifests | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).scenario -ceq 'TCP' } | Select-Object -First 1).FullName
     $originalTcpManifest = Get-Content -LiteralPath $tcpManifestPath -Raw
@@ -130,7 +132,7 @@ try {
     Set-Content -LiteralPath $tcpManifestPath -Value $originalTcpManifest -Encoding utf8
 
     $wrongBootstrap = $originalTcpManifest | ConvertFrom-Json
-    $wrongBootstrap.bootstrap = "/dns/node.example.org/tcp/45555/p2p/$otherPeer"
+    $wrongBootstrap.bootstrap = "/ip4/1.1.1.1/tcp/45555/p2p/$otherPeer"
     $wrongBootstrap | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $tcpManifestPath -Encoding utf8
     Expect-Fail 'manifest bootstrap outside paired session identity' {
         & $validator -SessionInfoPath $sessionInfoPath -Manifest $manifestPaths | Out-Null
@@ -146,6 +148,15 @@ try {
     }
     Set-Content -LiteralPath $sessionInfoPath -Value $originalSessionInfo -Encoding utf8
 
+    $nonPublicSession = $originalSessionInfo | ConvertFrom-Json
+    $nonPublicSession.tcp_bootstrap = "/ip4/203.0.113.10/tcp/45555/p2p/$peer"
+    $nonPublicSession.quic_bootstrap = "/ip4/203.0.113.10/udp/45555/quic-v1/p2p/$peer"
+    $nonPublicSession | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $sessionInfoPath -Encoding utf8
+    Expect-Fail 'tampered session using documentation-only bootstrap' {
+        & $validator -SessionInfoPath $sessionInfoPath -Manifest $manifestPaths | Out-Null
+    }
+    Set-Content -LiteralPath $sessionInfoPath -Value $originalSessionInfo -Encoding utf8
+
     $tamperRoot = Join-Path $temp 'tampered-bundle'
     $tamperBuild = New-BuildFixture $tamperRoot
     Add-Content -LiteralPath (Join-Path $tamperRoot 'konofix-node.exe') -Value 'tamper' -Encoding ascii
@@ -154,11 +165,18 @@ try {
     }
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $outputRoot 'tampered-node'))) 'Tampered Node failure left a final session directory.'
 
-    $mismatchQuic = "/dns/node.example.org/udp/45555/quic-v1/p2p/$otherPeer"
+    $mismatchQuic = "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$otherPeer"
     Expect-Fail 'mismatched TCP/QUIC Peer IDs' {
         Invoke-Session -BuildInfoPath $buildInfoPath -OutputRoot $outputRoot -Name 'peer-mismatch' -Tcp $tcp -Quic $mismatchQuic
     }
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $outputRoot 'peer-mismatch'))) 'Peer mismatch failure left a final session directory.'
+
+    $documentationTcp = "/ip4/203.0.113.10/tcp/45555/p2p/$peer"
+    $documentationQuic = "/ip4/203.0.113.10/udp/45555/quic-v1/p2p/$peer"
+    Expect-Fail 'documentation-only bootstrap cannot create promotion session' {
+        Invoke-Session -BuildInfoPath $buildInfoPath -OutputRoot $outputRoot -Name 'documentation-bootstrap' -Tcp $documentationTcp -Quic $documentationQuic
+    }
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $outputRoot 'documentation-bootstrap'))) 'Non-public bootstrap failure left a final session directory.'
 
     Expect-Fail 'same network/operator' {
         Invoke-Session -BuildInfoPath $buildInfoPath -OutputRoot $outputRoot -Name 'same-network' -Tcp $tcp -Quic $quic -NetworkB 'Operator-A LTE'

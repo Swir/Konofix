@@ -28,8 +28,8 @@ try {
     $peer = '12D3KooWQd1w4w6m7rV8xY9ZaBcDeFgHiJkMnPqRsTuVwXyZ12'
     $otherPeer = '12D3KooWRsTuVwXyZ12Qd1w4w6m7rV8xY9ZaBcDeFgHiJkMnPq'
     $sourceCommit = '0123456789abcdef0123456789abcdef01234567'
-    $tcp = "/ip4/203.0.113.10/tcp/45555/p2p/$peer"
-    $quic = "/ip4/203.0.113.10/udp/45555/quic-v1/p2p/$peer"
+    $tcp = "/ip4/8.8.8.8/tcp/45555/p2p/$peer"
+    $quic = "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$peer"
     $healthPath = Join-Path $tempRoot 'health.json'
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -59,20 +59,30 @@ try {
     if (-not $positive.ready -or [string]$positive.peer_id -cne $peer) {
         throw 'Positive readiness fixture did not produce the expected ready result.'
     }
+    if (-not $positive.public_host_validated) {
+        throw 'Readiness result must prove the public-host policy gate passed.'
+    }
+    if ([int]$positive.schema -ne 2) {
+        throw 'Readiness result schema must be 2 after adding public-host evidence.'
+    }
+    $resolved = @($positive.resolved_addresses)
+    if ($resolved.Count -ne 1 -or [string]$resolved[0] -cne '8.8.8.8') {
+        throw 'Literal public endpoint should be preserved as resolved public evidence.'
+    }
     if (-not $positive.quic_multiaddr_validated -or $positive.quic_handshake_proven) {
         throw 'Readiness result must validate the QUIC address without claiming a handshake it did not perform.'
     }
 
     Expect-Failure -Contains 'same Konofix Node Peer ID' -Action {
-        & $validator -TcpBootstrap $tcp -QuicBootstrap "/ip4/203.0.113.10/udp/45555/quic-v1/p2p/$otherPeer" -HealthPath $healthPath -SkipTcpReachability -AsJson | Out-Null
+        & $validator -TcpBootstrap $tcp -QuicBootstrap "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$otherPeer" -HealthPath $healthPath -SkipTcpReachability -AsJson | Out-Null
     }
 
     Expect-Failure -Contains 'same public host' -Action {
-        & $validator -TcpBootstrap $tcp -QuicBootstrap "/ip4/198.51.100.20/udp/45555/quic-v1/p2p/$peer" -HealthPath $healthPath -SkipTcpReachability -AsJson | Out-Null
+        & $validator -TcpBootstrap $tcp -QuicBootstrap "/ip4/1.1.1.1/udp/45555/quic-v1/p2p/$peer" -HealthPath $healthPath -SkipTcpReachability -AsJson | Out-Null
     }
 
     Expect-Failure -Contains 'same port' -Action {
-        & $validator -TcpBootstrap $tcp -QuicBootstrap "/ip4/203.0.113.10/udp/45556/quic-v1/p2p/$peer" -HealthPath $healthPath -SkipTcpReachability -AsJson | Out-Null
+        & $validator -TcpBootstrap $tcp -QuicBootstrap "/ip4/8.8.8.8/udp/45556/quic-v1/p2p/$peer" -HealthPath $healthPath -SkipTcpReachability -AsJson | Out-Null
     }
 
     Expect-Failure -Contains 'TcpBootstrap must use TCP' -Action {
@@ -81,6 +91,14 @@ try {
 
     Expect-Failure -Contains 'QuicBootstrap must use UDP/QUIC v1' -Action {
         & $validator -TcpBootstrap $tcp -QuicBootstrap $tcp -HealthPath $healthPath -SkipTcpReachability -AsJson | Out-Null
+    }
+
+    Expect-Failure -Contains 'not globally routable' -Action {
+        & $validator -TcpBootstrap "/ip4/203.0.113.10/tcp/45555/p2p/$peer" -QuicBootstrap "/ip4/203.0.113.10/udp/45555/quic-v1/p2p/$peer" -HealthPath $healthPath -SkipTcpReachability -AsJson | Out-Null
+    }
+
+    Expect-Failure -Contains 'not globally routable' -Action {
+        & $validator -TcpBootstrap "/ip4/127.0.0.1/tcp/45555/p2p/$peer" -QuicBootstrap "/ip4/127.0.0.1/udp/45555/quic-v1/p2p/$peer" -HealthPath $healthPath -SkipTcpReachability -AsJson | Out-Null
     }
 
     $health.status = 'stopped'

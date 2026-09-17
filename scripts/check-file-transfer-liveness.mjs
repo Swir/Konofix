@@ -122,9 +122,9 @@ if (cancelStart < 0) {
   const cancelEnd = text.indexOf('request_response::Message::Response', cancelStart);
   const cancel = text.slice(cancelStart, cancelEnd > cancelStart ? cancelEnd : cancelStart + 8000);
   for (const [needle, message] of [
-    ['pending_incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false)', 'cancel must authenticate pending-offer ownership before removal.'],
-    ['incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false)', 'cancel must authenticate accepted-transfer ownership before removal.'],
-    ['outgoing.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false)', 'cancel must authenticate outgoing-transfer ownership before removal.'],
+    ['let pending_matches = pending_incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);', 'cancel must authenticate pending-offer ownership before removal.'],
+    ['let incoming_matches = incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);', 'cancel must authenticate accepted-transfer ownership before removal.'],
+    ['let outgoing_matches = outgoing.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);', 'cancel must authenticate outgoing-transfer ownership before removal.'],
     ['let matched = pending_matches || incoming_matches || outgoing_matches;', 'cancel must track whether any peer-owned state matched.'],
     ['FileResponse::Error { message: "Transfer not found for requesting peer.".into() }', 'late or unrelated Cancel must fail closed without deleting unrelated state.'],
   ]) {

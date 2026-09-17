@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 
 const README_PATH = process.argv[2] || 'README.md';
-const STANDARD_MARKER = '<!-- SWIR-README-STANDARD:v1 -->';
+const STANDARD_MARKER = '<!-- SWIR-README-STANDARD:v2 -->';
+const HERO_PATH = 'assets/readme/hero.svg';
 const readme = fs.readFileSync(README_PATH, 'utf8');
 
 const fail = (message) => {
@@ -9,14 +10,14 @@ const fail = (message) => {
   process.exitCode = 1;
 };
 
-const markerPattern = /^\uFEFF?<!-- SWIR-README-STANDARD:v1 -->\r?\n/;
+const markerPattern = /^\uFEFF?<!-- SWIR-README-STANDARD:v2 -->\r?\n/;
 if (!markerPattern.test(readme)) {
   fail(`${README_PATH} must start with ${STANDARD_MARKER}.`);
 }
 
 const requiredFragments = [
   '<div align="center">',
-  './src-tauri/icons/icon.ico',
+  `<img width="100%" src="${HERO_PATH}"`,
   'https://raw.githubusercontent.com/Swir/Swir/main/assets/power-divider-v4.svg',
   '## Project status',
   '## Highlights',
@@ -34,6 +35,10 @@ for (const fragment of requiredFragments) {
   if (!readme.includes(fragment)) {
     fail(`${README_PATH} is missing required SWIR README fragment: ${fragment}`);
   }
+}
+
+if (!fs.existsSync(HERO_PATH)) {
+  fail(`Canonical SWIR README PRO v2 hero asset is missing: ${HERO_PATH}.`);
 }
 
 const searchHeading = '## 🔎 Search Keywords';
@@ -67,9 +72,13 @@ if (heroEnd < 0 || heroEnd > 3500) {
   fail(`${README_PATH} must have a compact centered hero near the top.`);
 }
 
-const primaryBadgeCount = (readme.slice(0, heroEnd).match(/style=for-the-badge/g) || []).length;
+const heroBlock = readme.slice(0, heroEnd);
+const primaryBadgeCount = (heroBlock.match(/style=for-the-badge/g) || []).length;
 if (primaryBadgeCount < 3 || primaryBadgeCount > 5) {
   fail(`Centered hero should contain 3-5 primary for-the-badge badges; found ${primaryBadgeCount}.`);
+}
+if (!heroBlock.includes(HERO_PATH)) {
+  fail(`Centered hero must use the local ${HERO_PATH} asset.`);
 }
 
 if (!/Real Internet Test milestone: \d+% complete/.test(readme)) {
@@ -88,5 +97,5 @@ if (!/v0\.4\.2-test1/.test(readme) || !/prerelease/i.test(readme)) {
 }
 
 if (!process.exitCode) {
-  console.log(`SWIR README standard: ${README_PATH} passes marker, information architecture, keyword, progress-truthfulness and footer checks.`);
+  console.log(`SWIR README PRO v2: ${README_PATH} passes marker, local-hero, information architecture, keyword, progress-truthfulness and footer checks.`);
 }

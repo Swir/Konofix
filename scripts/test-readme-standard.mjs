@@ -28,8 +28,9 @@ const runChecker = (name, content, expectedSuccess) => {
 try {
   runChecker('canonical', canonical, true);
   runChecker('windows-crlf', canonical.replace(/\r?\n/g, '\r\n'), true);
-  runChecker('missing-marker', canonical.replace('<!-- SWIR-README-STANDARD:v1 -->', '<!-- missing-standard -->'), false);
-  runChecker('missing-icon', canonical.replace('./src-tauri/icons/icon.ico', './missing-icon.png'), false);
+  runChecker('missing-marker', canonical.replace('<!-- SWIR-README-STANDARD:v2 -->', '<!-- missing-standard -->'), false);
+  runChecker('stale-v1-marker', canonical.replace('<!-- SWIR-README-STANDARD:v2 -->', '<!-- SWIR-README-STANDARD:v1 -->'), false);
+  runChecker('missing-local-hero', canonical.replace('assets/readme/hero.svg', 'assets/readme/missing-hero.svg'), false);
   runChecker('false-completion', canonical.replace('Real Internet Test milestone: 92% complete', 'Real Internet Test milestone: 100% complete'), false);
   runChecker('missing-prerelease-truth', canonical.replaceAll('v0.4.2-test1', 'v0.4.2'), false);
 
@@ -50,7 +51,7 @@ try {
   );
   runChecker('duplicate-keywords', duplicateKeyword, false);
 
-  console.log('SWIR README policy adversarial self-tests passed.');
+  console.log('SWIR README PRO v2 policy adversarial self-tests passed.');
 } finally {
   fs.rmSync(tempRoot, { recursive: true, force: true });
 }

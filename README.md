@@ -1,12 +1,12 @@
-<!-- SWIR-README-STANDARD:v1 -->
+<!-- SWIR-README-STANDARD:v2 -->
 
 <div align="center">
 
-<img src="./src-tauri/icons/icon.ico" width="96" height="96" alt="Konofix Chat icon" />
+<img width="100%" src="assets/readme/hero.svg" alt="Konofix Chat — ephemeral peer-to-peer messaging and direct file transfer for Windows" />
 
-# ⚡ Konofix Chat
+<br>
 
-### Ephemeral peer-to-peer messaging and direct file transfer for Windows
+**Ephemeral peer-to-peer messaging and direct file transfer for Windows**
 
 **No traditional accounts • Rust/libp2p networking • Tauri desktop UI • Public-Node test tooling**
 
@@ -19,6 +19,8 @@
 [![Linux Node CI](https://github.com/Swir/Konofix/actions/workflows/linux-node-ci.yml/badge.svg)](https://github.com/Swir/Konofix/actions/workflows/linux-node-ci.yml)
 [![Stars](https://img.shields.io/github/stars/Swir/Konofix?style=flat-square&color=0088FF)](https://github.com/Swir/Konofix/stargazers)
 [![Test Release](https://img.shields.io/badge/test_release-v0.4.2--test1-0088FF?style=flat-square)](https://github.com/Swir/Konofix/releases/tag/v0.4.2-test1)
+
+[**Highlights**](#highlights) · [**Quick Start**](#quick-start) · [**Architecture**](#architecture) · [**Roadmap**](#roadmap) · [**Releases**](#releases)
 
 </div>
 
@@ -259,6 +261,7 @@ scripts/              CI, release, public-Node and evidence tooling
 node-linux/           Isolated headless Linux Node target
 docs/                 Operator, testing and security documentation
 .github/workflows/    Windows and Linux CI
+assets/readme/         SWIR README PRO project hero
 ```
 
 ## 🔎 Search Keywords

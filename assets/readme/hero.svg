@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="title desc">
+  <title id="title">Konofix Chat — SWIR project hero</title>
+  <desc id="desc">Dark electric-cyan banner for Konofix Chat, an ephemeral peer-to-peer messenger with direct file transfer and public-node test tooling.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#02050A"/>
+      <stop offset="0.56" stop-color="#07111C"/>
+      <stop offset="1" stop-color="#02050A"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0088FF"/>
+      <stop offset="0.5" stop-color="#62E5FF"/>
+      <stop offset="1" stop-color="#0088FF"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#62E5FF" stroke-opacity="0.05" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="320" rx="26" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1198" height="318" rx="25" fill="none" stroke="#62E5FF" stroke-opacity="0.28"/>
+  <rect width="1200" height="320" rx="26" fill="url(#grid)"/>
+
+  <path d="M0 258 C180 205 285 304 462 257 S755 213 914 252 S1085 280 1200 230" fill="none" stroke="url(#cyan)" stroke-opacity="0.25" stroke-width="2"/>
+  <path d="M780 45H1180" stroke="#62E5FF" stroke-opacity="0.14"/>
+  <path d="M1010 70H1180" stroke="#0088FF" stroke-opacity="0.22"/>
+
+  <g transform="translate(68 72)">
+    <rect width="156" height="156" rx="32" fill="#07111C" stroke="#62E5FF" stroke-opacity="0.55"/>
+    <path d="M43 42H113A18 18 0 0 1 131 60V94A18 18 0 0 1 113 112H79L56 132V112H43A18 18 0 0 1 25 94V60A18 18 0 0 1 43 42Z" fill="none" stroke="#62E5FF" stroke-width="5" filter="url(#glow)"/>
+    <circle cx="53" cy="77" r="7" fill="#62E5FF"/>
+    <circle cx="78" cy="77" r="7" fill="#0088FF"/>
+    <circle cx="103" cy="77" r="7" fill="#62E5FF"/>
+    <path d="M53 77H78M78 77H103" stroke="#62E5FF" stroke-width="2" stroke-opacity="0.65"/>
+    <path d="M91 104H114M107 97L114 104L107 111" fill="none" stroke="#0088FF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <text x="270" y="69" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="4" fill="#62E5FF">SWIR PROJECT</text>
+  <text x="270" y="145" font-family="Segoe UI, Arial, sans-serif" font-size="58" font-weight="800" fill="#F4FAFF">KONOFIX CHAT</text>
+  <text x="272" y="190" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="500" fill="#B8D2E0">Ephemeral peer-to-peer messaging and direct file transfer</text>
+  <text x="272" y="232" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="650" letter-spacing="1.4" fill="#62E5FF">WINDOWS  •  RUST / LIBP2P  •  TAURI 2  •  PUBLIC-NODE TESTING</text>
+
+  <g transform="translate(1015 242)">
+    <circle cx="0" cy="0" r="4" fill="#62E5FF" filter="url(#glow)"/>
+    <circle cx="25" cy="0" r="4" fill="#0088FF"/>
+    <circle cx="50" cy="0" r="4" fill="#62E5FF" opacity="0.5"/>
+  </g>
+</svg>

@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 
 const configPath = '.github/dependabot.yml';
-const text = fs.readFileSync(configPath, 'utf8');
+// GitHub's Windows checkout may materialize text files with CRLF while Linux uses LF.
+// Normalize before structural checks so the policy gate is semantic, not line-ending dependent.
+const text = fs.readFileSync(configPath, 'utf8').replaceAll('\r\n', '\n');
 const blocks = text.split(/\n(?=  - package-ecosystem:)/);
 
 const fail = (message) => {
@@ -80,7 +82,7 @@ if (cargoBlocks.length !== 1) {
   }
 
   const configuredMajorGroups = new Set(
-    [...cargo.matchAll(/^\s{6}([A-Za-z0-9_-]+-major):\s*$/gm)].map((match) => match[1]),
+    [...cargo.matchAll(/^ {6}([A-Za-z0-9_-]+-major): *$/gm)].map((match) => match[1]),
   );
   for (const group of configuredMajorGroups) {
     if (!expectedMajorGroups.has(group)) {

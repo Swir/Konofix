@@ -11,6 +11,8 @@ $MaxZipEntryBytes = [int64](1GB)
 $MaxZipExpandedBytes = [int64](2GB)
 $MaxZipCompressionRatio = 500.0
 $MinZipRatioCheckBytes = [int64](1MB)
+$MaxBuildInfoBytes = [int64](2MB)
+$MaxChecksumBytes = [int64](1KB)
 $WindowsReservedDeviceNamePattern = '^(?i:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9]|LPT[1-9])$'
 
 function Assert-True([bool]$Condition, [string]$Message) {
@@ -41,6 +43,19 @@ function Assert-SafeRelativePath([string]$PathValue, [string]$Label) {
   }
 }
 
+function Read-ReleaseChecksum([string]$Path, [string]$ArchivePath) {
+  $checksumItem = Get-Item -LiteralPath $Path
+  Assert-True ([int64]$checksumItem.Length -gt 0) 'SHA-256 file is empty.'
+  Assert-True ([int64]$checksumItem.Length -le $MaxChecksumBytes) "SHA-256 file is unexpectedly large. bytes=$($checksumItem.Length) max=$MaxChecksumBytes"
+  $text = (Get-Content -LiteralPath $Path -Raw).Trim()
+  $match = [regex]::Match($text, '^([0-9a-f]{64}) [ *]([^\r\n]+)$', [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+  Assert-True ($match.Success) 'SHA-256 file has an invalid format; expected exactly one lowercase SHA-256 and archive filename.'
+  $recordedName = $match.Groups[2].Value
+  $archiveName = [IO.Path]::GetFileName((Resolve-Path -LiteralPath $ArchivePath).Path)
+  Assert-True ([string]::Equals($recordedName, $archiveName, [System.StringComparison]::Ordinal)) "SHA-256 file names a different archive. expected=$archiveName actual=$recordedName"
+  return $match.Groups[1].Value
+}
+
 function Assert-SafeZipEntries([string]$ArchivePath) {
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $archiveFull = (Resolve-Path $ArchivePath).Path
@@ -65,6 +80,9 @@ function Assert-SafeZipEntries([string]$ArchivePath) {
       Assert-True ($entryLength -ge 0) "ZIP entry reports a negative expanded size: $normalized"
       Assert-True ($compressedLength -ge 0) "ZIP entry reports a negative compressed size: $normalized"
       Assert-True ($entryLength -le $MaxZipEntryBytes) "ZIP entry exceeds the expanded per-file limit: $normalized bytes=$entryLength max=$MaxZipEntryBytes"
+      if ([string]::Equals($normalized, 'BUILD_INFO.json', [System.StringComparison]::OrdinalIgnoreCase)) {
+        Assert-True ($entryLength -le $MaxBuildInfoBytes) "BUILD_INFO.json exceeds the bounded metadata size. bytes=$entryLength max=$MaxBuildInfoBytes"
+      }
       Assert-True ($expandedBytes -le ($MaxZipExpandedBytes - $entryLength)) "ZIP expanded size exceeds the verification budget. next=$normalized total_limit=$MaxZipExpandedBytes"
       $expandedBytes += $entryLength
 
@@ -84,9 +102,8 @@ Write-Host '=== Konofix Chat - RELEASE ARTIFACT VERIFY ===' -ForegroundColor Cya
 Assert-True (Test-Path $ZipPath -PathType Leaf) "Release archive is missing: $ZipPath"
 Assert-True (Test-Path $ChecksumPath -PathType Leaf) "SHA-256 file is missing: $ChecksumPath"
 
-$expected = ((Get-Content $ChecksumPath -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+$expected = Read-ReleaseChecksum -Path $ChecksumPath -ArchivePath $ZipPath
 $actual = (Get-FileHash $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-Assert-True ($expected -match '^[0-9a-f]{64}$') 'Invalid SHA-256 format.'
 Assert-True ([string]::Equals($actual, $expected, [System.StringComparison]::Ordinal)) "SHA-256 mismatch. expected=$expected actual=$actual"
 
 # Inspect entry names and resource budgets before extraction so a re-hashed archive cannot use
@@ -189,7 +206,7 @@ try {
   Assert-True (Test-Path $repoCargoLock -PathType Leaf) 'Committed repository src-tauri\Cargo.lock is missing during artifact verification.'
   Assert-True ([int64](Get-Item $repoCargoLock).Length -eq [int64](Get-Item $cargoLock).Length) 'Packaged Cargo.lock size does not match the committed Rust build input.'
   $repoCargoLockHash = (Get-FileHash $repoCargoLock -Algorithm SHA256).Hash.ToLowerInvariant()
-  Assert-True ([string]::Equals($repoCargoLockHash, [string]$lockMeta.sha256, [System.StringComparison]::Ordinal)) 'Packaged Cargo.lock does not match the committed Rust build input.'
+  Assert-True ([string]::Equals($repoCargoLockHash, [string]$lockMeta.sha256, [System.StringComparison]::Ordinal)) 'Packaged Cargo.lock.json does not match the committed Rust build input.'
 
   $installerMetadata = @($buildInfo.installers)
   Assert-True ($installerMetadata.Count -eq $installers.Count) "BUILD_INFO.json installer count mismatch. metadata=$($installerMetadata.Count) archive=$($installers.Count)"

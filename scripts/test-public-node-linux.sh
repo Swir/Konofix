@@ -152,6 +152,10 @@ expect_reject 'reserved DNS suffix' \
   --public-host node.example --binary "$FAKE_NODE" --state-dir /var/lib/k4 --install-dir /usr/local/lib/k4 --print-unit
 expect_reject 'IANA example.com documentation namespace' \
   --public-host node.example.com --binary "$FAKE_NODE" --state-dir /var/lib/k4a --install-dir /usr/local/lib/k4a --print-unit
+expect_reject 'IANA example.net documentation namespace' \
+  --public-host node.example.net --binary "$FAKE_NODE" --state-dir /var/lib/k4a2 --install-dir /usr/local/lib/k4a2 --print-unit
+expect_reject 'IANA example.org documentation namespace' \
+  --public-host node.example.org --binary "$FAKE_NODE" --state-dir /var/lib/k4a3 --install-dir /usr/local/lib/k4a3 --print-unit
 expect_reject 'private internal namespace' \
   --public-host bootstrap.internal --binary "$FAKE_NODE" --state-dir /var/lib/k4b --install-dir /usr/local/lib/k4b --print-unit
 expect_reject 'onion special-use namespace' \

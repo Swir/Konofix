@@ -114,19 +114,16 @@ def validate_wrapper(linux_root: pathlib.Path, relative: str, expected_include: 
     except OSError as exc:
         raise ParityError(f"Could not read isolated source wrapper {wrapper}: {exc}") from exc
 
-    includes = []
-    for raw in text.splitlines():
-        line = raw.strip()
-        if line.startswith("include!(") and line.endswith(");"):
-            literal = line[len("include!(") : -2].strip()
-            if len(literal) >= 2 and literal[0] == literal[-1] == '"':
-                includes.append(literal[1:-1])
-            else:
-                raise ParityError(f"Wrapper {relative} uses a non-literal include! path.")
-
-    if includes != [expected_include]:
+    expected_statement = f'include!("{expected_include}");'
+    active_lines = [
+        raw.strip()
+        for raw in text.splitlines()
+        if raw.strip() and not raw.strip().startswith("//")
+    ]
+    if active_lines != [expected_statement]:
         raise ParityError(
-            f"Wrapper {relative} must include exactly {expected_include}; found {includes or 'none'}."
+            f"Wrapper {relative} must contain only comments plus exactly {expected_statement}; "
+            f"active lines were {active_lines or 'none'}."
         )
 
     resolved = (wrapper.parent / expected_include).resolve()
@@ -181,7 +178,7 @@ def self_test(repo_root: pathlib.Path) -> None:
         (production_dir / "konofix-node.rs").write_text("fn main() {}\n", encoding="utf-8")
         (production_dir / "konofix-netprobe.rs").write_text("fn main() {}\n", encoding="utf-8")
         (wrapper_dir / "main.rs").write_text(
-            'include!("../../src-tauri/src/bin/konofix-node.rs");\n', encoding="utf-8"
+            '// canonical bridge\ninclude!("../../src-tauri/src/bin/konofix-node.rs");\n', encoding="utf-8"
         )
         (wrapper_dir / "netprobe.rs").write_text(
             'include!("../../src-tauri/src/bin/konofix-netprobe.rs");\n', encoding="utf-8"
@@ -202,6 +199,14 @@ def self_test(repo_root: pathlib.Path) -> None:
         )
         expect_failure(
             "commented include decoy",
+            lambda: validate_wrapper(linux_root, "src/main.rs", EXPECTED_WRAPPERS["src/main.rs"]),
+        )
+
+        (wrapper_dir / "main.rs").write_text(
+            'fn shadow_linux_only() {}\ninclude!("../../src-tauri/src/bin/konofix-node.rs");\n', encoding="utf-8"
+        )
+        expect_failure(
+            "extra Linux-only executable source",
             lambda: validate_wrapper(linux_root, "src/main.rs", EXPECTED_WRAPPERS["src/main.rs"]),
         )
 

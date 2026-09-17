@@ -70,6 +70,12 @@ const cases = [
     replacement: 'echo "production audit accidentally removed"',
     expected: 'production Cargo.lock',
   },
+  {
+    name: 'policy document trigger removed',
+    source: "      - 'docs/RUSTSEC_AUDIT.md'\n",
+    replacement: '',
+    expected: "pull-request trigger is missing 'docs/RUSTSEC_AUDIT.md'",
+  },
 ];
 
 for (const testCase of cases) {

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "audit": "node scripts/project-audit.mjs && node scripts/check-dependabot-config.mjs && node scripts/check-typescript-compat.mjs",
+    "audit": "node scripts/project-audit.mjs && node scripts/check-dependabot-config.mjs && node scripts/check-typescript-compat.mjs && node scripts/check-readme-standard.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"

@@ -29,35 +29,11 @@ jobs:
           toolchain: stable
           components: rustfmt
 
-      - name: Isolated Node manifest parity gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import pathlib
-          import tomllib
+      - name: Isolated Node manifest/source parity self-tests
+        run: python3 scripts/check-node-linux-parity.py self-test
 
-          desktop = tomllib.loads(pathlib.Path("src-tauri/Cargo.toml").read_text(encoding="utf-8"))
-          node = tomllib.loads(pathlib.Path("node-linux/Cargo.toml").read_text(encoding="utf-8"))
-
-          checks = {
-              "package.version": (desktop["package"]["version"], node["package"]["version"]),
-              "package.rust-version": (desktop["package"]["rust-version"], node["package"]["rust-version"]),
-              "dependencies": (desktop["dependencies"], node["dependencies"]),
-              "windows dependencies": (
-                  desktop["target"]["cfg(windows)"]["dependencies"],
-                  node["target"]["cfg(windows)"]["dependencies"],
-              ),
-              "windows build-dependencies": (
-                  desktop["target"]["cfg(windows)"]["build-dependencies"],
-                  node["target"]["cfg(windows)"]["build-dependencies"],
-              ),
-          }
-          drift = [name for name, (expected, actual) in checks.items() if expected != actual]
-          if drift:
-              raise SystemExit("Isolated Linux Node manifest drift: " + ", ".join(drift))
-          print("Isolated Linux Node manifest matches the shared Rust build inputs.")
-          PY
+      - name: Isolated Node manifest/source parity gate
+        run: python3 scripts/check-node-linux-parity.py check
 
       - name: Prepare isolated Node lockfile
         shell: bash

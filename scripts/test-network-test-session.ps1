@@ -14,8 +14,9 @@ function New-BuildFixture([string]$Root, [string]$Commit = $commit) {
     $nodePath = Join-Path $Root 'konofix-node.exe'
     [IO.File]::WriteAllBytes($nodePath, [Text.Encoding]::UTF8.GetBytes('konofix-test-node-bytes'))
     $node = Get-Item -LiteralPath $nodePath
+    $nodeHash = (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $buildInfo = [ordered]@{
-        schema = 1
+        schema = 2
         product = 'Konofix Chat'
         version = '0.4.2'
         commit = $Commit
@@ -24,8 +25,13 @@ function New-BuildFixture([string]$Root, [string]$Commit = $commit) {
         node = [ordered]@{
             path = 'konofix-node.exe'
             bytes = [int64]$node.Length
-            sha256 = (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            sha256 = $nodeHash
         }
+        files = @([ordered]@{
+            path = 'konofix-node.exe'
+            bytes = [int64]$node.Length
+            sha256 = $nodeHash
+        })
     }
     $buildInfoPath = Join-Path $Root 'BUILD_INFO.json'
     $buildInfo | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $buildInfoPath -Encoding utf8

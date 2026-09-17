@@ -17,7 +17,8 @@ $buildInfo = $null
 
 if ($artifactMode) {
     $buildInfo = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json
-    if ([int]$buildInfo.schema -ne 1) {
+    $buildInfoSchema = [int]$buildInfo.schema
+    if ($buildInfoSchema -notin @(1, 2)) {
         throw "Unsupported BUILD_INFO schema '$($buildInfo.schema)'."
     }
     if ([string]::IsNullOrWhiteSpace([string]$buildInfo.version) -or

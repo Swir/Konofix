@@ -206,7 +206,7 @@ try {
   Assert-True (Test-Path $repoCargoLock -PathType Leaf) 'Committed repository src-tauri\Cargo.lock is missing during artifact verification.'
   Assert-True ([int64](Get-Item $repoCargoLock).Length -eq [int64](Get-Item $cargoLock).Length) 'Packaged Cargo.lock size does not match the committed Rust build input.'
   $repoCargoLockHash = (Get-FileHash $repoCargoLock -Algorithm SHA256).Hash.ToLowerInvariant()
-  Assert-True ([string]::Equals($repoCargoLockHash, [string]$lockMeta.sha256, [System.StringComparison]::Ordinal)) 'Packaged Cargo.lock.json does not match the committed Rust build input.'
+  Assert-True ([string]::Equals($repoCargoLockHash, [string]$lockMeta.sha256, [System.StringComparison]::Ordinal)) 'Packaged Cargo.lock does not match the committed Rust build input.'
 
   $installerMetadata = @($buildInfo.installers)
   Assert-True ($installerMetadata.Count -eq $installers.Count) "BUILD_INFO.json installer count mismatch. metadata=$($installerMetadata.Count) archive=$($installers.Count)"

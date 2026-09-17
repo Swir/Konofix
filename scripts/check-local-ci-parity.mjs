@@ -28,26 +28,41 @@ const requiredPowerShellGates = [
   'test-node-soak-collector.ps1',
 ];
 
+const workflowPowerShellGates = new Set(
+  [...workflow.matchAll(/^\s*run:\s*\.\/scripts\/([^\s'"`]+\.ps1)\s*$/gm)].map((match) => match[1]),
+);
+const localPowerShellGates = new Set(
+  [...localCheck.matchAll(/^\s*&\s+['"]\.\/scripts\/([^'"]+\.ps1)['"]\s*$/gm)].map((match) => match[1]),
+);
+
 for (const script of requiredPowerShellGates) {
-  const invocation = `./scripts/${script}`;
-  if (!workflow.includes(invocation)) {
+  if (!workflowPowerShellGates.has(script)) {
     fail(`Windows CI is missing required preflight gate ${script}.`);
   }
-  if (!localCheck.includes(invocation)) {
+  if (!localPowerShellGates.has(script)) {
     fail(`scripts/check.ps1 is missing Windows CI preflight gate ${script}.`);
   }
 }
 
-const workflowCargoChecks = [...workflow.matchAll(/^\s*run:\s*(cargo check --locked[^\r\n]+)$/gm)]
-  .map((match) => match[1].trim());
+const workflowCargoChecks = new Set(
+  [...workflow.matchAll(/^\s*run:\s*(cargo check --locked[^\r\n]+)$/gm)].map((match) => match[1].trim()),
+);
+const localCargoChecks = new Set(
+  [...localCheck.matchAll(/^\s*(cargo check --locked[^\r\n]+)$/gm)].map((match) => match[1].trim()),
+);
 
-if (workflowCargoChecks.length < 3) {
-  fail(`Expected at least three locked cargo check commands in Windows CI; found ${workflowCargoChecks.length}.`);
+if (workflowCargoChecks.size < 3) {
+  fail(`Expected at least three locked cargo check commands in Windows CI; found ${workflowCargoChecks.size}.`);
 }
 
 for (const command of workflowCargoChecks) {
-  if (!localCheck.includes(command)) {
+  if (!localCargoChecks.has(command)) {
     fail(`scripts/check.ps1 is missing Windows CI Rust check: ${command}`);
+  }
+}
+for (const command of localCargoChecks) {
+  if (!workflowCargoChecks.has(command)) {
+    fail(`scripts/check.ps1 contains a locked Rust check that Windows CI does not run: ${command}`);
   }
 }
 
@@ -57,10 +72,10 @@ const requiredTargets = [
   'cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-netprobe',
 ];
 for (const command of requiredTargets) {
-  if (!workflow.includes(command)) fail(`Windows CI is missing required Rust check: ${command}`);
-  if (!localCheck.includes(command)) fail(`scripts/check.ps1 is missing required Rust check: ${command}`);
+  if (!workflowCargoChecks.has(command)) fail(`Windows CI is missing required Rust check: ${command}`);
+  if (!localCargoChecks.has(command)) fail(`scripts/check.ps1 is missing required Rust check: ${command}`);
 }
 
 if (!process.exitCode) {
-  console.log(`Local/Windows CI preflight parity: ${requiredPowerShellGates.length} PowerShell gates and ${workflowCargoChecks.length} locked Cargo checks aligned.`);
+  console.log(`Local/Windows CI preflight parity: ${requiredPowerShellGates.length} PowerShell gates and ${workflowCargoChecks.size} locked Cargo checks aligned.`);
 }

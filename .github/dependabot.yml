@@ -10,16 +10,20 @@ updates:
     open-pull-requests-limit: 5
     rebase-strategy: "auto"
     groups:
+      # Low-risk maintenance can share one review/build cycle. Major upgrades
+      # stay ungrouped so a toolchain break has one dependency-sized blast radius.
       frontend-minor-patch:
         update-types:
           - "minor"
           - "patch"
-      frontend-major:
-        update-types:
-          - "major"
 
+  # Keep the desktop and isolated headless Node manifests on one update surface.
+  # The Linux Node CI parity gate requires shared production dependencies to
+  # stay aligned, so Dependabot must update both manifests in the same run.
   - package-ecosystem: "cargo"
-    directory: "/src-tauri"
+    directories:
+      - "/src-tauri"
+      - "/node-linux"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -28,13 +32,11 @@ updates:
     open-pull-requests-limit: 5
     rebase-strategy: "auto"
     groups:
+      # Keep routine Rust maintenance compact, but isolate major upgrades.
       rust-minor-patch:
         update-types:
           - "minor"
           - "patch"
-      rust-major:
-        update-types:
-          - "major"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -46,6 +48,11 @@ updates:
     open-pull-requests-limit: 5
     rebase-strategy: "auto"
     groups:
-      github-actions:
+      # Major Action runtime changes (for example Node runtime jumps) are
+      # intentionally reviewed one at a time just like application toolchains.
+      github-actions-minor-patch:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"

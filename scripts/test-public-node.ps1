@@ -44,20 +44,26 @@ Assert-True ($fqdn.public_host -ceq 'node.github.com') 'A trailing DNS root dot 
 $ipv6 = (& $tool -PublicHost '[2606:4700:4700::1111]' -StateDirectory $tempState -AsJson) | ConvertFrom-Json
 Assert-True ($ipv6.address_prefix -ceq '/ip6/2606:4700:4700::1111') 'IPv6 prefix is wrong.'
 
-Assert-Fails 'private IPv4 rejection' 'private, local, CGNAT, documentation, multicast, or otherwise non-public' {
-  & $tool -PublicHost '192.168.10.20' -StateDirectory $tempState -AsJson | Out-Null
-}
-Assert-Fails 'IPv4-mapped private IPv6 rejection' 'private, local, CGNAT, documentation, multicast, or otherwise non-public' {
-  & $tool -PublicHost '::ffff:192.168.10.20' -StateDirectory $tempState -AsJson | Out-Null
-}
-Assert-Fails 'CGNAT rejection' 'private, local, CGNAT, documentation, multicast, or otherwise non-public' {
-  & $tool -PublicHost '100.64.1.2' -StateDirectory $tempState -AsJson | Out-Null
-}
-Assert-Fails 'documentation IPv4 rejection' 'private, local, CGNAT, documentation, multicast, or otherwise non-public' {
-  & $tool -PublicHost '203.0.113.10' -StateDirectory $tempState -AsJson | Out-Null
-}
-Assert-Fails 'documentation IPv6 rejection' 'private, local, CGNAT, documentation, multicast, or otherwise non-public' {
-  & $tool -PublicHost '2001:db8::1' -StateDirectory $tempState -AsJson | Out-Null
+foreach ($case in @(
+  @('private IPv4 rejection', '192.168.10.20'),
+  @('IPv4-mapped private IPv6 rejection', '::ffff:192.168.10.20'),
+  @('CGNAT rejection', '100.64.1.2'),
+  @('protocol-assignment IPv4 rejection', '192.0.0.1'),
+  @('documentation IPv4 rejection', '203.0.113.10'),
+  @('deprecated relay-anycast IPv4 rejection', '192.88.99.1'),
+  @('benchmark IPv4 rejection', '198.18.0.1'),
+  @('reserved IPv4 rejection', '240.0.0.1'),
+  @('documentation IPv6 rejection', '2001:db8::1'),
+  @('benchmark IPv6 rejection', '2001:2::1'),
+  @('ORCHIDv1 IPv6 rejection', '2001:10::1'),
+  @('ORCHIDv2 IPv6 rejection', '2001:20::1'),
+  @('ULA IPv6 rejection', 'fd00::1')
+)) {
+  $label = [string]$case[0]
+  $hostValue = [string]$case[1]
+  Assert-Fails $label 'private, local, CGNAT, documentation, multicast, or otherwise non-public' {
+    & $tool -PublicHost $hostValue -StateDirectory $tempState -AsJson | Out-Null
+  }
 }
 
 $lab = (& $tool -PublicHost '192.168.10.20' -StateDirectory $tempState -AllowPrivateAddress -AsJson) | ConvertFrom-Json
@@ -67,14 +73,29 @@ $samePath = Join-Path $tempState 'state.dat'
 Assert-Fails 'identity/health collision rejection' 'Identity and health files must be different paths' {
   & $tool -PublicHost '8.8.8.8' -IdentityFile $samePath -HealthFile $samePath -AsJson | Out-Null
 }
-Assert-Fails 'reserved DNS rejection' 'local, single-label, or reserved for testing/documentation' {
-  & $tool -PublicHost 'node.example' -StateDirectory $tempState -AsJson | Out-Null
+
+foreach ($reservedName in @(
+  'node.example',
+  'node.example.com',
+  'node.example.net',
+  'node.example.org',
+  'bootstrap.internal',
+  'relay.onion',
+  'resolver.alt',
+  'router.home.arpa',
+  'printer.local',
+  'localhost'
+)) {
+  Assert-Fails "reserved DNS rejection: $reservedName" 'local, single-label, or reserved for testing/documentation/private/special use' {
+    & $tool -PublicHost $reservedName -StateDirectory $tempState -AsJson | Out-Null
+  }
 }
-Assert-Fails 'single-label DNS rejection' 'local, single-label, or reserved for testing/documentation' {
+
+Assert-Fails 'single-label DNS rejection' 'local, single-label, or reserved for testing/documentation/private/special use' {
   & $tool -PublicHost 'intranet' -StateDirectory $tempState -AsJson | Out-Null
 }
 Assert-Fails 'invalid host rejection' 'Invalid public host' {
   & $tool -PublicHost 'node.example.com/path' -StateDirectory $tempState -AsJson | Out-Null
 }
 
-Write-Host 'OK - public Node deployment preflight rejects unsafe address/state configurations and produces deterministic launch arguments.' -ForegroundColor Green
+Write-Host 'OK - public Node deployment preflight rejects non-global literal/special-use DNS endpoints, unsafe state configurations and produces deterministic launch arguments.' -ForegroundColor Green

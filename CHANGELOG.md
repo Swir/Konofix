@@ -2,6 +2,8 @@
 
 ## 0.4.2
 
+- updated the shared Rust `dirs` dependency to 7.0.0 across the desktop and isolated Linux Node manifests after full Windows and Linux CI verification; the project does not use the changed preference-directory API, and this maintenance update does not add Real Internet Test credit,
+- adopted TypeScript 7.0.2 with Vite client ambient types for CSS/asset side-effect imports and added a project-audit compatibility guard so the declaration cannot silently disappear in a later toolchain update; full Windows and Linux PR CI passed before merge and the real-network milestone remains 54/59,
 - hardened bootstrap Peer ID handling to decode base58btc and validate the libp2p multihash envelope (`identity` or `sha2-256`) before readiness/session/evidence workflows; malformed, truncated, unsupported-code, wrong-digest-length and oversized-inline identities now fail closed, and promotion/session/readiness self-tests use canonical valid identities so the stricter boundary is exercised end-to-end without adding Real Internet Test credit,
 - added scheduled Dependabot coverage for npm, Cargo and GitHub Actions, separating major dependency upgrades from grouped minor/patch maintenance and keeping update queues bounded so supply-chain drift is surfaced through reviewable pull requests,
 - added a repository security policy for private vulnerability reporting, safe report contents and supported pre-release scope; security maintenance remains independent of the 54/59 Real Internet Test evidence milestone,

@@ -218,6 +218,12 @@ if ([int]$clientProbeResult.evidence_count -ne 2) { throw 'Stable promotion requ
 if (-not [bool]$clientProbeResult.authenticated_tcp -or -not [bool]$clientProbeResult.authenticated_quic_v1) {
   throw 'Stable promotion requires authenticated direct TCP and QUIC-v1 evidence from both clients.'
 }
+if (-not [bool]$clientProbeResult.distinct_hosts) {
+  throw 'Stable promotion requires client evidence captured on two distinct Windows hosts.'
+}
+if (-not [bool]$clientProbeResult.distinct_network_contexts) {
+  throw 'Stable promotion requires client evidence captured from two distinct default-route network contexts.'
+}
 if ([string]$clientProbeResult.bootstrap_peer_id -cne $bootstrapPeer) {
   throw 'Client Netprobe evidence Peer ID does not match the validated network evidence bootstrap Peer ID.'
 }
@@ -233,7 +239,7 @@ if ([string]$clientProbeResult.bootstrap_peer_id -cne $bootstrapPeer) {
   -RequirePeerObserved
 
 $result = [ordered]@{
-  schema = 2
+  schema = 3
   status = 'PASS'
   product = $product
   version = $version
@@ -243,6 +249,8 @@ $result = [ordered]@{
   client_netprobe_evidence_count = [int]$clientProbeResult.evidence_count
   authenticated_direct_tcp = [bool]$clientProbeResult.authenticated_tcp
   authenticated_direct_quic_v1 = [bool]$clientProbeResult.authenticated_quic_v1
+  distinct_client_hosts = [bool]$clientProbeResult.distinct_hosts
+  distinct_client_network_contexts = [bool]$clientProbeResult.distinct_network_contexts
   netprobe_sha256 = [string]$clientProbeResult.netprobe_sha256
   node_soak_snapshot_count = $resolvedNodeSoakEvidence.Count
   node_binary_bytes = $actualNodeBytes
@@ -263,6 +271,8 @@ Write-Host "Bootstrap Peer ID:        $bootstrapPeer"
 Write-Host "Network manifests:        $($resolvedNetworkEvidence.Count)"
 Write-Host "Client Netprobe records:  $($clientProbeResult.evidence_count)"
 Write-Host "Authenticated TCP/QUIC:   PASS / PASS"
+Write-Host 'Distinct client hosts:    PASS'
+Write-Host 'Distinct client networks: PASS'
 Write-Host "Node soak snapshots:      $($resolvedNodeSoakEvidence.Count)"
 Write-Host "Node SHA-256:             $actualNodeHash"
-Write-Host 'PASS - packaged Node/Netprobe provenance, authenticated TCP+QUIC probes from both independent clients, one coherent cross-country test session, required network scenarios and public-Node soak evidence all match the exact verified Windows build.' -ForegroundColor Green
+Write-Host 'PASS - packaged Node/Netprobe provenance, authenticated TCP+QUIC probes from two distinct Windows hosts and default-route network contexts, one coherent cross-country test session, required network scenarios and public-Node soak evidence all match the exact verified Windows build.' -ForegroundColor Green

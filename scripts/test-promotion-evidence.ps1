@@ -101,7 +101,7 @@ function New-Probe([string]$Transport, [string]$Target) {
   }
 }
 
-function New-ClientNetprobeEvidence([string]$Role, [string]$Path, [string]$BuildInfoHash, [string]$NetprobeHash) {
+function New-ClientNetprobeEvidence([string]$Role, [string]$Path, [string]$BuildInfoHash, [string]$SessionInfoHash, [string]$NetprobeHash) {
   $id = if ($Role -ceq 'A') { 'promotion-selftest-a' } else { 'promotion-selftest-b' }
   $country = if ($Role -ceq 'A') { 'PL' } else { 'NO' }
   $network = if ($Role -ceq 'A') { 'promotion-net-a' } else { 'promotion-net-b' }
@@ -116,6 +116,7 @@ function New-ClientNetprobeEvidence([string]$Role, [string]$Path, [string]$Build
     build_version = $version
     source_commit = $sourceCommit
     build_info_sha256 = $BuildInfoHash
+    session_info_sha256 = $SessionInfoHash
     netprobe_sha256 = $NetprobeHash
     bootstrap_peer_id = $peerId
     tcp_bootstrap = $tcpBootstrap
@@ -190,11 +191,12 @@ try {
     manifests = $manifestInventory
     notes = 'promotion session fixture'
   } | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $sessionInfoPath -Encoding UTF8
+  $sessionInfoHash = (Get-FileHash -LiteralPath $sessionInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
   $clientProbeA = Join-Path $temp 'client-a-netprobe.json'
   $clientProbeB = Join-Path $temp 'client-b-netprobe.json'
-  New-ClientNetprobeEvidence -Role A -Path $clientProbeA -BuildInfoHash $buildInfoHash -NetprobeHash $netprobeHash
-  New-ClientNetprobeEvidence -Role B -Path $clientProbeB -BuildInfoHash $buildInfoHash -NetprobeHash $netprobeHash
+  New-ClientNetprobeEvidence -Role A -Path $clientProbeA -BuildInfoHash $buildInfoHash -SessionInfoHash $sessionInfoHash -NetprobeHash $netprobeHash
+  New-ClientNetprobeEvidence -Role B -Path $clientProbeB -BuildInfoHash $buildInfoHash -SessionInfoHash $sessionInfoHash -NetprobeHash $netprobeHash
   $clientProbePaths = @($clientProbeA, $clientProbeB)
 
   $soakPaths = @()

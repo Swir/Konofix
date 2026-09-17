@@ -122,9 +122,12 @@ function ConvertFrom-Base58([string]$Value) {
 
     $carry = [int]$digit
     for ($i = $decoded.Count - 1; $i -ge 0; $i--) {
-      $value = ([int]$decoded[$i] * 58) + $carry
-      $decoded[$i] = [byte]($value -band 0xFF)
-      $carry = [Math]::Floor($value / 256)
+      # PowerShell variable names are case-insensitive. Do not call this $value:
+      # that would overwrite the $Value input string and break leading-zero
+      # restoration for identity Peer IDs beginning with base58 '1'.
+      $accumulator = ([int]$decoded[$i] * 58) + $carry
+      $decoded[$i] = [byte]($accumulator -band 0xFF)
+      $carry = [Math]::Floor($accumulator / 256)
     }
     while ($carry -gt 0) {
       $decoded.Insert(0, [byte]($carry -band 0xFF))

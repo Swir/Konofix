@@ -84,16 +84,27 @@ const fixture = (completed, open, heading = '## 0.4.2 — Real Internet Test �
 {
   const progress = { ...computeProgress(54, 59), project: 'Konofix Chat', scope: '0.4.2 — Real Internet Test', source: 'ROADMAP.md' };
   const fallback = '**Verified checklist fraction: 54 of 59 tasks — 91.5%.**';
-  assert.doesNotThrow(() => validateEmbeddings(
-    `<img src="assets/readme/progress-card.svg" />\n${fallback}`,
-    `<img src="assets/readme/progress-mini.svg" />\n${fallback}`,
-    progress,
-  ));
+  const cardAlt = 'alt="Konofix Chat Real Internet Test progress — 54 of 59 verified tasks, 91.5%, in progress; release readiness is a separate gate"';
+  const miniAlt = 'alt="Konofix Chat Real Internet Test compact progress — 54 of 59 verified tasks, 91.5%, in progress"';
+  const readme = `<img src="assets/readme/progress-card.svg" ${cardAlt} />\n${fallback}`;
+  const roadmap = `<img src="assets/readme/progress-mini.svg" ${miniAlt} />\n${fallback}`;
+
+  assert.doesNotThrow(() => validateEmbeddings(readme, roadmap, progress));
   assert.throws(() => validateEmbeddings(
-    `<img src="assets/readme/progress-card.svg" />\n${fallback}`,
-    '<img src="assets/readme/progress-mini.svg" />\n**Verified checklist fraction: 54 of 59 tasks — 90.0%.**',
+    readme,
+    `<img src="assets/readme/progress-mini.svg" ${miniAlt} />\n**Verified checklist fraction: 54 of 59 tasks — 90.0%.**`,
     progress,
   ), /textual progress fallback is stale/);
+  assert.throws(() => validateEmbeddings(
+    readme.replace('91.5%, in progress; release readiness', '90.0%, in progress; release readiness'),
+    roadmap,
+    progress,
+  ), /progress-card alt text is stale/);
+  assert.throws(() => validateEmbeddings(
+    readme,
+    roadmap.replace('54 of 59 verified tasks', '53 of 59 verified tasks'),
+    progress,
+  ), /progress-mini alt text is stale/);
 }
 
 console.log('Progress SVG adversarial/unit tests: PASS');

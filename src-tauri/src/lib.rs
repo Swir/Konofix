@@ -40,6 +40,7 @@ const MAX_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_TRANSFERS_PER_DIRECTION: usize = 4;
 const MAX_PENDING_OFFERS_PER_PEER: usize = 1;
 const PENDING_FILE_OFFER_TTL_SECS: u64 = 45;
+const INCOMING_TRANSFER_IDLE_TTL_SECS: u64 = 120;
 
 // Production releases can ship community bootstrap peers here.
 // They are only discovery entry points; chat/file payloads are not stored there.
@@ -388,6 +389,11 @@ fn pending_offer_is_expired(created_at: Instant, now: Instant) -> bool {
     now.saturating_duration_since(created_at) >= Duration::from_secs(PENDING_FILE_OFFER_TTL_SECS)
 }
 
+fn incoming_transfer_is_expired(last_activity: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(last_activity)
+        >= Duration::from_secs(INCOMING_TRANSFER_IDLE_TTL_SECS)
+}
+
 #[derive(Debug)]
 struct IncomingTransfer {
     peer: PeerId,
@@ -399,6 +405,7 @@ struct IncomingTransfer {
     hasher: Sha256,
     final_path: PathBuf,
     temp_path: PathBuf,
+    last_activity: Instant,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1362,6 +1369,30 @@ async fn network_task(
                         );
                     }
                 }
+
+                let expired_incoming: Vec<String> = incoming
+                    .iter()
+                    .filter(|(_, transfer)| incoming_transfer_is_expired(transfer.last_activity, now))
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for transfer_id in expired_incoming {
+                    if let Some(transfer) = incoming.remove(&transfer_id) {
+                        let temp_path = transfer.temp_path.clone();
+                        let _ = tokio::fs::remove_file(&temp_path).await;
+                        emit_transfer(
+                            &app,
+                            &file_view_incoming(
+                                &transfer_id,
+                                &transfer,
+                                "failed",
+                                None,
+                                Some(format!(
+                                    "Transfer timed out after {INCOMING_TRANSFER_IDLE_TTL_SECS} seconds without file data."
+                                )),
+                            ),
+                        );
+                    }
+                }
             }
             Some(cmd) = rx.recv() => {
                 match cmd {
@@ -1457,6 +1488,7 @@ async fn network_task(
                                 hasher: Sha256::new(),
                                 final_path: reservation.final_path,
                                 temp_path: reservation.temp_path.clone(),
+                                last_activity: Instant::now(),
                             };
                             if swarm.behaviour_mut().file_transfer.send_response(pending.channel, FileResponse::Accepted).is_err() {
                                 let _ = tokio::fs::remove_file(&transfer.temp_path).await;
@@ -1537,6 +1569,45 @@ async fn network_task(
                 SwarmEvent::ConnectionClosed { peer_id: remote, num_established, .. } => {
                     if num_established == 0 {
                         swarm.behaviour_mut().gossipsub.remove_explicit_peer(&remote);
+
+                        let pending_from_peer: Vec<String> = pending_incoming
+                            .iter()
+                            .filter(|(_, offer)| offer.peer == remote)
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        for transfer_id in pending_from_peer {
+                            if pending_incoming.remove(&transfer_id).is_some() {
+                                let _ = app.emit(
+                                    "file-offer-expired",
+                                    serde_json::json!({
+                                        "transfer_id": transfer_id,
+                                        "peer_id": remote.to_string(),
+                                    }),
+                                );
+                            }
+                        }
+
+                        let incoming_from_peer: Vec<String> = incoming
+                            .iter()
+                            .filter(|(_, transfer)| transfer.peer == remote)
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        for transfer_id in incoming_from_peer {
+                            if let Some(transfer) = incoming.remove(&transfer_id) {
+                                let temp_path = transfer.temp_path.clone();
+                                let _ = tokio::fs::remove_file(&temp_path).await;
+                                emit_transfer(
+                                    &app,
+                                    &file_view_incoming(
+                                        &transfer_id,
+                                        &transfer,
+                                        "failed",
+                                        None,
+                                        Some("Peer disconnected before the file transfer completed.".into()),
+                                    ),
+                                );
+                            }
+                        }
                     }
                     emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączenie z peerem zamknięte");
                 }
@@ -1726,7 +1797,9 @@ async fn network_task(
                                             });
                                         }
                                         FileRequest::Chunk { transfer_id, offset, data } => {
-                                            let response = if data.len() > FILE_CHUNK_SIZE {
+                                            let response = if data.is_empty() {
+                                                FileResponse::Error { message: "Empty file chunks are not allowed.".into() }
+                                            } else if data.len() > FILE_CHUNK_SIZE {
                                                 FileResponse::Error { message: "Zbyt duży fragment pliku.".into() }
                                             } else if let Some(transfer) = incoming.get_mut(&transfer_id) {
                                                 if transfer.peer != peer {
@@ -1740,6 +1813,7 @@ async fn network_task(
                                                         Ok(()) => {
                                                             transfer.hasher.update(&data);
                                                             transfer.received += data.len() as u64;
+                                                            transfer.last_activity = Instant::now();
                                                             emit_transfer(&app, &file_view_incoming(&transfer_id, transfer, "receiving", None, None));
                                                             FileResponse::Ack { received: transfer.received }
                                                         }
@@ -2010,6 +2084,19 @@ mod file_offer_admission_tests {
             .expect("test Instant must support short subtraction");
         assert!(!pending_offer_is_expired(fresh, now));
         assert!(pending_offer_is_expired(expired, now));
+    }
+
+    #[test]
+    fn accepted_transfer_ttl_expires_only_after_the_boundary() {
+        let now = Instant::now();
+        let fresh = now
+            .checked_sub(Duration::from_secs(INCOMING_TRANSFER_IDLE_TTL_SECS - 1))
+            .expect("test Instant must support short subtraction");
+        let expired = now
+            .checked_sub(Duration::from_secs(INCOMING_TRANSFER_IDLE_TTL_SECS))
+            .expect("test Instant must support short subtraction");
+        assert!(!incoming_transfer_is_expired(fresh, now));
+        assert!(incoming_transfer_is_expired(expired, now));
     }
 }
 

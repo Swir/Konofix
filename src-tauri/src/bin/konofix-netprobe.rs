@@ -207,10 +207,7 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
         .with_behaviour(|key| {
             let identify = identify::Behaviour::new(
                 identify::Config::new("/konofix/netprobe/1.0.0".into(), key.public())
-                    .with_agent_version(format!(
-                        "Konofix-Netprobe/{}",
-                        env!("CARGO_PKG_VERSION")
-                    ))
+                    .with_agent_version(format!("Konofix-Netprobe/{}", env!("CARGO_PKG_VERSION")))
                     .with_interval(Duration::from_secs(5)),
             );
             let ping = ping::Behaviour::new(
@@ -293,7 +290,9 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
                 agent_version = Some(info.agent_version);
                 observed_peer = Some(peer_id);
             }
-            SwarmEvent::Behaviour(ProbeBehaviourEvent::Ping(event)) if event.peer == expected_peer => {
+            SwarmEvent::Behaviour(ProbeBehaviourEvent::Ping(event))
+                if event.peer == expected_peer =>
+            {
                 match event.result {
                     Ok(duration) => rtt = Some(duration),
                     Err(error) => {
@@ -321,11 +320,7 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
                 protocol_version: protocol_version.unwrap_or_default(),
                 agent_version: agent_version.unwrap_or_default(),
                 rtt_micros: rtt.as_micros().try_into().unwrap_or(u64::MAX),
-                elapsed_millis: started
-                    .elapsed()
-                    .as_millis()
-                    .try_into()
-                    .unwrap_or(u64::MAX),
+                elapsed_millis: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
                 timestamp_unix: unix_timestamp(),
             });
         }

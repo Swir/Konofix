@@ -99,7 +99,8 @@
 - canonicalized Linux public-Node state/install paths before systemd unit generation and reject root/top-level, equal, nested, lexical-alias and symlink-alias layouts so writable identity/health state cannot overlap the staged executable,
 - extended Linux installer self-tests with canonical rendering plus adversarial root, nesting, lexical-alias and symlink-alias path cases,
 - moved Linux bundle staging and integrity verification onto pull requests as well as `main` pushes, leaving only artifact upload push-only,
-- added a reusable fail-closed Linux archive provenance verifier that validates the outer checksum and inspects TAR members before extraction, rejects unsafe, duplicate, non-regular, missing or unexpected entries, verifies exact commit/version plus every recorded byte size/SHA-256, checks executable modes, and includes adversarial self-tests for tampering, extra inventory, path traversal and wrong commit/version.
+- added a reusable fail-closed Linux archive provenance verifier that validates the outer checksum and inspects TAR members before extraction, rejects unsafe, duplicate, non-regular, missing or unexpected entries, verifies exact commit/version plus every recorded byte size/SHA-256, checks executable modes, and includes adversarial self-tests for tampering, extra inventory, path traversal and wrong commit/version,
+- hardened the Linux public-Node systemd sandbox with empty capability sets, device/tmp/proc isolation, hostname/clock/kernel/control-group protections, namespace/realtime/personality/SUID restrictions, native-only syscall ABI, private keyring/IPC lifecycle and a single dedicated writable state path; installer self-tests now fail if those controls or the write-boundary invariant regress.
 
 ## 0.4.1
 

@@ -45,8 +45,28 @@ for expected in \
   'Group=konofix' \
   'Restart=on-failure' \
   'NoNewPrivileges=true' \
+  'CapabilityBoundingSet=' \
+  'AmbientCapabilities=' \
+  'PrivateTmp=true' \
+  'PrivateDevices=true' \
   'ProtectSystem=strict' \
   'ProtectHome=true' \
+  'ProtectHostname=true' \
+  'ProtectClock=true' \
+  'ProtectKernelTunables=true' \
+  'ProtectKernelModules=true' \
+  'ProtectKernelLogs=true' \
+  'ProtectControlGroups=true' \
+  'ProtectProc=invisible' \
+  'ProcSubset=pid' \
+  'RestrictNamespaces=true' \
+  'RestrictRealtime=true' \
+  'RestrictSUIDSGID=true' \
+  'LockPersonality=true' \
+  'MemoryDenyWriteExecute=true' \
+  'SystemCallArchitectures=native' \
+  'KeyringMode=private' \
+  'RemoveIPC=true' \
   'RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX' \
   'ReadWritePaths=/var/lib/konofix-selftest' \
   '--public-host 1.1.1.1' \
@@ -54,6 +74,14 @@ for expected in \
   '--health-file /var/lib/konofix-selftest/node-health.json'; do
   grep -Fq -- "$expected" <<<"$unit" || fail "Generated unit is missing: $expected"
 done
+
+# The public service must not regain ambient/bounding capabilities or a second writable tree.
+[[ "$(grep -Fxc 'CapabilityBoundingSet=' <<<"$unit")" -eq 1 ]] || fail 'CapabilityBoundingSet must be explicitly empty exactly once.'
+[[ "$(grep -Fxc 'AmbientCapabilities=' <<<"$unit")" -eq 1 ]] || fail 'AmbientCapabilities must be explicitly empty exactly once.'
+[[ "$(grep -Fc 'ReadWritePaths=' <<<"$unit")" -eq 1 ]] || fail 'Exactly one writable service path is expected.'
+if grep -Eq '^ReadWritePaths=.*(/usr|/etc|/home)(/|$)' <<<"$unit"; then
+  fail 'System/application paths must not be writable through ReadWritePaths.'
+fi
 
 preview="$(bash "$INSTALLER" \
   --public-host node.example.net \

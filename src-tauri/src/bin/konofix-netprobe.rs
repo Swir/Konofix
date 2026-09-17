@@ -95,20 +95,29 @@ fn parse_target(raw: &str) -> Result<ProbeTarget, String> {
         _ => return Err("Target multiaddr must end in /p2p/<PeerId>.".into()),
     };
 
-    let mut tcp_count = 0usize;
-    let mut udp_count = 0usize;
-    let mut quic_v1_count = 0usize;
+    let mut shape = Vec::new();
     let mut peer_count = 0usize;
     let mut has_circuit = false;
 
     for protocol in address.iter() {
         match protocol {
-            Protocol::Tcp(_) => tcp_count += 1,
-            Protocol::Udp(_) => udp_count += 1,
-            Protocol::QuicV1 => quic_v1_count += 1,
-            Protocol::P2p(_) => peer_count += 1,
-            Protocol::P2pCircuit => has_circuit = true,
-            _ => {}
+            Protocol::Ip4(_)
+            | Protocol::Ip6(_)
+            | Protocol::Dns(_)
+            | Protocol::Dns4(_)
+            | Protocol::Dns6(_) => shape.push("host"),
+            Protocol::Tcp(_) => shape.push("tcp"),
+            Protocol::Udp(_) => shape.push("udp"),
+            Protocol::QuicV1 => shape.push("quic-v1"),
+            Protocol::P2p(_) => {
+                peer_count += 1;
+                shape.push("p2p");
+            }
+            Protocol::P2pCircuit => {
+                has_circuit = true;
+                shape.push("p2p-circuit");
+            }
+            _ => shape.push("other"),
         }
     }
 
@@ -119,10 +128,15 @@ fn parse_target(raw: &str) -> Result<ProbeTarget, String> {
         return Err("Relay targets are not valid direct transport probes.".into());
     }
 
-    let transport = match (tcp_count, udp_count, quic_v1_count) {
-        (1, 0, 0) => ProbeTransport::Tcp,
-        (0, 1, 1) => ProbeTransport::QuicV1,
-        _ => return Err("Target must contain exactly one direct TCP or QUIC-v1 transport.".into()),
+    let transport = if shape.as_slice() == ["host", "tcp", "p2p"] {
+        ProbeTransport::Tcp
+    } else if shape.as_slice() == ["host", "udp", "quic-v1", "p2p"] {
+        ProbeTransport::QuicV1
+    } else {
+        return Err(
+            "Target must be exactly /HOST/tcp/PORT/p2p/PEER_ID or /HOST/udp/PORT/quic-v1/p2p/PEER_ID."
+                .into(),
+        );
     };
 
     Ok(ProbeTarget {
@@ -387,7 +401,17 @@ mod tests {
         let peer = test_peer();
         let error = parse_target(&format!("/ip4/127.0.0.1/udp/45555/p2p/{peer}"))
             .expect_err("raw UDP should be rejected");
-        assert!(error.contains("direct TCP or QUIC-v1"));
+        assert!(error.contains("must be exactly"));
+    }
+
+    #[test]
+    fn rejects_ambiguous_multiple_host_components() {
+        let peer = test_peer();
+        let error = parse_target(&format!(
+            "/ip4/127.0.0.1/dns4/node.example.org/tcp/45555/p2p/{peer}"
+        ))
+        .expect_err("multiple host components should be rejected");
+        assert!(error.contains("must be exactly"));
     }
 
     #[test]

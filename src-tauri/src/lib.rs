@@ -34,6 +34,8 @@ const NICK_LEASE_SECS: u64 = 42;
 const FILE_CHUNK_SIZE: usize = 256 * 1024;
 const MAX_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_TRANSFERS_PER_DIRECTION: usize = 4;
+const MAX_PENDING_OFFERS_PER_PEER: usize = 1;
+const PENDING_FILE_OFFER_TTL_SECS: u64 = 45;
 
 // Production releases can ship community bootstrap peers here.
 // They are only discovery entry points; chat/file payloads are not stored there.
@@ -220,6 +222,63 @@ fn wire_event_matches_source(event: &WireEvent, source: &PeerId) -> bool {
         .unwrap_or(false)
 }
 
+fn valid_wire_room_id(room_id: &str) -> bool {
+    !room_id.is_empty()
+        && room_id.chars().count() <= 64
+        && room_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+}
+
+fn wire_event_is_well_formed(event: &WireEvent) -> bool {
+    match event {
+        WireEvent::Presence { peer_id, nick } => {
+            peer_id.parse::<PeerId>().is_ok() && validate_nick(nick).is_ok()
+        }
+        WireEvent::Goodbye { peer_id } => peer_id.parse::<PeerId>().is_ok(),
+        WireEvent::NickClaim {
+            peer_id,
+            nick,
+            canonical,
+            expires_at,
+        } => {
+            peer_id.parse::<PeerId>().is_ok()
+                && validate_nick(nick).is_ok()
+                && canonical == &canonical_nick(nick)
+                && *expires_at > 0
+        }
+        WireEvent::Chat(message) => {
+            let Some(peer_id) = message.peer_id.as_deref() else {
+                return false;
+            };
+            peer_id.parse::<PeerId>().is_ok()
+                && Uuid::parse_str(&message.id).is_ok()
+                && message.kind == "chat"
+                && validate_nick(&message.nick).is_ok()
+                && valid_wire_room_id(&message.room)
+                && !message.text.trim().is_empty()
+                && message.text.chars().count() <= 4000
+        }
+        WireEvent::RoomCreate(room) => {
+            let Some(owner) = room.owner.as_deref() else {
+                return false;
+            };
+            let Some(title) = room.title.strip_prefix("# ") else {
+                return false;
+            };
+            owner.parse::<PeerId>().is_ok()
+                && room.id != "world"
+                && valid_wire_room_id(&room.id)
+                && (3..=32).contains(&title.chars().count())
+                && room.id == slug::slugify(title)
+                && room.users.is_none_or(|users| users <= 100_000)
+        }
+        WireEvent::RoomClose { room_id, owner } => {
+            owner.parse::<PeerId>().is_ok() && room_id != "world" && valid_wire_room_id(room_id)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum FileRequest {
@@ -303,7 +362,26 @@ struct PendingIncomingOffer {
     nick: String,
     file_name: String,
     size: u64,
+    created_at: Instant,
     channel: request_response::ResponseChannel<FileResponse>,
+}
+
+fn file_offer_capacity_error(
+    pending_total: usize,
+    incoming_total: usize,
+    pending_from_peer: usize,
+) -> Option<&'static str> {
+    if pending_from_peer >= MAX_PENDING_OFFERS_PER_PEER {
+        return Some("This peer already has a pending file offer.");
+    }
+    if pending_total.saturating_add(incoming_total) >= MAX_TRANSFERS_PER_DIRECTION {
+        return Some("All incoming file-transfer slots are currently busy.");
+    }
+    None
+}
+
+fn pending_offer_is_expired(created_at: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(created_at) >= Duration::from_secs(PENDING_FILE_OFFER_TTL_SECS)
 }
 
 #[derive(Debug)]
@@ -1288,6 +1366,31 @@ async fn network_task(
                         let _ = app.emit("room-closed", serde_json::json!({"room_id": room_id}));
                     }
                 }
+
+                let now = Instant::now();
+                let expired_offers: Vec<String> = pending_incoming
+                    .iter()
+                    .filter(|(_, offer)| pending_offer_is_expired(offer.created_at, now))
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for transfer_id in expired_offers {
+                    if let Some(offer) = pending_incoming.remove(&transfer_id) {
+                        let peer_id = offer.peer.to_string();
+                        let _ = swarm.behaviour_mut().file_transfer.send_response(
+                            offer.channel,
+                            FileResponse::Rejected {
+                                reason: "File offer expired before it was accepted.".into(),
+                            },
+                        );
+                        let _ = app.emit(
+                            "file-offer-expired",
+                            serde_json::json!({
+                                "transfer_id": transfer_id,
+                                "peer_id": peer_id,
+                            }),
+                        );
+                    }
+                }
             }
             Some(cmd) = rx.recv() => {
                 match cmd {
@@ -1540,6 +1643,13 @@ async fn network_task(
                             );
                             continue;
                         }
+                        if !wire_event_is_well_formed(&event) {
+                            let _ = app.emit(
+                                "network-warning",
+                                format!("Dropped malformed authenticated P2P event from {authenticated_source}."),
+                            );
+                            continue;
+                        }
                         match event {
                             WireEvent::Presence { peer_id: remote_id, nick: remote_nick } => {
                                 if remote_id != peer_id {
@@ -1615,8 +1725,19 @@ async fn network_task(
                                                 let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Rejected { reason: "Plik przekracza limit 32 GiB.".into() });
                                                 continue;
                                             }
-                                            if pending_incoming.len() + incoming.len() >= MAX_TRANSFERS_PER_DIRECTION {
-                                                let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Rejected { reason: "Odbiorca ma zajęte wszystkie sloty transferu.".into() });
+                                            let pending_from_peer = pending_incoming
+                                                .values()
+                                                .filter(|offer| offer.peer == peer)
+                                                .count();
+                                            if let Some(reason) = file_offer_capacity_error(
+                                                pending_incoming.len(),
+                                                incoming.len(),
+                                                pending_from_peer,
+                                            ) {
+                                                let _ = swarm.behaviour_mut().file_transfer.send_response(
+                                                    channel,
+                                                    FileResponse::Rejected { reason: reason.into() },
+                                                );
                                                 continue;
                                             }
                                             let remote_nick = peers.get(&peer).map(|p| p.nick.clone()).unwrap_or_else(|| peer.to_string());
@@ -1626,6 +1747,7 @@ async fn network_task(
                                                 nick: remote_nick.clone(),
                                                 file_name: safe.clone(),
                                                 size,
+                                                created_at: Instant::now(),
                                                 channel,
                                             });
                                             let _ = app.emit("file-offer", FileOfferView {
@@ -1897,6 +2019,41 @@ fn open_github() -> Result<(), String> {
 }
 
 #[cfg(test)]
+mod file_offer_admission_tests {
+    use super::*;
+
+    #[test]
+    fn one_peer_cannot_reserve_multiple_pending_slots() {
+        assert_eq!(
+            file_offer_capacity_error(1, 0, MAX_PENDING_OFFERS_PER_PEER),
+            Some("This peer already has a pending file offer.")
+        );
+    }
+
+    #[test]
+    fn global_incoming_capacity_is_still_enforced() {
+        assert_eq!(
+            file_offer_capacity_error(MAX_TRANSFERS_PER_DIRECTION - 1, 1, 0),
+            Some("All incoming file-transfer slots are currently busy.")
+        );
+        assert_eq!(file_offer_capacity_error(0, 0, 0), None);
+    }
+
+    #[test]
+    fn pending_offer_ttl_expires_only_after_the_boundary() {
+        let now = Instant::now();
+        let fresh = now
+            .checked_sub(Duration::from_secs(PENDING_FILE_OFFER_TTL_SECS - 1))
+            .expect("test Instant must support short subtraction");
+        let expired = now
+            .checked_sub(Duration::from_secs(PENDING_FILE_OFFER_TTL_SECS))
+            .expect("test Instant must support short subtraction");
+        assert!(!pending_offer_is_expired(fresh, now));
+        assert!(pending_offer_is_expired(expired, now));
+    }
+}
+
+#[cfg(test)]
 mod authenticated_event_tests {
     use super::*;
 
@@ -1904,6 +2061,62 @@ mod authenticated_event_tests {
         libp2p::identity::Keypair::generate_ed25519()
             .public()
             .to_peer_id()
+    }
+
+    #[test]
+    fn malformed_authenticated_wire_events_are_rejected() {
+        let source = test_peer();
+        let source_text = source.to_string();
+        let valid_chat = WireEvent::Chat(ChatMessage {
+            id: Uuid::new_v4().to_string(),
+            kind: "chat".into(),
+            peer_id: Some(source_text.clone()),
+            nick: "alice".into(),
+            room: "world".into(),
+            text: "hello".into(),
+            timestamp: 1,
+        });
+        assert!(wire_event_is_well_formed(&valid_chat));
+        let oversized_chat = WireEvent::Chat(ChatMessage {
+            id: Uuid::new_v4().to_string(),
+            kind: "chat".into(),
+            peer_id: Some(source_text.clone()),
+            nick: "alice".into(),
+            room: "world".into(),
+            text: "x".repeat(4001),
+            timestamp: 1,
+        });
+        assert!(!wire_event_is_well_formed(&oversized_chat));
+        assert!(!wire_event_is_well_formed(&WireEvent::Presence {
+            peer_id: source_text.clone(),
+            nick: "<script>".into()
+        }));
+        assert!(!wire_event_is_well_formed(&WireEvent::NickClaim {
+            peer_id: source_text.clone(),
+            nick: "Alice".into(),
+            canonical: "mallory".into(),
+            expires_at: 1
+        }));
+        assert!(!wire_event_is_well_formed(&WireEvent::RoomCreate(
+            RoomInfo {
+                id: "world".into(),
+                title: "# world".into(),
+                owner: Some(source_text.clone()),
+                users: Some(1)
+            }
+        )));
+        assert!(!wire_event_is_well_formed(&WireEvent::RoomCreate(
+            RoomInfo {
+                id: "different-room".into(),
+                title: "# valid room".into(),
+                owner: Some(source_text.clone()),
+                users: Some(1)
+            }
+        )));
+        assert!(!wire_event_is_well_formed(&WireEvent::RoomClose {
+            room_id: "world".into(),
+            owner: source_text
+        }));
     }
 
     #[test]

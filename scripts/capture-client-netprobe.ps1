@@ -80,6 +80,7 @@ Assert-True ([string]::Equals((Get-RequiredString $session 'build_version' 'SESS
 Assert-True ([string]::Equals((Get-RequiredString $session 'source_commit' 'SESSION_INFO'), $commit, [StringComparison]::Ordinal)) 'SESSION_INFO source_commit does not match BUILD_INFO.'
 
 $actualBuildInfoHash = (Get-FileHash -LiteralPath $buildInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$actualSessionInfoHash = (Get-FileHash -LiteralPath $sessionInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
 Assert-True ([string]::Equals((Get-RequiredString $session 'build_info_sha256' 'SESSION_INFO'), $actualBuildInfoHash, [StringComparison]::Ordinal)) 'SESSION_INFO does not bind to this BUILD_INFO.json.'
 
 $netprobeMeta = $buildInfo.PSObject.Properties['netprobe'].Value
@@ -133,6 +134,7 @@ $evidence = [ordered]@{
     build_version = $version
     source_commit = $commit
     build_info_sha256 = $actualBuildInfoHash
+    session_info_sha256 = $actualSessionInfoHash
     netprobe_sha256 = $actualNetprobeHash
     bootstrap_peer_id = $peerId
     tcp_bootstrap = $tcpBootstrap

@@ -82,6 +82,50 @@ function New-SoakSnapshot([string]$Path, [int64]$Timestamp, [int64]$Uptime, [int
   } | ConvertTo-Json | Set-Content -LiteralPath $Path -Encoding UTF8
 }
 
+function New-Probe([string]$Transport, [string]$Target) {
+  [ordered]@{
+    schema = 1
+    status = 'pass'
+    tool = 'konofix-netprobe'
+    version = $version
+    source_commit = $sourceCommit
+    transport = $Transport
+    target = $Target
+    expected_peer_id = $peerId
+    observed_peer_id = $peerId
+    protocol_version = '/konofix/4.0'
+    agent_version = "Konofix-Node/$version"
+    rtt_micros = 1200
+    elapsed_millis = 20
+    timestamp_unix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+  }
+}
+
+function New-ClientNetprobeEvidence([string]$Role, [string]$Path, [string]$BuildInfoHash, [string]$SessionInfoHash, [string]$NetprobeHash) {
+  $id = if ($Role -ceq 'A') { 'promotion-selftest-a' } else { 'promotion-selftest-b' }
+  $country = if ($Role -ceq 'A') { 'PL' } else { 'NO' }
+  $network = if ($Role -ceq 'A') { 'promotion-net-a' } else { 'promotion-net-b' }
+  [ordered]@{
+    schema_version = 1
+    created_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    product = 'Konofix Chat'
+    client_role = $Role
+    client_id = $id
+    client_country = $country
+    client_network = $network
+    build_version = $version
+    source_commit = $sourceCommit
+    build_info_sha256 = $BuildInfoHash
+    session_info_sha256 = $SessionInfoHash
+    netprobe_sha256 = $NetprobeHash
+    bootstrap_peer_id = $peerId
+    tcp_bootstrap = $tcpBootstrap
+    quic_bootstrap = $quicBootstrap
+    tcp_probe = New-Probe -Transport 'tcp' -Target $tcpBootstrap
+    quic_probe = New-Probe -Transport 'quic-v1' -Target $quicBootstrap
+  } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
 try {
   $nodePath = Join-Path $temp 'konofix-node.exe'
   $nodeBytesFixture = [byte[]]::new(4096)
@@ -89,9 +133,15 @@ try {
   [IO.File]::WriteAllBytes($nodePath, $nodeBytesFixture)
   $nodeHash = (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash.ToLowerInvariant()
 
+  $netprobePath = Join-Path $temp 'konofix-netprobe.exe'
+  $netprobeBytesFixture = [byte[]]::new(2048)
+  for ($i = 0; $i -lt $netprobeBytesFixture.Length; $i++) { $netprobeBytesFixture[$i] = [byte](255 - ($i % 251)) }
+  [IO.File]::WriteAllBytes($netprobePath, $netprobeBytesFixture)
+  $netprobeHash = (Get-FileHash -LiteralPath $netprobePath -Algorithm SHA256).Hash.ToLowerInvariant()
+
   $buildInfoPath = Join-Path $temp 'BUILD_INFO.json'
   [ordered]@{
-    schema = 1
+    schema = 2
     product = 'Konofix Chat'
     version = $version
     commit = $sourceCommit
@@ -99,6 +149,11 @@ try {
       path = 'konofix-node.exe'
       bytes = [int64](Get-Item -LiteralPath $nodePath).Length
       sha256 = $nodeHash
+    }
+    netprobe = [ordered]@{
+      path = 'konofix-netprobe.exe'
+      bytes = [int64](Get-Item -LiteralPath $netprobePath).Length
+      sha256 = $netprobeHash
     }
   } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $buildInfoPath -Encoding UTF8
   $buildInfoHash = (Get-FileHash -LiteralPath $buildInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -136,6 +191,13 @@ try {
     manifests = $manifestInventory
     notes = 'promotion session fixture'
   } | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $sessionInfoPath -Encoding UTF8
+  $sessionInfoHash = (Get-FileHash -LiteralPath $sessionInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+  $clientProbeA = Join-Path $temp 'client-a-netprobe.json'
+  $clientProbeB = Join-Path $temp 'client-b-netprobe.json'
+  New-ClientNetprobeEvidence -Role A -Path $clientProbeA -BuildInfoHash $buildInfoHash -SessionInfoHash $sessionInfoHash -NetprobeHash $netprobeHash
+  New-ClientNetprobeEvidence -Role B -Path $clientProbeB -BuildInfoHash $buildInfoHash -SessionInfoHash $sessionInfoHash -NetprobeHash $netprobeHash
+  $clientProbePaths = @($clientProbeA, $clientProbeB)
 
   $soakPaths = @()
   $samples = @(
@@ -155,25 +217,42 @@ try {
     -BuildInfoPath $buildInfoPath `
     -SessionInfoPath $sessionInfoPath `
     -NetworkEvidence $networkPaths `
+    -ClientNetprobeEvidence $clientProbePaths `
     -NodeSoakEvidence $soakWildcard `
     -NodeSoakMinSpanSeconds 180 `
     -NodeSoakMaxGapSeconds 75 `
     -NodeSoakMaxAgeSeconds 60 `
     -AsJson) | ConvertFrom-Json
 
-  Assert-True ($result.schema -eq 1) 'Promotion result schema must be 1.'
+  Assert-True ($result.schema -eq 2) 'Promotion result schema must be 2.'
   Assert-True ($result.status -ceq 'PASS') 'Promotion evidence must return PASS.'
   Assert-True ($result.version -ceq $version) 'Promotion result version mismatch.'
   Assert-True ($result.source_commit -ceq $sourceCommit) 'Promotion result source commit mismatch.'
   Assert-True ($result.bootstrap_peer_id -ceq $peerId) 'Promotion result bootstrap Peer ID mismatch.'
   Assert-True ($result.network_manifest_count -eq 5) 'Promotion result must report five required network scenarios.'
+  Assert-True ($result.client_netprobe_evidence_count -eq 2) 'Promotion result must report both client Netprobe evidence records.'
+  Assert-True ($result.authenticated_direct_tcp -eq $true) 'Promotion result must prove authenticated direct TCP.'
+  Assert-True ($result.authenticated_direct_quic_v1 -eq $true) 'Promotion result must prove authenticated direct QUIC-v1.'
+  Assert-True ($result.netprobe_sha256 -ceq $netprobeHash) 'Promotion result Netprobe SHA-256 mismatch.'
   Assert-True ($result.node_soak_snapshot_count -eq 4) 'Promotion wildcard expansion must resolve all four soak snapshots.'
   Assert-True ($result.node_binary_sha256 -ceq $nodeHash) 'Promotion result Node SHA-256 mismatch.'
   Assert-True ($result.build_info_sha256 -ceq $buildInfoHash) 'Promotion result BUILD_INFO SHA-256 mismatch.'
   Assert-True ($result.coherent_test_session -eq $true) 'Promotion result must prove a coherent test session.'
 
   Assert-Fails 'empty wildcard rejection' 'wildcard matched no files' {
-    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence (Join-Path $temp 'missing-soak-*.json') -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbePaths -NodeSoakEvidence (Join-Path $temp 'missing-soak-*.json') -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+  }
+
+  Assert-Fails 'missing second client Netprobe evidence' 'exactly two' {
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbeA -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+  }
+
+  $tamperedClientProbe = Join-Path $temp 'client-a-netprobe-tampered.json'
+  $badClient = Get-Content -LiteralPath $clientProbeA -Raw | ConvertFrom-Json
+  $badClient.tcp_probe.observed_peer_id = '12D3KooWWrongPromotionPeer1234567890'
+  $badClient | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $tamperedClientProbe -Encoding UTF8
+  Assert-Fails 'tampered authenticated peer evidence' 'observed_peer_id mismatch' {
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence @($tamperedClientProbe,$clientProbeB) -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
   $tcpOriginal = Get-Content -LiteralPath $networkPaths[0] -Raw
@@ -182,7 +261,7 @@ try {
     $missingEvidence.check_evidence.PSObject.Properties.Remove('world_a_to_b')
     $missingEvidence | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $networkPaths[0] -Encoding UTF8
     Assert-Fails 'evidence-free PASS rejection' 'missing concrete check_evidence' {
-      & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+      & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbePaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
     }
   } finally {
     Set-Content -LiteralPath $networkPaths[0] -Value $tcpOriginal -Encoding UTF8 -NoNewline
@@ -194,24 +273,34 @@ try {
   $tamperedNodeBytes[$tamperedNodeBytes.Length - 1] = 0x7f
   [IO.File]::WriteAllBytes($nodePath, $tamperedNodeBytes)
   Assert-Fails 'tampered Node rejection' 'size does not match BUILD_INFO' {
-    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbePaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
   [IO.File]::WriteAllBytes($nodePath, $originalNodeBytes)
+
+  $originalNetprobeBytes = [IO.File]::ReadAllBytes($netprobePath)
+  $tamperedNetprobeBytes = [byte[]]::new($originalNetprobeBytes.Length + 1)
+  [Array]::Copy($originalNetprobeBytes, $tamperedNetprobeBytes, $originalNetprobeBytes.Length)
+  $tamperedNetprobeBytes[$tamperedNetprobeBytes.Length - 1] = 0x55
+  [IO.File]::WriteAllBytes($netprobePath, $tamperedNetprobeBytes)
+  Assert-Fails 'tampered Netprobe rejection' 'size does not match BUILD_INFO' {
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbePaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+  }
+  [IO.File]::WriteAllBytes($netprobePath, $originalNetprobeBytes)
 
   $wrongBuild = Join-Path $temp 'BUILD_INFO-wrong-commit.json'
   $bad = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json
   $bad.commit = '89abcdef0123456789abcdef0123456789abcdef'
   $bad | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $wrongBuild -Encoding UTF8
   Assert-Fails 'wrong build provenance rejection' 'source commit' {
-    & $tool -BuildInfoPath $wrongBuild -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+    & $tool -BuildInfoPath $wrongBuild -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbePaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
   $stringSchema = Join-Path $temp 'BUILD_INFO-string-schema.json'
   $raw = Get-Content -LiteralPath $buildInfoPath -Raw
-  $raw = $raw -replace '"schema"\s*:\s*1', '"schema": "1"'
+  $raw = $raw -replace '"schema"\s*:\s*2', '"schema": "2"'
   Set-Content -LiteralPath $stringSchema -Value $raw -Encoding UTF8
   Assert-Fails 'string schema rejection' 'must be a JSON integer' {
-    & $tool -BuildInfoPath $stringSchema -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+    & $tool -BuildInfoPath $stringSchema -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbePaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
   $mixedSessionPath = Join-Path $temp 'SESSION_INFO-mixed-client.json'
@@ -219,10 +308,10 @@ try {
   $mixedSession.client_b.country = 'DE'
   $mixedSession | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $mixedSessionPath -Encoding UTF8
   Assert-Fails 'mixed session endpoint rejection' 'client_b_country does not match SESSION_INFO' {
-    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $mixedSessionPath -NetworkEvidence $networkPaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $mixedSessionPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbePaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
-  Write-Host 'OK - packaged Node bytes, exact BUILD_INFO provenance, one coherent public-endpoint test session, evidence-rich PASS checks, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
+  Write-Host 'OK - packaged Node and Netprobe bytes, exact BUILD_INFO provenance, authenticated direct TCP/QUIC evidence from both independent clients, one coherent public-endpoint test session, evidence-rich PASS checks, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

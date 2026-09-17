@@ -64,7 +64,8 @@ $BuildInfoPath = [IO.Path]::GetFullPath($BuildInfoPath)
 $buildInfo = Read-BoundedJson -Path $BuildInfoPath -MaxBytes (256KB) -Label 'BUILD_INFO.json'
 
 $schemaIsInteger = ($buildInfo.schema -is [int]) -or ($buildInfo.schema -is [long])
-Assert-True ($schemaIsInteger -and [int64]$buildInfo.schema -eq 1) 'BUILD_INFO.json must use integer schema 1.'
+$buildInfoSchema = if ($schemaIsInteger) { [int64]$buildInfo.schema } else { -1 }
+Assert-True ($schemaIsInteger -and $buildInfoSchema -in @(1, 2)) 'BUILD_INFO.json must use supported integer schema 1 or 2.'
 Assert-True ([string]::Equals([string]$buildInfo.product, 'Konofix Chat', [System.StringComparison]::Ordinal)) 'BUILD_INFO.json contains the wrong product name.'
 $version = [string]$buildInfo.version
 Assert-True (-not [string]::IsNullOrWhiteSpace($version)) 'BUILD_INFO.json version is empty.'

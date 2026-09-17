@@ -186,9 +186,22 @@ jobs:
               sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             }
           })
+          $completeInventory = @(Get-ChildItem $artifactRoot -Recurse -File | Sort-Object FullName | ForEach-Object {
+            $relative = [IO.Path]::GetRelativePath($artifactRoot, $_.FullName).Replace('\', '/')
+            if ([string]::Equals($relative, 'BUILD_INFO.json', [System.StringComparison]::OrdinalIgnoreCase)) {
+              throw 'BUILD_INFO.json must not exist before the complete bundle inventory is sealed.'
+            }
+            [ordered]@{
+              path = $relative
+              bytes = [int64]$_.Length
+              sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          })
+          if ($completeInventory.Count -lt 10) { throw 'Windows bundle inventory is unexpectedly small.' }
+
           $package = Get-Content 'package.json' -Raw | ConvertFrom-Json
           $buildInfo = [ordered]@{
-            schema = 1
+            schema = 2
             product = 'Konofix Chat'
             version = [string]$package.version
             commit = [string]$env:GITHUB_SHA
@@ -211,8 +224,9 @@ jobs:
             }
             installers = $installerInfo
             tools = $toolInfo
+            files = $completeInventory
           }
-          $buildInfo | ConvertTo-Json -Depth 6 | Set-Content 'artifact\BUILD_INFO.json' -Encoding utf8
+          $buildInfo | ConvertTo-Json -Depth 7 | Set-Content 'artifact\BUILD_INFO.json' -Encoding utf8
           Get-ChildItem artifact -Recurse | Select-Object FullName, Length
 
       - name: Smoke staged Node bundle
@@ -233,6 +247,57 @@ jobs:
       - name: Verify release artifact integrity
         shell: pwsh
         run: .\scripts\verify-release.ps1
+
+      - name: Adversarial Windows bundle provenance smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $sourceZip = 'Konofix-Chat-0.4.2-test1-Windows.zip'
+
+          function Add-ZipEntry([string]$ZipPath, [string]$EntryName, [string]$Content) {
+            $archive = [System.IO.Compression.ZipFile]::Open($ZipPath, [System.IO.Compression.ZipArchiveMode]::Update)
+            try {
+              $entry = $archive.CreateEntry($EntryName, [System.IO.Compression.CompressionLevel]::Optimal)
+              $stream = $entry.Open()
+              $writer = [System.IO.StreamWriter]::new($stream, [System.Text.UTF8Encoding]::new($false))
+              try { $writer.Write($Content) } finally { $writer.Dispose() }
+            } finally {
+              $archive.Dispose()
+            }
+          }
+
+          function Write-ZipChecksum([string]$ZipPath, [string]$ChecksumPath) {
+            $hash = (Get-FileHash $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $ZipPath" | Set-Content $ChecksumPath -Encoding ascii
+          }
+
+          function Expect-VerifyFailure([string]$Label, [string]$EntryName, [string]$ExpectedPattern, [string]$Content = 'tamper-test') {
+            $badZip = Join-Path $env:RUNNER_TEMP ("konofix-" + [guid]::NewGuid().ToString('N') + '.zip')
+            $badChecksum = "$badZip.sha256"
+            Copy-Item $sourceZip $badZip -Force
+            try {
+              Add-ZipEntry -ZipPath $badZip -EntryName $EntryName -Content $Content
+              Write-ZipChecksum -ZipPath $badZip -ChecksumPath $badChecksum
+              $rejected = $false
+              try {
+                & .\scripts\verify-release.ps1 -ZipPath $badZip -ChecksumPath $badChecksum | Out-Null
+              } catch {
+                if ($_.Exception.Message -notmatch $ExpectedPattern) {
+                  throw "${Label}: verifier rejected the archive for an unexpected reason: $($_.Exception.Message)"
+                }
+                $rejected = $true
+              }
+              if (-not $rejected) { throw "${Label}: verifier accepted a tampered archive." }
+              Write-Host "Expected rejection passed: $Label"
+            } finally {
+              Remove-Item $badZip, $badChecksum -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+          Expect-VerifyFailure -Label 'unexpected file inventory' -EntryName 'UNEXPECTED.txt' -ExpectedPattern 'inventory'
+          Expect-VerifyFailure -Label 'parent-directory traversal entry' -EntryName '../escape.txt' -ExpectedPattern 'unsafe|parent-directory'
+          Expect-VerifyFailure -Label 'high-ratio decompression bomb' -EntryName 'compression-bomb.txt' -ExpectedPattern 'compression ratio|expanded size' -Content ('A' * 8MB)
 
       - name: Upload Windows test bundle
         if: github.event_name == 'push'

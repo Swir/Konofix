@@ -5,6 +5,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
+$MaxZipArchiveBytes = [int64](1GB)
+$MaxZipEntries = 8192
+$MaxZipEntryBytes = [int64](1GB)
+$MaxZipExpandedBytes = [int64](2GB)
+$MaxZipCompressionRatio = 500.0
+$MinZipRatioCheckBytes = [int64](1MB)
 
 function Assert-True([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
@@ -16,6 +22,59 @@ function Assert-Hash([string]$Path, [string]$Expected, [string]$Label) {
   Assert-True ([string]::Equals($actualHash, $Expected, [System.StringComparison]::Ordinal)) "$Label SHA-256 mismatch. expected=$Expected actual=$actualHash"
 }
 
+function Assert-SafeRelativePath([string]$PathValue, [string]$Label) {
+  Assert-True (-not [string]::IsNullOrWhiteSpace($PathValue)) "$Label path is empty."
+  Assert-True ($PathValue.Length -le 512) "$Label path is too long: $PathValue"
+  Assert-True (-not $PathValue.Contains('\')) "$Label path must use forward slashes only: $PathValue"
+  Assert-True (-not $PathValue.StartsWith('/')) "$Label path must be relative: $PathValue"
+  Assert-True ($PathValue -notmatch '^[A-Za-z]:') "$Label path must not contain a drive prefix: $PathValue"
+  Assert-True (-not $PathValue.Contains(':')) "$Label path contains a disallowed colon: $PathValue"
+  $segments = @($PathValue -split '/')
+  Assert-True ($segments.Count -gt 0) "$Label path has no segments: $PathValue"
+  Assert-True (-not ($segments | Where-Object { [string]::IsNullOrWhiteSpace($_) -or $_ -eq '.' -or $_ -eq '..' })) "$Label path contains an unsafe or parent-directory segment: $PathValue"
+}
+
+function Assert-SafeZipEntries([string]$ArchivePath) {
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $archiveFull = (Resolve-Path $ArchivePath).Path
+  $archiveFile = Get-Item -LiteralPath $archiveFull
+  Assert-True ([int64]$archiveFile.Length -le $MaxZipArchiveBytes) "ZIP archive is too large for safe verification. bytes=$($archiveFile.Length) max=$MaxZipArchiveBytes"
+
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($archiveFull)
+  $seenFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $expandedBytes = [int64]0
+  try {
+    Assert-True ($archive.Entries.Count -le $MaxZipEntries) "ZIP contains too many entries. entries=$($archive.Entries.Count) max=$MaxZipEntries"
+    foreach ($entry in $archive.Entries) {
+      $raw = [string]$entry.FullName
+      Assert-True (-not [string]::IsNullOrWhiteSpace($raw)) 'ZIP contains an unnamed entry.'
+      $normalized = $raw.Replace('\', '/').TrimEnd('/')
+      if ([string]::IsNullOrWhiteSpace($normalized)) { continue }
+      Assert-SafeRelativePath -PathValue $normalized -Label 'ZIP entry'
+
+      $entryLength = [int64]$entry.Length
+      $compressedLength = [int64]$entry.CompressedLength
+      Assert-True ($entryLength -ge 0) "ZIP entry reports a negative expanded size: $normalized"
+      Assert-True ($compressedLength -ge 0) "ZIP entry reports a negative compressed size: $normalized"
+      Assert-True ($entryLength -le $MaxZipEntryBytes) "ZIP entry exceeds the expanded per-file limit: $normalized bytes=$entryLength max=$MaxZipEntryBytes"
+      Assert-True ($expandedBytes -le ($MaxZipExpandedBytes - $entryLength)) "ZIP expanded size exceeds the verification budget. next=$normalized total_limit=$MaxZipExpandedBytes"
+      $expandedBytes += $entryLength
+
+      if ($entryLength -ge $MinZipRatioCheckBytes) {
+        Assert-True ($compressedLength -gt 0) "ZIP entry has an invalid zero compressed size: $normalized"
+        $ratio = [double]$entryLength / [double]$compressedLength
+        Assert-True ($ratio -le $MaxZipCompressionRatio) "ZIP entry compression ratio exceeds the verification budget: $normalized ratio=$([Math]::Round($ratio, 2)) max=$MaxZipCompressionRatio"
+      }
+
+      if (-not [string]::IsNullOrEmpty([string]$entry.Name)) {
+        Assert-True ($seenFiles.Add($normalized)) "ZIP contains a duplicate/case-colliding file entry: $normalized"
+      }
+    }
+  } finally {
+    $archive.Dispose()
+  }
+}
+
 Write-Host '=== Konofix Chat - RELEASE ARTIFACT VERIFY ===' -ForegroundColor Cyan
 
 Assert-True (Test-Path $ZipPath -PathType Leaf) "Release archive is missing: $ZipPath"
@@ -25,6 +84,10 @@ $expected = ((Get-Content $ChecksumPath -Raw).Trim() -split '\s+')[0].ToLowerInv
 $actual = (Get-FileHash $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
 Assert-True ($expected -match '^[0-9a-f]{64}$') 'Invalid SHA-256 format.'
 Assert-True ([string]::Equals($actual, $expected, [System.StringComparison]::Ordinal)) "SHA-256 mismatch. expected=$expected actual=$actual"
+
+# Inspect entry names and resource budgets before extraction so a re-hashed archive cannot use
+# path traversal, duplicate names or a decompression bomb against the verification workspace.
+Assert-SafeZipEntries -ArchivePath $ZipPath
 
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) ("konofix-release-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
@@ -80,7 +143,7 @@ try {
 
   $buildInfoPath = Join-Path $temp 'BUILD_INFO.json'
   try { $buildInfo = Get-Content $buildInfoPath -Raw | ConvertFrom-Json } catch { throw "BUILD_INFO.json is not valid JSON: $($_.Exception.Message)" }
-  Assert-True ([int]$buildInfo.schema -eq 1) 'BUILD_INFO.json uses an unsupported schema.'
+  Assert-True ([int]$buildInfo.schema -eq 2) 'BUILD_INFO.json uses an unsupported schema; complete inventory schema 2 is required.'
   Assert-True ([string]::Equals([string]$buildInfo.product, 'Konofix Chat', [System.StringComparison]::Ordinal)) 'BUILD_INFO.json contains the wrong product name.'
 
   $package = Get-Content (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
@@ -147,10 +210,44 @@ try {
     Assert-Hash -Path $tool.FullName -Expected ([string]$meta.sha256) -Label "Test tool $relative"
   }
 
+  # Schema 2 seals every regular file in the staged Windows bundle except BUILD_INFO.json
+  # itself (which cannot hash itself without recursion). This catches tampered docs, extra
+  # executables, missing files, and any bundle content not covered by the older selective fields.
+  $inventoryMetadata = @($buildInfo.files)
+  Assert-True ($inventoryMetadata.Count -gt 0) 'BUILD_INFO.json complete file inventory is missing.'
+  $seenMetadata = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $tempFull = [System.IO.Path]::GetFullPath($temp).TrimEnd([char[]]@('\', '/'))
+  $tempPrefix = $tempFull + [System.IO.Path]::DirectorySeparatorChar
+
+  foreach ($meta in $inventoryMetadata) {
+    $relative = [string]$meta.path
+    Assert-SafeRelativePath -PathValue $relative -Label 'BUILD_INFO inventory'
+    Assert-True (-not [string]::Equals($relative, 'BUILD_INFO.json', [System.StringComparison]::OrdinalIgnoreCase)) 'BUILD_INFO.json must not appear in its own complete inventory.'
+    Assert-True ($seenMetadata.Add($relative)) "BUILD_INFO.json contains a duplicate/case-colliding inventory path: $relative"
+    Assert-True ([int64]$meta.bytes -ge 0) "BUILD_INFO inventory contains a negative byte length: $relative"
+
+    $candidate = Join-Path $temp ($relative.Replace('/', [System.IO.Path]::DirectorySeparatorChar))
+    $candidateFull = [System.IO.Path]::GetFullPath($candidate)
+    Assert-True ($candidateFull.StartsWith($tempPrefix, [System.StringComparison]::OrdinalIgnoreCase)) "BUILD_INFO inventory path escapes the extraction root: $relative"
+    Assert-True (Test-Path $candidateFull -PathType Leaf) "Complete bundle inventory references a missing file: $relative"
+    Assert-True ([int64]$meta.bytes -eq [int64](Get-Item $candidateFull).Length) "Complete bundle inventory size mismatch: $relative"
+    Assert-Hash -Path $candidateFull -Expected ([string]$meta.sha256) -Label "Bundle file $relative"
+  }
+
+  $actualFiles = @(Get-ChildItem $temp -Recurse -File | Where-Object {
+    $relative = [IO.Path]::GetRelativePath($temp, $_.FullName).Replace('\', '/')
+    -not [string]::Equals($relative, 'BUILD_INFO.json', [System.StringComparison]::OrdinalIgnoreCase)
+  })
+  Assert-True ($actualFiles.Count -eq $inventoryMetadata.Count) "Complete bundle inventory count mismatch. metadata=$($inventoryMetadata.Count) archive=$($actualFiles.Count)"
+  foreach ($file in $actualFiles) {
+    $relative = [IO.Path]::GetRelativePath($temp, $file.FullName).Replace('\', '/')
+    Assert-True ($seenMetadata.Contains($relative)) "Release archive contains a file missing from the sealed inventory: $relative"
+  }
+
   $releaseNotes = Get-Content (Join-Path $temp 'RELEASE_NOTES.md') -Raw
   Assert-True ($releaseNotes -match '0\.4\.2 Test 1') 'RELEASE_NOTES.md does not describe the expected test release.'
 
-  Write-Host "OK - ZIP, provenance metadata, Node, committed frontend/Rust dependency inputs, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
+  Write-Host "OK - ZIP safety budgets, complete sealed file inventory, provenance metadata, Node, committed frontend/Rust dependency inputs, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
   Write-Host "SHA256: $actual"
   Write-Host "Build commit: $commit"
 } finally {

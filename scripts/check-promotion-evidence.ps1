@@ -136,7 +136,7 @@ $buildInfoFullPath = [IO.Path]::GetFullPath($BuildInfoPath)
 $buildInfo = Read-BuildInfo $buildInfoFullPath
 if ($buildInfo -isnot [pscustomobject]) { throw 'BUILD_INFO root must be a JSON object.' }
 $schema = Get-StrictInt64 (Get-RequiredProperty $buildInfo 'schema' $buildInfoFullPath) 'schema'
-if ($schema -ne 1) { throw "Unsupported BUILD_INFO schema: $schema" }
+if ($schema -notin @(1, 2)) { throw "Unsupported BUILD_INFO schema: $schema" }
 $product = Get-StrictString (Get-RequiredProperty $buildInfo 'product' $buildInfoFullPath) 'product'
 if ($product -cne 'Konofix Chat') { throw "Unexpected BUILD_INFO product: $product" }
 $version = Get-StrictString (Get-RequiredProperty $buildInfo 'version' $buildInfoFullPath) 'version'

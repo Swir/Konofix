@@ -73,15 +73,15 @@ fn print_help() {
     println!("Konofix Netprobe {}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("Usage:");
-    println!("  konofix-netprobe.exe [--timeout SEC] <NODE_MULTIADDR>");
+    println!("  konofix-netprobe [--timeout SEC] <NODE_MULTIADDR>");
     println!();
     println!("The target must be a direct TCP or QUIC-v1 address ending in /p2p/<PeerId>.");
     println!("A successful probe requires an authenticated connection to that Peer ID,");
     println!("Konofix Node Identify metadata, and a successful libp2p ping round trip.");
     println!();
     println!("Examples:");
-    println!("  konofix-netprobe.exe /ip4/127.0.0.1/tcp/45555/p2p/12D3KooW...");
-    println!("  konofix-netprobe.exe --timeout 30 /dns4/node.example.org/udp/45555/quic-v1/p2p/12D3KooW...");
+    println!("  konofix-netprobe /ip4/127.0.0.1/tcp/45555/p2p/12D3KooW...");
+    println!("  konofix-netprobe --timeout 30 <NODE_QUIC_MULTIADDR>");
 }
 
 fn parse_target(raw: &str) -> Result<ProbeTarget, String> {
@@ -113,21 +113,16 @@ fn parse_target(raw: &str) -> Result<ProbeTarget, String> {
     }
 
     if peer_count != 1 {
-        return Err("Target multiaddr must contain exactly one /p2p/<PeerId> component.".into());
+        return Err("Target must contain exactly one /p2p/<PeerId> component.".into());
     }
     if has_circuit {
-        return Err("Netprobe accepts direct Node addresses only; /p2p-circuit is not a direct transport probe.".into());
+        return Err("Relay targets are not valid direct transport probes.".into());
     }
 
     let transport = match (tcp_count, udp_count, quic_v1_count) {
         (1, 0, 0) => ProbeTransport::Tcp,
         (0, 1, 1) => ProbeTransport::QuicV1,
-        _ => {
-            return Err(
-                "Target must contain exactly one direct /tcp/<port> or /udp/<port>/quic-v1 transport."
-                    .into(),
-            )
-        }
+        _ => return Err("Target must contain exactly one direct TCP or QUIC-v1 transport.".into()),
     };
 
     Ok(ProbeTarget {
@@ -158,7 +153,8 @@ where
                     .map_err(|_| format!("Invalid timeout: {raw}"))?;
                 if !(MIN_TIMEOUT_SECONDS..=MAX_TIMEOUT_SECONDS).contains(&timeout_seconds) {
                     return Err(format!(
-                        "Timeout must be between {MIN_TIMEOUT_SECONDS} and {MAX_TIMEOUT_SECONDS} seconds."
+                        "Timeout must be between {MIN_TIMEOUT_SECONDS} and \
+                         {MAX_TIMEOUT_SECONDS} seconds."
                     ));
                 }
             }
@@ -196,6 +192,7 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
     let started = Instant::now();
     let target_text = args.target.address.to_string();
     let expected_peer = args.target.peer_id;
+    let transport = args.target.transport;
 
     let mut swarm = SwarmBuilder::with_existing_identity(identity::Keypair::generate_ed25519())
         .with_tokio()
@@ -242,7 +239,8 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
         let remaining = args.timeout.saturating_sub(started.elapsed());
         if remaining.is_zero() {
             return Err(format!(
-                "Timed out after {} seconds while probing {}. connected={} identify={} ping={}",
+                "Timed out after {} seconds while probing {}. \
+                 connected={} identify={} ping={}",
                 args.timeout.as_secs(),
                 target_text,
                 connected,
@@ -265,7 +263,8 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                 if peer_id != expected_peer {
                     return Err(format!(
-                        "Authenticated peer mismatch: expected {expected_peer}, connected to {peer_id}."
+                        "Authenticated peer mismatch: expected {expected_peer}, \
+                         connected to {peer_id}."
                     ));
                 }
                 connected = true;
@@ -278,7 +277,8 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
             })) => {
                 if peer_id != expected_peer {
                     return Err(format!(
-                        "Identify peer mismatch: expected {expected_peer}, received metadata from {peer_id}."
+                        "Identify peer mismatch: expected {expected_peer}, \
+                         received metadata from {peer_id}."
                     ));
                 }
                 if info.protocol_version != EXPECTED_PROTOCOL_VERSION {
@@ -297,7 +297,9 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
                 agent_version = Some(info.agent_version);
                 observed_peer = Some(peer_id);
             }
-            SwarmEvent::Behaviour(ProbeBehaviourEvent::Ping(event)) if event.peer == expected_peer => {
+            SwarmEvent::Behaviour(ProbeBehaviourEvent::Ping(event))
+                if event.peer == expected_peer =>
+            {
                 match event.result {
                     Ok(duration) => rtt = Some(duration),
                     Err(error) => {
@@ -318,7 +320,7 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
                 tool: "konofix-netprobe",
                 version: env!("CARGO_PKG_VERSION"),
                 source_commit: SOURCE_COMMIT,
-                transport: args.target.transport.as_str(),
+                transport: transport.as_str(),
                 target: target_text,
                 expected_peer_id: expected_peer.to_string(),
                 observed_peer_id: observed_peer.to_string(),
@@ -388,7 +390,7 @@ mod tests {
             "/ip4/127.0.0.1/tcp/45555/p2p/{relay}/p2p-circuit/p2p/{target}"
         ))
         .expect_err("relay target should be rejected");
-        assert!(error.contains("exactly one /p2p") || error.contains("p2p-circuit"));
+        assert!(error.contains("exactly one /p2p") || error.contains("Relay targets"));
     }
 
     #[test]
@@ -396,7 +398,7 @@ mod tests {
         let peer = test_peer();
         let error = parse_target(&format!("/ip4/127.0.0.1/udp/45555/p2p/{peer}"))
             .expect_err("raw UDP should be rejected");
-        assert!(error.contains("direct /tcp") || error.contains("quic-v1"));
+        assert!(error.contains("direct TCP or QUIC-v1"));
     }
 
     #[test]
@@ -417,7 +419,9 @@ mod tests {
     fn rejects_timeout_outside_safety_bounds() {
         let peer = test_peer();
         let target = format!("/ip4/127.0.0.1/tcp/45555/p2p/{peer}");
-        assert!(parse_args_from(vec!["--timeout".into(), "4".into(), target.clone()]).is_err());
-        assert!(parse_args_from(vec!["--timeout".into(), "121".into(), target]).is_err());
+        let low = vec!["--timeout".into(), "4".into(), target.clone()];
+        let high = vec!["--timeout".into(), "121".into(), target];
+        assert!(parse_args_from(low).is_err());
+        assert!(parse_args_from(high).is_err());
     }
 }

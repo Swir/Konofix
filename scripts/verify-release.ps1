@@ -11,6 +11,7 @@ $MaxZipEntryBytes = [int64](1GB)
 $MaxZipExpandedBytes = [int64](2GB)
 $MaxZipCompressionRatio = 500.0
 $MinZipRatioCheckBytes = [int64](1MB)
+$WindowsReservedDeviceNamePattern = '^(?i:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9]|LPT[1-9])$'
 
 function Assert-True([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
@@ -32,6 +33,12 @@ function Assert-SafeRelativePath([string]$PathValue, [string]$Label) {
   $segments = @($PathValue -split '/')
   Assert-True ($segments.Count -gt 0) "$Label path has no segments: $PathValue"
   Assert-True (-not ($segments | Where-Object { [string]::IsNullOrWhiteSpace($_) -or $_ -eq '.' -or $_ -eq '..' })) "$Label path contains an unsafe or parent-directory segment: $PathValue"
+  foreach ($segment in $segments) {
+    Assert-True ($segment -notmatch '[\x00-\x1f\x7f]') "$Label path contains a control character: $PathValue"
+    Assert-True ($segment -notmatch '[\. ]$') "$Label path segment ends with a Windows-aliased dot or space: $PathValue"
+    $deviceStem = @($segment -split '\.', 2)[0]
+    Assert-True ($deviceStem -notmatch $WindowsReservedDeviceNamePattern) "$Label path uses a reserved Windows device name: $PathValue"
+  }
 }
 
 function Assert-SafeZipEntries([string]$ArchivePath) {
@@ -41,7 +48,7 @@ function Assert-SafeZipEntries([string]$ArchivePath) {
   Assert-True ([int64]$archiveFile.Length -le $MaxZipArchiveBytes) "ZIP archive is too large for safe verification. bytes=$($archiveFile.Length) max=$MaxZipArchiveBytes"
 
   $archive = [System.IO.Compression.ZipFile]::OpenRead($archiveFull)
-  $seenFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $seenEntries = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $expandedBytes = [int64]0
   try {
     Assert-True ($archive.Entries.Count -le $MaxZipEntries) "ZIP contains too many entries. entries=$($archive.Entries.Count) max=$MaxZipEntries"
@@ -51,6 +58,7 @@ function Assert-SafeZipEntries([string]$ArchivePath) {
       $normalized = $raw.Replace('\', '/').TrimEnd('/')
       if ([string]::IsNullOrWhiteSpace($normalized)) { continue }
       Assert-SafeRelativePath -PathValue $normalized -Label 'ZIP entry'
+      Assert-True ($seenEntries.Add($normalized)) "ZIP contains a duplicate/case-colliding entry: $normalized"
 
       $entryLength = [int64]$entry.Length
       $compressedLength = [int64]$entry.CompressedLength
@@ -64,10 +72,6 @@ function Assert-SafeZipEntries([string]$ArchivePath) {
         Assert-True ($compressedLength -gt 0) "ZIP entry has an invalid zero compressed size: $normalized"
         $ratio = [double]$entryLength / [double]$compressedLength
         Assert-True ($ratio -le $MaxZipCompressionRatio) "ZIP entry compression ratio exceeds the verification budget: $normalized ratio=$([Math]::Round($ratio, 2)) max=$MaxZipCompressionRatio"
-      }
-
-      if (-not [string]::IsNullOrEmpty([string]$entry.Name)) {
-        Assert-True ($seenFiles.Add($normalized)) "ZIP contains a duplicate/case-colliding file entry: $normalized"
       }
     }
   } finally {
@@ -137,7 +141,6 @@ try {
   foreach ($installer in $installers) {
     Assert-True ($installer.Length -gt 1MB) "Installer appears incomplete: $($installer.FullName)"
   }
-
   $toolFiles = @($toolRelativePaths | ForEach-Object { Get-Item (Join-Path $temp $_) })
   Assert-True ($toolFiles.Count -eq $toolRelativePaths.Count) 'The release archive does not contain the complete test-tool set.'
 

@@ -16,7 +16,7 @@ The controlled fixture intentionally rewrites the single `rustls` package entry 
 
 ## When it runs
 
-The RustSec workflow runs on pushes to `main`, pull requests that change the Rust dependency inputs or the audit-policy files, a weekly schedule, and manual dispatch. The scheduled run matters because a new advisory can be published even when the committed dependency graph has not changed.
+The RustSec workflow runs on pushes to `main`, pull requests that change the Rust dependency inputs or the audit-policy files, a weekly schedule, and manual dispatch. The scheduled run matters because a new advisory can be published even when the committed dependency graph has not changed. The pull-request path filter also covers the project-audit wiring and this policy document, so changes to how the gate is enforced receive a fresh RustSec run instead of relying on an older result.
 
 ## Policy regression tests
 

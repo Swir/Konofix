@@ -65,6 +65,30 @@ const cases = [
     expected: 'exactly once',
   },
   {
+    name: 'late Complete no longer fails closed',
+    source: 'FileResponse::Error { message: "Transfer nie istnieje.".into() }',
+    replacement: 'FileResponse::Complete { verified: true, path: None }',
+    expected: 'completion must authenticate ownership and fail closed',
+  },
+  {
+    name: 'completion sender-identity gate removed',
+    source: 'let response = if sender_mismatch {',
+    replacement: 'let response = if false && sender_mismatch {',
+    expected: 'completion must authenticate ownership and fail closed',
+  },
+  {
+    name: 'late Cancel no longer fails closed',
+    source: 'FileResponse::Error { message: "Transfer not found for requesting peer.".into() }',
+    replacement: 'FileResponse::Ack { received: 0 }',
+    expected: 'late or unrelated Cancel must fail closed',
+  },
+  {
+    name: 'cancel accepted-state peer ownership inverted',
+    source: 'incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false)',
+    replacement: 'incoming.get(&transfer_id).map(|transfer| transfer.peer != peer).unwrap_or(false)',
+    expected: 'cancel must authenticate accepted-transfer ownership',
+  },
+  {
     name: 'disconnect cleanup no longer waits for final connection',
     source: 'if num_established == 0 {',
     replacement: 'if true {',

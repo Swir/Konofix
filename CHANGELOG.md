@@ -2,6 +2,8 @@
 
 ## 0.4.2
 
+- upgraded Vite to 8.3.0 after full Windows and Linux PR CI verification; the production TypeScript/Vite build, Rust gates, Windows packaging and release-artifact verification remained green, and this toolchain maintenance does not add Real Internet Test credit,
+- upgraded dual-client Netprobe evidence to schema 2 with session-scoped privacy-preserving Windows-host and default-route-network SHA-256 fingerprints; stable promotion now rejects legacy evidence and same-host/same-network Client A/B captures while retaining schema-1 readability for non-promotion diagnostics, without claiming real-network milestone credit,
 - updated the shared Rust `dirs` dependency to 7.0.0 across the desktop and isolated Linux Node manifests after full Windows and Linux CI verification; the project does not use the changed preference-directory API, and this maintenance update does not add Real Internet Test credit,
 - adopted TypeScript 7.0.2 with Vite client ambient types for CSS/asset side-effect imports and added a project-audit compatibility guard so the declaration cannot silently disappear in a later toolchain update; full Windows and Linux PR CI passed before merge and the real-network milestone remains 54/59,
 - hardened bootstrap Peer ID handling to decode base58btc and validate the libp2p multihash envelope (`identity` or `sha2-256`) before readiness/session/evidence workflows; malformed, truncated, unsupported-code, wrong-digest-length and oversized-inline identities now fail closed, and promotion/session/readiness self-tests use canonical valid identities so the stricter boundary is exercised end-to-end without adding Real Internet Test credit,

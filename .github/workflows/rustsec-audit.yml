@@ -1,0 +1,107 @@
+name: RustSec Audit
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - 'node-linux/Cargo.toml'
+      - 'package.json'
+      - '.github/workflows/rustsec-audit.yml'
+      - 'scripts/check-rustsec-workflow.mjs'
+      - 'scripts/test-rustsec-workflow.mjs'
+      - 'docs/RUSTSEC_AUDIT.md'
+  schedule:
+    - cron: '37 5 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: rustsec-audit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_AUDIT_VERSION: '0.22.2'
+      RUST_TOOLCHAIN: '1.88.0'
+      FIXTURE_ADVISORY: 'RUSTSEC-2026-0285'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install reviewed Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+          cargo --version
+
+      - name: Install pinned cargo-audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-audit --version "$CARGO_AUDIT_VERSION" --locked --force
+          if ! cargo install --list | grep -Fxq "cargo-audit v$CARGO_AUDIT_VERSION:"; then
+            echo "The installed cargo-audit package is not exactly v$CARGO_AUDIT_VERSION." >&2
+            cargo install --list >&2
+            exit 1
+          fi
+          cargo audit --version
+
+      - name: Prove RustSec gate fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          source_path = Path('src-tauri/Cargo.lock')
+          source = source_path.read_text(encoding='utf-8')
+          pattern = r'(?m)(\[\[package\]\]\nname = "rustls"\nversion = ")[^"]+(\")'
+          matches = list(re.finditer(pattern, source))
+          if len(matches) != 1:
+              raise SystemExit(f'Expected exactly one rustls package in the committed Cargo.lock fixture source, found {len(matches)}.')
+          fixture, replacements = re.subn(pattern, r'\g<1>0.23.44\2', source, count=1)
+          if replacements != 1:
+              raise SystemExit('Failed to create the controlled vulnerable rustls fixture.')
+          fixture_path = Path(os.environ['RUNNER_TEMP']) / 'rustsec-vulnerable-fixture.lock'
+          fixture_path.write_text(fixture, encoding='utf-8')
+          print(f'Created controlled vulnerable fixture at {fixture_path}')
+          PY
+
+          report="$RUNNER_TEMP/rustsec-vulnerable-fixture.json"
+          set +e
+          cargo audit --file "$RUNNER_TEMP/rustsec-vulnerable-fixture.lock" --json > "$report"
+          status=$?
+          set -e
+
+          if [[ $status -eq 0 ]]; then
+            echo "cargo-audit unexpectedly accepted the controlled vulnerable fixture." >&2
+            exit 1
+          fi
+          if ! grep -Fq "\"$FIXTURE_ADVISORY\"" "$report"; then
+            echo "cargo-audit failed, but did not report the expected $FIXTURE_ADVISORY fixture advisory." >&2
+            cat "$report" >&2 || true
+            exit 1
+          fi
+          echo "Controlled vulnerable fixture was rejected for $FIXTURE_ADVISORY as expected."
+
+      - name: Audit committed Rust dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo audit --file src-tauri/Cargo.lock

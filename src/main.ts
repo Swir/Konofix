@@ -447,10 +447,11 @@ function showFileOfferModal(offer: FileOffer) {
   });
 }
 
-async function disconnect() {
-  try { await invoke('disconnect_network'); } catch {}
+function resetSessionView(errorMessage?: string) {
   document.querySelectorAll('.modal-wrap').forEach(el => el.remove());
   state.connected = false;
+  state.nick = '';
+  state.peerId = '';
   state.peers.clear();
   state.rooms = new Map([['world', { id: 'world', title: '# WORLD' }]]);
   state.messages = new Map([['world', []]]);
@@ -458,6 +459,15 @@ async function disconnect() {
   state.status = { ...EMPTY_STATUS };
   state.room = 'world';
   renderLogin();
+  if (errorMessage) {
+    const error = document.querySelector<HTMLDivElement>('#loginError');
+    if (error) error.textContent = errorMessage;
+  }
+}
+
+async function disconnect() {
+  try { await invoke('disconnect_network'); } catch {}
+  resetSessionView();
 }
 
 function pushMessage(m: ChatMessage) {
@@ -556,8 +566,11 @@ async function wireEvents() {
   await listen<string>('network-warning', event => {
     if (state.connected) addSystem('world', `⚠ ${event.payload}`);
   });
-  await listen<string>('network-error', event => {
-    if (state.connected) addSystem('world', t('network.error', { error: event.payload }));
+  await listen<string>('network-error', async event => {
+    if (!state.connected) return;
+    const message = t('network.error', { error: event.payload });
+    try { await invoke('disconnect_network'); } catch {}
+    resetSessionView(message);
   });
   await listen<{ nick: string }>('nick-conflict', event => {
     alert(t('nick.conflict', { nick: event.payload.nick }));

@@ -6,13 +6,23 @@ import { spawnSync } from 'node:child_process';
 const root = process.cwd();
 const checker = path.join(root, 'scripts', 'check-readme-standard.mjs');
 const canonical = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+const canonicalHero = fs.readFileSync(path.join(root, 'assets', 'readme', 'hero.svg'), 'utf8');
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-readme-policy-'));
 
-const runChecker = (name, content, expectedSuccess) => {
-  const fixture = path.join(tempRoot, `${name}.md`);
+const runChecker = (name, content, expectedSuccess, heroContent = canonicalHero) => {
+  const fixtureRoot = path.join(tempRoot, name);
+  const fixture = path.join(fixtureRoot, 'README.md');
+  fs.mkdirSync(fixtureRoot, { recursive: true });
   fs.writeFileSync(fixture, content, 'utf8');
-  const result = spawnSync(process.execPath, [checker, fixture], {
-    cwd: root,
+
+  if (heroContent !== null) {
+    const heroDir = path.join(fixtureRoot, 'assets', 'readme');
+    fs.mkdirSync(heroDir, { recursive: true });
+    fs.writeFileSync(path.join(heroDir, 'hero.svg'), heroContent, 'utf8');
+  }
+
+  const result = spawnSync(process.execPath, [checker, 'README.md'], {
+    cwd: fixtureRoot,
     encoding: 'utf8',
     env: process.env,
   });
@@ -28,10 +38,51 @@ const runChecker = (name, content, expectedSuccess) => {
 try {
   runChecker('canonical', canonical, true);
   runChecker('windows-crlf', canonical.replace(/\r?\n/g, '\r\n'), true);
-  runChecker('missing-marker', canonical.replace('<!-- SWIR-README-STANDARD:v2 -->', '<!-- missing-standard -->'), false);
-  runChecker('stale-v1-marker', canonical.replace('<!-- SWIR-README-STANDARD:v2 -->', '<!-- SWIR-README-STANDARD:v1 -->'), false);
-  runChecker('missing-local-hero', canonical.replace('assets/readme/hero.svg', 'assets/readme/missing-hero.svg'), false);
-  runChecker('false-completion', canonical.replace('Real Internet Test milestone: 92% complete', 'Real Internet Test milestone: 100% complete'), false);
+  runChecker(
+    'missing-marker',
+    canonical.replace('<!-- SWIR-README-STANDARD:v2 -->', '<!-- missing-standard -->'),
+    false,
+  );
+  runChecker(
+    'stale-v1-marker',
+    canonical.replace('<!-- SWIR-README-STANDARD:v2 -->', '<!-- SWIR-README-STANDARD:v1 -->'),
+    false,
+  );
+  runChecker(
+    'missing-local-hero-reference',
+    canonical.replace('assets/readme/hero.svg', 'assets/readme/missing-hero.svg'),
+    false,
+  );
+  runChecker('missing-local-hero-file', canonical, false, null);
+  runChecker(
+    'invalid-hero-geometry',
+    canonical,
+    false,
+    canonicalHero.replace('width="1200"', 'width="1199"'),
+  );
+  runChecker(
+    'missing-hero-accessibility-title',
+    canonical,
+    false,
+    canonicalHero.replace(/\s*<title\b[^>]*>[^<]+<\/title>/i, ''),
+  );
+  runChecker(
+    'remote-hero-resource',
+    canonical,
+    false,
+    canonicalHero.replace('</svg>', '<image href="https://example.invalid/pixel.png" /></svg>'),
+  );
+  runChecker(
+    'scripted-hero',
+    canonical,
+    false,
+    canonicalHero.replace('</svg>', '<script>alert("x")</script></svg>'),
+  );
+  runChecker(
+    'false-completion',
+    canonical.replace('Real Internet Test milestone: 92% complete', 'Real Internet Test milestone: 100% complete'),
+    false,
+  );
   runChecker('missing-prerelease-truth', canonical.replaceAll('v0.4.2-test1', 'v0.4.2'), false);
 
   const keywordsHeading = '## 🔎 Search Keywords';

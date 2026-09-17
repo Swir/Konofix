@@ -9,9 +9,11 @@ on:
       - 'src-tauri/Cargo.toml'
       - 'src-tauri/Cargo.lock'
       - 'node-linux/Cargo.toml'
+      - 'package.json'
       - '.github/workflows/rustsec-audit.yml'
       - 'scripts/check-rustsec-workflow.mjs'
       - 'scripts/test-rustsec-workflow.mjs'
+      - 'docs/RUSTSEC_AUDIT.md'
   schedule:
     - cron: '37 5 * * 1'
   workflow_dispatch:

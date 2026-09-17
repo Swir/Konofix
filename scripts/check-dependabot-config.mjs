@@ -32,6 +32,10 @@ if (cargoBlocks.length !== 1) {
   }
 }
 
+if (/^\s*-\s*["']?major["']?\s*$/m.test(text)) {
+  fail('major dependency upgrades must stay ungrouped so each breaking change has an isolated review and CI cycle.');
+}
+
 if (!process.exitCode) {
-  console.log('Dependabot Cargo policy: desktop and isolated headless manifests are updated together.');
+  console.log('Dependabot policy: mirrored Cargo manifests move together and major upgrades remain isolated.');
 }

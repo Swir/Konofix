@@ -31,13 +31,40 @@ EXPECTED_WRAPPERS = {
     "src/main.rs": "../../src-tauri/src/bin/konofix-node.rs",
     "src/netprobe.rs": "../../src-tauri/src/bin/konofix-netprobe.rs",
 }
+EXPECTED_BUILD_BRIDGES = {
+    "src-tauri/build.rs": 'include!("build-shared.rs");',
+    "node-linux/build.rs": 'include!("../src-tauri/build-shared.rs");',
+}
+SHARED_BUILD_REQUIRED_TOKENS = (
+    "fn canonical_commit(",
+    "fn git_stdout(",
+    "fn source_commit()",
+    "fn emit_git_rerun_paths()",
+    "fn emit_build_provenance()",
+    "cargo:rerun-if-env-changed=GITHUB_SHA",
+    "cargo:rustc-env=KONOFIX_SOURCE_COMMIT={}",
+)
+BUILD_WRAPPER_FORBIDDEN_DUPLICATES = (
+    "fn canonical_commit(",
+    "fn git_stdout(",
+    "fn source_commit()",
+    "fn emit_git_rerun_paths()",
+)
 
 
 @dataclass(frozen=True)
 class Inputs:
+    repo_root: pathlib.Path
     desktop_manifest: pathlib.Path
     linux_manifest: pathlib.Path
     linux_root: pathlib.Path
+
+
+def read_text(path: pathlib.Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ParityError(f"Could not read {path}: {exc}") from exc
 
 
 def load_toml(path: pathlib.Path) -> dict:
@@ -65,6 +92,14 @@ def assert_equal(label: str, expected, actual) -> None:
 
 def normalize_relative(path_value: str) -> str:
     return pathlib.PurePosixPath(path_value.replace("\\", "/")).as_posix()
+
+
+def active_lines(text: str) -> list[str]:
+    return [
+        raw.strip()
+        for raw in text.splitlines()
+        if raw.strip() and not raw.strip().startswith("//")
+    ]
 
 
 def validate_manifests(desktop: dict, linux: dict) -> None:
@@ -109,29 +144,65 @@ def validate_manifests(desktop: dict, linux: dict) -> None:
 
 def validate_wrapper(linux_root: pathlib.Path, relative: str, expected_include: str) -> None:
     wrapper = linux_root / relative
-    try:
-        text = wrapper.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ParityError(f"Could not read isolated source wrapper {wrapper}: {exc}") from exc
+    text = read_text(wrapper)
 
     expected_statement = f'include!("{expected_include}");'
-    active_lines = [
-        raw.strip()
-        for raw in text.splitlines()
-        if raw.strip() and not raw.strip().startswith("//")
-    ]
-    if active_lines != [expected_statement]:
+    lines = active_lines(text)
+    if lines != [expected_statement]:
         raise ParityError(
             f"Wrapper {relative} must contain only comments plus exactly {expected_statement}; "
-            f"active lines were {active_lines or 'none'}."
+            f"active lines were {lines or 'none'}."
         )
 
     resolved = (wrapper.parent / expected_include).resolve()
-    # The include literal is pinned above. Also require it to resolve to a real
-    # production source file so a rename/removal cannot leave Linux CI testing a
-    # stale or broken bridge.
     if not resolved.is_file():
         raise ParityError(f"Wrapper {relative} include target does not exist: {resolved}")
+
+
+def validate_build_provenance_bridge(repo_root: pathlib.Path) -> None:
+    shared_path = repo_root / "src-tauri" / "build-shared.rs"
+    shared = read_text(shared_path)
+    for token in SHARED_BUILD_REQUIRED_TOKENS:
+        if token not in shared:
+            raise ParityError(f"Shared build provenance source is missing required token: {token}")
+    if "tauri_build::" in shared:
+        raise ParityError("Shared build provenance source must remain GUI/Tauri independent.")
+
+    for relative, include_statement in EXPECTED_BUILD_BRIDGES.items():
+        wrapper_path = repo_root / relative
+        wrapper = read_text(wrapper_path)
+        lines = active_lines(wrapper)
+        if lines.count(include_statement) != 1:
+            raise ParityError(
+                f"Build wrapper {relative} must actively include the canonical shared provenance source exactly once."
+            )
+        if lines.count("emit_build_provenance();") != 1:
+            raise ParityError(
+                f"Build wrapper {relative} must invoke emit_build_provenance() exactly once."
+            )
+        for forbidden in BUILD_WRAPPER_FORBIDDEN_DUPLICATES:
+            if forbidden in wrapper:
+                raise ParityError(
+                    f"Build wrapper {relative} duplicates shared provenance logic ({forbidden}); "
+                    "keep the implementation single-source."
+                )
+
+    linux_lines = active_lines(read_text(repo_root / "node-linux" / "build.rs"))
+    expected_linux_lines = [
+        EXPECTED_BUILD_BRIDGES["node-linux/build.rs"],
+        "fn main() {",
+        "emit_build_provenance();",
+        "}",
+    ]
+    if linux_lines != expected_linux_lines:
+        raise ParityError(
+            "node-linux/build.rs must remain a minimal canonical provenance bridge; "
+            f"active lines were {linux_lines}."
+        )
+
+    desktop = read_text(repo_root / "src-tauri" / "build.rs")
+    if "build_desktop_app();" not in active_lines(desktop):
+        raise ParityError("src-tauri/build.rs must still invoke the desktop build hook after provenance setup.")
 
 
 def check(inputs: Inputs) -> None:
@@ -140,6 +211,7 @@ def check(inputs: Inputs) -> None:
     validate_manifests(desktop, linux)
     for relative, expected in EXPECTED_WRAPPERS.items():
         validate_wrapper(inputs.linux_root, relative, expected)
+    validate_build_provenance_bridge(inputs.repo_root)
 
 
 def expect_failure(label: str, fn) -> None:
@@ -155,6 +227,7 @@ def self_test(repo_root: pathlib.Path) -> None:
     linux = load_toml(repo_root / "node-linux" / "Cargo.toml")
 
     validate_manifests(desktop, linux)
+    validate_build_provenance_bridge(repo_root)
 
     changed_edition = copy.deepcopy(linux)
     changed_edition["package"]["edition"] = "2024"
@@ -210,6 +283,56 @@ def self_test(repo_root: pathlib.Path) -> None:
             lambda: validate_wrapper(linux_root, "src/main.rs", EXPECTED_WRAPPERS["src/main.rs"]),
         )
 
+    with tempfile.TemporaryDirectory(prefix="konofix-build-bridge-") as temp:
+        root = pathlib.Path(temp)
+        (root / "src-tauri").mkdir(parents=True)
+        (root / "node-linux").mkdir(parents=True)
+        shared_source = read_text(repo_root / "src-tauri" / "build-shared.rs")
+        desktop_source = read_text(repo_root / "src-tauri" / "build.rs")
+        linux_source = read_text(repo_root / "node-linux" / "build.rs")
+        (root / "src-tauri" / "build-shared.rs").write_text(shared_source, encoding="utf-8")
+        (root / "src-tauri" / "build.rs").write_text(desktop_source, encoding="utf-8")
+        (root / "node-linux" / "build.rs").write_text(linux_source, encoding="utf-8")
+        validate_build_provenance_bridge(root)
+
+        (root / "node-linux" / "build.rs").write_text(
+            linux_source.replace(
+                'include!("../src-tauri/build-shared.rs");',
+                '// include!("../src-tauri/build-shared.rs");',
+            ),
+            encoding="utf-8",
+        )
+        expect_failure(
+            "commented build provenance include",
+            lambda: validate_build_provenance_bridge(root),
+        )
+
+        (root / "node-linux" / "build.rs").write_text(
+            linux_source + "\nfn source_commit() -> String { String::new() }\n",
+            encoding="utf-8",
+        )
+        expect_failure(
+            "duplicated Linux build provenance logic",
+            lambda: validate_build_provenance_bridge(root),
+        )
+
+        (root / "node-linux" / "build.rs").write_text(linux_source, encoding="utf-8")
+        (root / "src-tauri" / "build.rs").write_text(
+            desktop_source.replace('include!("build-shared.rs");', '// include!("build-shared.rs");'),
+            encoding="utf-8",
+        )
+        expect_failure(
+            "desktop build bridge removal",
+            lambda: validate_build_provenance_bridge(root),
+        )
+
+        (root / "src-tauri" / "build.rs").write_text(desktop_source, encoding="utf-8")
+        (root / "src-tauri" / "build-shared.rs").unlink()
+        expect_failure(
+            "missing shared build provenance source",
+            lambda: validate_build_provenance_bridge(root),
+        )
+
     print("Isolated Linux Node parity adversarial self-tests: PASS")
 
 
@@ -224,6 +347,7 @@ def main() -> int:
         return 0
 
     inputs = Inputs(
+        repo_root=repo_root,
         desktop_manifest=repo_root / "src-tauri" / "Cargo.toml",
         linux_manifest=repo_root / "node-linux" / "Cargo.toml",
         linux_root=repo_root / "node-linux",
@@ -232,7 +356,7 @@ def main() -> int:
         check(inputs)
     except ParityError as exc:
         raise SystemExit(str(exc)) from exc
-    print("Isolated Linux Node manifest and source bridges match the shared production build inputs.")
+    print("Isolated Linux Node manifest, source bridges and build provenance bridge match production inputs.")
     return 0
 
 

@@ -10,6 +10,10 @@ $tcpBootstrap = "/ip4/8.8.8.8/tcp/45555/p2p/$peerId"
 $quicBootstrap = "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$peerId"
 $fileHashA = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 $fileHashB = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
+$hostA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+$hostB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+$networkA = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+$networkB = 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 function Assert-True([bool]$Condition, [string]$Message) {
@@ -105,8 +109,10 @@ function New-ClientNetprobeEvidence([string]$Role, [string]$Path, [string]$Build
   $id = if ($Role -ceq 'A') { 'promotion-selftest-a' } else { 'promotion-selftest-b' }
   $country = if ($Role -ceq 'A') { 'PL' } else { 'NO' }
   $network = if ($Role -ceq 'A') { 'promotion-net-a' } else { 'promotion-net-b' }
+  $hostFingerprint = if ($Role -ceq 'A') { $hostA } else { $hostB }
+  $networkFingerprint = if ($Role -ceq 'A') { $networkA } else { $networkB }
   [ordered]@{
-    schema_version = 1
+    schema_version = 2
     created_utc = [DateTimeOffset]::UtcNow.ToString('o')
     product = 'Konofix Chat'
     client_role = $Role
@@ -121,6 +127,11 @@ function New-ClientNetprobeEvidence([string]$Role, [string]$Path, [string]$Build
     bootstrap_peer_id = $peerId
     tcp_bootstrap = $tcpBootstrap
     quic_bootstrap = $quicBootstrap
+    context_schema = 1
+    host_fingerprint_method = 'windows-machine-guid-session-sha256-v1'
+    host_fingerprint = $hostFingerprint
+    network_fingerprint_method = 'windows-default-route-session-sha256-v1'
+    network_fingerprint = $networkFingerprint
     tcp_probe = New-Probe -Transport 'tcp' -Target $tcpBootstrap
     quic_probe = New-Probe -Transport 'quic-v1' -Target $quicBootstrap
   } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Path -Encoding UTF8
@@ -224,7 +235,7 @@ try {
     -NodeSoakMaxAgeSeconds 60 `
     -AsJson) | ConvertFrom-Json
 
-  Assert-True ($result.schema -eq 2) 'Promotion result schema must be 2.'
+  Assert-True ($result.schema -eq 3) 'Promotion result schema must be 3.'
   Assert-True ($result.status -ceq 'PASS') 'Promotion evidence must return PASS.'
   Assert-True ($result.version -ceq $version) 'Promotion result version mismatch.'
   Assert-True ($result.source_commit -ceq $sourceCommit) 'Promotion result source commit mismatch.'
@@ -233,6 +244,8 @@ try {
   Assert-True ($result.client_netprobe_evidence_count -eq 2) 'Promotion result must report both client Netprobe evidence records.'
   Assert-True ($result.authenticated_direct_tcp -eq $true) 'Promotion result must prove authenticated direct TCP.'
   Assert-True ($result.authenticated_direct_quic_v1 -eq $true) 'Promotion result must prove authenticated direct QUIC-v1.'
+  Assert-True ($result.distinct_client_hosts -eq $true) 'Promotion result must prove distinct client hosts.'
+  Assert-True ($result.distinct_client_network_contexts -eq $true) 'Promotion result must prove distinct client network contexts.'
   Assert-True ($result.netprobe_sha256 -ceq $netprobeHash) 'Promotion result Netprobe SHA-256 mismatch.'
   Assert-True ($result.node_soak_snapshot_count -eq 4) 'Promotion wildcard expansion must resolve all four soak snapshots.'
   Assert-True ($result.node_binary_sha256 -ceq $nodeHash) 'Promotion result Node SHA-256 mismatch.'
@@ -245,6 +258,22 @@ try {
 
   Assert-Fails 'missing second client Netprobe evidence' 'exactly two' {
     & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbeA -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+  }
+
+  $sameHostProbe = Join-Path $temp 'client-b-same-host.json'
+  $sameHost = Get-Content -LiteralPath $clientProbeB -Raw | ConvertFrom-Json
+  $sameHost.host_fingerprint = $hostA
+  $sameHost | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $sameHostProbe -Encoding UTF8
+  Assert-Fails 'same-host client evidence' 'distinct Windows hosts' {
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence @($clientProbeA,$sameHostProbe) -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+  }
+
+  $sameNetworkProbe = Join-Path $temp 'client-b-same-network.json'
+  $sameNetwork = Get-Content -LiteralPath $clientProbeB -Raw | ConvertFrom-Json
+  $sameNetwork.network_fingerprint = $networkA
+  $sameNetwork | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $sameNetworkProbe -Encoding UTF8
+  Assert-Fails 'same-network client evidence' 'distinct default-route network contexts' {
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence @($clientProbeA,$sameNetworkProbe) -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
   $tamperedClientProbe = Join-Path $temp 'client-a-netprobe-tampered.json'
@@ -311,7 +340,7 @@ try {
     & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $mixedSessionPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbePaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
-  Write-Host 'OK - packaged Node and Netprobe bytes, exact BUILD_INFO provenance, authenticated direct TCP/QUIC evidence from both independent clients, one coherent public-endpoint test session, evidence-rich PASS checks, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
+  Write-Host 'OK - packaged Node and Netprobe bytes, exact BUILD_INFO provenance, authenticated direct TCP/QUIC evidence from two distinct host/network contexts, one coherent public-endpoint test session, evidence-rich PASS checks, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

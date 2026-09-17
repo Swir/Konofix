@@ -35,7 +35,7 @@
 
 The active `0.4.2 — Real Internet Test` milestone has **54 of 59 tasks complete**. The remaining five tasks require real public-network evidence and fixes discovered during those tests. CI, local transport smoke tests, or documentation work do not increase this percentage by themselves.
 
-The current public package is **`v0.4.2-test1`**, a prerelease for controlled cross-country P2P testing. It is not a declaration that the public-network milestone has passed.
+The current public package is **`v0.4.2-test1`**, a prerelease preview for controlled cross-country P2P testing. It predates some of the current exact-build Netprobe, soak-artifact and promotion-evidence hardening, so it must not be mixed with newer source/tooling when collecting promotion-quality evidence. It is not a declaration that the public-network milestone has passed.
 
 ## What is Konofix?
 
@@ -59,15 +59,18 @@ Konofix does not use a traditional account, email address, or phone number. Publ
 
 ## Quick Start
 
-### Recommended: controlled Windows test release
+### Public preview
 
 1. Open the [`v0.4.2-test1` release](https://github.com/Swir/Konofix/releases/tag/v0.4.2-test1).
 2. Download `Konofix-Chat-0.4.2-test1-Windows.zip` and its `.sha256` file.
-3. Verify the checksum before testing.
-4. Extract the archive and follow the bundled/public-network test instructions.
-5. Use the same verified public Konofix Node bootstrap on both test clients.
+3. Verify the checksum before exploratory testing.
+4. Extract the archive and follow its bundled instructions.
 
-> `v0.4.2-test1` is a prerelease. Windows SmartScreen may warn because the test build is not commercially code-signed.
+> `v0.4.2-test1` is an older prerelease preview and may trigger Windows SmartScreen because it is not commercially code-signed. Do **not** combine this archive with newer scripts, binaries, `BUILD_INFO.json`, Netprobe records or soak evidence for stable-promotion testing.
+
+### Promotion-quality controlled testing
+
+Use a **fresh Windows test bundle from a fully green `main` Windows CI run for the exact commit being tested**. Keep that bundle's `BUILD_INFO.json`, Node, Netprobe, scripts and evidence together. The promotion validators intentionally reject mixed commits, binaries, sessions and Node-soak provenance.
 
 ### From source
 
@@ -247,7 +250,7 @@ After this milestone closes, the roadmap moves to **0.5.0 — Rooms 2.0**.
 
 ## Releases
 
-The current public artifact is the [`v0.4.2-test1` prerelease](https://github.com/Swir/Konofix/releases/tag/v0.4.2-test1). A later release should be published only after the repository release gates and required real public-network evidence pass.
+The current public artifact is the [`v0.4.2-test1` prerelease](https://github.com/Swir/Konofix/releases/tag/v0.4.2-test1). It remains useful as a historical/exploratory preview, but promotion-quality evidence must use one exact fresh verified bundle and its matching provenance/tooling. A later GitHub Release should be published only after the repository release gates and required real public-network evidence pass.
 
 Release history: [GitHub Releases](https://github.com/Swir/Konofix/releases)  
 Change history: [`CHANGELOG.md`](CHANGELOG.md)

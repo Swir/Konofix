@@ -45,6 +45,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-network-evidence-gate.ps1
 
+      - name: Client public-node Netprobe evidence self-tests
+        shell: pwsh
+        run: .\scripts\test-client-netprobe-evidence.ps1
+
       - name: Promotion evidence preflight self-tests
         shell: pwsh
         run: .\scripts\test-promotion-evidence.ps1
@@ -146,6 +150,8 @@ jobs:
 
           $testTools = @(
             'internet-test.ps1',
+            'capture-client-netprobe.ps1',
+            'validate-client-netprobe.ps1',
             'public-node.ps1',
             'install-public-node-task.ps1',
             'check-public-node-readiness.ps1',

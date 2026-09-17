@@ -2,6 +2,8 @@
 
 ## 0.4.2
 
+- added exact-build client Netprobe capture and validation for real public-Node tests: Client A and Client B must each authenticate the configured Node over direct TCP and QUIC-v1, and stable promotion now binds both evidence records to one `SESSION_INFO.json`, exact `BUILD_INFO.json` hash, source commit, Netprobe SHA-256, client country/network metadata and bootstrap Peer ID,
+- hardened the new client Netprobe evidence validator against PowerShell 7.5+ ISO-8601 auto-conversion by preserving JSON date strings before strict schema/type validation; positive and adversarial Windows CI self-tests cover the exact-build dual-client gate without claiming real-network milestone credit,
 - extended the isolated Linux headless target with the same `konofix-netprobe` implementation used by Windows, adding release-build unit coverage and authenticated TCP + QUIC-v1 runtime probes after persistent-identity restart without claiming any real-Internet milestone credit,
 - added an independent exact-build `konofix-netprobe` libp2p client that requires a Noise-authenticated connection to the target Peer ID, Konofix Identify metadata and a successful Ping round trip before emitting PASS JSON,
 - upgraded the production Windows Node runtime smoke to probe the restarted release binary over both real loopback TCP and QUIC-v1 libp2p transports instead of trusting process/health state alone,
@@ -98,7 +100,7 @@
 - made the Linux systemd installer reject ports below 1024 because the service runs as the unprivileged `konofix` user, and added boundary self-tests proving port 1023 fails while port 1024 remains valid,
 - hardened the raw Node against identity/health/executable state-path collisions so health telemetry cannot overwrite the persistent Peer-ID key or running binary even when the higher-level launcher is bypassed,
 - replaced the fixed health `.tmp` staging name with unique create-new temporary files, durable writes and cleanup on failure, preventing custom-path collisions and accidental truncation of unrelated state,
-- made an explicitly requested initial `--health-file` snapshot a fail-closed startup contract while keeping later transient monitoring-write failures observable as warnings,
+- made an explicitly requested initial `--health-file` snapshot a fail-closed startup contract while keeping later transient health-update failures observable as warnings,
 - added Rust regression tests for direct and lexical state-path collision rejection plus safe health-snapshot replacement/cleanup,
 - canonicalized Linux public-Node state/install paths before systemd unit generation and reject root/top-level, equal, nested, lexical-alias and symlink-alias layouts so writable identity/health state cannot overlap the staged Node executable,
 - extended Linux installer self-tests with canonical rendering plus adversarial root, nesting, lexical-alias and symlink-alias path cases,

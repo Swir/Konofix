@@ -2,6 +2,10 @@
 
 ## Project progress
 
+<img width="100%" src="assets/readme/progress-mini.svg" alt="Konofix Chat Real Internet Test compact progress — 54 of 59 verified tasks, 91.5%, in progress" />
+
+**Verified checklist fraction: 54 of 59 tasks — 91.5%.** The generated mini card uses the exact checklist fraction; release readiness remains a separate evidence gate.
+
 **Real Internet Test milestone: 92% complete**
 
 `██████████████████░░ 92%`

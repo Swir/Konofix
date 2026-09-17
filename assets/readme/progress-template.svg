@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="180" viewBox="0 0 1200 180" role="img" aria-labelledby="templateTitle templateDesc" data-template="true" data-progress-percent="N/A">
+  <title id="templateTitle">SWIR Progress SVG PRO — reusable template</title>
+  <desc id="templateDesc">Template only. This file contains no project progress data and must not be embedded as live progress.</desc>
+  <defs>
+    <linearGradient id="progressGradient" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0088FF"/><stop offset="1" stop-color="#62E5FF"/></linearGradient>
+    <linearGradient id="surfaceGradient" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#02050A"/><stop offset="1" stop-color="#07111C"/></linearGradient>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path d="M 28 0 L 0 0 0 28" fill="none" stroke="#62E5FF" stroke-opacity="0.035" stroke-width="1"/></pattern>
+    <filter id="glow" x="-20%" y="-80%" width="140%" height="260%"><feGaussianBlur stdDeviation="4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <clipPath id="templateTrack"><rect x="50" y="108" width="1100" height="18" rx="9"/></clipPath>
+  </defs>
+  <rect width="1200" height="180" rx="24" fill="url(#surfaceGradient)"/>
+  <rect x="1" y="1" width="1198" height="178" rx="23" fill="none" stroke="#62E5FF" stroke-opacity="0.28" stroke-width="2"/>
+  <rect width="1200" height="180" rx="24" fill="url(#grid)"/>
+  <text x="50" y="35" fill="#62E5FF" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="2">SWIR PROGRESS • TEMPLATE</text>
+  <text x="1150" y="35" text-anchor="end" fill="#8DA8B8" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="700">TEMPLATE / NOT PROJECT DATA</text>
+  <text x="50" y="72" fill="#F4FAFF" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="600">PROJECT NAME — MEASURED SCOPE</text>
+  <rect x="50" y="108" width="1100" height="18" rx="9" fill="#0B1825" stroke="#62E5FF" stroke-opacity="0.22"/>
+  <text x="50" y="158" fill="#8DA8B8" font-family="Segoe UI, Arial, sans-serif" font-size="14">VERIFIED / TOTAL: N/A</text>
+  <text x="1150" y="158" text-anchor="end" fill="#F4FAFF" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">N/A</text>
+</svg>

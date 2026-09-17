@@ -67,7 +67,22 @@ Before distributing the bootstrap addresses to cross-country testers, run the co
 
 This binds both advertised transports to the same host, port and Peer ID, then binds that Peer ID to the fresh Node-health version/source commit and checks TCP socket reachability. It validates QUIC multiaddr structure but intentionally does not claim a successful QUIC handshake; that evidence must come from the actual Konofix/libp2p QUIC scenario. `-SkipTcpReachability` exists for parser/fixture automation and must not be used as proof that a public Node is Internet-reachable.
 
-A single healthy snapshot is not sufficient for stable promotion. Use `scripts\collect-node-soak.ps1` to capture only health snapshots that pass the strict health validator, then validate the resulting history with `scripts\validate-node-soak.ps1`; see `docs\NODE_SOAK.md`. Schema-v2 Node health carries the exact source commit, and the promotion gate requires that soak history to use the same Node version, exact source commit and bootstrap Peer ID as the real-network evidence.
+A single healthy snapshot is not sufficient for stable promotion. For promotion-quality Windows public-Node evidence, collect the soak from the same extracted verified artifact and bind every accepted copy to that artifact's exact Node and `BUILD_INFO.json` hashes:
+
+```powershell
+.\scripts\collect-node-soak.ps1 `
+  -HealthFile "C:\Konofix\node-health.json" `
+  -OutputDirectory "C:\Konofix\soak-evidence" `
+  -DurationSeconds 3600 `
+  -IntervalSeconds 60 `
+  -ExpectedVersion "0.4.2" `
+  -ExpectedPeerId "PEER_ID" `
+  -ExpectedSourceCommit "FULL_40_CHARACTER_COMMIT_SHA" `
+  -BuildInfoPath ".\BUILD_INFO.json" `
+  -NodeBinaryPath ".\konofix-node.exe"
+```
+
+The collector verifies the binary size/SHA-256 against `BUILD_INFO.json`, verifies health version/source provenance, and stamps only the validated evidence copies with exact Node and BUILD_INFO SHA-256 values. Final artifact promotion rejects unbound, mixed or mismatched soak history. See `docs\NODE_SOAK.md` for the validator and diagnostic-only legacy path.
 
 ## 4. Bootstrap precheck
 
@@ -144,17 +159,18 @@ Internet reports are rejected at creation time if countries or network/operator 
 
 The promotion gate requires one consistent client/Node build, one exact source commit, fresh evidence (30 days by default), PASS for all core communication/resilience checks, Relay observation in Relay and CGNAT evidence, DCUtR upgrade in DCUtR evidence, and passing manifests for TCP, QUIC, Relay, DCUtR and CGNAT. With the stable-promotion `RequireAllChecks` path, every PASS check must also have a concrete non-empty `check_evidence` string and both file-transfer checks must contain a full 64-character SHA-256 digest. Use `-MaxAgeDays` to tighten the freshness window. `overall=PASS` by itself is intentionally insufficient.
 
-Once all five manifests and the Node soak history are complete, bind them to the exact Windows artifact **and the one session that created them** in one command:
+Once all five manifests, both client Netprobe records and the exact-build-bound Node soak history are complete, bind them to the exact Windows artifact **and the one session that created them** in one command:
 
 ```powershell
 .\scripts\check-promotion-evidence.ps1 `
   -BuildInfoPath .\BUILD_INFO.json `
   -SessionInfoPath .\test-results\konofix-real-network-...\SESSION_INFO.json `
   -NetworkEvidence .\test-results\konofix-real-network-...\network-test-*.json `
+  -ClientNetprobeEvidence .\test-results\konofix-real-network-...\client-*-netprobe.json `
   -NodeSoakEvidence .\node-soak\*.json
 ```
 
-This preflight validates the exact `BUILD_INFO.json` version/source commit and packaged Node bytes, validates every required schema-v3 scenario, requires all five reports to belong to the same session endpoint pair and paired TCP/QUIC bootstrap identity, requires evidence-rich PASS observations including real file digests, extracts the single validated bootstrap Peer ID, and finally requires the Node-soak history to match that same version, source commit and Peer ID while proving peer activity. The stable source-tree release gate likewise requires `-NetworkSessionInfo` whenever `-RequireNetworkEvidence` is used. These checks cannot replace the real tests; they prevent unrelated, evidence-free or mismatched claims from being combined after those tests are complete.
+This preflight validates the exact `BUILD_INFO.json` version/source commit and packaged Node bytes, validates every required schema-v3 scenario, requires all five reports to belong to the same session endpoint pair and paired TCP/QUIC bootstrap identity, requires exactly one Client A and one Client B authenticated TCP+QUIC Netprobe record from distinct host/default-route contexts, requires evidence-rich PASS observations including real file digests, extracts the single validated bootstrap Peer ID, and finally requires the Node-soak history to match that same version, source commit, Peer ID, Node binary SHA-256 and `BUILD_INFO.json` SHA-256 while proving peer activity. The stable source-tree release gate likewise requires `-NetworkSessionInfo` whenever `-RequireNetworkEvidence` is used. These checks cannot replace the real tests; they prevent unrelated, evidence-free or mismatched claims from being combined after those tests are complete.
 
 Never put identity keys, access tokens, private addresses or other secrets in reports.
 
@@ -168,10 +184,10 @@ Test Wi-Fi/LTE loss during transfer, app closure during transfer, Node restart, 
 
 ## 11. Release-stage gate and artifact provenance
 
-A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond the test release additionally requires validated schema-v3 evidence from independent countries/networks for the required transport/NAT scenarios, one coherent `SESSION_INFO.json` binding those five scenarios to the same endpoint pair and TCP/QUIC bootstrap identity, concrete per-PASS observations with full file-transfer SHA-256 digests, continuous schema-v2 Node-soak evidence bound to the same bootstrap Peer ID/version/source commit, and fixes for issues discovered during those tests.
+A cross-country GitHub test release is build-ready only with green Windows CI, production app and Node binaries, consistent documentation/versioning, verified artifacts and a real public bootstrap path. Promotion beyond the test release additionally requires validated schema-v3 evidence from independent countries/networks for the required transport/NAT scenarios, one coherent `SESSION_INFO.json` binding those five scenarios to the same endpoint pair and TCP/QUIC bootstrap identity, exactly two authenticated schema-2 client Netprobe records from distinct host/network contexts, concrete per-PASS observations with full file-transfer SHA-256 digests, continuous schema-v2 Node-soak evidence bound to the same bootstrap Peer ID/version/source commit **and exact packaged Node/BUILD_INFO hashes**, and fixes for issues discovered during those tests.
 
 Every newly built Windows CI archive includes schema-v2 `BUILD_INFO.json`. It records the exact Git commit, project version and workflow run, retains dedicated Node/installer/test-tool/dependency-lock metadata, and additionally seals every staged regular file except `BUILD_INFO.json` itself with its relative path, exact byte size and SHA-256. `scripts\verify-release.ps1` verifies the outer ZIP checksum, inspects ZIP member paths before extraction, rejects traversal and duplicate/case-colliding file entries, extracts into an isolated directory, verifies every inventory entry, and rejects any missing or unexpected file. CI also re-hashes deliberately tampered archives with an extra file and a parent-directory entry to prove that a valid outer checksum alone cannot bypass the sealed inventory. The Node binary embeds the same source commit into its health telemetry.
 
-Stable promotion resolves the target commit from `-ExpectedSourceCommit`, `GITHUB_SHA`, or the clean Git working tree and passes that exact value into network-evidence, session-consistency and Node-soak validation. The bundled `check-promotion-evidence.ps1` gives remote testers the same exact-build binding using the artifact's verified `BUILD_INFO.json`. This prevents evidence collected for an earlier `0.4.2` commit, a different client pair or evidence-free PASS claims from being reused for a different `0.4.2` build/session.
+Stable promotion resolves the target commit from `-ExpectedSourceCommit`, `GITHUB_SHA`, or the clean Git working tree and passes that exact value into network-evidence, session-consistency and Node-soak validation. The bundled `check-promotion-evidence.ps1` gives remote testers the stronger artifact-level binding using the verified `BUILD_INFO.json`: it requires authenticated dual-client Netprobe evidence and exact-build-bound soak copies whose Node/BUILD_INFO hashes match the packaged release. This prevents evidence collected for an earlier `0.4.2` commit, another same-version/same-source Node build, a different client pair or evidence-free PASS claims from being reused for a different `0.4.2` artifact/session.
 
 Frontend dependency resolution is deterministic through the committed `package-lock.json` and `npm ci`. Rust dependency resolution is deterministic through committed `src-tauri\Cargo.lock`; CI/local/build helpers use `--locked` validation/build commands, and release verification rejects an archive whose packaged Cargo lockfile differs from the committed build input.

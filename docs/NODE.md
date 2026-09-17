@@ -19,7 +19,7 @@
 - exact source-commit provenance embedded into Node health snapshots
 - IPv4, IPv6, and generic DNS bootstrap address generation
 - fail-closed Windows deployment preflight with deterministic JSON output for automation
-- preview-first Windows startup-task installer with persistent runtime staging, restart policy and optional scoped firewall rules
+- preview-first Windows startup-task installer with protected SYSTEM-only runtime/state, restart policy and optional scoped firewall rules
 
 ## Windows
 
@@ -45,7 +45,7 @@ Then launch the same validated configuration:
   -Start
 ```
 
-The preflight rejects private, loopback, link-local, CGNAT, documentation and other special-use IP literals by default. It also rejects local/single-label/reserved DNS names, refuses identity/health path collisions, pins an explicit persistent identity path and resolves DNS before `-Start`. `-AllowPrivateAddress` is available only for controlled LAN/lab tests. Use `-AsJson` to obtain normalized launch metadata and bootstrap address templates without starting the Node.
+The preflight rejects non-globally-routable literals, including private, loopback, link-local, CGNAT, documentation, benchmark, deprecated relay-anycast, reserved and other special-use ranges. Public DNS input must be a public-looking FQDN; special/private-use namespaces such as `localhost`, `.local`, `.test`, `.example`, `example.com`, `example.net`, `example.org`, `.onion`, `.alt`, `.arpa`, and `.internal` are rejected. When DNS resolution is required (and before `-Start`), every returned address must satisfy the same globally-routable policy instead of accepting a mixed public/private answer set. The preflight also refuses identity/health path collisions and pins an explicit persistent identity path. `-AllowPrivateAddress` exists only for controlled LAN/lab tests. Use `-AsJson` to obtain normalized launch metadata and bootstrap address templates without starting the Node.
 
 ### Supervised startup task
 
@@ -61,7 +61,9 @@ Start with a mutation-free preview:
   -ConfigureFirewall
 ```
 
-The preview prints the normalized public host, persistent identity/health paths, staged runtime paths, SYSTEM task identity, restart policy and whether the scoped firewall rules would be managed. `-AsJson` returns the same plan in deterministic machine-readable form.
+The preview prints the normalized public host, persistent identity/health paths, staged runtime paths, SYSTEM task identity, restart policy, planned storage security policy, and whether the scoped firewall rules would be managed. `-AsJson` returns the same plan in deterministic machine-readable form.
+
+The supervised SYSTEM path deliberately has stricter storage rules than an interactive launch. `IdentityFile` and `HealthFile` must remain inside the dedicated `StateDirectory`; installation rejects an existing state/service path that traverses a Windows reparse point; the protected state and staged `service` directory disable inherited write access and grant full control only to `SYSTEM` and the built-in Administrators group. The staged Node and launcher receive the same protected access policy, as do existing identity/health files. This prevents an ordinary user from replacing a script or executable that Task Scheduler will later execute as SYSTEM, and protects the persistent Peer-ID key from non-admin modification. Use a dedicated ProgramData subtree rather than a user-writable folder.
 
 Install or update the task from an elevated PowerShell window only after reviewing the preview:
 
@@ -75,7 +77,7 @@ Install or update the task from an elevated PowerShell window only after reviewi
   -StartNow
 ```
 
-Installation copies only `konofix-node.exe` and the validated `public-node.ps1` launcher into the persistent `service` subdirectory, registers a SYSTEM startup task, enables restart attempts with a one-minute interval, and optionally creates inbound TCP and UDP firewall rules scoped to the staged Node executable and configured port. The task command is encoded after all user-controlled values are PowerShell-literal quoted, avoiding fragile nested quoting in Task Scheduler arguments.
+Before mutating the task, installation verifies that required ScheduledTasks cmdlets, the source Node, and (when requested) firewall cmdlets are available. If an existing task is running, the installer stops it and waits for the process/task state to leave `Running` before replacing the protected runtime files; a previously running task is restarted after the secured update. Installation copies only `konofix-node.exe` and the validated `public-node.ps1` launcher into the persistent `service` subdirectory, registers a SYSTEM startup task, enables restart attempts with a one-minute interval, and optionally creates inbound TCP and UDP firewall rules scoped to the staged Node executable and configured port. The task command is encoded after all user-controlled values are PowerShell-literal quoted, avoiding fragile nested quoting in Task Scheduler arguments.
 
 To remove the task:
 
@@ -83,7 +85,7 @@ To remove the task:
 .\scripts\install-public-node-task.ps1 -Uninstall
 ```
 
-Uninstall removes the configured startup task and the dedicated `Konofix Public Node` firewall group. It deliberately does **not** delete the state directory, health history or identity key. Keeping the identity prevents an accidental public bootstrap Peer-ID rotation. Delete persistent state only as a separate, deliberate operator action after it is no longer needed.
+Uninstall removes the configured startup task and the dedicated `Konofix Public Node` firewall group. It deliberately does **not** delete the state directory, health history or identity key. Keeping the identity prevents an accidental public bootstrap Peer-ID rotation. Delete persistent state only as a separate, deliberate administrator action after it is no longer needed.
 
 The raw binary remains available for manual operation:
 
@@ -188,11 +190,13 @@ BOOTSTRAP QUIC: /ip4/203.0.113.10/udp/45555/quic-v1/p2p/12D3KooW...
 RECOMMENDED   : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
 ```
 
+The values above use an IANA documentation address only to illustrate multiaddr syntax; the production deployment/readiness tools deliberately reject it as public evidence.
+
 For DNS names, the Node uses the generic `/dns/...` multiaddr form so the hostname is not artificially restricted to IPv4-only resolution.
 
 Paste the `RECOMMENDED` address into **Network settings → Bootstrap**. The client stores it locally.
 
-Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, private IPv4 addresses, and IPv6 unique-local/link-local addresses are not global bootstrap addresses. The Node prints a warning when `--public-host` is an obviously non-public IP literal; the recommended `public-node.ps1` deployment preflight is stricter and rejects those configurations before launch unless the explicit lab override is supplied.
+Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, private IPv4 addresses, IPv6 unique-local/link-local addresses, documentation ranges and other special-use ranges are not global bootstrap addresses. The Node binary can print a warning for obviously non-public literals, while the recommended deployment/readiness tooling is stricter and rejects such configurations before they can be used as promotion evidence unless the explicit lab override is supplied where supported.
 
 A public IP or DNS name plus reachable TCP and UDP ports are required for a proper Internet test.
 
@@ -200,7 +204,7 @@ A public IP or DNS name plus reachable TCP and UDP ports are required for a prop
 
 A small VPS only needs one Konofix Node process. The long-term goal is to run several independent nodes across different countries and providers so one outage cannot disconnect the entire network.
 
-For a public test node, keep the process supervised by the operating system or a service manager, place `--identity-file` on persistent storage, back that file up securely, monitor the periodic status line or JSON health snapshot, and verify both TCP and UDP/QUIC reachability from an external network. On Windows, the bundled startup-task installer provides a reproducible supervised path without requiring a source checkout or an interactive user session.
+For a public test node, keep the process supervised by the operating system or a service manager, place `--identity-file` on persistent protected storage, back that file up securely, monitor the periodic status line or JSON health snapshot, and verify both TCP and UDP/QUIC reachability from an external network. On Windows, the bundled startup-task installer provides a reproducible supervised path without requiring a source checkout or an interactive user session.
 
 A basic health check can verify that:
 

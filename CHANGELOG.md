@@ -2,6 +2,9 @@
 
 ## 0.4.2
 
+- added an independent exact-build `konofix-netprobe` libp2p client that requires a Noise-authenticated connection to the target Peer ID, Konofix Identify metadata and a successful Ping round trip before emitting PASS JSON,
+- upgraded the production Windows Node runtime smoke to probe the restarted release binary over both real loopback TCP and QUIC-v1 libp2p transports instead of trusting process/health state alone,
+- added `konofix-netprobe.exe` to the verified Windows bundle with explicit `BUILD_INFO.json` size/SHA-256 provenance, complete-inventory sealing, release verification and local Windows build support without crediting the still-unproven cross-country milestone,
 - added a production Windows Node runtime smoke that executes the release-built `konofix-node.exe`, validates exact version/source-commit health telemetry, restarts with one persisted identity and requires the Peer ID to remain stable,
 - made the runtime smoke portable in extracted Windows test artifacts, where it verifies the packaged Node SHA-256 against `BUILD_INFO.json` before execution; release provenance and archive verification now include the smoke tool itself,
 - added high-signal Clippy correctness/suspicious/performance gates to Windows CI and the matching local preflight,

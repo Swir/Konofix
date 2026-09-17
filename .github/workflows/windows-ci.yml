@@ -112,11 +112,17 @@ jobs:
       - name: Cargo check - Konofix Node
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-node
 
+      - name: Cargo check - Konofix Netprobe
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-netprobe
+
       - name: Build production Windows app
         run: npm run tauri build
 
       - name: Build production Konofix Node
         run: cargo build --locked --manifest-path src-tauri/Cargo.toml --release --bin konofix-node
+
+      - name: Build production Konofix Netprobe
+        run: cargo build --locked --manifest-path src-tauri/Cargo.toml --release --bin konofix-netprobe
 
       - name: Production Node runtime smoke
         shell: pwsh
@@ -129,6 +135,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifact | Out-Null
           New-Item -ItemType Directory -Force -Path 'artifact\scripts' | Out-Null
           Copy-Item 'src-tauri\target\release\konofix-node.exe' 'artifact\konofix-node.exe'
+          Copy-Item 'src-tauri\target\release\konofix-netprobe.exe' 'artifact\konofix-netprobe.exe'
           if (-not (Test-Path 'src-tauri\target\release\bundle' -PathType Container)) { throw 'Tauri Windows bundle directory is missing.' }
           Copy-Item 'src-tauri\target\release\bundle' 'artifact\bundle' -Recurse -Force
           Copy-Item 'README.md' 'artifact\README.md'
@@ -165,6 +172,7 @@ jobs:
 
           $artifactRoot = (Resolve-Path 'artifact').Path
           $nodePath = Join-Path $artifactRoot 'konofix-node.exe'
+          $netprobePath = Join-Path $artifactRoot 'konofix-netprobe.exe'
           $frontendLockPath = Join-Path $artifactRoot 'package-lock.json'
           $cargoLockPath = Join-Path $artifactRoot 'Cargo.lock'
           $installerFiles = @(Get-ChildItem (Join-Path $artifactRoot 'bundle') -Recurse -File | Where-Object { $_.Extension -in @('.exe', '.msi') })
@@ -211,6 +219,11 @@ jobs:
               path = 'konofix-node.exe'
               bytes = [int64](Get-Item $nodePath).Length
               sha256 = (Get-FileHash $nodePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            netprobe = [ordered]@{
+              path = 'konofix-netprobe.exe'
+              bytes = [int64](Get-Item $netprobePath).Length
+              sha256 = (Get-FileHash $netprobePath -Algorithm SHA256).Hash.ToLowerInvariant()
             }
             frontend_lock = [ordered]@{
               path = 'package-lock.json'

@@ -10,6 +10,10 @@ rust-version = "1.88"
 name = "konofix-node"
 path = "src/main.rs"
 
+[[bin]]
+name = "konofix-netprobe"
+path = "src/netprobe.rs"
+
 [target.'cfg(windows)'.build-dependencies]
 tauri-build = { version = "2", features = [] }
 

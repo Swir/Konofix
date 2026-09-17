@@ -145,7 +145,12 @@ except ValueError:
     if len(lower) > 253 or "." not in lower or not re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", lower):
         print(f"ERROR: invalid public DNS name: {host}", file=sys.stderr)
         raise SystemExit(4)
-    if lower.endswith((".local", ".localhost", ".invalid", ".test", ".example")):
+    reserved_suffixes = (
+        "localhost", "local", "invalid", "test", "example",
+        "example.com", "example.net", "example.org",
+        "onion", "alt", "arpa", "internal",
+    )
+    if any(lower == suffix or lower.endswith("." + suffix) for suffix in reserved_suffixes):
         print(f"ERROR: reserved/non-public DNS name: {host}", file=sys.stderr)
         raise SystemExit(5)
     if require_dns:

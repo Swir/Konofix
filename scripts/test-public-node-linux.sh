@@ -132,6 +132,16 @@ expect_reject 'documentation address without lab override' \
   --public-host 203.0.113.10 --binary "$FAKE_NODE" --state-dir /var/lib/k3 --install-dir /usr/local/lib/k3 --print-unit
 expect_reject 'reserved DNS suffix' \
   --public-host node.example --binary "$FAKE_NODE" --state-dir /var/lib/k4 --install-dir /usr/local/lib/k4 --print-unit
+expect_reject 'IANA example.com documentation namespace' \
+  --public-host node.example.com --binary "$FAKE_NODE" --state-dir /var/lib/k4a --install-dir /usr/local/lib/k4a --print-unit
+expect_reject 'private internal namespace' \
+  --public-host bootstrap.internal --binary "$FAKE_NODE" --state-dir /var/lib/k4b --install-dir /usr/local/lib/k4b --print-unit
+expect_reject 'onion special-use namespace' \
+  --public-host relay.onion --binary "$FAKE_NODE" --state-dir /var/lib/k4c --install-dir /usr/local/lib/k4c --print-unit
+expect_reject 'home.arpa special-use namespace' \
+  --public-host router.home.arpa --binary "$FAKE_NODE" --state-dir /var/lib/k4d --install-dir /usr/local/lib/k4d --print-unit
+expect_reject 'alt special-use namespace' \
+  --public-host resolver.alt --binary "$FAKE_NODE" --state-dir /var/lib/k4e --install-dir /usr/local/lib/k4e --print-unit
 expect_reject 'single-label hostname' \
   --public-host localhost --binary "$FAKE_NODE" --state-dir /var/lib/k5 --install-dir /usr/local/lib/k5 --print-unit
 expect_reject 'port zero' \
@@ -163,7 +173,7 @@ expect_reject 'top-level state directory' \
 expect_reject 'top-level install directory' \
   --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /var/lib/k-usr --install-dir /usr --print-unit
 expect_reject 'missing binary' \
-  --public-host 1.1.1.1 --binary "$TMP/missing" --state-dir /var/lib/k11 --install-dir /usr/local/lib/k11 --print-unit
+  --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /var/lib/k11 --install-dir /usr/local/lib/k11 --print-unit
 expect_reject 'start-now without install' \
   --public-host 1.1.1.1 --binary "$FAKE_NODE" --state-dir /var/lib/k12 --install-dir /usr/local/lib/k12 --start-now
 

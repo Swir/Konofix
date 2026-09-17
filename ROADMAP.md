@@ -129,6 +129,7 @@ The active milestone currently has 54 of 59 tasks complete. The remaining five t
 - The supervised Windows SYSTEM public-Node task now requires identity/health inside one protected state tree, rejects existing reparse-point storage during installation, applies protected SYSTEM+Administrators-only ACLs to the state/runtime tree, preflights ScheduledTasks/firewall capabilities before mutation, and safely stops/waits/restarts an already-running task during secured upgrades.
 - File-transfer abuse resistance now bounds unanswered inbound offers per remote peer and expires stale pending offers, preventing one peer from indefinitely reserving all receiver slots; the desktop closes expired offer dialogs and reports expiry instead of exposing stale actions. This preserves the 54/59 real-network milestone count.
 - Authenticated GossipSub input is now schema-bounded after signature/source verification: malformed nickname, chat and room events (including attempts to mutate reserved `world`) are rejected before they can alter UI/network state.
+- Repository supply-chain maintenance now has scheduled Dependabot coverage for npm, Cargo and GitHub Actions plus a private-disclosure security policy; these maintenance controls do not add Real Internet Test credit.
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test

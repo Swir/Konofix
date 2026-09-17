@@ -127,6 +127,7 @@ The active milestone currently has 54 of 59 tasks complete. The remaining five t
 - Public-Node readiness now fails closed when a literal bootstrap endpoint is private, CGNAT, loopback/link-local, documentation-only, benchmark/reserved/ORCHID or otherwise non-global; DNS endpoints must be public-looking FQDNs and, for readiness evidence, resolve only to globally routable addresses. Readiness schema v2 records the resolved-address evidence while still refusing to claim a QUIC handshake that was not actually performed.
 - Windows and Linux public-Node deployment preflights now use the same fail-closed public-host boundary as promotion readiness: special/private-use DNS suffixes are rejected, and DNS evidence cannot pass with mixed public/non-public answers.
 - The supervised Windows SYSTEM public-Node task now requires identity/health inside one protected state tree, rejects existing reparse-point storage during installation, applies protected SYSTEM+Administrators-only ACLs to the state/runtime tree, preflights ScheduledTasks/firewall capabilities before mutation, and safely stops/waits/restarts an already-running task during secured upgrades.
+- Authenticated GossipSub input is now schema-bounded after signature/source verification: malformed nickname, chat and room events (including attempts to mutate reserved `world`) are rejected before they can alter UI/network state.
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test

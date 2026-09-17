@@ -220,6 +220,63 @@ fn wire_event_matches_source(event: &WireEvent, source: &PeerId) -> bool {
         .unwrap_or(false)
 }
 
+fn valid_wire_room_id(room_id: &str) -> bool {
+    !room_id.is_empty()
+        && room_id.chars().count() <= 64
+        && room_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+}
+
+fn wire_event_is_well_formed(event: &WireEvent) -> bool {
+    match event {
+        WireEvent::Presence { peer_id, nick } => {
+            peer_id.parse::<PeerId>().is_ok() && validate_nick(nick).is_ok()
+        }
+        WireEvent::Goodbye { peer_id } => peer_id.parse::<PeerId>().is_ok(),
+        WireEvent::NickClaim {
+            peer_id,
+            nick,
+            canonical,
+            expires_at,
+        } => {
+            peer_id.parse::<PeerId>().is_ok()
+                && validate_nick(nick).is_ok()
+                && canonical == &canonical_nick(nick)
+                && *expires_at > 0
+        }
+        WireEvent::Chat(message) => {
+            let Some(peer_id) = message.peer_id.as_deref() else {
+                return false;
+            };
+            peer_id.parse::<PeerId>().is_ok()
+                && Uuid::parse_str(&message.id).is_ok()
+                && message.kind == "chat"
+                && validate_nick(&message.nick).is_ok()
+                && valid_wire_room_id(&message.room)
+                && !message.text.trim().is_empty()
+                && message.text.chars().count() <= 4000
+        }
+        WireEvent::RoomCreate(room) => {
+            let Some(owner) = room.owner.as_deref() else {
+                return false;
+            };
+            let Some(title) = room.title.strip_prefix("# ") else {
+                return false;
+            };
+            owner.parse::<PeerId>().is_ok()
+                && room.id != "world"
+                && valid_wire_room_id(&room.id)
+                && (3..=32).contains(&title.chars().count())
+                && room.id == slug::slugify(title)
+                && room.users.is_none_or(|users| users <= 100_000)
+        }
+        WireEvent::RoomClose { room_id, owner } => {
+            owner.parse::<PeerId>().is_ok() && room_id != "world" && valid_wire_room_id(room_id)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum FileRequest {
@@ -1540,6 +1597,13 @@ async fn network_task(
                             );
                             continue;
                         }
+                        if !wire_event_is_well_formed(&event) {
+                            let _ = app.emit(
+                                "network-warning",
+                                format!("Dropped malformed authenticated P2P event from {authenticated_source}."),
+                            );
+                            continue;
+                        }
                         match event {
                             WireEvent::Presence { peer_id: remote_id, nick: remote_nick } => {
                                 if remote_id != peer_id {
@@ -1904,6 +1968,70 @@ mod authenticated_event_tests {
         libp2p::identity::Keypair::generate_ed25519()
             .public()
             .to_peer_id()
+    }
+
+    #[test]
+    fn malformed_authenticated_wire_events_are_rejected() {
+        let source = test_peer();
+        let source_text = source.to_string();
+
+        let valid_chat = WireEvent::Chat(ChatMessage {
+            id: Uuid::new_v4().to_string(),
+            kind: "chat".into(),
+            peer_id: Some(source_text.clone()),
+            nick: "alice".into(),
+            room: "world".into(),
+            text: "hello".into(),
+            timestamp: 1,
+        });
+        assert!(wire_event_is_well_formed(&valid_chat));
+
+        let oversized_chat = WireEvent::Chat(ChatMessage {
+            id: Uuid::new_v4().to_string(),
+            kind: "chat".into(),
+            peer_id: Some(source_text.clone()),
+            nick: "alice".into(),
+            room: "world".into(),
+            text: "x".repeat(4001),
+            timestamp: 1,
+        });
+        assert!(!wire_event_is_well_formed(&oversized_chat));
+
+        let invalid_nick = WireEvent::Presence {
+            peer_id: source_text.clone(),
+            nick: "<script>".into(),
+        };
+        assert!(!wire_event_is_well_formed(&invalid_nick));
+
+        let inconsistent_claim = WireEvent::NickClaim {
+            peer_id: source_text.clone(),
+            nick: "Alice".into(),
+            canonical: "mallory".into(),
+            expires_at: 1,
+        };
+        assert!(!wire_event_is_well_formed(&inconsistent_claim));
+
+        let reserved_room = WireEvent::RoomCreate(RoomInfo {
+            id: "world".into(),
+            title: "# world".into(),
+            owner: Some(source_text.clone()),
+            users: Some(1),
+        });
+        assert!(!wire_event_is_well_formed(&reserved_room));
+
+        let mismatched_room_slug = WireEvent::RoomCreate(RoomInfo {
+            id: "different-room".into(),
+            title: "# valid room".into(),
+            owner: Some(source_text.clone()),
+            users: Some(1),
+        });
+        assert!(!wire_event_is_well_formed(&mismatched_room_slug));
+
+        let reserved_close = WireEvent::RoomClose {
+            room_id: "world".into(),
+            owner: source_text,
+        };
+        assert!(!wire_event_is_well_formed(&reserved_close));
     }
 
     #[test]

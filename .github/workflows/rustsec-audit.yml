@@ -10,6 +10,8 @@ on:
       - 'src-tauri/Cargo.lock'
       - 'node-linux/Cargo.toml'
       - '.github/workflows/rustsec-audit.yml'
+      - 'scripts/check-rustsec-workflow.mjs'
+      - 'scripts/test-rustsec-workflow.mjs'
   schedule:
     - cron: '37 5 * * 1'
   workflow_dispatch:
@@ -67,10 +69,13 @@ jobs:
 
           source_path = Path('src-tauri/Cargo.lock')
           source = source_path.read_text(encoding='utf-8')
-          pattern = r'(\[\[package\]\]\nname = "rustls"\nversion = ")0\.23\.45(")'
+          pattern = r'(?m)(\[\[package\]\]\nname = "rustls"\nversion = ")[^"]+(\")'
+          matches = list(re.finditer(pattern, source))
+          if len(matches) != 1:
+              raise SystemExit(f'Expected exactly one rustls package in the committed Cargo.lock fixture source, found {len(matches)}.')
           fixture, replacements = re.subn(pattern, r'\g<1>0.23.44\2', source, count=1)
           if replacements != 1:
-              raise SystemExit('Expected exactly one rustls 0.23.45 package in the committed Cargo.lock fixture source.')
+              raise SystemExit('Failed to create the controlled vulnerable rustls fixture.')
           fixture_path = Path(os.environ['RUNNER_TEMP']) / 'rustsec-vulnerable-fixture.lock'
           fixture_path.write_text(fixture, encoding='utf-8')
           print(f'Created controlled vulnerable fixture at {fixture_path}')

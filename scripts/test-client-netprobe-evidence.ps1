@@ -149,7 +149,9 @@ try {
 
     $malformedIdentitySession = Join-Path $temp 'SESSION_INFO-malformed-identity.json'
     $malformedIdentity = Get-Content -LiteralPath $sessionPath -Raw | ConvertFrom-Json
-    $fakePeer = '12D3KooWClientProbeSelfTestPeer123456789'
+    # Keep the fake inside the base58btc alphabet so this assertion exercises the
+    # multihash parser, not the earlier textual-alphabet guard.
+    $fakePeer = '12D3KooW7N8jFx6tT8hVYpY3iM3x1bqL6ZpH8sR4wC2dA9eF5gK'
     $malformedIdentity.bootstrap_peer_id = $fakePeer
     $malformedIdentity.tcp_bootstrap = "/ip4/8.8.8.8/tcp/45555/p2p/$fakePeer"
     $malformedIdentity.quic_bootstrap = "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$fakePeer"

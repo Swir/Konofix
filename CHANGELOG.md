@@ -2,6 +2,7 @@
 
 ## 0.4.2
 
+- hardened coherent network-session validation so every supplied TCP/QUIC/Relay/DCUtR/CGNAT manifest must reside beside its `SESSION_INFO.json`; cross-directory copies with otherwise matching names/metadata are rejected and covered by adversarial self-tests, without changing the 54/59 Real Internet Test milestone,
 - upgraded Vite to 8.3.0 after full Windows and Linux PR CI verification; the production TypeScript/Vite build, Rust gates, Windows packaging and release-artifact verification remained green, and this toolchain maintenance does not add Real Internet Test credit,
 - upgraded dual-client Netprobe evidence to schema 2 with session-scoped privacy-preserving Windows-host and default-route-network SHA-256 fingerprints; stable promotion now rejects legacy evidence and same-host/same-network Client A/B captures while retaining schema-1 readability for non-promotion diagnostics, without claiming real-network milestone credit,
 - updated the shared Rust `dirs` dependency to 7.0.0 across the desktop and isolated Linux Node manifests after full Windows and Linux CI verification; the project does not use the changed preference-directory API, and this maintenance update does not add Real Internet Test credit,
@@ -42,7 +43,6 @@
 - added strict `scripts/check-node-health.ps1` validation and adversarial CI coverage,
 - hardened Node health validation with version/Peer ID pinning, uptime, quorum, freshness, clock-skew and bounded snapshot-size gates,
 - require Node-health numeric fields to be genuine JSON integers and textual fields to be genuine non-empty JSON strings,
-- use ordinal case-sensitive status/version/Peer ID comparisons and fail closed on explicitly empty identity pins,
 - upgraded Node health snapshots to schema v2 with an embedded exact source commit and added optional fail-closed `ExpectedSourceCommit` validation,
 - upgraded real-network evidence to schema v3 with an exact 40-character source commit, automatically derived from verified `BUILD_INFO.json` or Git when possible,
 - bound stable-promotion network evidence and Node soak history to the exact target source commit in addition to the client/Node versions and bootstrap Peer ID,

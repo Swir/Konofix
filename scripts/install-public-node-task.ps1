@@ -49,6 +49,42 @@ function Test-IsPathInside([string]$RootPath, [string]$ChildPath) {
   return $childFull.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Assert-SafeDedicatedStateRoot([string]$PathValue) {
+  $full = Get-FullPath $PathValue 'state directory'
+  $volumeRoot = [System.IO.Path]::GetPathRoot($full)
+  if ([string]::IsNullOrWhiteSpace($volumeRoot)) {
+    throw "StateDirectory has no filesystem root: $full"
+  }
+  $trimmedFull = $full.TrimEnd([char[]]@('\', '/'))
+  $trimmedVolume = $volumeRoot.TrimEnd([char[]]@('\', '/'))
+  if ([System.StringComparer]::OrdinalIgnoreCase.Equals($trimmedFull, $trimmedVolume)) {
+    throw 'StateDirectory must be a dedicated subdirectory, never a filesystem root.'
+  }
+
+  $forbiddenBases = @(
+    [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Windows),
+    [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles),
+    [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFilesX86),
+    [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile),
+    [System.IO.Path]::GetTempPath()
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { Get-FullPath $_ 'protected base' } | Select-Object -Unique
+
+  foreach ($base in $forbiddenBases) {
+    if ([System.StringComparer]::OrdinalIgnoreCase.Equals($full.TrimEnd([char[]]@('\', '/')), $base.TrimEnd([char[]]@('\', '/'))) -or
+        (Test-IsPathInside -RootPath $base -ChildPath $full)) {
+      throw "StateDirectory must not be a filesystem/system/user/temp tree used for unrelated content: $full"
+    }
+  }
+
+  $programData = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::CommonApplicationData)
+  if (-not [string]::IsNullOrWhiteSpace($programData)) {
+    $programDataFull = Get-FullPath $programData 'ProgramData'
+    if ([System.StringComparer]::OrdinalIgnoreCase.Equals($full.TrimEnd([char[]]@('\', '/')), $programDataFull.TrimEnd([char[]]@('\', '/')))) {
+      throw 'StateDirectory must be a dedicated child of ProgramData, not ProgramData itself.'
+    }
+  }
+}
+
 function Assert-NoReparsePointInExistingPath([string]$PathValue, [string]$Label) {
   $current = Get-FullPath $PathValue $Label
   while (-not [string]::IsNullOrWhiteSpace($current)) {
@@ -154,6 +190,7 @@ if ([string]::IsNullOrWhiteSpace($StateDirectory)) {
   $StateDirectory = Join-Path $programData 'Konofix Node'
 }
 $stateFull = Get-FullPath $StateDirectory 'state directory'
+Assert-SafeDedicatedStateRoot $stateFull
 
 $preflightArgs = @{
   PublicHost = $PublicHost
@@ -233,6 +270,7 @@ $plan = [ordered]@{
   restart_count = 999
   security = [ordered]@{
     state_containment_required = $true
+    dedicated_state_root_required = $true
     reparse_points_rejected = $true
     dacl_mode = 'SYSTEM+Administrators full-control only; inheritance disabled at protected state root'
     directory_sddl = $privateDirectorySddl

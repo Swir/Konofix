@@ -1,7 +1,9 @@
 $ErrorActionPreference = 'Stop'
 $tool = Join-Path $PSScriptRoot 'install-public-node-task.ps1'
-$tempState = Join-Path ([System.IO.Path]::GetTempPath()) ("konofix-public-node-task-test-" + [guid]::NewGuid().ToString('N'))
-$outsideRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("konofix-public-node-task-outside-" + [guid]::NewGuid().ToString('N'))
+$programData = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::CommonApplicationData)
+if ([string]::IsNullOrWhiteSpace($programData)) { throw 'Self-test could not determine CommonApplicationData.' }
+$tempState = Join-Path $programData ("Konofix-Task-Test-" + [guid]::NewGuid().ToString('N'))
+$outsideRoot = Join-Path $programData ("Konofix-Task-Outside-" + [guid]::NewGuid().ToString('N'))
 
 function Assert-True([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
@@ -30,6 +32,7 @@ Assert-True ($plan.public_host -ceq '8.8.8.8') 'Public host was not normalized c
 Assert-True ($plan.port -eq 46666) 'Custom port was not preserved.'
 Assert-True ($plan.status_interval -eq 45) 'Custom status interval was not preserved.'
 Assert-True ([bool]$plan.security.state_containment_required) 'SYSTEM-task plan must require protected state containment.'
+Assert-True ([bool]$plan.security.dedicated_state_root_required) 'SYSTEM-task plan must require a dedicated state root.'
 Assert-True ([bool]$plan.security.reparse_points_rejected) 'SYSTEM-task plan must advertise reparse-point rejection.'
 Assert-True ($plan.security.directory_sddl -ceq 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)') 'Protected directory SDDL drifted.'
 Assert-True ($plan.security.file_sddl -ceq 'D:P(A;;FA;;;SY)(A;;FA;;;BA)') 'Protected file SDDL drifted.'
@@ -68,6 +71,22 @@ Assert-Fails 'external health path rejection' 'requires HealthFile to stay insid
 Assert-Fails 'state root cannot be identity file' 'requires IdentityFile to stay inside StateDirectory' {
   & $tool -PublicHost '8.8.8.8' -StateDirectory $tempState -IdentityFile $tempState -AsJson | Out-Null
 }
+Assert-Fails 'filesystem root state rejection' 'never a filesystem root' {
+  & $tool -PublicHost '8.8.8.8' -StateDirectory ([System.IO.Path]::GetPathRoot($tempState)) -AsJson | Out-Null
+}
+Assert-Fails 'ProgramData root state rejection' 'dedicated child of ProgramData' {
+  & $tool -PublicHost '8.8.8.8' -StateDirectory $programData -AsJson | Out-Null
+}
+$tempUnsafe = Join-Path ([System.IO.Path]::GetTempPath()) ('Konofix-' + [guid]::NewGuid().ToString('N'))
+Assert-Fails 'temporary-tree state rejection' 'filesystem/system/user/temp tree' {
+  & $tool -PublicHost '8.8.8.8' -StateDirectory $tempUnsafe -AsJson | Out-Null
+}
+$userProfile = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
+if (-not [string]::IsNullOrWhiteSpace($userProfile)) {
+  Assert-Fails 'user-profile state rejection' 'filesystem/system/user/temp tree' {
+    & $tool -PublicHost '8.8.8.8' -StateDirectory (Join-Path $userProfile 'KonofixNode') -AsJson | Out-Null
+  }
+}
 Assert-Fails 'invalid task name rejection' 'TaskName must be 1-80 characters' {
   & $tool -PublicHost '8.8.8.8' -StateDirectory $tempState -TaskName '..\bad' -AsJson | Out-Null
 }
@@ -81,4 +100,4 @@ Assert-Fails 'start-now mode rejection' '-StartNow requires -Install' {
   & $tool -PublicHost '8.8.8.8' -StateDirectory $tempState -StartNow -AsJson | Out-Null
 }
 
-Write-Host 'OK - startup-task planning is deterministic, encoded-command safe, enforces protected state containment, exposes the SYSTEM/Admin-only ACL plan and remains mutation-free in self-tests.' -ForegroundColor Green
+Write-Host 'OK - startup-task planning is deterministic, encoded-command safe, enforces a dedicated protected state root, exposes the SYSTEM/Admin-only ACL plan and remains mutation-free in self-tests.' -ForegroundColor Green

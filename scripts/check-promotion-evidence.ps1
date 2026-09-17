@@ -236,10 +236,12 @@ if ([string]$clientProbeResult.bootstrap_peer_id -cne $bootstrapPeer) {
   -ExpectedVersion $version `
   -ExpectedPeerId $bootstrapPeer `
   -ExpectedSourceCommit $commit `
+  -ExpectedNodeSha256 $actualNodeHash `
+  -ExpectedBuildInfoSha256 $actualBuildInfoHash `
   -RequirePeerObserved
 
 $result = [ordered]@{
-  schema = 3
+  schema = 4
   status = 'PASS'
   product = $product
   version = $version
@@ -253,6 +255,7 @@ $result = [ordered]@{
   distinct_client_network_contexts = [bool]$clientProbeResult.distinct_network_contexts
   netprobe_sha256 = [string]$clientProbeResult.netprobe_sha256
   node_soak_snapshot_count = $resolvedNodeSoakEvidence.Count
+  node_soak_exact_build_binding = $true
   node_binary_bytes = $actualNodeBytes
   node_binary_sha256 = $actualNodeHash
   build_info_sha256 = $actualBuildInfoHash
@@ -274,5 +277,6 @@ Write-Host "Authenticated TCP/QUIC:   PASS / PASS"
 Write-Host 'Distinct client hosts:    PASS'
 Write-Host 'Distinct client networks: PASS'
 Write-Host "Node soak snapshots:      $($resolvedNodeSoakEvidence.Count)"
+Write-Host 'Node soak artifact bind:  PASS'
 Write-Host "Node SHA-256:             $actualNodeHash"
-Write-Host 'PASS - packaged Node/Netprobe provenance, authenticated TCP+QUIC probes from two distinct Windows hosts and default-route network contexts, one coherent cross-country test session, required network scenarios and public-Node soak evidence all match the exact verified Windows build.' -ForegroundColor Green
+Write-Host 'PASS - packaged Node/Netprobe provenance, exact-build-bound public-Node soak history, authenticated TCP+QUIC probes from two distinct Windows hosts and default-route network contexts, one coherent cross-country test session, required network scenarios and public-Node soak evidence all match the exact verified Windows build.' -ForegroundColor Green

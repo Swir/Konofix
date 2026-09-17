@@ -83,6 +83,9 @@ function New-SoakSnapshot([string]$Path, [int64]$Timestamp, [int64]$Uptime, [int
     uptime_seconds = $Uptime
     connected_peers = $Peers
     timestamp_unix = $Timestamp
+    evidence_binding_schema = 1
+    node_binary_sha256 = $nodeHash
+    build_info_sha256 = $buildInfoHash
   } | ConvertTo-Json | Set-Content -LiteralPath $Path -Encoding UTF8
 }
 
@@ -235,7 +238,7 @@ try {
     -NodeSoakMaxAgeSeconds 60 `
     -AsJson) | ConvertFrom-Json
 
-  Assert-True ($result.schema -eq 3) 'Promotion result schema must be 3.'
+  Assert-True ($result.schema -eq 4) 'Promotion result schema must be 4.'
   Assert-True ($result.status -ceq 'PASS') 'Promotion evidence must return PASS.'
   Assert-True ($result.version -ceq $version) 'Promotion result version mismatch.'
   Assert-True ($result.source_commit -ceq $sourceCommit) 'Promotion result source commit mismatch.'
@@ -248,9 +251,20 @@ try {
   Assert-True ($result.distinct_client_network_contexts -eq $true) 'Promotion result must prove distinct client network contexts.'
   Assert-True ($result.netprobe_sha256 -ceq $netprobeHash) 'Promotion result Netprobe SHA-256 mismatch.'
   Assert-True ($result.node_soak_snapshot_count -eq 4) 'Promotion wildcard expansion must resolve all four soak snapshots.'
+  Assert-True ($result.node_soak_exact_build_binding -eq $true) 'Promotion result must require exact-build-bound soak evidence.'
   Assert-True ($result.node_binary_sha256 -ceq $nodeHash) 'Promotion result Node SHA-256 mismatch.'
   Assert-True ($result.build_info_sha256 -ceq $buildInfoHash) 'Promotion result BUILD_INFO SHA-256 mismatch.'
   Assert-True ($result.coherent_test_session -eq $true) 'Promotion result must prove a coherent test session.'
+
+  $tamperedSoak = Join-Path $temp 'soak-tampered-binding.json'
+  Copy-Item -LiteralPath $soakPaths[2] -Destination $tamperedSoak
+  $badSoak = Get-Content -LiteralPath $tamperedSoak -Raw | ConvertFrom-Json
+  $badSoak.node_binary_sha256 = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+  $badSoak | ConvertTo-Json | Set-Content -LiteralPath $tamperedSoak -Encoding UTF8
+  $tamperedSoakSet = @($soakPaths[0], $soakPaths[1], $tamperedSoak, $soakPaths[3])
+  Assert-Fails 'mismatched soak artifact binding' 'exact Node binary SHA-256 mismatch' {
+    & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbePaths -NodeSoakEvidence $tamperedSoakSet -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
+  }
 
   Assert-Fails 'empty wildcard rejection' 'wildcard matched no files' {
     & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbePaths -NodeSoakEvidence (Join-Path $temp 'missing-soak-*.json') -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
@@ -340,7 +354,7 @@ try {
     & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $mixedSessionPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence $clientProbePaths -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null
   }
 
-  Write-Host 'OK - packaged Node and Netprobe bytes, exact BUILD_INFO provenance, authenticated direct TCP/QUIC evidence from two distinct host/network contexts, one coherent public-endpoint test session, evidence-rich PASS checks, wildcard evidence resolution, all required real-network scenarios and matching public-Node soak history are combined into one fail-closed promotion preflight.' -ForegroundColor Green
+  Write-Host 'OK - packaged Node and Netprobe bytes, exact BUILD_INFO provenance, exact-build-bound Node soak history, authenticated direct TCP/QUIC evidence from two distinct host/network contexts, one coherent public-endpoint test session, evidence-rich PASS checks, wildcard evidence resolution and all required real-network scenarios are combined into one fail-closed promotion preflight.' -ForegroundColor Green
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

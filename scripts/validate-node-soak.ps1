@@ -22,6 +22,10 @@ param(
 
     [string]$ExpectedSourceCommit = '',
 
+    [string]$ExpectedNodeSha256 = '',
+
+    [string]$ExpectedBuildInfoSha256 = '',
+
     [int64]$MaxSnapshotBytes = 65536
 )
 
@@ -74,6 +78,11 @@ function Test-SourceCommitFormat {
     return $Value -eq 'unknown' -or $Value -cmatch '^[0-9a-f]{40}$'
 }
 
+function Test-CanonicalSha256 {
+    param([Parameter(Mandatory = $true)][string]$Value)
+    return $Value -cmatch '^[0-9a-f]{64}$'
+}
+
 if ($Snapshot.Count -lt 2) { throw 'Node soak validation requires at least two health snapshots.' }
 if ($MinSpanSeconds -lt 60 -or $MinSpanSeconds -gt 604800) { throw 'MinSpanSeconds must be between 60 and 604800.' }
 if ($MaxGapSeconds -lt 10 -or $MaxGapSeconds -gt 86400) { throw 'MaxGapSeconds must be between 10 and 86400.' }
@@ -87,6 +96,16 @@ if ($PSBoundParameters.ContainsKey('ExpectedPeerId') -and [string]::IsNullOrWhit
 if ($PSBoundParameters.ContainsKey('ExpectedSourceCommit')) {
     if ([string]::IsNullOrWhiteSpace($ExpectedSourceCommit)) { throw 'ExpectedSourceCommit cannot be empty or whitespace when explicitly supplied.' }
     if ($ExpectedSourceCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'ExpectedSourceCommit must be a canonical lowercase 40-character Git commit SHA.' }
+}
+if ($PSBoundParameters.ContainsKey('ExpectedNodeSha256')) {
+    if ([string]::IsNullOrWhiteSpace($ExpectedNodeSha256) -or -not (Test-CanonicalSha256 $ExpectedNodeSha256)) { throw 'ExpectedNodeSha256 must be a canonical lowercase SHA-256.' }
+}
+if ($PSBoundParameters.ContainsKey('ExpectedBuildInfoSha256')) {
+    if ([string]::IsNullOrWhiteSpace($ExpectedBuildInfoSha256) -or -not (Test-CanonicalSha256 $ExpectedBuildInfoSha256)) { throw 'ExpectedBuildInfoSha256 must be a canonical lowercase SHA-256.' }
+}
+$requireArtifactBinding = $PSBoundParameters.ContainsKey('ExpectedNodeSha256') -or $PSBoundParameters.ContainsKey('ExpectedBuildInfoSha256')
+if ($requireArtifactBinding -and -not ($PSBoundParameters.ContainsKey('ExpectedNodeSha256') -and $PSBoundParameters.ContainsKey('ExpectedBuildInfoSha256'))) {
+    throw 'Exact-build soak validation requires both ExpectedNodeSha256 and ExpectedBuildInfoSha256.'
 }
 
 $samples = @()
@@ -112,6 +131,24 @@ foreach ($path in $Snapshot) {
     if (-not [string]::IsNullOrWhiteSpace($ExpectedPeerId) -and -not (Test-OrdinalEqual $peerId $ExpectedPeerId)) { throw "Node soak Peer ID mismatch (expected=$ExpectedPeerId actual=$peerId)." }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedSourceCommit) -and -not (Test-OrdinalEqual $sourceCommit $ExpectedSourceCommit)) { throw "Node soak source commit mismatch (expected=$ExpectedSourceCommit actual=$sourceCommit)." }
 
+    $bindingSchema = $null
+    $nodeSha256 = $null
+    $buildInfoSha256 = $null
+    $bindingFieldsPresent = $null -ne $health.evidence_binding_schema -or $null -ne $health.node_binary_sha256 -or $null -ne $health.build_info_sha256
+    if ($bindingFieldsPresent -or $requireArtifactBinding) {
+        foreach ($field in @('evidence_binding_schema', 'node_binary_sha256', 'build_info_sha256')) {
+            if ($null -eq $health.$field) { throw "Node soak snapshot is missing exact-build binding field '$field': $path" }
+        }
+        $bindingSchema = Get-StrictJsonInt64 -Value $health.evidence_binding_schema -Field 'evidence_binding_schema'
+        if ($bindingSchema -ne 1) { throw "Unsupported Node soak evidence binding schema: $bindingSchema" }
+        $nodeSha256 = Get-StrictJsonString -Value $health.node_binary_sha256 -Field 'node_binary_sha256'
+        $buildInfoSha256 = Get-StrictJsonString -Value $health.build_info_sha256 -Field 'build_info_sha256'
+        if (-not (Test-CanonicalSha256 $nodeSha256)) { throw "Node soak node_binary_sha256 is not a canonical lowercase SHA-256: $path" }
+        if (-not (Test-CanonicalSha256 $buildInfoSha256)) { throw "Node soak build_info_sha256 is not a canonical lowercase SHA-256: $path" }
+        if ($requireArtifactBinding -and -not (Test-OrdinalEqual $nodeSha256 $ExpectedNodeSha256)) { throw "Node soak exact Node binary SHA-256 mismatch (expected=$ExpectedNodeSha256 actual=$nodeSha256)." }
+        if ($requireArtifactBinding -and -not (Test-OrdinalEqual $buildInfoSha256 $ExpectedBuildInfoSha256)) { throw "Node soak exact BUILD_INFO SHA-256 mismatch (expected=$ExpectedBuildInfoSha256 actual=$buildInfoSha256)." }
+    }
+
     $uptime = Get-StrictJsonInt64 -Value $health.uptime_seconds -Field 'uptime_seconds'
     $peers = Get-StrictJsonInt64 -Value $health.connected_peers -Field 'connected_peers'
     $timestamp = Get-StrictJsonInt64 -Value $health.timestamp_unix -Field 'timestamp_unix'
@@ -129,6 +166,9 @@ foreach ($path in $Snapshot) {
         uptime = $uptime
         peers = $peers
         timestamp = $timestamp
+        binding_schema = $bindingSchema
+        node_sha256 = $nodeSha256
+        build_info_sha256 = $buildInfoSha256
     }
 }
 
@@ -139,6 +179,15 @@ $peerIds = @($ordered | ForEach-Object peer_id | Sort-Object -Unique -CaseSensit
 if ($versions.Count -ne 1) { throw "Node soak snapshots contain multiple versions: $($versions -join ', ')" }
 if ($sourceCommits.Count -ne 1) { throw "Node soak snapshots contain multiple source commits: $($sourceCommits -join ', ')" }
 if ($peerIds.Count -ne 1) { throw "Node soak snapshots contain multiple Peer IDs: $($peerIds -join ', ')" }
+
+$boundSamples = @($ordered | Where-Object { $null -ne $_.binding_schema })
+if ($boundSamples.Count -ne 0 -and $boundSamples.Count -ne $ordered.Count) { throw 'Node soak evidence mixes exact-build-bound and unbound snapshots.' }
+if ($boundSamples.Count -gt 0) {
+    $nodeHashes = @($boundSamples | ForEach-Object node_sha256 | Sort-Object -Unique -CaseSensitive)
+    $buildInfoHashes = @($boundSamples | ForEach-Object build_info_sha256 | Sort-Object -Unique -CaseSensitive)
+    if ($nodeHashes.Count -ne 1) { throw 'Node soak snapshots contain multiple Node binary SHA-256 bindings.' }
+    if ($buildInfoHashes.Count -ne 1) { throw 'Node soak snapshots contain multiple BUILD_INFO SHA-256 bindings.' }
+}
 
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $latest = $ordered[-1]
@@ -169,4 +218,5 @@ for ($i = 0; $i -lt $ordered.Count; $i++) {
 
 if ($RequirePeerObserved -and -not $peerObserved) { throw 'Node soak evidence never observed a connected peer.' }
 
-Write-Host "Konofix Node soak healthy: version=$($versions[0]) source_commit=$($sourceCommits[0]) peer_id=$($peerIds[0]) samples=$($ordered.Count) span=${span}s max_gap=${MaxGapSeconds}s latest_age=${latestAge}s peer_observed=$peerObserved"
+$bindingState = if ($boundSamples.Count -eq $ordered.Count) { 'exact-build-bound' } else { 'legacy-unbound' }
+Write-Host "Konofix Node soak healthy: version=$($versions[0]) source_commit=$($sourceCommits[0]) peer_id=$($peerIds[0]) samples=$($ordered.Count) span=${span}s max_gap=${MaxGapSeconds}s latest_age=${latestAge}s peer_observed=$peerObserved binding=$bindingState"

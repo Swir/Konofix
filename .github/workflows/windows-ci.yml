@@ -297,6 +297,8 @@ jobs:
 
           Expect-VerifyFailure -Label 'unexpected file inventory' -EntryName 'UNEXPECTED.txt' -ExpectedPattern 'inventory'
           Expect-VerifyFailure -Label 'parent-directory traversal entry' -EntryName '../escape.txt' -ExpectedPattern 'unsafe|parent-directory'
+          Expect-VerifyFailure -Label 'reserved Windows device alias' -EntryName 'NUL.txt' -ExpectedPattern 'reserved Windows device'
+          Expect-VerifyFailure -Label 'trailing-dot Windows alias' -EntryName 'alias.txt.' -ExpectedPattern 'Windows-aliased dot or space'
           Expect-VerifyFailure -Label 'high-ratio decompression bomb' -EntryName 'compression-bomb.txt' -ExpectedPattern 'compression ratio|expanded size' -Content ('A' * 8MB)
 
       - name: Upload Windows test bundle

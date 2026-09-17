@@ -58,7 +58,6 @@ export function parseMilestone(roadmapText) {
   const completed = (section.match(/^- \[[xX]\] /gm) || []).length;
   const open = (section.match(/^- \[ \] /gm) || []).length;
   const total = completed + open;
-  if (total === 0) throw new Error('The active milestone has no verifiable checklist tasks; progress must be N/A until a denominator exists.');
   const heading = section.split(/\r?\n/, 1)[0]
     .replace(/^##\s+/, '')
     .replace(/\s+🚧\s*$/, '')
@@ -203,6 +202,19 @@ export function validateSvg(svg, label) {
   if ((svg.match(/<svg\b/g) || []).length !== 1 || (svg.match(/<\/svg>/g) || []).length !== 1) throw new Error(`${label}: SVG must contain exactly one root element.`);
 }
 
+export function validateEmbeddings(readmeText, roadmapText, progress) {
+  const readmePath = 'src="assets/readme/progress-card.svg"';
+  const roadmapPath = 'src="assets/readme/progress-mini.svg"';
+  if (!readmeText.includes(readmePath)) throw new Error('README.md must embed assets/readme/progress-card.svg near project status.');
+  if (!roadmapText.includes(roadmapPath)) throw new Error('ROADMAP.md must embed assets/readme/progress-mini.svg near its authoritative status dashboard.');
+
+  const fallback = progress.total === 0
+    ? 'Verified checklist fraction: N/A.'
+    : `Verified checklist fraction: ${progress.completed} of ${progress.total} tasks — ${progress.percentText}.`;
+  if (!readmeText.includes(fallback)) throw new Error(`README.md textual progress fallback is stale; expected '${fallback}'.`);
+  if (!roadmapText.includes(fallback)) throw new Error(`ROADMAP.md textual progress fallback is stale; expected '${fallback}'.`);
+}
+
 export function generateAssets(roadmapText) {
   const progress = parseMilestone(roadmapText);
   const assets = {
@@ -230,6 +242,18 @@ function main() {
       fs.mkdirSync(path.dirname(fullPath), { recursive: true });
       fs.writeFileSync(fullPath, expected, 'utf8');
       console.log(`Wrote ${relativePath}`);
+    }
+  }
+  if (checkOnly) {
+    try {
+      validateEmbeddings(
+        fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8'),
+        roadmap,
+        progress,
+      );
+    } catch (error) {
+      console.error(`PROGRESS SVG ERROR: ${error.message}`);
+      stale = true;
     }
   }
   if (stale) process.exitCode = 1;

@@ -6,6 +6,7 @@ import {
   renderMini,
   renderTemplate,
   validateSvg,
+  validateEmbeddings,
 } from './progress-svg.mjs';
 
 const fixture = (completed, open, heading = '## 0.4.2 — Real Internet Test 🚧') => `${heading}\n${'- [x] done\n'.repeat(completed)}${'- [ ] todo\n'.repeat(open)}\n## 0.5.0 — Next\n`;
@@ -71,6 +72,28 @@ const fixture = (completed, open, heading = '## 0.4.2 — Real Internet Test �
   assert.equal(parsed.completed, 2);
   assert.equal(parsed.total, 3);
   assert.equal(parsed.percentText, '66.7%');
+}
+
+{
+  const parsed = parseMilestone('## 0.4.2 — Real Internet Test 🚧\nNo checklist yet.\n\n## 0.5.0 — Next\n');
+  assert.equal(parsed.total, 0);
+  assert.equal(parsed.percentText, 'N/A');
+  assert.equal(parsed.status, 'PLANNING');
+}
+
+{
+  const progress = { ...computeProgress(54, 59), project: 'Konofix Chat', scope: '0.4.2 — Real Internet Test', source: 'ROADMAP.md' };
+  const fallback = '**Verified checklist fraction: 54 of 59 tasks — 91.5%.**';
+  assert.doesNotThrow(() => validateEmbeddings(
+    `<img src="assets/readme/progress-card.svg" />\n${fallback}`,
+    `<img src="assets/readme/progress-mini.svg" />\n${fallback}`,
+    progress,
+  ));
+  assert.throws(() => validateEmbeddings(
+    `<img src="assets/readme/progress-card.svg" />\n${fallback}`,
+    '<img src="assets/readme/progress-mini.svg" />\n**Verified checklist fraction: 54 of 59 tasks — 90.0%.**',
+    progress,
+  ), /textual progress fallback is stale/);
 }
 
 console.log('Progress SVG adversarial/unit tests: PASS');

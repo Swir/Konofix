@@ -1,12 +1,12 @@
-<!-- SWIR-README-STANDARD:v1 -->
+<!-- SWIR-README-STANDARD:v2 -->
 
 <div align="center">
 
-<img src="./src-tauri/icons/icon.ico" width="96" height="96" alt="Konofix Chat icon" />
+<img width="100%" src="assets/readme/hero.svg" alt="Konofix Chat — ephemeral peer-to-peer messaging and direct file transfer for Windows" />
 
-# ⚡ Konofix Chat
+<br>
 
-### Ephemeral peer-to-peer messaging and direct file transfer for Windows
+**Ephemeral peer-to-peer messaging and direct file transfer for Windows**
 
 **No traditional accounts • Rust/libp2p networking • Tauri desktop UI • Public-Node test tooling**
 
@@ -19,6 +19,8 @@
 [![Linux Node CI](https://github.com/Swir/Konofix/actions/workflows/linux-node-ci.yml/badge.svg)](https://github.com/Swir/Konofix/actions/workflows/linux-node-ci.yml)
 [![Stars](https://img.shields.io/github/stars/Swir/Konofix?style=flat-square&color=0088FF)](https://github.com/Swir/Konofix/stargazers)
 [![Test Release](https://img.shields.io/badge/test_release-v0.4.2--test1-0088FF?style=flat-square)](https://github.com/Swir/Konofix/releases/tag/v0.4.2-test1)
+
+[**Highlights**](#highlights) · [**Quick Start**](#quick-start) · [**Architecture**](#architecture) · [**Roadmap**](#roadmap) · [**Releases**](#releases)
 
 </div>
 
@@ -33,7 +35,7 @@
 
 The active `0.4.2 — Real Internet Test` milestone has **54 of 59 tasks complete**. The remaining five tasks require real public-network evidence and fixes discovered during those tests. CI, local transport smoke tests, or documentation work do not increase this percentage by themselves.
 
-The current public package is **`v0.4.2-test1`**, a prerelease for controlled cross-country P2P testing. It is not a declaration that the public-network milestone has passed.
+The current public package is **`v0.4.2-test1`**, a prerelease preview for controlled cross-country P2P testing. It predates some of the current exact-build Netprobe, soak-artifact and promotion-evidence hardening, so it must not be mixed with newer source/tooling when collecting promotion-quality evidence. It is not a declaration that the public-network milestone has passed.
 
 ## What is Konofix?
 
@@ -57,15 +59,18 @@ Konofix does not use a traditional account, email address, or phone number. Publ
 
 ## Quick Start
 
-### Recommended: controlled Windows test release
+### Public preview
 
 1. Open the [`v0.4.2-test1` release](https://github.com/Swir/Konofix/releases/tag/v0.4.2-test1).
 2. Download `Konofix-Chat-0.4.2-test1-Windows.zip` and its `.sha256` file.
-3. Verify the checksum before testing.
-4. Extract the archive and follow the bundled/public-network test instructions.
-5. Use the same verified public Konofix Node bootstrap on both test clients.
+3. Verify the checksum before exploratory testing.
+4. Extract the archive and follow its bundled instructions.
 
-> `v0.4.2-test1` is a prerelease. Windows SmartScreen may warn because the test build is not commercially code-signed.
+> `v0.4.2-test1` is an older prerelease preview and may trigger Windows SmartScreen because it is not commercially code-signed. Do **not** combine this archive with newer scripts, binaries, `BUILD_INFO.json`, Netprobe records or soak evidence for stable-promotion testing.
+
+### Promotion-quality controlled testing
+
+Use a **fresh Windows test bundle from a fully green `main` Windows CI run for the exact commit being tested**. Keep that bundle's `BUILD_INFO.json`, Node, Netprobe, scripts and evidence together. The promotion validators intentionally reject mixed commits, binaries, sessions and Node-soak provenance.
 
 ### From source
 
@@ -162,7 +167,7 @@ Then create the complete five-scenario exact-build workspace from the extracted 
   -QuicBootstrap "/dns/node.yourdomain.com/udp/45555/quic-v1/p2p/PEER_ID"
 ```
 
-The stable-promotion evidence path requires TCP, QUIC, Relay, DCUtR and CGNAT scenario manifests from one coherent session, exact artifact/source provenance, authenticated direct TCP+QUIC Netprobe records from both independent client contexts, concrete per-check evidence, file-transfer SHA-256 observations, and a continuous Node soak history sealed to the same exact Node and `BUILD_INFO.json` hashes. Session validation also rejects cross-directory manifest substitution.
+The stable-promotion evidence path requires TCP, QUIC, Relay, DCUtR and CGNAT scenario manifests from one coherent session, exact artifact/source provenance, authenticated direct TCP+QUIC Netprobe records from both independent client contexts, concrete per-check evidence, file-transfer SHA-256 observations, and a continuous Node soak history sealed to the same exact Node binary and `BUILD_INFO.json` hashes. Session validation also rejects cross-directory manifest substitution.
 
 Run the final evidence preflight with the `BUILD_INFO.json` from that same verified archive:
 
@@ -245,7 +250,7 @@ After this milestone closes, the roadmap moves to **0.5.0 — Rooms 2.0**.
 
 ## Releases
 
-The current public artifact is the [`v0.4.2-test1` prerelease](https://github.com/Swir/Konofix/releases/tag/v0.4.2-test1). A later release should be published only after the repository release gates and required real public-network evidence pass.
+The current public artifact is the [`v0.4.2-test1` prerelease](https://github.com/Swir/Konofix/releases/tag/v0.4.2-test1). It remains useful as a historical/exploratory preview, but promotion-quality evidence must use one exact fresh verified bundle and its matching provenance/tooling. A later GitHub Release should be published only after the repository release gates and required real public-network evidence pass.
 
 Release history: [GitHub Releases](https://github.com/Swir/Konofix/releases)  
 Change history: [`CHANGELOG.md`](CHANGELOG.md)
@@ -260,6 +265,7 @@ scripts/              CI, release, public-Node and evidence tooling
 node-linux/           Isolated headless Linux Node target
 docs/                 Operator, testing and security documentation
 .github/workflows/    Windows and Linux CI
+assets/readme/         SWIR README PRO project hero
 ```
 
 ## 🔎 Search Keywords

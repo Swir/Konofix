@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 
 const README_PATH = process.argv[2] || 'README.md';
-const STANDARD_MARKER = '<!-- SWIR-README-STANDARD:v1 -->';
+const STANDARD_MARKER = '<!-- SWIR-README-STANDARD:v2 -->';
+const HERO_PATH = 'assets/readme/hero.svg';
+const HERO_MAX_BYTES = 100 * 1024;
 const readme = fs.readFileSync(README_PATH, 'utf8');
 
 const fail = (message) => {
@@ -9,14 +11,14 @@ const fail = (message) => {
   process.exitCode = 1;
 };
 
-const markerPattern = /^\uFEFF?<!-- SWIR-README-STANDARD:v1 -->\r?\n/;
+const markerPattern = /^\uFEFF?<!-- SWIR-README-STANDARD:v2 -->\r?\n/;
 if (!markerPattern.test(readme)) {
   fail(`${README_PATH} must start with ${STANDARD_MARKER}.`);
 }
 
 const requiredFragments = [
   '<div align="center">',
-  './src-tauri/icons/icon.ico',
+  `<img width="100%" src="${HERO_PATH}"`,
   'https://raw.githubusercontent.com/Swir/Swir/main/assets/power-divider-v4.svg',
   '## Project status',
   '## Highlights',
@@ -33,6 +35,53 @@ const requiredFragments = [
 for (const fragment of requiredFragments) {
   if (!readme.includes(fragment)) {
     fail(`${README_PATH} is missing required SWIR README fragment: ${fragment}`);
+  }
+}
+
+if (!fs.existsSync(HERO_PATH)) {
+  fail(`Canonical SWIR README PRO v2 hero asset is missing: ${HERO_PATH}.`);
+} else {
+  const heroBytes = fs.readFileSync(HERO_PATH);
+  if (heroBytes.byteLength > HERO_MAX_BYTES) {
+    fail(`Local hero must stay at or below ${HERO_MAX_BYTES} bytes; found ${heroBytes.byteLength}.`);
+  }
+
+  const hero = heroBytes.toString('utf8');
+  const svgRoot = hero.match(/<svg\b[^>]*>/i)?.[0] ?? null;
+  if (!svgRoot) {
+    fail(`${HERO_PATH} must contain an SVG root element.`);
+  } else {
+    const rootRequirements = [
+      [/\bwidth=["']1200["']/i, 'root width="1200"'],
+      [/\bheight=["']320["']/i, 'root height="320"'],
+      [/\bviewBox=["']0 0 1200 320["']/i, 'root viewBox="0 0 1200 320"'],
+    ];
+    for (const [pattern, description] of rootRequirements) {
+      if (!pattern.test(svgRoot)) {
+        fail(`${HERO_PATH} must contain ${description}.`);
+      }
+    }
+  }
+
+  const heroRequirements = [
+    [/<title\b[^>]*>[^<]+<\/title>/i, 'an accessible <title>'],
+    [/<desc\b[^>]*>[^<]+<\/desc>/i, 'an accessible <desc>'],
+    [/#02050A/i, 'the SWIR dark background token #02050A'],
+    [/#62E5FF/i, 'the SWIR electric-cyan token #62E5FF'],
+    [/KONOFIX/i, 'project-specific KONOFIX branding'],
+  ];
+
+  for (const [pattern, description] of heroRequirements) {
+    if (!pattern.test(hero)) {
+      fail(`${HERO_PATH} must contain ${description}.`);
+    }
+  }
+
+  if (/<script\b/i.test(hero) || /\son[a-z]+\s*=/i.test(hero)) {
+    fail(`${HERO_PATH} must not contain scripts or inline event handlers.`);
+  }
+  if (/(?:href|xlink:href)\s*=\s*["']https?:\/\//i.test(hero)) {
+    fail(`${HERO_PATH} must be self-contained and must not load remote resources.`);
   }
 }
 
@@ -67,9 +116,13 @@ if (heroEnd < 0 || heroEnd > 3500) {
   fail(`${README_PATH} must have a compact centered hero near the top.`);
 }
 
-const primaryBadgeCount = (readme.slice(0, heroEnd).match(/style=for-the-badge/g) || []).length;
+const heroBlock = readme.slice(0, heroEnd);
+const primaryBadgeCount = (heroBlock.match(/style=for-the-badge/g) || []).length;
 if (primaryBadgeCount < 3 || primaryBadgeCount > 5) {
   fail(`Centered hero should contain 3-5 primary for-the-badge badges; found ${primaryBadgeCount}.`);
+}
+if (!heroBlock.includes(HERO_PATH)) {
+  fail(`Centered hero must use the local ${HERO_PATH} asset.`);
 }
 
 if (!/Real Internet Test milestone: \d+% complete/.test(readme)) {
@@ -88,5 +141,5 @@ if (!/v0\.4\.2-test1/.test(readme) || !/prerelease/i.test(readme)) {
 }
 
 if (!process.exitCode) {
-  console.log(`SWIR README standard: ${README_PATH} passes marker, information architecture, keyword, progress-truthfulness and footer checks.`);
+  console.log(`SWIR README PRO v2: ${README_PATH} passes marker, root-hero geometry, local-hero safety/branding, information architecture, keyword, progress-truthfulness and footer checks.`);
 }

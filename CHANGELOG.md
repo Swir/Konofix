@@ -100,7 +100,9 @@
 - extended Linux installer self-tests with canonical rendering plus adversarial root, nesting, lexical-alias and symlink-alias path cases,
 - moved Linux bundle staging and integrity verification onto pull requests as well as `main` pushes, leaving only artifact upload push-only,
 - added a reusable fail-closed Linux archive provenance verifier that validates the outer checksum and inspects TAR members before extraction, rejects unsafe, duplicate, non-regular, missing or unexpected entries, verifies exact commit/version plus every recorded byte size/SHA-256, checks executable modes, and includes adversarial self-tests for tampering, extra inventory, path traversal and wrong commit/version,
-- hardened the Linux public-Node systemd sandbox with empty capability sets, device/tmp/proc isolation, hostname/clock/kernel/control-group protections, namespace/realtime/personality/SUID restrictions, native-only syscall ABI, private keyring/IPC lifecycle and a single dedicated writable state path; installer self-tests now fail if those controls or the write-boundary invariant regress.
+- hardened the Linux public-Node systemd sandbox with empty capability sets, device/tmp/proc isolation, hostname/clock/kernel/control-group protections, namespace/realtime/personality/SUID restrictions, native-only syscall ABI, private keyring/IPC lifecycle and a single dedicated writable state path; installer self-tests now fail if those controls or the write-boundary invariant regress,
+- made production public-Node readiness fail closed on non-globally-routable literal endpoints (including private, CGNAT, loopback/link-local and documentation ranges), require public-looking FQDNs, require DNS bootstraps to resolve only to globally routable addresses, and record the resolved-address evidence in readiness schema v2,
+- expanded Internet-precheck and public-readiness adversarial tests so documentation/private endpoints can still be used for parser fixtures but can no longer be mistaken for real public-network evidence.
 
 ## 0.4.1
 

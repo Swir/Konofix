@@ -130,16 +130,11 @@ def validate_wrapper(linux_root: pathlib.Path, relative: str, expected_include: 
         )
 
     resolved = (wrapper.parent / expected_include).resolve()
-    expected_target = (linux_root.parent / expected_include.removeprefix("../")).resolve()
-    # The include path itself is canonical; additionally require it to resolve to
-    # a real file so a renamed production source cannot leave Linux CI testing a
-    # stale or missing bridge.
+    # The include literal is pinned above. Also require it to resolve to a real
+    # production source file so a rename/removal cannot leave Linux CI testing a
+    # stale or broken bridge.
     if not resolved.is_file():
         raise ParityError(f"Wrapper {relative} include target does not exist: {resolved}")
-    # Guard against path normalization surprises while keeping the assertion
-    # independent of comments/formatting in the wrapper.
-    if resolved != expected_target:
-        raise ParityError(f"Wrapper {relative} include path resolves unexpectedly: {resolved}")
 
 
 def check(inputs: Inputs) -> None:

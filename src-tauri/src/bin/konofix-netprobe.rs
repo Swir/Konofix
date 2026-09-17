@@ -153,8 +153,7 @@ where
                     .map_err(|_| format!("Invalid timeout: {raw}"))?;
                 if !(MIN_TIMEOUT_SECONDS..=MAX_TIMEOUT_SECONDS).contains(&timeout_seconds) {
                     return Err(format!(
-                        "Timeout must be between {MIN_TIMEOUT_SECONDS} and \
-                         {MAX_TIMEOUT_SECONDS} seconds."
+                        "Timeout must be between {MIN_TIMEOUT_SECONDS} and {MAX_TIMEOUT_SECONDS} seconds."
                     ));
                 }
             }
@@ -239,8 +238,7 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
         let remaining = args.timeout.saturating_sub(started.elapsed());
         if remaining.is_zero() {
             return Err(format!(
-                "Timed out after {} seconds while probing {}. \
-                 connected={} identify={} ping={}",
+                "Timed out after {} seconds while probing {}. connected={} identify={} ping={}",
                 args.timeout.as_secs(),
                 target_text,
                 connected,
@@ -263,8 +261,7 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                 if peer_id != expected_peer {
                     return Err(format!(
-                        "Authenticated peer mismatch: expected {expected_peer}, \
-                         connected to {peer_id}."
+                        "Authenticated peer mismatch: expected {expected_peer}, connected to {peer_id}."
                     ));
                 }
                 connected = true;
@@ -277,8 +274,7 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
             })) => {
                 if peer_id != expected_peer {
                     return Err(format!(
-                        "Identify peer mismatch: expected {expected_peer}, \
-                         received metadata from {peer_id}."
+                        "Identify peer mismatch: expected {expected_peer}, received metadata from {peer_id}."
                     ));
                 }
                 if info.protocol_version != EXPECTED_PROTOCOL_VERSION {
@@ -297,9 +293,7 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
                 agent_version = Some(info.agent_version);
                 observed_peer = Some(peer_id);
             }
-            SwarmEvent::Behaviour(ProbeBehaviourEvent::Ping(event))
-                if event.peer == expected_peer =>
-            {
+            SwarmEvent::Behaviour(ProbeBehaviourEvent::Ping(event)) if event.peer == expected_peer => {
                 match event.result {
                     Ok(duration) => rtt = Some(duration),
                     Err(error) => {

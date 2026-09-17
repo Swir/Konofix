@@ -18,8 +18,9 @@ updates:
           - "patch"
 
   # Keep the desktop and isolated headless Node manifests on one update surface.
-  # The Linux Node CI parity gate requires shared production dependencies to
-  # stay aligned, so Dependabot must update both manifests in the same run.
+  # Minor/patch maintenance can move together. Major upgrades are grouped by
+  # dependency name so each breaking dependency gets one PR that updates both
+  # mirrored manifests instead of two parity-breaking directory-specific PRs.
   - package-ecosystem: "cargo"
     directories:
       - "/src-tauri"
@@ -32,11 +33,80 @@ updates:
     open-pull-requests-limit: 5
     rebase-strategy: "auto"
     groups:
-      # Keep routine Rust maintenance compact, but isolate major upgrades.
       rust-minor-patch:
         update-types:
           - "minor"
           - "patch"
+      serde-major:
+        patterns:
+          - "serde"
+        update-types:
+          - "major"
+      serde-json-major:
+        patterns:
+          - "serde_json"
+        update-types:
+          - "major"
+      tokio-major:
+        patterns:
+          - "tokio"
+        update-types:
+          - "major"
+      futures-major:
+        patterns:
+          - "futures"
+        update-types:
+          - "major"
+      uuid-major:
+        patterns:
+          - "uuid"
+        update-types:
+          - "major"
+      slug-major:
+        patterns:
+          - "slug"
+        update-types:
+          - "major"
+      unicode-normalization-major:
+        patterns:
+          - "unicode-normalization"
+        update-types:
+          - "major"
+      sha2-major:
+        patterns:
+          - "sha2"
+        update-types:
+          - "major"
+      hex-major:
+        patterns:
+          - "hex"
+        update-types:
+          - "major"
+      dirs-major:
+        patterns:
+          - "dirs"
+        update-types:
+          - "major"
+      libp2p-major:
+        patterns:
+          - "libp2p"
+        update-types:
+          - "major"
+      tauri-build-major:
+        patterns:
+          - "tauri-build"
+        update-types:
+          - "major"
+      tauri-major:
+        patterns:
+          - "tauri"
+        update-types:
+          - "major"
+      rfd-major:
+        patterns:
+          - "rfd"
+        update-types:
+          - "major"
 
   - package-ecosystem: "github-actions"
     directory: "/"

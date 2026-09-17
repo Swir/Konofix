@@ -28,12 +28,16 @@
 
 ## Project status
 
+<img width="100%" src="assets/readme/progress-card.svg" alt="Konofix Chat Real Internet Test progress — 54 of 59 verified tasks, 91.5%, in progress; release readiness is a separate gate" />
+
 **Development / controlled Internet testing**
+
+**Verified checklist fraction: 54 of 59 tasks — 91.5%.** The generated SVG uses the exact checklist fraction. The existing whole-percent summary below remains CI-checked for backward-compatible textual status.
 
 **Real Internet Test milestone: 92% complete**  
 `██████████████████░░ 92%`
 
-The active `0.4.2 — Real Internet Test` milestone has **54 of 59 tasks complete**. The remaining five tasks require real public-network evidence and fixes discovered during those tests. CI, local transport smoke tests, or documentation work do not increase this percentage by themselves.
+The active `0.4.2 — Real Internet Test` milestone has **54 of 59 tasks complete**. The remaining five tasks require real public-network evidence and fixes discovered during those tests. CI, local transport smoke tests, documentation work, or progress-graphic maintenance do not increase this percentage by themselves.
 
 The current public package is **`v0.4.2-test1`**, a prerelease preview for controlled cross-country P2P testing. It predates some of the current exact-build Netprobe, soak-artifact and promotion-evidence hardening, so it must not be mixed with newer source/tooling when collecting promotion-quality evidence. It is not a declaration that the public-network milestone has passed.
 
@@ -261,11 +265,11 @@ Change history: [`CHANGELOG.md`](CHANGELOG.md)
 src/                  TypeScript desktop UI and localization
 src-tauri/            Rust/Tauri application and binaries
 src-tauri/src/bin/    Konofix Node and Netprobe binaries
-scripts/              CI, release, public-Node and evidence tooling
+scripts/              CI, release, public-Node, progress and evidence tooling
 node-linux/           Isolated headless Linux Node target
 docs/                 Operator, testing and security documentation
 .github/workflows/    Windows and Linux CI
-assets/readme/         SWIR README PRO project hero
+assets/readme/         SWIR README PRO hero and generated progress SVGs
 ```
 
 ## 🔎 Search Keywords

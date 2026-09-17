@@ -56,9 +56,11 @@ for (const requiredPath of [
   "'src-tauri/Cargo.toml'",
   "'src-tauri/Cargo.lock'",
   "'node-linux/Cargo.toml'",
+  "'package.json'",
   "'.github/workflows/rustsec-audit.yml'",
   "'scripts/check-rustsec-workflow.mjs'",
   "'scripts/test-rustsec-workflow.mjs'",
+  "'docs/RUSTSEC_AUDIT.md'",
 ]) {
   if (!text.includes(requiredPath)) {
     fail(`pull-request trigger is missing ${requiredPath}.`);

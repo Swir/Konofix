@@ -28,7 +28,7 @@ function Test-IpInCidr([System.Net.IPAddress]$Address, [string]$Network, [int]$P
 
   $remainingBits = $PrefixLength % 8
   if ($remainingBits -eq 0) { return $true }
-  $mask = [byte](0xFF -shl (8 - $remainingBits))
+  $mask = [byte](0xFF -band (0xFF -shl (8 - $remainingBits)))
   return (($addressBytes[$fullBytes] -band $mask) -eq ($networkBytes[$fullBytes] -band $mask))
 }
 

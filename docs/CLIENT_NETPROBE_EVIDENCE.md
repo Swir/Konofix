@@ -25,11 +25,11 @@ Create the session once from the verified Windows test bundle. The two clients m
 .\scripts\new-network-test-session.ps1 `
   -ClientA "client-a" -ClientACountry "PL" -ClientANetwork "operator-a" `
   -ClientB "client-b" -ClientBCountry "NO" -ClientBNetwork "operator-b" `
-  -TcpBootstrap  "/dns4/node.example.net/tcp/45555/p2p/<PEER_ID>" `
-  -QuicBootstrap "/dns4/node.example.net/udp/45555/quic-v1/p2p/<PEER_ID>"
+  -TcpBootstrap  "/dns4/node.yourdomain.com/tcp/45555/p2p/<PEER_ID>" `
+  -QuicBootstrap "/dns4/node.yourdomain.com/udp/45555/quic-v1/p2p/<PEER_ID>"
 ```
 
-Use the real public Node hostname or globally routable IP. Reserved/example/private names and private, loopback, link-local, CGNAT, documentation or benchmark addresses are rejected by the public-host preflight.
+Replace `node.yourdomain.com` with the real public Node hostname (or use a globally routable IP multiaddress). Reserved/example/private names and private, loopback, link-local, CGNAT, documentation or benchmark addresses are rejected by the public-host preflight.
 
 Copy the generated session directory, including `SESSION_INFO.json`, to each tester without editing it. Each tester must use the **same verified Windows test bundle** whose `BUILD_INFO.json` created the session.
 

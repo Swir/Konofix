@@ -90,7 +90,15 @@ function Test-GloballyRoutableIp([System.Net.IPAddress]$Address) {
 
 function Test-ReservedPublicDnsName([string]$HostName) {
   $normalized = $HostName.TrimEnd('.').ToLowerInvariant()
-  foreach ($suffix in @('localhost', 'local', 'invalid', 'test', 'example', 'home.arpa', 'onion', 'internal')) {
+
+  # Public-node evidence deliberately rejects DNS namespaces designated for
+  # documentation, private/local use, alternate resolution, onion services or
+  # DNS protocol infrastructure. IANA special-use status applies to subdomains too.
+  foreach ($suffix in @(
+    'localhost', 'local', 'invalid', 'test', 'example',
+    'example.com', 'example.net', 'example.org',
+    'onion', 'alt', 'arpa', 'internal'
+  )) {
     if ($normalized -eq $suffix -or $normalized.EndsWith('.' + $suffix, [System.StringComparison]::Ordinal)) {
       return $true
     }
@@ -212,7 +220,7 @@ if ($strictPublicValidation) {
       throw "DNS bootstrap host '$($parsed.host)' must be a fully-qualified public hostname for public-node evidence."
     }
     if (Test-ReservedPublicDnsName ([string]$parsed.host)) {
-      throw "DNS bootstrap host '$($parsed.host)' uses a reserved/private-use suffix and cannot be used as public-node evidence."
+      throw "DNS bootstrap host '$($parsed.host)' uses a reserved/private/special-use suffix and cannot be used as public-node evidence."
     }
     if ($RequireDnsResolution) {
       $resolvedAddresses = @(Resolve-PublicDnsAddresses -HostProtocol ([string]$parsed.host_protocol) -HostName ([string]$parsed.host))

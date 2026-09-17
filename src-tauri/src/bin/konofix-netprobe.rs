@@ -12,7 +12,7 @@ use serde::Serialize;
 
 const SOURCE_COMMIT: &str = env!("KONOFIX_SOURCE_COMMIT");
 const EXPECTED_PROTOCOL_VERSION: &str = "/konofix/4.0";
-const EXPECTED_AGENT_PREFIX: &str = "Konofix-Node/";
+const EXPECTED_AGENT_VERSION: &str = concat!("Konofix-Node/", env!("CARGO_PKG_VERSION"));
 const DEFAULT_TIMEOUT_SECONDS: u64 = 20;
 const MIN_TIMEOUT_SECONDS: u64 = 5;
 const MAX_TIMEOUT_SECONDS: u64 = 120;
@@ -294,9 +294,9 @@ async fn run_probe(args: ProbeArgs) -> Result<ProbeEvidence, String> {
                         info.protocol_version
                     ));
                 }
-                if !info.agent_version.starts_with(EXPECTED_AGENT_PREFIX) {
+                if info.agent_version != EXPECTED_AGENT_VERSION {
                     return Err(format!(
-                        "Unexpected peer agent from {peer_id}: {}",
+                        "Unexpected peer agent from {peer_id}: {} (expected {EXPECTED_AGENT_VERSION})",
                         info.agent_version
                     ));
                 }

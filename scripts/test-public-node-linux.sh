@@ -84,7 +84,7 @@ if grep -Eq '^ReadWritePaths=.*(/usr|/etc|/home)(/|$)' <<<"$unit"; then
 fi
 
 preview="$(bash "$INSTALLER" \
-  --public-host node.example.net \
+  --public-host 1.0.0.1 \
   --binary "$FAKE_NODE" \
   --state-dir /var/lib/konofix-preview \
   --install-dir /usr/local/lib/konofix-preview)"

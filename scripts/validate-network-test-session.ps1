@@ -82,6 +82,7 @@ function Assert-OptionalPin([string]$Name, [string]$Actual, [string]$Expected, [
 }
 
 $sessionFullPath = [IO.Path]::GetFullPath($SessionInfoPath)
+$sessionDirectory = [IO.Path]::GetFullPath((Split-Path $sessionFullPath -Parent))
 $session = Read-BoundedJsonObject -Path $sessionFullPath -MaxBytes $MaxSessionInfoBytes -Label 'SESSION_INFO.json'
 $schema = Get-StrictInt64 (Get-RequiredProperty $session 'schema_version' 'SESSION_INFO.json') 'schema_version'
 Assert-True ($schema -eq 1) "Unsupported SESSION_INFO schema: $schema"
@@ -145,7 +146,10 @@ $manifestPaths = @()
 foreach ($path in $Manifest) {
     Assert-True (-not [string]::IsNullOrWhiteSpace($path)) 'Manifest path cannot be empty or whitespace.'
     Assert-True (Test-Path -LiteralPath $path -PathType Leaf) "Manifest not found: $path"
-    $manifestPaths += (Get-Item -LiteralPath $path).FullName
+    $manifestFullPath = (Get-Item -LiteralPath $path).FullName
+    $manifestDirectory = [IO.Path]::GetFullPath((Split-Path $manifestFullPath -Parent))
+    Assert-True ([string]::Equals($manifestDirectory, $sessionDirectory, [StringComparison]::OrdinalIgnoreCase)) "Session manifest must reside beside SESSION_INFO.json; cross-directory evidence is rejected: $manifestFullPath"
+    $manifestPaths += $manifestFullPath
 }
 $manifestPaths = @($manifestPaths | Sort-Object -Unique)
 Assert-True ($manifestPaths.Count -eq 5) "A network test session must contain exactly five unique manifests; found $($manifestPaths.Count)."

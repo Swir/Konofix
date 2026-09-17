@@ -25,6 +25,10 @@ use tokio::{
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
+mod incoming_file;
+
+use incoming_file::{commit_reserved_file, reserve_incoming_file};
+
 const WORLD_TOPIC: &str = "konofix/world/v3";
 const KAD_PROTOCOL: &str = "/konofix/kad/1.0.0";
 const FILE_PROTOCOL: &str = "/konofix/file/1.0.0";
@@ -590,39 +594,6 @@ fn download_directory() -> Result<PathBuf, String> {
         .or_else(|| dirs::home_dir().map(|p| p.join("Downloads")))
         .ok_or("Nie udało się znaleźć folderu Pobrane.")?;
     Ok(base.join("Konofix Chat"))
-}
-
-fn unique_download_path(dir: &Path, file_name: &str) -> PathBuf {
-    let safe = safe_filename(file_name);
-    let original = Path::new(&safe);
-    let stem = original
-        .file_stem()
-        .and_then(|v| v.to_str())
-        .unwrap_or("plik");
-    let ext = original.extension().and_then(|v| v.to_str());
-
-    for n in 0..10_000u32 {
-        let candidate_name = if n == 0 {
-            safe.clone()
-        } else if let Some(ext) = ext {
-            format!("{stem} ({n}).{ext}")
-        } else {
-            format!("{stem} ({n})")
-        };
-        let candidate = dir.join(candidate_name);
-        let candidate_basename = candidate
-            .file_name()
-            .and_then(|v| v.to_str())
-            .unwrap_or("file");
-        if !candidate.exists()
-            && !candidate
-                .with_file_name(format!("{candidate_basename}.konofixpart"))
-                .exists()
-        {
-            return candidate;
-        }
-    }
-    dir.join(format!("{}-{}", Uuid::new_v4(), safe))
 }
 
 fn file_view_outgoing(
@@ -1475,24 +1446,20 @@ async fn network_task(
                             let pending = pending_incoming.remove(&transfer_id).ok_or("Oferta pliku wygasła albo nie istnieje.")?;
                             let dir = download_directory()?;
                             tokio::fs::create_dir_all(&dir).await.map_err(|e| format!("Nie można utworzyć folderu Pobrane/Konofix Chat: {e}"))?;
-                            let final_path = unique_download_path(&dir, &pending.file_name);
-                            let final_basename = final_path.file_name().and_then(|v| v.to_str()).unwrap_or("file");
-                            let temp_name = format!("{final_basename}.konofixpart");
-                            let temp_path = final_path.with_file_name(temp_name);
-                            let file = File::create(&temp_path).await.map_err(|e| format!("Nie można utworzyć pliku tymczasowego: {e}"))?;
+                            let reservation = reserve_incoming_file(&dir, &pending.file_name).await?;
                             let transfer = IncomingTransfer {
                                 peer: pending.peer,
                                 nick: pending.nick,
                                 file_name: pending.file_name,
                                 size: pending.size,
                                 received: 0,
-                                file,
+                                file: reservation.file,
                                 hasher: Sha256::new(),
-                                final_path,
-                                temp_path: temp_path.clone(),
+                                final_path: reservation.final_path,
+                                temp_path: reservation.temp_path.clone(),
                             };
                             if swarm.behaviour_mut().file_transfer.send_response(pending.channel, FileResponse::Accepted).is_err() {
-                                let _ = tokio::fs::remove_file(&temp_path).await;
+                                let _ = tokio::fs::remove_file(&transfer.temp_path).await;
                                 return Err("Nadawca rozłączył się zanim zaakceptowano plik.".to_string());
                             }
                             let view = file_view_incoming(&transfer_id, &transfer, "receiving", None, None);
@@ -1802,21 +1769,36 @@ async fn network_task(
                                                 let completed_path = final_path_buf.to_string_lossy().to_string();
                                                 let mut completed_view = file_view_incoming(&transfer_id, &transfer, "completed", Some(completed_path.clone()), None);
                                                 let mut failed_view = file_view_incoming(&transfer_id, &transfer, "failed", None, None);
-                                                let _ = transfer.file.flush().await;
+                                                let durability_result: std::io::Result<()> = if valid {
+                                                    async {
+                                                        transfer.file.flush().await?;
+                                                        transfer.file.sync_all().await
+                                                    }
+                                                    .await
+                                                } else {
+                                                    Ok(())
+                                                };
                                                 drop(transfer.file);
                                                 if valid {
-                                                    match tokio::fs::rename(&temp_path, &final_path_buf).await {
-                                                        Ok(()) => {
-                                                            completed_view.transferred = completed_view.size;
-                                                            completed_view.progress = 100.0;
-                                                            emit_transfer(&app, &completed_view);
-                                                            FileResponse::Complete { verified: true, path: Some(completed_path) }
-                                                        }
-                                                        Err(e) => {
-                                                            let _ = tokio::fs::remove_file(&temp_path).await;
-                                                            failed_view.error = Some(format!("Nie można zapisać pliku: {e}"));
-                                                            emit_transfer(&app, &failed_view);
-                                                            FileResponse::Complete { verified: false, path: None }
+                                                    if let Err(error) = durability_result {
+                                                        let _ = tokio::fs::remove_file(&temp_path).await;
+                                                        failed_view.error = Some(format!("Nie można utrwalić odebranego pliku przed finalizacją: {error}"));
+                                                        emit_transfer(&app, &failed_view);
+                                                        FileResponse::Complete { verified: false, path: None }
+                                                    } else {
+                                                        match commit_reserved_file(&temp_path, &final_path_buf).await {
+                                                            Ok(()) => {
+                                                                completed_view.transferred = completed_view.size;
+                                                                completed_view.progress = 100.0;
+                                                                emit_transfer(&app, &completed_view);
+                                                                FileResponse::Complete { verified: true, path: Some(completed_path) }
+                                                            }
+                                                            Err(error) => {
+                                                                let _ = tokio::fs::remove_file(&temp_path).await;
+                                                                failed_view.error = Some(error);
+                                                                emit_transfer(&app, &failed_view);
+                                                                FileResponse::Complete { verified: false, path: None }
+                                                            }
                                                         }
                                                     }
                                                 } else {
@@ -1831,49 +1813,27 @@ async fn network_task(
                                             let _ = swarm.behaviour_mut().file_transfer.send_response(channel, response);
                                         }
                                         FileRequest::Cancel { transfer_id } => {
-
                                             let pending_matches = pending_incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);
-
                                             let incoming_matches = incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);
-
                                             let outgoing_matches = outgoing.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);
-
                                             let matched = pending_matches || incoming_matches || outgoing_matches;
-
                                             if pending_matches { pending_incoming.remove(&transfer_id); }
-
                                             if incoming_matches {
-
                                                 if let Some(transfer) = incoming.remove(&transfer_id) {
-
                                                     let _ = tokio::fs::remove_file(&transfer.temp_path).await;
-
                                                     emit_transfer(&app, &file_view_incoming(&transfer_id, &transfer, "cancelled", None, Some("Druga strona anulowała transfer.".into())));
-
                                                 }
-
                                             }
-
                                             if outgoing_matches {
-
                                                 if let Some(transfer) = outgoing.remove(&transfer_id) {
-
                                                     emit_transfer(&app, &file_view_outgoing(&transfer_id, &transfer, "cancelled", None, Some("Druga strona anulowała transfer.".into())));
-
                                                 }
-
                                             }
-
                                             let response = if matched {
-
                                                 FileResponse::Ack { received: 0 }
-
                                             } else {
-
                                                 FileResponse::Error { message: "Transfer not found for requesting peer.".into() }
-
                                             };
-
                                             let _ = swarm.behaviour_mut().file_transfer.send_response(channel, response);
                                         }
                                     }

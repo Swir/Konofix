@@ -25,8 +25,8 @@ function Expect-Failure {
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("konofix-readiness-test-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
 try {
-    $peer = '12D3KooWQd1w4w6m7rV8xY9ZaBcDeFgHiJkMnPqRsTuVwXyZ12'
-    $otherPeer = '12D3KooWRsTuVwXyZ12Qd1w4w6m7rV8xY9ZaBcDeFgHiJkMnPq'
+    $peer = '12D3KooW9tHTtS3inCZiYykw4u5G4frbjVFqhkmJX12gSNCVeH3e'
+    $otherPeer = 'QmNQa1FSTXNHmrjjfgUW3Px3Vkke4oKiFWdigWkYSux2Pi'
     $sourceCommit = '0123456789abcdef0123456789abcdef01234567'
     $tcp = "/ip4/8.8.8.8/tcp/45555/p2p/$peer"
     $quic = "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$peer"

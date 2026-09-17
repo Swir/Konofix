@@ -5,7 +5,7 @@ New-Item -ItemType Directory -Force -Path $temp | Out-Null
 
 $version = '0.4.2'
 $sourceCommit = '0123456789abcdef0123456789abcdef01234567'
-$peerId = '12D3KooWPromotionSelfTestPeer123456789'
+$peerId = '12D3KooW9tHTtS3inCZiYykw4u5G4frbjVFqhkmJX12gSNCVeH3e'
 $tcpBootstrap = "/ip4/8.8.8.8/tcp/45555/p2p/$peerId"
 $quicBootstrap = "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$peerId"
 $fileHashA = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
@@ -249,7 +249,7 @@ try {
 
   $tamperedClientProbe = Join-Path $temp 'client-a-netprobe-tampered.json'
   $badClient = Get-Content -LiteralPath $clientProbeA -Raw | ConvertFrom-Json
-  $badClient.tcp_probe.observed_peer_id = '12D3KooWWrongPromotionPeer1234567890'
+  $badClient.tcp_probe.observed_peer_id = 'QmNQa1FSTXNHmrjjfgUW3Px3Vkke4oKiFWdigWkYSux2Pi'
   $badClient | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $tamperedClientProbe -Encoding UTF8
   Assert-Fails 'tampered authenticated peer evidence' 'observed_peer_id mismatch' {
     & $tool -BuildInfoPath $buildInfoPath -SessionInfoPath $sessionInfoPath -NetworkEvidence $networkPaths -ClientNetprobeEvidence @($tamperedClientProbe,$clientProbeB) -NodeSoakEvidence $soakPaths -NodeSoakMinSpanSeconds 180 -NodeSoakMaxGapSeconds 75 -NodeSoakMaxAgeSeconds 60 | Out-Null

@@ -61,6 +61,14 @@ try {
   const commentDecoyFixture = writeFixture('check-comment-decoy.ps1', commentDecoy);
   expectFail('comment cannot impersonate an active PowerShell gate', workflowFixture, commentDecoyFixture);
 
+  const workflowExtraGate = `${workflowSource}\n      - name: Synthetic future source gate\n        shell: pwsh\n        run: .\\scripts\\future-source-gate.ps1\n`;
+  const workflowExtraGateFixture = writeFixture('windows-ci-extra-source-gate.yml', workflowExtraGate);
+  expectFail('new Windows CI PowerShell preflight must be mirrored locally', workflowExtraGateFixture, localFixture);
+
+  const localExtraPowerShellGate = `${localSource}\n& '.\\scripts\\future-local-only-gate.ps1'\n`;
+  const localExtraPowerShellFixture = writeFixture('check-extra-powershell-gate.ps1', localExtraPowerShellGate);
+  expectFail('local PowerShell preflight cannot drift away from Windows CI', workflowFixture, localExtraPowerShellFixture);
+
   const missingNetprobeCargo = removeLineContaining(
     localSource,
     'cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-netprobe',

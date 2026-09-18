@@ -893,11 +893,8 @@ mod tests {
 
     #[test]
     fn non_global_public_host_requires_explicit_lab_override() {
-        let error = parse_args_from(vec![
-            "--public-host".to_string(),
-            "100.64.0.1".to_string(),
-        ])
-        .expect_err("CGNAT must fail closed without lab override");
+        let error = parse_args_from(vec!["--public-host".to_string(), "100.64.0.1".to_string()])
+            .expect_err("CGNAT must fail closed without lab override");
         assert!(error.contains("not globally routable"));
         assert!(error.contains("--allow-private-address"));
 

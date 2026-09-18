@@ -98,7 +98,8 @@ lab_unit="$(bash "$INSTALLER" \
   --state-dir /var/lib/konofix-lab \
   --install-dir /usr/local/lib/konofix-lab \
   --print-unit)"
-grep -Fq -- '--public-host 10.0.0.5' <<<"$lab_unit" || fail 'Lab override did not preserve private host.'
+grep -Fq -- '--public-host 10.0.0.5 --allow-private-address' <<<"$lab_unit" || fail 'Lab override was not propagated to the raw Node service command.'
+grep -Fq -- 'LAB ONLY (--allow-private-address); not valid public-node evidence.' <<<"$lab_unit" || fail 'Lab override output must be labelled as non-evidence.'
 
 boundary_unit="$(bash "$INSTALLER" \
   --public-host 1.1.1.1 \
@@ -146,6 +147,10 @@ expect_reject 'ORCHIDv1 IPv6 without lab override' \
   --public-host 2001:10::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3f --install-dir /usr/local/lib/k3f --print-unit
 expect_reject 'ORCHIDv2 IPv6 without lab override' \
   --public-host 2001:20::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3g --install-dir /usr/local/lib/k3g --print-unit
+expect_reject 'RFC 9637 documentation IPv6 without lab override' \
+  --public-host 3fff::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3g2 --install-dir /usr/local/lib/k3g2 --print-unit
+expect_reject 'IPv4-mapped IPv6 without lab override' \
+  --public-host ::ffff:8.8.8.8 --binary "$FAKE_NODE" --state-dir /var/lib/k3g3 --install-dir /usr/local/lib/k3g3 --print-unit
 expect_reject 'ULA IPv6 without lab override' \
   --public-host fd00::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3h --install-dir /usr/local/lib/k3h --print-unit
 expect_reject 'reserved DNS suffix' \

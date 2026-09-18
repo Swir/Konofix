@@ -74,6 +74,9 @@ for expected in \
   '--health-file /var/lib/konofix-selftest/node-health.json'; do
   grep -Fq -- "$expected" <<<"$unit" || fail "Generated unit is missing: $expected"
 done
+if grep -Fq -- '--allow-private-address' <<<"$unit"; then
+  fail 'Public systemd unit must not enable the lab-only raw Node override.'
+fi
 
 # The public service must not regain ambient/bounding capabilities or a second writable tree.
 [[ "$(grep -Fxc 'CapabilityBoundingSet=' <<<"$unit")" -eq 1 ]] || fail 'CapabilityBoundingSet must be explicitly empty exactly once.'
@@ -99,6 +102,7 @@ lab_unit="$(bash "$INSTALLER" \
   --install-dir /usr/local/lib/konofix-lab \
   --print-unit)"
 grep -Fq -- '--public-host 10.0.0.5' <<<"$lab_unit" || fail 'Lab override did not preserve private host.'
+grep -Fq -- '--allow-private-address' <<<"$lab_unit" || fail 'Lab systemd unit must forward the raw Node lab-only override.'
 
 boundary_unit="$(bash "$INSTALLER" \
   --public-host 1.1.1.1 \

@@ -1,0 +1,123 @@
+from pathlib import Path
+
+
+def replace_once(path: str, old: str, new: str) -> None:
+    file_path = Path(path)
+    text = file_path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{path}: expected one match, found {count}")
+    file_path.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
+
+
+lib_old = '''    tauri::async_runtime::spawn(async move {
+        if let Err(err) =
+            network_task(nick_for_task, bootstrap_list, app.clone(), rx, ready_tx).await
+        {
+            let app_state = app.state::<AppState>();
+            if clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false) {
+                let _ = app.emit("network-error", err);
+            }
+        }
+    });'''
+lib_new = '''    tauri::async_runtime::spawn(async move {
+        let task_result =
+            network_task(nick_for_task, bootstrap_list, app.clone(), rx, ready_tx).await;
+        let app_state = app.state::<AppState>();
+        let owned_session =
+            clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);
+        if let Err(err) = task_result {
+            if owned_session {
+                let _ = app.emit("network-error", err);
+            }
+        }
+    });'''
+replace_once("src-tauri/src/lib.rs", lib_old, lib_new)
+
+test_marker = '''    #[test]
+    fn explicit_sender_take_is_idempotent() {'''
+test_insert = '''    #[test]
+    fn owned_clean_exit_cleanup_allows_reconnect() {
+        let state = AppState::default();
+        let (first_tx, _first_rx) = mpsc::channel(1);
+        let (second_tx, _second_rx) = mpsc::channel(1);
+
+        install_network_sender(&state, first_tx.clone()).expect("first session should install");
+        assert!(clear_network_sender_if_current(&state, &first_tx)
+            .expect("clean owner exit should release its session"));
+        install_network_sender(&state, second_tx.clone())
+            .expect("clean exit should permit immediate reconnect");
+
+        let stored = state
+            .tx
+            .lock()
+            .expect("state lock")
+            .as_ref()
+            .expect("replacement session should be active")
+            .clone();
+        assert!(stored.same_channel(&second_tx));
+    }
+
+    #[test]
+    fn explicit_sender_take_is_idempotent() {'''
+replace_once("src-tauri/src/lib.rs", test_marker, test_insert)
+
+audit_old = '''requireText(rust, 'clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false)', 'fatal task cleanup must be channel-owned.');
+requireText(rust, 'if clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false) {\\n                let _ = app.emit("network-error", err);', 'terminal network-error must be emitted only by the task that successfully clears the active session.');'''
+audit_new = '''requireText(rust, 'let task_result =\\n            network_task(nick_for_task, bootstrap_list, app.clone(), rx, ready_tx).await;', 'network task result must be captured before unconditional owned cleanup.');
+requireText(rust, 'let owned_session =\\n            clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);', 'network task cleanup must run after every network task return, including clean exits.');
+requireText(rust, 'if let Err(err) = task_result {\\n            if owned_session {\\n                let _ = app.emit("network-error", err);', 'terminal network-error must be emitted only for an owned fatal exit.');
+requireText(rust, 'fn owned_clean_exit_cleanup_allows_reconnect()', 'clean task exit/reconnect regression test is missing.');
+const taskResultIndex = rust.indexOf('let task_result =');
+const taskCleanupIndex = rust.indexOf('let owned_session =', taskResultIndex);
+const taskErrorIndex = rust.indexOf('if let Err(err) = task_result', taskResultIndex);
+if (taskResultIndex < 0 || taskCleanupIndex < 0 || taskErrorIndex < 0 || !(taskResultIndex < taskCleanupIndex && taskCleanupIndex < taskErrorIndex)) {
+  fail('task-owned sender cleanup must occur after every network task return and before error-only handling.');
+}'''
+replace_once("scripts/check-network-session-lifecycle.mjs", audit_old, audit_new)
+
+mutation_old = '''  {
+    name: 'fatal task emits terminal error without owning active session',
+    target: 'rust',
+    source: 'if clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false) {\\n                let _ = app.emit("network-error", err);',
+    replacement: 'let _ = clear_network_sender_if_current(app_state.inner(), &task_tx);\\n            if true {\\n                let _ = app.emit("network-error", err);',
+    expected: 'only by the task',
+  },'''
+mutation_new = '''  {
+    name: 'clean task exit cleanup becomes error-only',
+    target: 'rust',
+    source: 'let owned_session =\\n            clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);\\n        if let Err(err) = task_result {',
+    replacement: 'if let Err(err) = task_result {\\n            let owned_session =\\n                clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);',
+    expected: 'after every network task return',
+  },
+  {
+    name: 'fatal task emits terminal error without owning active session',
+    target: 'rust',
+    source: 'if let Err(err) = task_result {\\n            if owned_session {\\n                let _ = app.emit("network-error", err);',
+    replacement: 'if let Err(err) = task_result {\\n            if true {\\n                let _ = app.emit("network-error", err);',
+    expected: 'owned fatal exit',
+  },'''
+replace_once("scripts/test-network-session-lifecycle.mjs", mutation_old, mutation_new)
+
+docs_old = '''The spawned task retains a clone of that exact Tokio MPSC sender. If the P2P task exits with a fatal error, cleanup compares the task-owned sender with the currently installed sender using `Sender::same_channel`. Only the task that still owns the active channel may clear `AppState.tx` and emit the terminal `network-error` event. A late exit from an older task therefore cannot tear down a newer reconnect session.'''
+docs_new = '''The spawned task retains a clone of that exact Tokio MPSC sender. After every P2P task return — clean `Ok(())` or fatal `Err(...)` — cleanup compares the task-owned sender with the currently installed sender using `Sender::same_channel`. Only the task that still owns the active channel may clear `AppState.tx`; `network-error` is emitted only when that owned exit is fatal. A clean nickname-conflict shutdown therefore releases backend ownership without manufacturing a fatal error, while a late exit from an older task cannot tear down a newer reconnect session.'''
+replace_once("docs/NETWORK_SESSION_LIFECYCLE.md", docs_old, docs_new)
+
+policy_old = '''Rust unit tests cover channel ownership, overlapping-start rejection followed by reconnect, and idempotent sender take. `scripts/check-network-session-lifecycle.mjs` is wired into the normal project audit together with adversarial mutation tests. The policy gate fails if channel ownership, atomic start, startup-safe terminal recovery, stale async-start invalidation, terminal-event ownership, idempotent disconnect, or frontend terminal reset behavior is removed.'''
+policy_new = '''Rust unit tests cover channel ownership, clean-exit release followed by reconnect, overlapping-start rejection followed by reconnect, and idempotent sender take. `scripts/check-network-session-lifecycle.mjs` is wired into the normal project audit together with adversarial mutation tests. The policy gate fails if cleanup stops running for every task return, channel ownership, atomic start, startup-safe terminal recovery, stale async-start invalidation, fatal terminal-event ownership, idempotent disconnect, or frontend terminal reset behavior is removed.'''
+replace_once("docs/NETWORK_SESSION_LIFECYCLE.md", policy_old, policy_new)
+
+changelog_marker = '''## 0.4.2
+
+'''
+changelog_insert = '''## 0.4.2
+
+- completed desktop P2P task-exit ownership convergence: every `network_task` return now attempts exact-channel cleanup before error-only handling, so clean nickname-conflict/task shutdowns release stale backend session state without emitting a false fatal error; regression coverage proves clean-exit reconnect, preserves stale-task and explicit-disconnect safety, and the fail-closed lifecycle audit rejects any regression back to `Err`-only cleanup without adding Real Internet Test credit,
+'''
+replace_once("CHANGELOG.md", changelog_marker, changelog_insert)
+
+roadmap_marker = '''- Fatal desktop network-task exits now release only the session sender owned by that exact Tokio channel, stale task exits cannot clear a newer reconnect, overlapping starts are rejected atomically, explicit disconnect remains idempotent, and terminal frontend recovery clears stale peer/room/message/transfer state before returning to login. Rust regression tests, adversarial audit mutations and dedicated lifecycle documentation cover the behavior; this resilience hardening does not add Real Internet Test credit and the milestone remains 54/59.
+'''
+roadmap_insert = roadmap_marker + '''- All desktop network-task returns now converge owned backend session state, including clean exits such as nickname-conflict shutdowns; cleanup runs before error-only reporting, preserves exact-channel stale-task protection and idempotent explicit disconnect, and is guarded by Rust plus adversarial audit regression coverage. This lifecycle resilience work does not add Real Internet Test credit and the milestone remains 54/59.
+'''
+replace_once("ROADMAP.md", roadmap_marker, roadmap_insert)

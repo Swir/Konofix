@@ -8,12 +8,60 @@ use tokio::fs::{self, File, OpenOptions};
 use super::safe_filename;
 
 const MAX_RESERVATION_ATTEMPTS: u32 = 10_000;
+const MAX_SAFE_FILENAME_BYTES: usize = 180;
+const MAX_PRESERVED_EXTENSION_BYTES: usize = 40;
 
 #[derive(Debug)]
 pub(crate) struct IncomingFileReservation {
     pub(crate) file: File,
     pub(crate) final_path: PathBuf,
     pub(crate) temp_path: PathBuf,
+}
+
+fn truncate_utf8_to_bytes(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+
+    let mut end = max_bytes.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+fn bounded_safe_filename(raw: &str) -> String {
+    let safe = safe_filename(raw);
+    if safe.len() <= MAX_SAFE_FILENAME_BYTES {
+        return safe;
+    }
+
+    let original = Path::new(&safe);
+    let stem = original
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("konofix-file");
+    let extension = original.extension().and_then(|value| value.to_str());
+
+    if let Some(extension) = extension {
+        let extension_suffix = format!(".{extension}");
+        if extension_suffix.len() <= MAX_PRESERVED_EXTENSION_BYTES {
+            let stem_budget = MAX_SAFE_FILENAME_BYTES - extension_suffix.len();
+            let bounded_stem = truncate_utf8_to_bytes(stem, stem_budget)
+                .trim_end_matches(|character| character == '.' || character == ' ');
+            if !bounded_stem.is_empty() {
+                return format!("{bounded_stem}{extension_suffix}");
+            }
+        }
+    }
+
+    let bounded = truncate_utf8_to_bytes(&safe, MAX_SAFE_FILENAME_BYTES)
+        .trim_end_matches(|character| character == '.' || character == ' ');
+    if bounded.is_empty() {
+        "konofix-file.bin".into()
+    } else {
+        bounded.to_string()
+    }
 }
 
 fn candidate_path(dir: &Path, safe: &str, attempt: u32) -> PathBuf {
@@ -55,7 +103,7 @@ async fn reserve_incoming_file_with_hook<F>(
 where
     F: FnMut(&Path, &Path) -> std::io::Result<()>,
 {
-    let safe = safe_filename(file_name);
+    let safe = bounded_safe_filename(file_name);
 
     for attempt in 0..max_attempts {
         let final_path = candidate_path(dir, &safe, attempt);
@@ -172,6 +220,70 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn multibyte_filename_is_byte_bounded_and_keeps_short_extension() {
+        let raw = format!("{}.txt", "🚀".repeat(100));
+        let bounded = bounded_safe_filename(&raw);
+
+        assert!(bounded.len() <= MAX_SAFE_FILENAME_BYTES);
+        assert!(bounded.ends_with(".txt"));
+        assert!(bounded.is_char_boundary(bounded.len()));
+    }
+
+    #[test]
+    fn ordinary_safe_filename_is_not_changed_by_component_bound() {
+        assert_eq!(
+            bounded_safe_filename("report-final.txt"),
+            "report-final.txt"
+        );
+    }
+
+    #[test]
+    fn worst_case_retry_and_temp_suffix_stay_below_common_component_limit() {
+        let raw = format!("{}.bin", "é".repeat(200));
+        let safe = bounded_safe_filename(&raw);
+        let final_path = candidate_path(Path::new(""), &safe, MAX_RESERVATION_ATTEMPTS - 1);
+        let temp_path = temp_path_for(&final_path);
+        let final_name = final_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("utf-8 final filename");
+        let temp_name = temp_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("utf-8 temp filename");
+
+        assert!(final_name.len() < 255);
+        assert!(temp_name.len() < 255);
+        assert!(temp_name.ends_with(".konofixpart"));
+    }
+
+    #[tokio::test]
+    async fn long_multibyte_filename_can_be_reserved() {
+        let dir = TestDir::new();
+        let raw = format!("{}.txt", "🚀".repeat(100));
+        let reservation = reserve_incoming_file(dir.path(), &raw)
+            .await
+            .expect("reserve byte-bounded multibyte name");
+
+        let final_name = reservation
+            .final_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("utf-8 final name");
+        let temp_name = reservation
+            .temp_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("utf-8 temp name");
+        assert!(final_name.len() <= MAX_SAFE_FILENAME_BYTES);
+        assert!(final_name.ends_with(".txt"));
+        assert!(temp_name.len() < 255);
+
+        drop(reservation.file);
+        remove_owned_temp(&reservation.temp_path).await;
     }
 
     #[tokio::test]

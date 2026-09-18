@@ -14,6 +14,7 @@
 - explicit identity-file location for service/VPS deployments
 - fail-closed identity loading: an unreadable or corrupted existing key is never silently replaced
 - automatic generation of ready-to-use public multiaddresses
+- fail-closed raw-binary validation for non-global IPv4/IPv6 `--public-host` literals, with an explicit lab-only override
 - periodic operational status lines with uptime and connected-peer count
 - optional metadata-only JSON health snapshot for supervisors and monitoring
 - exact source-commit provenance embedded into Node health snapshots
@@ -98,6 +99,10 @@ A public DNS name is also supported:
 ```powershell
 konofix-node.exe --port 45555 --public-host node.yourdomain.com
 ```
+
+For raw-binary invocation, an IP literal supplied through `--public-host`/`--public-ip` is now validated before identity creation or network startup. Private, loopback/link-local, CGNAT, documentation, benchmarking, multicast/reserved and equivalent non-global IPv6/special-use literals fail closed instead of merely printing a warning. Controlled LAN/lab testing can opt in explicitly with `--allow-private-address`; the resulting bootstrap output is labelled `LAB-ONLY` and must not be used as public-Node, cross-country or release evidence.
+
+DNS names remain supported by the raw binary because deployment/evidence tooling performs the stronger FQDN, special-namespace and DNS-resolution checks. The raw binary therefore prints a DNS note that its generated `/dns/...` addresses prove syntax only, not successful resolution or Internet reachability. Use `scripts\public-node.ps1 -RequireDnsResolution` for deployment validation.
 
 ### Stable public identity
 
@@ -190,13 +195,13 @@ BOOTSTRAP QUIC: /ip4/203.0.113.10/udp/45555/quic-v1/p2p/12D3KooW...
 RECOMMENDED   : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
 ```
 
-The values above use an IANA documentation address only to illustrate multiaddr syntax; the production deployment/readiness tools deliberately reject it as public evidence.
+The values above use an IANA documentation address only to illustrate multiaddr syntax; the raw binary and the production deployment/readiness tools deliberately reject that literal as public evidence. To deliberately exercise non-global addressing in a controlled lab, add `--allow-private-address`; the raw binary visibly marks the generated addresses as lab-only instead of normal public shareable output.
 
-For DNS names, the Node uses the generic `/dns/...` multiaddr form so the hostname is not artificially restricted to IPv4-only resolution.
+For DNS names, the Node uses the generic `/dns/...` multiaddr form so the hostname is not artificially restricted to IPv4-only resolution. DNS syntax alone is not reachability evidence; resolve and probe it through the deployment/readiness flow before recording public-network evidence.
 
-Paste the `RECOMMENDED` address into **Network settings → Bootstrap**. The client stores it locally.
+Paste the `RECOMMENDED` address into **Network settings → Bootstrap** only after the public endpoint has passed the appropriate validation. The client stores it locally.
 
-Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, private IPv4 addresses, IPv6 unique-local/link-local addresses, documentation ranges and other special-use ranges are not global bootstrap addresses. The Node binary can print a warning for obviously non-public literals, while the recommended deployment/readiness tooling is stricter and rejects such configurations before they can be used as promotion evidence unless the explicit lab override is supplied where supported.
+Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, private IPv4 addresses, CGNAT, IPv6 unique-local/link-local addresses, documentation ranges, benchmarking ranges, multicast/reserved addresses and other non-global literals are not public bootstrap addresses. Direct raw-Node invocation now rejects them by default; only the explicit lab override can print them, and that output is not valid public-network evidence.
 
 A public IP or DNS name plus reachable TCP and UDP ports are required for a proper Internet test.
 

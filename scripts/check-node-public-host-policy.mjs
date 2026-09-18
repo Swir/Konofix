@@ -96,9 +96,13 @@ export function checkNodePublicHostPolicy({ nodeSource, windowsLauncher, linuxIn
   }
 
   if (!windowsLauncher.includes("if ($AllowPrivateAddress) { $nodeArgs += '--allow-private-address' }")) {
-    if (!windowsLauncher.includes("@('3fff::', 20)")) errors.push('Windows deployment policy must reject RFC 9637 documentation prefix 3fff::/20.');
-    if (!linuxInstaller.includes('\"3fff::/20\"')) errors.push('Linux deployment policy must reject RFC 9637 documentation prefix 3fff::/20.');
     errors.push('Windows public-node launcher must forward the lab-only override to the raw Node binary.');
+  }
+  if (!windowsLauncher.includes("@('3fff::', 20)")) {
+    errors.push('Windows deployment policy must reject RFC 9637 documentation prefix 3fff::/20.');
+  }
+  if (!linuxInstaller.includes('"3fff::/20"')) {
+    errors.push('Linux deployment policy must reject RFC 9637 documentation prefix 3fff::/20.');
   }
   if (!linuxInstaller.includes('NODE_LAB_FLAG=""') ||
       !linuxInstaller.includes('NODE_LAB_FLAG=" --allow-private-address"') ||

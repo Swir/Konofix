@@ -1657,6 +1657,7 @@ async fn network_task(
                     }
                     NetworkCommand::CancelFile { transfer_id, reply } => {
                         let result = if let Some(transfer) = outgoing.remove(&transfer_id) {
+                            outbound_requests.retain(|_, meta| meta.transfer_id != transfer_id);
                             let request_id = swarm.behaviour_mut().file_transfer.send_request(
                                 &transfer.peer,
                                 FileRequest::Cancel { transfer_id: transfer_id.clone() },
@@ -2062,7 +2063,16 @@ async fn network_task(
                                             let incoming_matches = incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);
                                             let outgoing_matches = outgoing.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);
                                             let matched = pending_matches || incoming_matches || outgoing_matches;
-                                            if pending_matches { pending_incoming.remove(&transfer_id); }
+                                            if pending_matches {
+                                                pending_incoming.remove(&transfer_id);
+                                                let _ = app.emit(
+                                                    "file-offer-cancelled",
+                                                    serde_json::json!({
+                                                        "transfer_id": transfer_id.clone(),
+                                                        "peer_id": peer.to_string(),
+                                                    }),
+                                                );
+                                            }
                                             if incoming_matches {
                                                 if let Some(transfer) = incoming.remove(&transfer_id) {
                                                     let _ = tokio::fs::remove_file(&transfer.temp_path).await;
@@ -2070,6 +2080,7 @@ async fn network_task(
                                                 }
                                             }
                                             if outgoing_matches {
+                                                outbound_requests.retain(|_, meta| meta.transfer_id != transfer_id);
                                                 if let Some(transfer) = outgoing.remove(&transfer_id) {
                                                     emit_transfer(&app, &file_view_outgoing(&transfer_id, &transfer, "cancelled", None, Some("Druga strona anulowała transfer.".into())));
                                                 }

@@ -84,6 +84,7 @@ const EN = {
   'transfer.safe': 'The file will be saved to Downloads\\Konofix Chat only after successful SHA-256 verification.',
   'transfer.offerExpiryNote': 'Unanswered file offers expire automatically after about 45 seconds.',
   'transfer.offerExpired': '⌛ Incoming file offer expired before it was accepted.',
+  'transfer.offerCancelled': '🚫 Incoming file offer was cancelled by the sender.',
   'transfer.reject': 'Reject',
   'transfer.accept': 'Accept',
   'transfer.preparing': 'Preparing…',
@@ -172,6 +173,7 @@ const PL: Dictionary = {
   'transfer.safe': 'Plik zostanie zapisany do Pobrane\\Konofix Chat dopiero po poprawnej weryfikacji SHA-256.',
   'transfer.offerExpiryNote': 'Niezaakceptowana oferta pliku wygaśnie automatycznie po około 45 sekundach.',
   'transfer.offerExpired': '⌛ Oferta przychodzącego pliku wygasła przed akceptacją.',
+  'transfer.offerCancelled': '🚫 Nadawca anulował ofertę przychodzącego pliku.',
   'transfer.reject': 'Odrzuć',
   'transfer.accept': 'Akceptuj',
   'transfer.preparing': 'Przygotowuję…',
@@ -206,6 +208,7 @@ const NO: Dictionary = {
   'transfer.sending': 'Sender', 'transfer.receiving': 'Mottar', 'transfer.verifying': 'Verifiserer SHA-256',
   'transfer.completed': 'Ferdig', 'transfer.rejected': 'Avvist', 'transfer.failed': 'Feil', 'transfer.cancelled': 'Avbrutt',
   'transfer.reject': 'Avvis', 'transfer.accept': 'Godta',
+  'transfer.offerCancelled': '🚫 Avsenderen avbrøt det innkommende filtilbudet.',
 };
 
 const DE: Dictionary = {
@@ -217,6 +220,7 @@ const DE: Dictionary = {
   'transfer.section': 'ÜBERTRAGUNGEN', 'transfer.none': 'Keine Übertragungen', 'transfer.sendFile': '📎 Datei senden',
   'transfer.sendFilePlain': 'Datei senden', 'transfer.reject': 'Ablehnen', 'transfer.accept': 'Akzeptieren',
   'transfer.failed': 'Fehler', 'transfer.completed': 'Fertig', 'common.cancel': 'Abbrechen',
+  'transfer.offerCancelled': '🚫 Der Absender hat das eingehende Dateiangebot abgebrochen.',
 };
 
 const FR: Dictionary = {
@@ -228,6 +232,7 @@ const FR: Dictionary = {
   'transfer.section': 'TRANSFERTS', 'transfer.none': 'Aucun transfert', 'transfer.sendFile': '📎 Envoyer un fichier',
   'transfer.sendFilePlain': 'Envoyer un fichier', 'transfer.reject': 'Refuser', 'transfer.accept': 'Accepter',
   'transfer.failed': 'Erreur', 'transfer.completed': 'Terminé', 'common.cancel': 'Annuler',
+  'transfer.offerCancelled': '🚫 L’expéditeur a annulé l’offre de fichier entrante.',
 };
 
 const ES: Dictionary = {
@@ -239,6 +244,7 @@ const ES: Dictionary = {
   'transfer.section': 'TRANSFERENCIAS', 'transfer.none': 'Sin transferencias', 'transfer.sendFile': '📎 Enviar archivo',
   'transfer.sendFilePlain': 'Enviar archivo', 'transfer.reject': 'Rechazar', 'transfer.accept': 'Aceptar',
   'transfer.failed': 'Error', 'transfer.completed': 'Completado', 'common.cancel': 'Cancelar',
+  'transfer.offerCancelled': '🚫 El remitente canceló la oferta de archivo entrante.',
 };
 
 const UK: Dictionary = {
@@ -250,6 +256,7 @@ const UK: Dictionary = {
   'transfer.section': 'ПЕРЕДАЧІ', 'transfer.none': 'Немає передач', 'transfer.sendFile': '📎 Надіслати файл',
   'transfer.sendFilePlain': 'Надіслати файл', 'transfer.reject': 'Відхилити', 'transfer.accept': 'Прийняти',
   'transfer.failed': 'Помилка', 'transfer.completed': 'Готово', 'common.cancel': 'Скасувати',
+  'transfer.offerCancelled': '🚫 Відправник скасував пропозицію вхідного файлу.',
 };
 
 const DICTIONARIES: Record<Locale, Dictionary> = { en: EN, pl: PL, no: NO, de: DE, fr: FR, es: ES, uk: UK };

@@ -17,6 +17,7 @@ type NetworkStatus = {
 };
 type FileOffer = { transfer_id: string; peer_id: string; nick: string; file_name: string; size: number };
 type FileOfferExpired = { transfer_id: string; peer_id: string };
+type FileOfferCancelled = { transfer_id: string; peer_id: string };
 type FileTransfer = {
   transfer_id: string;
   direction: 'incoming' | 'outgoing';
@@ -594,6 +595,12 @@ async function wireEvents() {
     if (!modal) return;
     modal.remove();
     if (state.connected) addSystem(state.room, t('transfer.offerExpired'));
+  });
+  await listen<FileOfferCancelled>('file-offer-cancelled', event => {
+    const modal = document.querySelector(`#file-offer-${CSS.escape(event.payload.transfer_id)}`);
+    if (!modal) return;
+    modal.remove();
+    if (state.connected) addSystem(state.room, t('transfer.offerCancelled'));
   });
   await listen<FileTransfer>('file-transfer', event => {
     state.transfers.set(event.payload.transfer_id, event.payload);

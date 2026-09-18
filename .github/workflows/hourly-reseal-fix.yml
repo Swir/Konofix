@@ -1,0 +1,108 @@
+name: Hourly session reseal fix
+
+on:
+  push:
+    branches:
+      - automation/room-evidence-hardening-20260918
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Correct session inventory lifecycle
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one patch anchor, found {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          editor = 'scripts/set-network-test-result.ps1'
+          replace_once(
+              editor,
+              '''$manifestFull = [IO.Path]::GetFullPath($Manifest)\nif (-not (Test-Path -LiteralPath $manifestFull -PathType Leaf)) {\n    throw "Network test manifest not found: $manifestFull"\n}\n\ntry {\n    $data = Get-Content -LiteralPath $manifestFull -Raw | ConvertFrom-Json\n} catch {\n    throw "Network test manifest is not valid JSON: $($_.Exception.Message)"\n}\n''',
+              '''$manifestFull = [IO.Path]::GetFullPath($Manifest)\nif (-not (Test-Path -LiteralPath $manifestFull -PathType Leaf)) {\n    throw "Network test manifest not found: $manifestFull"\n}\n\n$manifestDirectory = Split-Path $manifestFull -Parent\n$manifestName = [IO.Path]::GetFileName($manifestFull)\n$sessionInfoPath = Join-Path $manifestDirectory 'SESSION_INFO.json'\n$sessionValidator = Join-Path $PSScriptRoot 'validate-network-test-session.ps1'\n$sessionData = $null\n$sessionInventoryEntry = $null\n$sessionManifestPaths = @()\n$originalSessionBytes = $null\n\ntry {\n    $data = Get-Content -LiteralPath $manifestFull -Raw | ConvertFrom-Json\n} catch {\n    throw "Network test manifest is not valid JSON: $($_.Exception.Message)"\n}\n\nif (Test-Path -LiteralPath $sessionInfoPath -PathType Leaf) {\n    if (-not (Test-Path -LiteralPath $sessionValidator -PathType Leaf)) {\n        throw "Session-aware evidence edit requires validator: $sessionValidator"\n    }\n    $sessionItem = Get-Item -LiteralPath $sessionInfoPath\n    if ($sessionItem.Length -le 0 -or $sessionItem.Length -gt 262144) {\n        throw 'SESSION_INFO.json is empty or exceeds the 262144-byte safety limit.'\n    }\n    $originalSessionBytes = [IO.File]::ReadAllBytes($sessionInfoPath)\n    try {\n        $sessionData = Get-Content -LiteralPath $sessionInfoPath -Raw | ConvertFrom-Json\n    } catch {\n        throw "SESSION_INFO.json is not valid JSON: $($_.Exception.Message)"\n    }\n    if ($sessionData -isnot [pscustomobject] -or [int]$sessionData.schema_version -ne 1 -or [string]$sessionData.product -cne 'Konofix Chat') {\n        throw 'SESSION_INFO.json does not describe a supported Konofix test session.'\n    }\n    $inventory = @($sessionData.manifests)\n    if ($inventory.Count -ne 5) { throw 'SESSION_INFO.json must inventory exactly five manifests.' }\n    $matches = @($inventory | Where-Object { [string]$_.path -ceq $manifestName })\n    if ($matches.Count -ne 1) { throw "Current manifest must occur exactly once in SESSION_INFO inventory: $manifestName" }\n    $sessionInventoryEntry = $matches[0]\n    $sessionManifestPaths = @($inventory | ForEach-Object {\n        $name = [string]$_.path\n        if ([IO.Path]::GetFileName($name) -cne $name) { throw "Unsafe SESSION_INFO manifest path: $name" }\n        Join-Path $manifestDirectory $name\n    })\n    & $sessionValidator -SessionInfoPath $sessionInfoPath -Manifest $sessionManifestPaths | Out-Null\n\n    if ([string]$sessionData.build_version -cne [string]$data.build_version -or\n        [string]$sessionData.node_version -cne [string]$data.node_version -or\n        [string]$sessionData.source_commit -cne [string]$data.source_commit -or\n        [string]$sessionData.client_a.id -cne [string]$data.client_a -or\n        [string]$sessionData.client_b.id -cne [string]$data.client_b -or\n        [string]$sessionData.client_a.country -cne [string]$data.client_a_country -or\n        [string]$sessionData.client_b.country -cne [string]$data.client_b_country -or\n        [string]$sessionData.client_a.network -cne [string]$data.client_a_network -or\n        [string]$sessionData.client_b.network -cne [string]$data.client_b_network) {\n        throw 'Manifest identity/provenance fields do not match sibling SESSION_INFO.json.'\n    }\n    $expectedBootstrap = if ([string]$data.scenario -ceq 'QUIC') { [string]$sessionData.quic_bootstrap } else { [string]$sessionData.tcp_bootstrap }\n    if ([string]$data.bootstrap -cne $expectedBootstrap) {\n        throw 'Manifest bootstrap does not match sibling SESSION_INFO.json.'\n    }\n}\n''',
+          )
+
+          replace_once(
+              editor,
+              '''$directory = Split-Path $manifestFull -Parent\n$manifestTemp = Join-Path $directory ('.network-manifest-' + [Guid]::NewGuid().ToString('N') + '.json')\n$markdownFull = [IO.Path]::ChangeExtension($manifestFull, '.md')\n$markdownTemp = Join-Path $directory ('.network-report-' + [Guid]::NewGuid().ToString('N') + '.md')\n\ntry {\n    $data | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestTemp -Encoding utf8\n    Set-Content -LiteralPath $markdownTemp -Value $markdown -Encoding utf8\n\n    if ($Finalize) {\n        & $validator -Manifest $manifestTemp -RequiredScenario @([string]$data.scenario) | Out-Null\n    }\n\n    Move-Item -LiteralPath $manifestTemp -Destination $manifestFull -Force\n    Move-Item -LiteralPath $markdownTemp -Destination $markdownFull -Force\n} finally {\n    Remove-Item -LiteralPath $manifestTemp -Force -ErrorAction SilentlyContinue\n    Remove-Item -LiteralPath $markdownTemp -Force -ErrorAction SilentlyContinue\n}\n''',
+              '''$directory = Split-Path $manifestFull -Parent\n$manifestTemp = Join-Path $directory ('.network-manifest-' + [Guid]::NewGuid().ToString('N') + '.json')\n$markdownFull = [IO.Path]::ChangeExtension($manifestFull, '.md')\n$markdownTemp = Join-Path $directory ('.network-report-' + [Guid]::NewGuid().ToString('N') + '.md')\n$sessionTemp = Join-Path $directory ('.network-session-' + [Guid]::NewGuid().ToString('N') + '.json')\n$originalManifestBytes = [IO.File]::ReadAllBytes($manifestFull)\n$markdownExisted = Test-Path -LiteralPath $markdownFull -PathType Leaf\n$originalMarkdownBytes = if ($markdownExisted) { [IO.File]::ReadAllBytes($markdownFull) } else { $null }\n$manifestCommitted = $false\n$markdownCommitted = $false\n$sessionCommitted = $false\n\ntry {\n    $data | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestTemp -Encoding utf8\n    Set-Content -LiteralPath $markdownTemp -Value $markdown -Encoding utf8\n\n    if ($Finalize) {\n        & $validator -Manifest $manifestTemp -RequiredScenario @([string]$data.scenario) | Out-Null\n    }\n\n    if ($null -ne $sessionData) {\n        $newManifestItem = Get-Item -LiteralPath $manifestTemp\n        $newManifestHash = (Get-FileHash -LiteralPath $manifestTemp -Algorithm SHA256).Hash.ToLowerInvariant()\n        $sessionInventoryEntry.bytes = [int64]$newManifestItem.Length\n        $sessionInventoryEntry.sha256 = $newManifestHash\n        $sessionData | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $sessionTemp -Encoding utf8\n    }\n\n    Move-Item -LiteralPath $manifestTemp -Destination $manifestFull -Force\n    $manifestCommitted = $true\n    Move-Item -LiteralPath $markdownTemp -Destination $markdownFull -Force\n    $markdownCommitted = $true\n    if ($null -ne $sessionData) {\n        Move-Item -LiteralPath $sessionTemp -Destination $sessionInfoPath -Force\n        $sessionCommitted = $true\n        & $sessionValidator -SessionInfoPath $sessionInfoPath -Manifest $sessionManifestPaths | Out-Null\n    }\n} catch {\n    $failure = $_\n    if ($manifestCommitted) { [IO.File]::WriteAllBytes($manifestFull, $originalManifestBytes) }\n    if ($markdownCommitted) {\n        if ($markdownExisted) { [IO.File]::WriteAllBytes($markdownFull, $originalMarkdownBytes) }\n        else { Remove-Item -LiteralPath $markdownFull -Force -ErrorAction SilentlyContinue }\n    }\n    if ($sessionCommitted -and $null -ne $originalSessionBytes) {\n        [IO.File]::WriteAllBytes($sessionInfoPath, $originalSessionBytes)\n    }\n    throw $failure\n} finally {\n    Remove-Item -LiteralPath $manifestTemp -Force -ErrorAction SilentlyContinue\n    Remove-Item -LiteralPath $markdownTemp -Force -ErrorAction SilentlyContinue\n    Remove-Item -LiteralPath $sessionTemp -Force -ErrorAction SilentlyContinue\n}\n''',
+          )
+
+          test_session = 'scripts/test-network-test-session.ps1'
+          replace_once(
+              test_session,
+              '''$validator = Join-Path $PSScriptRoot 'validate-network-test-session.ps1'\n''',
+              '''$validator = Join-Path $PSScriptRoot 'validate-network-test-session.ps1'\n$editor = Join-Path $PSScriptRoot 'set-network-test-result.ps1'\n''',
+          )
+          replace_once(
+              test_session,
+              '''    $tcpManifestPath = ($manifests | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).scenario -ceq 'TCP' } | Select-Object -First 1).FullName\n\n    $originalTcpBytes = [IO.File]::ReadAllBytes($tcpManifestPath)\n''',
+              '''    $tcpManifestPath = ($manifests | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).scenario -ceq 'TCP' } | Select-Object -First 1).FullName\n\n    & $editor -Manifest $tcpManifestPath -Check world_a_to_b -Result PASS -Evidence 'authorized session-editor observation' | Out-Null\n    & $validator -SessionInfoPath $sessionInfoPath -Manifest $manifestPaths | Out-Null\n    $resealedSession = Get-Content -LiteralPath $sessionInfoPath -Raw | ConvertFrom-Json\n    $resealedEntry = @($resealedSession.manifests | Where-Object { [string]$_.path -ceq [IO.Path]::GetFileName($tcpManifestPath) })\n    Assert-True ($resealedEntry.Count -eq 1) 'Authorized evidence edit lost SESSION_INFO inventory binding.'\n    $resealedHash = (Get-FileHash -LiteralPath $tcpManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()\n    Assert-True ([string]$resealedEntry[0].sha256 -ceq $resealedHash) 'Authorized evidence edit did not reseal manifest SHA-256 in SESSION_INFO.'\n    Assert-True ([int64]$resealedEntry[0].bytes -eq (Get-Item -LiteralPath $tcpManifestPath).Length) 'Authorized evidence edit did not reseal manifest byte count in SESSION_INFO.'\n\n    $originalTcpBytes = [IO.File]::ReadAllBytes($tcpManifestPath)\n''',
+          )
+
+          changelog = 'CHANGELOG.md'
+          replace_once(
+              changelog,
+              '- bound real-network session evidence to its sealed `SESSION_INFO.json` inventory: validation now requires and verifies each manifest byte count plus canonical SHA-256 before semantic checks, with an adversarial post-session edit fixture proving otherwise-valid content drift fails closed; this evidence-integrity hardening adds no Real Internet Test credit,',
+              '- bound real-network session evidence to a tamper-evident `SESSION_INFO.json` inventory: validation requires each manifest byte count plus canonical SHA-256 before semantic checks, the controlled report editor verifies the current session before an edit and atomically reseals the changed manifest inventory entry with rollback on validation failure, and direct out-of-band edits fail closed; this evidence-integrity hardening adds no Real Internet Test credit,',
+          )
+          roadmap = 'ROADMAP.md'
+          replace_once(
+              roadmap,
+              '- Real-network session validation now verifies every manifest byte count and SHA-256 against the sealed `SESSION_INFO.json` inventory before semantic evidence checks. This promotion-evidence integrity fix adds no Real Internet Test credit.',
+              '- Real-network session validation now verifies every manifest byte count and SHA-256 against a tamper-evident `SESSION_INFO.json` inventory; the controlled evidence editor validates then reseals authorized changes, while out-of-band edits fail closed. This promotion-evidence integrity fix adds no Real Internet Test credit.',
+          )
+
+          workflow = Path('.github/workflows/hourly-reseal-fix.yml')
+          workflow.unlink()
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Project audit
+        run: npm run audit
+
+      - name: Report editor self-tests
+        shell: pwsh
+        run: .\scripts\test-network-report-editor.ps1
+
+      - name: Session lifecycle self-tests
+        shell: pwsh
+        run: .\scripts\test-network-test-session.ps1
+
+      - name: Rust format check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Diff hygiene
+        shell: pwsh
+        run: |
+          git diff --check
+          if (Test-Path '.github/workflows/hourly-reseal-fix.yml') { throw 'Temporary workflow leaked into final tree.' }
+          Select-String -LiteralPath 'scripts\set-network-test-result.ps1' -Pattern 'Authorized evidence edit' -Quiet | Out-Null
+
+      - name: Commit corrected integration
+        env:
+          BRANCH: automation/room-evidence-hardening-20260918
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Reseal session manifest inventory after authorized edits'
+          git push origin HEAD:$env:BRANCH

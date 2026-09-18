@@ -49,6 +49,9 @@ const state = {
   status: { ...EMPTY_STATUS } as NetworkStatus,
 };
 
+let sessionRevision = 0;
+let connectPending = false;
+
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
 function esc(s: string): string {
@@ -132,6 +135,7 @@ function renderLogin() {
 }
 
 async function connect() {
+  if (connectPending) return;
   const input = document.querySelector<HTMLInputElement>('#nick')!;
   const error = document.querySelector<HTMLDivElement>('#loginError')!;
   const nick = normalizeNick(input.value);
@@ -146,6 +150,8 @@ async function connect() {
     return;
   }
 
+  connectPending = true;
+  const revision = ++sessionRevision;
   const btn = document.querySelector<HTMLButtonElement>('#connectBtn')!;
   btn.disabled = true;
   btn.textContent = t('login.starting');
@@ -155,6 +161,8 @@ async function connect() {
       nick,
       bootstraps: loadBootstraps(),
     });
+    if (revision !== sessionRevision) return;
+    connectPending = false;
     state.nick = result.nick;
     state.peerId = result.peer_id;
     state.version = result.version;
@@ -162,6 +170,8 @@ async function connect() {
     renderChat();
     addSystem('world', t('login.connectedAs', { nick: state.nick }));
   } catch (e) {
+    if (revision !== sessionRevision) return;
+    connectPending = false;
     error.textContent = String(e);
     btn.disabled = false;
     btn.textContent = t('login.connect');
@@ -447,10 +457,13 @@ function showFileOfferModal(offer: FileOffer) {
   });
 }
 
-async function disconnect() {
-  try { await invoke('disconnect_network'); } catch {}
+function resetSessionView(errorMessage?: string) {
+  sessionRevision += 1;
+  connectPending = false;
   document.querySelectorAll('.modal-wrap').forEach(el => el.remove());
   state.connected = false;
+  state.nick = '';
+  state.peerId = '';
   state.peers.clear();
   state.rooms = new Map([['world', { id: 'world', title: '# WORLD' }]]);
   state.messages = new Map([['world', []]]);
@@ -458,6 +471,15 @@ async function disconnect() {
   state.status = { ...EMPTY_STATUS };
   state.room = 'world';
   renderLogin();
+  if (errorMessage) {
+    const error = document.querySelector<HTMLDivElement>('#loginError');
+    if (error) error.textContent = errorMessage;
+  }
+}
+
+async function disconnect() {
+  try { await invoke('disconnect_network'); } catch {}
+  resetSessionView();
 }
 
 function pushMessage(m: ChatMessage) {
@@ -556,8 +578,11 @@ async function wireEvents() {
   await listen<string>('network-warning', event => {
     if (state.connected) addSystem('world', `⚠ ${event.payload}`);
   });
-  await listen<string>('network-error', event => {
-    if (state.connected) addSystem('world', t('network.error', { error: event.payload }));
+  await listen<string>('network-error', async event => {
+    if (!state.connected && !connectPending) return;
+    const message = t('network.error', { error: event.payload });
+    try { await invoke('disconnect_network'); } catch {}
+    resetSessionView(message);
   });
   await listen<{ nick: string }>('nick-conflict', event => {
     alert(t('nick.conflict', { nick: event.payload.nick }));

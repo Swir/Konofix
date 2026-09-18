@@ -38,6 +38,7 @@ const NICK_LEASE_SECS: u64 = 42;
 const FILE_CHUNK_SIZE: usize = 256 * 1024;
 const MAX_FILE_OFFER_NAME_BYTES: usize = 4 * 1024;
 const MAX_FILE_REQUEST_WIRE_BYTES: u64 = 320 * 1024;
+const MAX_FILE_RESPONSE_WIRE_BYTES: u64 = 16 * 1024;
 const MAX_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_TRANSFERS_PER_DIRECTION: usize = 4;
 const MAX_PENDING_OFFERS_PER_PEER: usize = 1;
@@ -355,6 +356,13 @@ enum FileResponse {
     Error {
         message: String,
     },
+}
+
+fn file_completion_response(verified: bool) -> FileResponse {
+    FileResponse::Complete {
+        verified,
+        path: None,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1240,7 +1248,8 @@ async fn network_task(
                 request_response::Config::default().with_request_timeout(Duration::from_secs(300));
             let file_codec =
                 request_response::cbor::codec::Codec::<FileRequest, FileResponse>::default()
-                    .set_request_size_maximum(MAX_FILE_REQUEST_WIRE_BYTES);
+                    .set_request_size_maximum(MAX_FILE_REQUEST_WIRE_BYTES)
+                    .set_response_size_maximum(MAX_FILE_RESPONSE_WIRE_BYTES);
             let file_transfer =
                 request_response::cbor::Behaviour::<FileRequest, FileResponse>::with_codec(
                     file_codec,
@@ -1922,7 +1931,7 @@ async fn network_task(
                                                 let temp_path = transfer.temp_path.clone();
                                                 let final_path_buf = transfer.final_path.clone();
                                                 let completed_path = final_path_buf.to_string_lossy().to_string();
-                                                let mut completed_view = file_view_incoming(&transfer_id, &transfer, "completed", Some(completed_path.clone()), None);
+                                                let mut completed_view = file_view_incoming(&transfer_id, &transfer, "completed", Some(completed_path), None);
                                                 let mut failed_view = file_view_incoming(&transfer_id, &transfer, "failed", None, None);
                                                 let durability_result: std::io::Result<()> = if valid {
                                                     async {
@@ -1939,20 +1948,20 @@ async fn network_task(
                                                         let _ = tokio::fs::remove_file(&temp_path).await;
                                                         failed_view.error = Some(format!("Nie można utrwalić odebranego pliku przed finalizacją: {error}"));
                                                         emit_transfer(&app, &failed_view);
-                                                        FileResponse::Complete { verified: false, path: None }
+                                                        file_completion_response(false)
                                                     } else {
                                                         match commit_reserved_file(&temp_path, &final_path_buf).await {
                                                             Ok(()) => {
                                                                 completed_view.transferred = completed_view.size;
                                                                 completed_view.progress = 100.0;
                                                                 emit_transfer(&app, &completed_view);
-                                                                FileResponse::Complete { verified: true, path: Some(completed_path) }
+                                                                file_completion_response(true)
                                                             }
                                                             Err(error) => {
                                                                 let _ = tokio::fs::remove_file(&temp_path).await;
                                                                 failed_view.error = Some(error);
                                                                 emit_transfer(&app, &failed_view);
-                                                                FileResponse::Complete { verified: false, path: None }
+                                                                file_completion_response(false)
                                                             }
                                                         }
                                                     }
@@ -1960,7 +1969,7 @@ async fn network_task(
                                                     let _ = tokio::fs::remove_file(&temp_path).await;
                                                     failed_view.error = Some("Suma SHA-256 nie zgadza się lub rozmiar jest niepoprawny.".into());
                                                     emit_transfer(&app, &failed_view);
-                                                    FileResponse::Complete { verified: false, path: None }
+                                                    file_completion_response(false)
                                                 }
                                             } else {
                                                 FileResponse::Error { message: "Transfer nie istnieje.".into() }
@@ -2262,6 +2271,27 @@ mod file_offer_admission_tests {
     fn request_codec_limit_preserves_a_large_chunk_overhead_budget() {
         assert_eq!(MAX_FILE_REQUEST_WIRE_BYTES, 320 * 1024);
         assert!(MAX_FILE_REQUEST_WIRE_BYTES >= (FILE_CHUNK_SIZE as u64).saturating_add(64 * 1024));
+    }
+
+    #[test]
+    fn response_codec_limit_and_completion_ack_preserve_privacy() {
+        assert_eq!(MAX_FILE_RESPONSE_WIRE_BYTES, 16 * 1024);
+        assert!(MAX_FILE_RESPONSE_WIRE_BYTES < 1024 * 1024);
+        for verified in [false, true] {
+            match file_completion_response(verified) {
+                FileResponse::Complete {
+                    verified: actual,
+                    path,
+                } => {
+                    assert_eq!(actual, verified);
+                    assert!(
+                        path.is_none(),
+                        "wire completion must not expose receiver-local paths"
+                    );
+                }
+                _ => unreachable!("completion helper must return FileResponse::Complete"),
+            }
+        }
     }
 
     #[test]

@@ -22,6 +22,8 @@ const COLORS = {
   muted: '#8DA8B8',
 };
 
+const LEGACY_TEXT_PROGRESS_METER = /(?:^|\n)\s*`?\s*(?:[█▓▒░■□▰▱]{5,}|\[[#=\-]{5,}\])(?:\s+\d+(?:\.\d+)?%)?\s*`?\s*(?=\n|$)/u;
+
 export function escapeXml(value) {
   return String(value)
     .replaceAll('&', '&amp;')
@@ -217,6 +219,8 @@ export function validateEmbeddings(readmeText, roadmapText, progress) {
   const roadmapPath = 'src="assets/readme/progress-mini.svg"';
   if (!readmeText.includes(readmePath)) throw new Error('README.md must embed assets/readme/progress-card.svg near project status.');
   if (!roadmapText.includes(roadmapPath)) throw new Error('ROADMAP.md must embed assets/readme/progress-mini.svg near its authoritative status dashboard.');
+  if (LEGACY_TEXT_PROGRESS_METER.test(readmeText)) throw new Error('README.md contains a retired text/Unicode progress meter; keep the SVG plus numeric fallback only.');
+  if (LEGACY_TEXT_PROGRESS_METER.test(roadmapText)) throw new Error('ROADMAP.md contains a retired text/Unicode progress meter; keep the SVG plus numeric fallback only.');
 
   const readmeAlt = `alt="${escapeXml(progressAlt(progress, false))}"`;
   const roadmapAlt = `alt="${escapeXml(progressAlt(progress, true))}"`;

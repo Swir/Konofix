@@ -533,11 +533,11 @@ function showNetworkModal() {
     const address = input.value.trim();
     if (!address) return;
     const next = [...loadBootstraps(), address];
-    saveBootstraps(next);
     if (state.connected) {
       try { await invoke('add_bootstrap', { address }); }
       catch (e) { alert(String(e)); return; }
     }
+    saveBootstraps(next);
     close();
     showNetworkModal();
   });

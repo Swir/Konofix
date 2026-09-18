@@ -49,6 +49,9 @@ const state = {
   status: { ...EMPTY_STATUS } as NetworkStatus,
 };
 
+let sessionRevision = 0;
+let connectPending = false;
+
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
 function esc(s: string): string {
@@ -132,6 +135,7 @@ function renderLogin() {
 }
 
 async function connect() {
+  if (connectPending) return;
   const input = document.querySelector<HTMLInputElement>('#nick')!;
   const error = document.querySelector<HTMLDivElement>('#loginError')!;
   const nick = normalizeNick(input.value);
@@ -146,6 +150,8 @@ async function connect() {
     return;
   }
 
+  connectPending = true;
+  const revision = ++sessionRevision;
   const btn = document.querySelector<HTMLButtonElement>('#connectBtn')!;
   btn.disabled = true;
   btn.textContent = t('login.starting');
@@ -155,6 +161,8 @@ async function connect() {
       nick,
       bootstraps: loadBootstraps(),
     });
+    if (revision !== sessionRevision) return;
+    connectPending = false;
     state.nick = result.nick;
     state.peerId = result.peer_id;
     state.version = result.version;
@@ -162,6 +170,8 @@ async function connect() {
     renderChat();
     addSystem('world', t('login.connectedAs', { nick: state.nick }));
   } catch (e) {
+    if (revision !== sessionRevision) return;
+    connectPending = false;
     error.textContent = String(e);
     btn.disabled = false;
     btn.textContent = t('login.connect');
@@ -448,6 +458,8 @@ function showFileOfferModal(offer: FileOffer) {
 }
 
 function resetSessionView(errorMessage?: string) {
+  sessionRevision += 1;
+  connectPending = false;
   document.querySelectorAll('.modal-wrap').forEach(el => el.remove());
   state.connected = false;
   state.nick = '';
@@ -567,7 +579,7 @@ async function wireEvents() {
     if (state.connected) addSystem('world', `⚠ ${event.payload}`);
   });
   await listen<string>('network-error', async event => {
-    if (!state.connected) return;
+    if (!state.connected && !connectPending) return;
     const message = t('network.error', { error: event.payload });
     try { await invoke('disconnect_network'); } catch {}
     resetSessionView(message);

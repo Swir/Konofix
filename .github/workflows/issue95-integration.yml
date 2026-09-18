@@ -19,7 +19,18 @@ jobs:
           fetch-depth: 0
 
       - name: Apply hardening
-        run: python scripts/issue95-apply.py
+        run: |
+          python scripts/issue95-apply.py
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/check-nickname-lease-auth.mjs')
+          s = p.read_text(encoding='utf-8')
+          old = "  if (!/NickClaim\\s*\\{[\\s\\S]{0,250}envelope:[\\s\\S]{0,500}verify_nick_lease/.test(source)) failures.push('GossipSub nickname claims do not share authenticated lease validation');"
+          new = "  if (!source.includes('WireEvent::NickClaim') || !source.includes('verify_nick_lease(&lease, None, None, now_ms())')) failures.push('GossipSub nickname claims do not share authenticated lease validation');"
+          if old not in s:
+              raise SystemExit('staged checker patch anchor missing')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
 
       - name: Format and verify
         run: |

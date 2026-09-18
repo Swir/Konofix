@@ -19,7 +19,7 @@ export function checkNodePublicHostPolicy(nodeSource, linuxInstallerSource) {
   requireToken(errors, nodeSource, '"--allow-private-address" =>', 'Raw Node must parse --allow-private-address explicitly.');
   requireToken(errors, nodeSource, 'fn validate_public_host(', 'Raw Node is missing the centralized public-host validator.');
   requireToken(errors, nodeSource, 'not globally routable under the Konofix public-node evidence policy', 'Non-global literal public hosts must fail closed by default.');
-  requireToken(errors, nodeSource, '=== KONOFIX LAB-ONLY ADDRESSES ===', 'Lab override output must be visibly separated from shareable public-node output.');
+  requireToken(errors, nodeSource, '=== KONOFIX LAB-ONLY ADDRESSES ===', 'LAB-ONLY override output must be visibly separated from shareable public-node output.');
   requireToken(errors, nodeSource, 'NOT valid public-node or promotion evidence', 'Lab-only output must state that it cannot satisfy public-node/promotion evidence.');
   requireToken(errors, nodeSource, 'DNS syntax alone is not reachability evidence', 'DNS public-host output must not claim syntax as reachability evidence.');
   requireToken(errors, nodeSource, 'a == 100 && (64..=127).contains(&b)', 'Raw Node policy must reject IPv4 CGNAT 100.64.0.0/10.');

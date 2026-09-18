@@ -29,6 +29,8 @@ Assert-True ($dns.bootstrap_tcp_template -ceq '/dns/node.github.com/tcp/45555/p2
 Assert-True ($dns.bootstrap_quic_template -ceq '/dns/node.github.com/udp/45555/quic-v1/p2p/<PEER_ID>') 'QUIC bootstrap template is wrong.'
 Assert-True ($dns.args -contains '--identity-file') 'Launch arguments must pin the identity file.'
 Assert-True ($dns.args -contains '--health-file') 'Launch arguments must pin the health file.'
+Assert-True (-not ($dns.args -contains '--allow-private-address')) 'Normal public config must not enable the lab-only binary override.'
+Assert-True (-not [bool]$dns.lab_only) 'Normal public config must not be labelled lab-only.'
 
 $ipv4 = (& $tool -PublicHost '8.8.8.8' -Port 46666 -StateDirectory $tempState -AsJson) | ConvertFrom-Json
 Assert-True ($ipv4.address_prefix -ceq '/ip4/8.8.8.8') 'IPv4 prefix is wrong.'
@@ -68,6 +70,8 @@ foreach ($case in @(
 
 $lab = (& $tool -PublicHost '192.168.10.20' -StateDirectory $tempState -AllowPrivateAddress -AsJson) | ConvertFrom-Json
 Assert-True ($lab.address_prefix -ceq '/ip4/192.168.10.20') 'AllowPrivateAddress must permit controlled lab addresses.'
+Assert-True ([bool]$lab.lab_only) 'AllowPrivateAddress config must be labelled lab-only.'
+Assert-True ($lab.args -contains '--allow-private-address') 'AllowPrivateAddress must propagate the explicit lab override to konofix-node.'
 
 $samePath = Join-Path $tempState 'state.dat'
 Assert-Fails 'identity/health collision rejection' 'Identity and health files must be different paths' {
@@ -98,4 +102,4 @@ Assert-Fails 'invalid host rejection' 'Invalid public host' {
   & $tool -PublicHost 'node.example.com/path' -StateDirectory $tempState -AsJson | Out-Null
 }
 
-Write-Host 'OK - public Node deployment preflight rejects non-global literal/special-use DNS endpoints, unsafe state configurations and produces deterministic launch arguments.' -ForegroundColor Green
+Write-Host 'OK - public Node deployment preflight rejects non-global literal/special-use DNS endpoints, unsafe state configurations and produces deterministic launch arguments with explicit lab override propagation.' -ForegroundColor Green

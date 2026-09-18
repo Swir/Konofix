@@ -78,11 +78,7 @@ fn clear_network_sender_if_current(
 }
 
 fn take_network_sender(state: &AppState) -> Result<Option<mpsc::Sender<NetworkCommand>>, String> {
-    Ok(state
-        .tx
-        .lock()
-        .map_err(|_| "Błąd blokady stanu")?
-        .take())
+    Ok(state.tx.lock().map_err(|_| "Błąd blokady stanu")?.take())
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -8,7 +8,9 @@ use std::{
 
 use futures::StreamExt;
 use libp2p::{
-    autonat, dcutr, gossipsub, identify,
+    autonat,
+    core::SignedEnvelope,
+    dcutr, gossipsub, identify, identity,
     kad::{self, store::MemoryStore, GetRecordOk, Quorum, Record, RecordKey},
     mdns, noise, ping, relay, request_response,
     swarm::{NetworkBehaviour, SwarmEvent},
@@ -35,6 +37,10 @@ const FILE_PROTOCOL: &str = "/konofix/file/1.0.0";
 const WORLD_PROVIDER_KEY: &str = "/konofix/world/providers/v1";
 const PRESENCE_TTL_SECS: u64 = 38;
 const NICK_LEASE_SECS: u64 = 42;
+const NICK_LEASE_CLOCK_SKEW_SECS: u64 = 5;
+const NICK_LEASE_DOMAIN: &str = "konofix/nick-lease/v1";
+const NICK_LEASE_PAYLOAD_TYPE: &[u8] = b"\x01";
+const MAX_NICK_LEASE_ENVELOPE_BYTES: usize = 2 * 1024;
 const FILE_CHUNK_SIZE: usize = 256 * 1024;
 const MAX_FILE_OFFER_NAME_BYTES: usize = 4 * 1024;
 const MAX_FILE_REQUEST_WIRE_BYTES: u64 = 320 * 1024;
@@ -127,12 +133,32 @@ struct NetworkStatus {
     detail: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct NickLeasePayload {
+    peer_id: String,
+    nick: String,
+    canonical: String,
+    expires_at: u128,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NickLease {
     peer_id: String,
     nick: String,
     canonical: String,
     expires_at: u128,
+    envelope: Vec<u8>,
+}
+
+impl NickLease {
+    fn payload(&self) -> NickLeasePayload {
+        NickLeasePayload {
+            peer_id: self.peer_id.clone(),
+            nick: self.nick.clone(),
+            canonical: self.canonical.clone(),
+            expires_at: self.expires_at,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -233,6 +259,7 @@ enum WireEvent {
         nick: String,
         canonical: String,
         expires_at: u128,
+        envelope: Vec<u8>,
     },
     Chat(ChatMessage),
     RoomCreate(RoomInfo),
@@ -279,11 +306,16 @@ fn wire_event_is_well_formed(event: &WireEvent) -> bool {
             nick,
             canonical,
             expires_at,
+            envelope,
         } => {
-            peer_id.parse::<PeerId>().is_ok()
-                && validate_nick(nick).is_ok()
-                && canonical == &canonical_nick(nick)
-                && *expires_at > 0
+            let lease = NickLease {
+                peer_id: peer_id.clone(),
+                nick: nick.clone(),
+                canonical: canonical.clone(),
+                expires_at: *expires_at,
+                envelope: envelope.clone(),
+            };
+            verify_nick_lease(&lease, None, None, now_ms())
         }
         WireEvent::Chat(message) => {
             let Some(peer_id) = message.peer_id.as_deref() else {
@@ -630,6 +662,86 @@ fn validate_nick(raw: &str) -> Result<String, String> {
 fn nick_record_key(canonical: &str) -> RecordKey {
     let bytes = format!("/konofix/nick/{canonical}").into_bytes();
     RecordKey::new(&bytes)
+}
+
+fn build_nick_lease(
+    signing_key: &identity::Keypair,
+    nick: &str,
+    canonical: &str,
+    expires_at: u128,
+) -> Result<NickLease, String> {
+    let payload = NickLeasePayload {
+        peer_id: signing_key.public().to_peer_id().to_string(),
+        nick: nick.to_string(),
+        canonical: canonical.to_string(),
+        expires_at,
+    };
+    let payload_bytes = serde_json::to_vec(&payload)
+        .map_err(|error| format!("Could not serialize nickname lease payload: {error}"))?;
+    let envelope = SignedEnvelope::new(
+        signing_key,
+        NICK_LEASE_DOMAIN.to_string(),
+        NICK_LEASE_PAYLOAD_TYPE.to_vec(),
+        payload_bytes,
+    )
+    .map_err(|error| format!("Could not sign nickname lease: {error}"))?
+    .into_protobuf_encoding();
+    if envelope.len() > MAX_NICK_LEASE_ENVELOPE_BYTES {
+        return Err("Signed nickname lease exceeds the protocol size limit.".into());
+    }
+    Ok(NickLease {
+        peer_id: payload.peer_id,
+        nick: payload.nick,
+        canonical: payload.canonical,
+        expires_at: payload.expires_at,
+        envelope,
+    })
+}
+
+fn verify_nick_lease(
+    lease: &NickLease,
+    expected_record_key: Option<&RecordKey>,
+    record_publisher: Option<&PeerId>,
+    now: u128,
+) -> bool {
+    if lease.envelope.is_empty() || lease.envelope.len() > MAX_NICK_LEASE_ENVELOPE_BYTES {
+        return false;
+    }
+    if validate_nick(&lease.nick).ok().as_deref() != Some(lease.nick.as_str())
+        || lease.canonical != canonical_nick(&lease.nick)
+    {
+        return false;
+    }
+    let maximum_expiry = now.saturating_add(
+        (NICK_LEASE_SECS.saturating_add(NICK_LEASE_CLOCK_SKEW_SECS) as u128) * 1000,
+    );
+    if lease.expires_at <= now || lease.expires_at > maximum_expiry {
+        return false;
+    }
+    if expected_record_key.is_some_and(|key| key != &nick_record_key(&lease.canonical)) {
+        return false;
+    }
+    let Ok(claimed_peer) = lease.peer_id.parse::<PeerId>() else {
+        return false;
+    };
+    if record_publisher.is_some_and(|publisher| publisher != &claimed_peer) {
+        return false;
+    }
+    let Ok(envelope) = SignedEnvelope::from_protobuf_encoding(&lease.envelope) else {
+        return false;
+    };
+    if !envelope.verify(NICK_LEASE_DOMAIN.to_string()) {
+        return false;
+    }
+    let Ok((payload_bytes, signing_key)) =
+        envelope.payload_and_signing_key(NICK_LEASE_DOMAIN.to_string(), NICK_LEASE_PAYLOAD_TYPE)
+    else {
+        return false;
+    };
+    let Ok(payload) = serde_json::from_slice::<NickLeasePayload>(payload_bytes) else {
+        return false;
+    };
+    payload == lease.payload() && signing_key.to_peer_id() == claimed_peer
 }
 
 fn world_provider_key() -> RecordKey {
@@ -1119,16 +1231,13 @@ fn publish_presence(
 fn publish_nick_lease(
     swarm: &mut libp2p::Swarm<Behaviour>,
     topic: &gossipsub::IdentTopic,
-    local_peer: PeerId,
+    signing_key: &identity::Keypair,
     nick: &str,
     canonical: &str,
 ) {
     let expires_at = now_ms() + (NICK_LEASE_SECS as u128 * 1000);
-    let lease = NickLease {
-        peer_id: local_peer.to_string(),
-        nick: nick.to_string(),
-        canonical: canonical.to_string(),
-        expires_at,
+    let Ok(lease) = build_nick_lease(signing_key, nick, canonical, expires_at) else {
+        return;
     };
 
     publish(
@@ -1139,12 +1248,13 @@ fn publish_nick_lease(
             nick: lease.nick.clone(),
             canonical: lease.canonical.clone(),
             expires_at,
+            envelope: lease.envelope.clone(),
         },
     );
 
     if let Ok(value) = serde_json::to_vec(&lease) {
         let mut record = Record::new(nick_record_key(canonical), value);
-        record.publisher = Some(local_peer);
+        record.publisher = Some(signing_key.public().to_peer_id());
         record.expires = Some(Instant::now() + Duration::from_secs(NICK_LEASE_SECS));
         let _ = swarm.behaviour_mut().kad.put_record(record, Quorum::One);
     }
@@ -1275,7 +1385,9 @@ async fn network_task(
     mut rx: mpsc::Receiver<NetworkCommand>,
     ready: oneshot::Sender<Result<String, String>>,
 ) -> Result<(), String> {
-    let mut swarm = SwarmBuilder::with_new_identity()
+    let identity_key = identity::Keypair::generate_ed25519();
+    let nickname_signing_key = identity_key.clone();
+    let mut swarm = SwarmBuilder::with_existing_identity(identity_key)
         .with_tokio()
         .with_tcp(
             tcp::Config::default(),
@@ -1438,7 +1550,7 @@ async fn network_task(
         HashMap::new();
 
     publish_presence(&mut swarm, &world, &peer_id, &nick);
-    publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical);
+    publish_nick_lease(&mut swarm, &world, &nickname_signing_key, &nick, &canonical);
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
     let mut discovery = tokio::time::interval(Duration::from_secs(25));
@@ -1460,7 +1572,7 @@ async fn network_task(
         tokio::select! {
             _ = heartbeat.tick() => {
                 publish_presence(&mut swarm, &world, &peer_id, &nick);
-                publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical);
+                publish_nick_lease(&mut swarm, &world, &nickname_signing_key, &nick, &canonical);
                 swarm.behaviour_mut().kad.get_record(nick_record_key(&canonical));
             }
             _ = discovery.tick() => {
@@ -1824,7 +1936,12 @@ async fn network_task(
                         }
                         kad::QueryResult::GetRecord(Ok(GetRecordOk::FoundRecord(peer_record))) => {
                             if let Ok(lease) = serde_json::from_slice::<NickLease>(&peer_record.record.value) {
-                                if check_nick_conflict(&lease.peer_id, &lease.canonical, lease.expires_at, local_peer, &canonical) {
+                                if verify_nick_lease(
+                                    &lease,
+                                    Some(&peer_record.record.key),
+                                    peer_record.record.publisher.as_ref(),
+                                    now_ms(),
+                                ) && check_nick_conflict(&lease.peer_id, &lease.canonical, lease.expires_at, local_peer, &canonical) {
                                     let _ = app.emit("nick-conflict", serde_json::json!({"nick": nick, "peer_id": lease.peer_id}));
                                     break 'network;
                                 }
@@ -2250,6 +2367,144 @@ fn open_github() -> Result<(), String> {
 }
 
 #[cfg(test)]
+mod nickname_lease_auth_tests {
+    use super::*;
+
+    const TEST_NOW: u128 = 1_800_000_000_000;
+
+    fn live_lease(key: &identity::Keypair, nick: &str) -> NickLease {
+        let canonical = canonical_nick(nick);
+        build_nick_lease(
+            key,
+            nick,
+            &canonical,
+            TEST_NOW + (NICK_LEASE_SECS as u128 * 1000),
+        )
+        .expect("test lease should sign")
+    }
+
+    #[test]
+    fn signed_lease_requires_identity_key_record_key_and_bounded_expiry() {
+        let key = identity::Keypair::generate_ed25519();
+        let peer = key.public().to_peer_id();
+        let lease = live_lease(&key, "Alice");
+        let record_key = nick_record_key(&lease.canonical);
+        assert!(verify_nick_lease(
+            &lease,
+            Some(&record_key),
+            Some(&peer),
+            TEST_NOW
+        ));
+
+        let mut forged_identity = lease.clone();
+        forged_identity.peer_id = identity::Keypair::generate_ed25519()
+            .public()
+            .to_peer_id()
+            .to_string();
+        assert!(!verify_nick_lease(
+            &forged_identity,
+            Some(&record_key),
+            None,
+            TEST_NOW
+        ));
+
+        let wrong_record_key = nick_record_key("mallory");
+        assert!(!verify_nick_lease(
+            &lease,
+            Some(&wrong_record_key),
+            Some(&peer),
+            TEST_NOW
+        ));
+        let wrong_publisher = identity::Keypair::generate_ed25519().public().to_peer_id();
+        assert!(!verify_nick_lease(
+            &lease,
+            Some(&record_key),
+            Some(&wrong_publisher),
+            TEST_NOW
+        ));
+    }
+
+    #[test]
+    fn unsigned_tampered_expired_and_far_future_leases_fail_closed() {
+        let key = identity::Keypair::generate_ed25519();
+        let peer = key.public().to_peer_id();
+        let lease = live_lease(&key, "alice");
+        let record_key = nick_record_key("alice");
+
+        let mut unsigned = lease.clone();
+        unsigned.envelope.clear();
+        assert!(!verify_nick_lease(
+            &unsigned,
+            Some(&record_key),
+            Some(&peer),
+            TEST_NOW
+        ));
+
+        let mut tampered = lease.clone();
+        let last = tampered.envelope.len() - 1;
+        tampered.envelope[last] ^= 0x01;
+        assert!(!verify_nick_lease(
+            &tampered,
+            Some(&record_key),
+            Some(&peer),
+            TEST_NOW
+        ));
+
+        let expired = build_nick_lease(&key, "alice", "alice", TEST_NOW - 1)
+            .expect("expired lease can be signed for verification test");
+        assert!(!verify_nick_lease(
+            &expired,
+            Some(&record_key),
+            Some(&peer),
+            TEST_NOW
+        ));
+
+        let far_future = build_nick_lease(
+            &key,
+            "alice",
+            "alice",
+            TEST_NOW + ((NICK_LEASE_SECS + NICK_LEASE_CLOCK_SKEW_SECS + 1) as u128 * 1000),
+        )
+        .expect("future lease can be signed for verification test");
+        assert!(!verify_nick_lease(
+            &far_future,
+            Some(&record_key),
+            Some(&peer),
+            TEST_NOW
+        ));
+    }
+
+    #[test]
+    fn authenticated_live_lease_still_participates_in_deterministic_conflict_resolution() {
+        let first = identity::Keypair::generate_ed25519();
+        let second = identity::Keypair::generate_ed25519();
+        let first_peer = first.public().to_peer_id();
+        let second_peer = second.public().to_peer_id();
+        let (remote_key, local_peer) = if first_peer < second_peer {
+            (&first, second_peer)
+        } else {
+            (&second, first_peer)
+        };
+        let lease = live_lease(remote_key, "alice");
+        let record_key = nick_record_key("alice");
+        let remote_peer = remote_key.public().to_peer_id();
+        assert!(verify_nick_lease(
+            &lease,
+            Some(&record_key),
+            Some(&remote_peer),
+            TEST_NOW
+        ));
+        assert!(check_nick_conflict(
+            &lease.peer_id,
+            &lease.canonical,
+            lease.expires_at,
+            local_peer,
+            "alice"
+        ));
+    }
+}
+
+#[cfg(test)]
 mod network_session_state_tests {
     use super::*;
 
@@ -2470,7 +2725,8 @@ mod authenticated_event_tests {
             peer_id: source_text.clone(),
             nick: "Alice".into(),
             canonical: "mallory".into(),
-            expires_at: 1
+            expires_at: 1,
+            envelope: Vec::new(),
         }));
         assert!(!wire_event_is_well_formed(&WireEvent::RoomCreate(
             RoomInfo {
@@ -2512,6 +2768,7 @@ mod authenticated_event_tests {
                 nick: "alice".into(),
                 canonical: "alice".into(),
                 expires_at: 1,
+                envelope: Vec::new(),
             },
             WireEvent::Chat(ChatMessage {
                 id: "message".into(),

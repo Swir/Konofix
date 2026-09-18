@@ -119,6 +119,12 @@ const cases = [
     expected: 'prune only request metadata',
   },
   {
+    name: 'outgoing request metadata pruning predicate inverted',
+    source: 'outbound_requests.retain(|_, meta| !outgoing_from_peer.contains(&meta.transfer_id));',
+    replacement: 'outbound_requests.retain(|_, meta| outgoing_from_peer.contains(&meta.transfer_id));',
+    expected: 'prune only request metadata',
+  },
+  {
     name: 'disconnect cleanup globally clears request metadata',
     source: 'outbound_requests.retain(|_, meta| !outgoing_from_peer.contains(&meta.transfer_id));',
     replacement: 'outbound_requests.clear();',

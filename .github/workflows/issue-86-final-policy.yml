@@ -32,7 +32,9 @@ jobs:
 
       - name: Apply final fail-closed policy patch
         shell: pwsh
-        run: python .github/issue-86-finalize.py
+        run: |
+          python .github/issue-86-finalize.py
+          python .github/issue-86-extra.py
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -81,7 +83,7 @@ jobs:
       - name: Commit verified patch and remove integration helpers
         shell: pwsh
         run: |
-          git rm .github/issue-86-finalize.py .github/workflows/issue-86-final-policy.yml
+          git rm .github/issue-86-finalize.py .github/issue-86-extra.py .github/workflows/issue-86-final-policy.yml
           git diff --check
           git add -A
           if (git diff --cached --quiet) { throw 'Final integration produced no changes.' }

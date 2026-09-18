@@ -1,0 +1,56 @@
+name: Format public-host hardening
+
+on:
+  push:
+    branches:
+      - automation/public-host-fail-closed-86
+
+permissions:
+  contents: write
+
+jobs:
+  format-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Format Rust and remove one-shot workflow
+        shell: bash
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all
+          git rm .github/workflows/format-public-host-86.yml
+
+      - name: Verify project policies and diff hygiene
+        shell: bash
+        run: |
+          npm ci
+          npm run audit
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          git diff HEAD --check
+
+      - name: Commit verified formatting
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Format public-host hardening"
+          git push origin HEAD:automation/public-host-fail-closed-86

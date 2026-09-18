@@ -14,6 +14,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'path-identity.ps1')
 
 function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
@@ -156,7 +157,7 @@ foreach ($path in $Manifest) {
     $manifestItem = Get-Item -LiteralPath $path
     $manifestFullPath = $manifestItem.FullName
     $manifestDirectory = [IO.Path]::GetFullPath((Split-Path $manifestFullPath -Parent))
-    Assert-True ([string]::Equals($manifestDirectory, $sessionDirectory, [StringComparison]::OrdinalIgnoreCase)) "Session manifest must reside beside SESSION_INFO.json; cross-directory evidence is rejected: $manifestFullPath"
+    Assert-True (Test-KonofixSameDirectory -Left $manifestDirectory -Right $sessionDirectory) "Session manifest must reside beside SESSION_INFO.json; cross-directory evidence is rejected: $manifestFullPath"
     $manifestName = [IO.Path]::GetFileName($manifestFullPath)
     Assert-True ($inventoryByName.ContainsKey($manifestName)) "Supplied manifest is absent from SESSION_INFO inventory: $manifestName"
     $binding = $inventoryByName[$manifestName]

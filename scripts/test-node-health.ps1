@@ -32,6 +32,10 @@ try {
     Expect-Reject 'missing snapshot' { & $checker -Path (Join-Path $tempRoot 'missing.json') }
     $malformed=Join-Path $tempRoot 'malformed.json'; Set-Content -LiteralPath $malformed -Value '{not-json' -Encoding utf8
     Expect-Reject 'malformed JSON' { & $checker -Path $malformed }
+    $arrayRoot=Join-Path $tempRoot 'array-root.json'
+    $arrayPayload=[ordered]@{schema=2;status='running';version='0.4.2';source_commit=$sourceCommit;peer_id='12D3KooWTestPeerId';uptime_seconds=120;connected_peers=2;timestamp_unix=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()}
+    Set-Content -LiteralPath $arrayRoot -Value ('[' + ($arrayPayload | ConvertTo-Json -Compress) + ']') -Encoding utf8
+    Expect-Reject 'array JSON root' { & $checker -Path $arrayRoot }
 
     foreach ($case in @(
         @{Name='unsupported schema';Overrides=@{schema=1}}, @{Name='string schema';Overrides=@{schema='2'}},

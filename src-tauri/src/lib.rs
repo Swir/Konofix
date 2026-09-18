@@ -1645,6 +1645,28 @@ async fn network_task(
                                 );
                             }
                         }
+
+                let outgoing_from_peer: Vec<String> = outgoing
+                    .iter()
+                    .filter(|(_, candidate)| candidate.peer == remote)
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                outbound_requests.retain(|_, meta| !outgoing_from_peer.contains(&meta.transfer_id));
+                for transfer_id in outgoing_from_peer {
+                    if let Some(transfer) = outgoing.remove(&transfer_id) {
+                        emit_transfer(
+                            &app,
+                            &file_view_outgoing(
+                                &transfer_id,
+                                &transfer,
+                                "failed",
+                                None,
+                                Some("Peer disconnected before the outgoing file transfer completed.".into()),
+                            ),
+                        );
+                    }
+                }
+
                     }
                     emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączenie z peerem zamknięte");
                 }

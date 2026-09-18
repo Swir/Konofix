@@ -146,20 +146,31 @@ if (connectionStart < 0) {
   fail('ConnectionClosed handler is missing.');
 } else {
   const nextEvent = text.indexOf('SwarmEvent::', connectionStart + 20);
-  const connection = text.slice(connectionStart, nextEvent > connectionStart ? nextEvent : connectionStart + 9000);
+  const connection = text.slice(connectionStart, nextEvent > connectionStart ? nextEvent : connectionStart + 12000);
   for (const [needle, message] of [
-    ['if num_established == 0 {', 'peer-owned receive state must only be reclaimed after the final connection closes.'],
+    ['if num_established == 0 {', 'peer-owned transfer state must only be reclaimed after the final connection closes.'],
     ['.filter(|(_, offer)| offer.peer == remote)', 'disconnect cleanup must select only pending offers owned by the disconnected peer.'],
     ['pending_incoming.remove(&transfer_id)', 'disconnect cleanup must release selected pending offers.'],
+    ['let incoming_from_peer: Vec<String> = incoming', 'disconnect cleanup must collect accepted transfers separately.'],
     ['.filter(|(_, transfer)| transfer.peer == remote)', 'disconnect cleanup must select only accepted transfers owned by the disconnected peer.'],
     ['incoming.remove(&transfer_id)', 'disconnect cleanup must release selected accepted transfers.'],
     ['tokio::fs::remove_file(&temp_path).await', 'disconnect cleanup must remove the reclaimed transfer-owned temp file.'],
-    ['"Peer disconnected before the file transfer completed."', 'disconnect cleanup must emit deterministic failed-transfer state.'],
+    ['"Peer disconnected before the file transfer completed."', 'disconnect cleanup must emit deterministic failed receive-transfer state.'],
+    ['let outgoing_from_peer: Vec<String> = outgoing', 'disconnect cleanup must collect outgoing transfers owned by the disconnected peer.'],
+    ['.filter(|(_, candidate)| candidate.peer == remote)', 'disconnect cleanup must select only outgoing transfers owned by the disconnected peer.'],
+    ['outbound_requests.retain(|_, meta| !outgoing_from_peer.contains(&meta.transfer_id));', 'disconnect cleanup must prune only request metadata belonging to reclaimed outgoing transfers.'],
+    ['for transfer_id in outgoing_from_peer {', 'disconnect cleanup must reclaim each selected outgoing transfer.'],
+    ['if let Some(transfer) = outgoing.remove(&transfer_id) {', 'disconnect cleanup must release selected outgoing transfer slots immediately.'],
+    ['"Peer disconnected before the outgoing file transfer completed."', 'disconnect cleanup must emit deterministic failed outgoing-transfer state.'],
   ]) {
     if (!connection.includes(needle)) fail(message);
+  }
+
+  if (connection.includes('outbound_requests.clear()')) {
+    fail('disconnect cleanup must never clear unrelated outbound request metadata.');
   }
 }
 
 if (!process.exitCode) {
-  console.log('File-transfer liveness policy: bounded WAN-safe TTL, successful-write-only lease refresh, zero-byte rejection, fail-closed late Complete/Cancel handling, periodic reclamation and peer-scoped disconnect cleanup are enforced.');
+  console.log('File-transfer liveness policy: bounded WAN-safe TTL, successful-write-only lease refresh, zero-byte rejection, fail-closed late Complete/Cancel handling, periodic reclamation, and peer-scoped incoming/outgoing disconnect cleanup with request-metadata pruning are enforced.');
 }

@@ -47,7 +47,22 @@ if (/if state\.tx\.lock\([^\n]+\)\?\.is_some\(\)[\s\S]{0,500}\*state\.tx\.lock\(
   fail('start_network regressed to a check-then-set sender race.');
 }
 
+requireText(ui, 'let sessionRevision = 0;', 'frontend must track lifecycle revisions across asynchronous startup.');
+requireText(ui, 'let connectPending = false;', 'frontend must track an in-flight network start.');
+requireText(ui, 'if (connectPending) return;', 'frontend must reject overlapping local connect attempts.');
+requireText(ui, 'connectPending = true;\n  const revision = ++sessionRevision;', 'each frontend connect attempt must own a lifecycle revision.');
+requireText(
+  ui,
+  'if (revision !== sessionRevision) return;\n    connectPending = false;\n    state.nick = result.nick;',
+  'a stale successful start result must not resurrect a session after terminal recovery.',
+);
+requireText(
+  ui,
+  'catch (e) {\n    if (revision !== sessionRevision) return;\n    connectPending = false;',
+  'a stale rejected start result must not overwrite a newer/reset login view.',
+);
 requireText(ui, 'function resetSessionView(errorMessage?: string) {', 'frontend must centralize terminal/local session reset.');
+requireText(ui, 'sessionRevision += 1;\n  connectPending = false;', 'session reset must invalidate any in-flight startup before touching UI state.');
 for (const [needle, message] of [
   ["document.querySelectorAll('.modal-wrap').forEach(el => el.remove());", 'session reset must close stale modals.'],
   ['state.connected = false;', 'session reset must leave connected state.'],
@@ -63,10 +78,10 @@ for (const [needle, message] of [
 
 requireText(
   ui,
-  "await listen<string>('network-error', async event => {\n    if (!state.connected) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    resetSessionView(message);\n  });",
-  'terminal network-error recovery must idempotently disconnect the backend and return the UI to login with the error surfaced.',
+  "await listen<string>('network-error', async event => {\n    if (!state.connected && !connectPending) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    resetSessionView(message);\n  });",
+  'terminal network-error recovery must cover both connected sessions and in-flight startup, converge backend disconnect and invalidate stale startup results.',
 );
 
 if (!process.exitCode) {
-  console.log('Network-session lifecycle policy: atomic start, channel-owned task cleanup, idempotent disconnect and terminal UI reset are enforced.');
+  console.log('Network-session lifecycle policy: atomic start, channel-owned task cleanup, startup-safe terminal recovery, idempotent disconnect and terminal UI reset are enforced.');
 }

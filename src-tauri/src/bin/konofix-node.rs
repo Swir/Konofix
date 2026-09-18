@@ -459,8 +459,7 @@ fn is_globally_routable_ip(ip: IpAddr) -> bool {
                 return false;
             }
             if segments[0] == 0x2001
-                && ((segments[1] & 0xfff0) == 0x0010
-                    || (segments[1] & 0xfff0) == 0x0020)
+                && ((segments[1] & 0xfff0) == 0x0010 || (segments[1] & 0xfff0) == 0x0020)
             {
                 return false;
             }
@@ -469,7 +468,10 @@ fn is_globally_routable_ip(ip: IpAddr) -> bool {
     }
 }
 
-fn validate_public_host(host: &str, allow_private_address: bool) -> Result<PublicHostPolicy, String> {
+fn validate_public_host(
+    host: &str,
+    allow_private_address: bool,
+) -> Result<PublicHostPolicy, String> {
     match host.parse::<IpAddr>() {
         Ok(ip) if is_globally_routable_ip(ip) => Ok(PublicHostPolicy::GlobalIp),
         Ok(ip) if allow_private_address => Ok(PublicHostPolicy::LabOnlyIp),
@@ -831,7 +833,10 @@ mod tests {
     fn public_host_ipv4_policy_matches_evidence_ranges() {
         for public in ["1.1.1.1", "8.8.8.8"] {
             let ip = public.parse::<IpAddr>().expect("fixture is an IP address");
-            assert!(is_globally_routable_ip(ip), "expected public IPv4: {public}");
+            assert!(
+                is_globally_routable_ip(ip),
+                "expected public IPv4: {public}"
+            );
         }
 
         for blocked in [
@@ -852,7 +857,10 @@ mod tests {
             "240.0.0.1",
         ] {
             let ip = blocked.parse::<IpAddr>().expect("fixture is an IP address");
-            assert!(!is_globally_routable_ip(ip), "expected blocked IPv4: {blocked}");
+            assert!(
+                !is_globally_routable_ip(ip),
+                "expected blocked IPv4: {blocked}"
+            );
         }
     }
 
@@ -860,7 +868,10 @@ mod tests {
     fn public_host_ipv6_policy_matches_evidence_ranges() {
         for public in ["2606:4700:4700::1111", "2001:4860:4860::8888"] {
             let ip = public.parse::<IpAddr>().expect("fixture is an IP address");
-            assert!(is_globally_routable_ip(ip), "expected public IPv6: {public}");
+            assert!(
+                is_globally_routable_ip(ip),
+                "expected public IPv6: {public}"
+            );
         }
 
         for blocked in [
@@ -877,7 +888,10 @@ mod tests {
             "2001:20::1",
         ] {
             let ip = blocked.parse::<IpAddr>().expect("fixture is an IP address");
-            assert!(!is_globally_routable_ip(ip), "expected blocked IPv6: {blocked}");
+            assert!(
+                !is_globally_routable_ip(ip),
+                "expected blocked IPv6: {blocked}"
+            );
         }
     }
 

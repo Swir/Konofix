@@ -1,0 +1,47 @@
+name: Hourly hidden manifest portability fix
+
+on:
+  push:
+    branches:
+      - automation/room-evidence-hardening-20260918
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Make report validation portable for hidden staging files
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('scripts/validate-network-test-report.ps1')
+          text = p.read_text(encoding='utf-8')
+          old = '$manifestFile = Get-Item -LiteralPath $path\n'
+          new = '$manifestFile = Get-Item -LiteralPath $path -Force\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'validator Get-Item anchor drifted: {text.count(old)}')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          Path('.github/workflows/hourly-hidden-temp-fix.yml').unlink()
+      - name: Smoke hidden manifest lookup
+        shell: pwsh
+        run: |
+          $p = Join-Path $env:RUNNER_TEMP '.hidden.json'
+          Set-Content -LiteralPath $p -Value '{}' -Encoding utf8
+          $item = Get-Item -LiteralPath $p -Force
+          if ($null -eq $item) { throw 'Hidden manifest lookup failed.' }
+      - name: Commit portability fix
+        env:
+          BRANCH: automation/room-evidence-hardening-20260918
+        run: |
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Handle hidden staged evidence manifests cross-platform'
+          git push origin HEAD:$BRANCH

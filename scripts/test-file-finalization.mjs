@@ -15,7 +15,10 @@ function expectPolicyFailure(mutated, pattern) {
 assert.deepEqual(checkFileFinalizationSource(source), []);
 
 expectPolicyFailure(
-  source.replace('.create_new(true)', '.create(true)'),
+  source.replace(
+    'let mut destination = match OpenOptions::new()\n        .write(true)\n        .create_new(true)',
+    'let mut destination = match OpenOptions::new()\n        .write(true)\n        .create(true)',
+  ),
   /create_new/,
 );
 

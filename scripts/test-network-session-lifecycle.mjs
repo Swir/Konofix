@@ -35,6 +35,8 @@ if (baseline.status !== 0) {
   throw new Error('Canonical lifecycle implementation must pass before adversarial mutations run.');
 }
 
+const terminalRecovery = "await listen<string>('network-error', async event => {\n    if (!state.connected) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    resetSessionView(message);\n  });";
+
 const cases = [
   {
     name: 'channel ownership comparison removed',
@@ -81,16 +83,16 @@ const cases = [
   {
     name: 'frontend terminal handler no longer disconnects backend',
     target: 'ui',
-    source: "try { await invoke('disconnect_network'); } catch {}",
-    replacement: '/* backend convergence removed */',
-    expected: 'backend disconnect',
+    source: terminalRecovery,
+    replacement: "await listen<string>('network-error', async event => {\n    if (!state.connected) return;\n    const message = t('network.error', { error: event.payload });\n    /* backend convergence removed */\n    resetSessionView(message);\n  });",
+    expected: 'terminal network-error recovery',
   },
   {
     name: 'frontend terminal handler no longer resets UI',
     target: 'ui',
-    source: 'resetSessionView(message);',
-    replacement: 'addSystem(\'world\', message);',
-    expected: 'return the UI to login',
+    source: terminalRecovery,
+    replacement: "await listen<string>('network-error', async event => {\n    if (!state.connected) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    addSystem('world', message);\n  });",
+    expected: 'terminal network-error recovery',
   },
   {
     name: 'session reset retains stale transfers',

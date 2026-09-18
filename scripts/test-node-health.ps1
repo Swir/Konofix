@@ -20,6 +20,15 @@ function Expect-Reject { param([string]$Name,[scriptblock]$Action) $rejected=$fa
 try {
     $valid=Write-Snapshot 'valid'
     Expect-Pass 'valid health snapshot' { & $checker -Path $valid -MaxAgeSeconds 120 -RequirePeer -ExpectedVersion '0.4.2' -ExpectedPeerId '12D3KooWTestPeerId' -ExpectedSourceCommit $sourceCommit -MinUptimeSeconds 60 }
+
+    $validatedJson = & $checker -Path $valid -MaxAgeSeconds 120 -RequirePeer -ExpectedVersion '0.4.2' -ExpectedPeerId '12D3KooWTestPeerId' -ExpectedSourceCommit $sourceCommit -MinUptimeSeconds 60 -AsJson
+    $validated = $validatedJson | ConvertFrom-Json
+    if ([int]$validated.schema -ne 2 -or [string]$validated.status -cne 'running') { throw 'Structured health result did not preserve validated schema/status.' }
+    if ([string]$validated.version -cne '0.4.2' -or [string]$validated.source_commit -cne $sourceCommit -or [string]$validated.peer_id -cne '12D3KooWTestPeerId') { throw 'Structured health result did not preserve validated identity/build fields.' }
+    if ([int64]$validated.uptime_seconds -ne 120 -or [int64]$validated.connected_peers -ne 2 -or [int64]$validated.required_peers -ne 1) { throw 'Structured health result did not preserve validated liveness fields.' }
+    if ([int64]$validated.snapshot_bytes -le 0) { throw 'Structured health result must report the exact bounded snapshot byte count.' }
+    if ($null -eq $validated.snapshot_age_seconds) { throw 'Structured health result must report the validated snapshot age.' }
+
     Expect-Reject 'missing snapshot' { & $checker -Path (Join-Path $tempRoot 'missing.json') }
     $malformed=Join-Path $tempRoot 'malformed.json'; Set-Content -LiteralPath $malformed -Value '{not-json' -Encoding utf8
     Expect-Reject 'malformed JSON' { & $checker -Path $malformed }

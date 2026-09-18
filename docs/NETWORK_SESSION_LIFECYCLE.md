@@ -6,7 +6,7 @@ Konofix treats one running desktop P2P task as one owned network session. The Ru
 
 `start_network` installs the command sender while holding the `AppState.tx` mutex. The check for an existing session and the sender installation happen under the same lock, so overlapping starts cannot both pass a check-then-set window.
 
-The spawned task retains a clone of that exact Tokio MPSC sender. If the P2P task exits with a fatal error, cleanup compares the task-owned sender with the currently installed sender using `Sender::same_channel`. Only the task that still owns the active channel may clear `AppState.tx` and emit the terminal `network-error` event. A late exit from an older task therefore cannot tear down a newer reconnect session.
+The spawned task retains a clone of that exact Tokio MPSC sender. After every P2P task return — clean `Ok(())` or fatal `Err(...)` — cleanup compares the task-owned sender with the currently installed sender using `Sender::same_channel`. Only the task that still owns the active channel may clear `AppState.tx`; `network-error` is emitted only when that owned exit is fatal. A clean nickname-conflict shutdown therefore releases backend ownership without manufacturing a fatal error, while a late exit from an older task cannot tear down a newer reconnect session.
 
 Startup/ready-handshake failures use the same channel-ownership check. They may clear only the sender installed for that startup attempt.
 
@@ -24,6 +24,6 @@ The terminal `network-error` listener handles failures while either a session is
 
 ## Regression policy
 
-Rust unit tests cover channel ownership, overlapping-start rejection followed by reconnect, and idempotent sender take. `scripts/check-network-session-lifecycle.mjs` is wired into the normal project audit together with adversarial mutation tests. The policy gate fails if channel ownership, atomic start, startup-safe terminal recovery, stale async-start invalidation, terminal-event ownership, idempotent disconnect, or frontend terminal reset behavior is removed.
+Rust unit tests cover channel ownership, clean-exit release followed by reconnect, overlapping-start rejection followed by reconnect, and idempotent sender take. `scripts/check-network-session-lifecycle.mjs` is wired into the normal project audit together with adversarial mutation tests. The policy gate fails if cleanup stops running for every task return, channel ownership, atomic start, startup-safe terminal recovery, stale async-start invalidation, fatal terminal-event ownership, idempotent disconnect, or frontend terminal reset behavior is removed.
 
 This lifecycle hardening improves resilience only. It does **not** add Real Internet Test milestone credit; public cross-country/independent-network evidence remains authoritative for that milestone.

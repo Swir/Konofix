@@ -1,0 +1,136 @@
+name: Hourly hardening integration
+
+on:
+  push:
+    branches:
+      - automation/room-evidence-hardening-20260918
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Apply fail-closed hardening
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one patch anchor, found {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          lib = 'src-tauri/src/lib.rs'
+          replace_once(
+              lib,
+              'const INCOMING_TRANSFER_IDLE_TTL_SECS: u64 = 120;\n',
+              'const INCOMING_TRANSFER_IDLE_TTL_SECS: u64 = 120;\nconst MAX_ROOMS_TOTAL: usize = 256;\nconst MAX_ROOMS_PER_OWNER: usize = 16;\n',
+          )
+
+          marker = '''\n#[derive(Debug, Clone, Serialize, Deserialize)]\n#[serde(tag = "type", rename_all = "snake_case")]\nenum FileRequest {'''
+          helper = '''\nfn room_create_admission(\n    rooms: &HashMap<String, RoomInfo>,\n    room: &RoomInfo,\n) -> Result<(), &'static str> {\n    let Some(owner) = room.owner.as_deref() else {\n        return Err("Room owner is missing.");\n    };\n\n    if let Some(existing) = rooms.get(&room.id) {\n        return if existing.owner.as_deref() == Some(owner) {\n            Ok(())\n        } else {\n            Err("Room ID is already owned by another peer.")\n        };\n    }\n\n    let owned_count = rooms\n        .values()\n        .filter(|candidate| candidate.owner.as_deref() == Some(owner))\n        .count();\n    if owned_count >= MAX_ROOMS_PER_OWNER {\n        return Err("Room owner reached the active-room limit.");\n    }\n    if rooms.len() >= MAX_ROOMS_TOTAL {\n        return Err("Global active-room limit reached.");\n    }\n\n    Ok(())\n}\n''' + marker
+          replace_once(lib, marker, helper)
+
+          replace_once(
+              lib,
+              '''                    NetworkCommand::CreateRoom { mut room } => {\n                        room.owner = Some(peer_id.clone());\n                        rooms.insert(room.id.clone(), room.clone());\n                        owned_rooms.insert(room.id.clone(), room.clone());\n                        let _ = app.emit("room-created", room.clone());\n                        publish(&mut swarm, &world, &WireEvent::RoomCreate(room));\n                    }''',
+              '''                    NetworkCommand::CreateRoom { mut room } => {\n                        room.owner = Some(peer_id.clone());\n                        match room_create_admission(&rooms, &room) {\n                            Ok(()) => {\n                                rooms.insert(room.id.clone(), room.clone());\n                                owned_rooms.insert(room.id.clone(), room.clone());\n                                let _ = app.emit("room-created", room.clone());\n                                publish(&mut swarm, &world, &WireEvent::RoomCreate(room));\n                            }\n                            Err(reason) => {\n                                let _ = app.emit(\n                                    "network-warning",\n                                    format!("Room creation rejected: {reason}"),\n                                );\n                            }\n                        }\n                    }''',
+          )
+
+          replace_once(
+              lib,
+              '''                            WireEvent::RoomCreate(room) => {\n                                if room.owner.as_deref() != Some(&peer_id) {\n                                    rooms.insert(room.id.clone(), room.clone());\n                                    let _ = app.emit("room-created", room);\n                                }\n                            }''',
+              '''                            WireEvent::RoomCreate(room) => {\n                                if room.owner.as_deref() != Some(&peer_id) {\n                                    match room_create_admission(&rooms, &room) {\n                                        Ok(()) => {\n                                            rooms.insert(room.id.clone(), room.clone());\n                                            let _ = app.emit("room-created", room);\n                                        }\n                                        Err(reason) => {\n                                            let _ = app.emit(\n                                                "network-warning",\n                                                format!(\n                                                    "Dropped room announcement from {authenticated_source}: {reason}"\n                                                ),\n                                            );\n                                        }\n                                    }\n                                }\n                            }''',
+          )
+
+          tests_marker = '''\n#[cfg(test)]\nmod network_session_state_tests {'''
+          room_tests = '''\n#[cfg(test)]\nmod room_admission_tests {\n    use super::*;\n\n    fn room(id: &str, owner: &str) -> RoomInfo {\n        RoomInfo {\n            id: id.to_string(),\n            title: format!("# {id}"),\n            owner: Some(owner.to_string()),\n            users: Some(1),\n        }\n    }\n\n    #[test]\n    fn foreign_owner_cannot_take_over_existing_room_id() {\n        let mut rooms = HashMap::new();\n        rooms.insert("alpha".into(), room("alpha", "peer-a"));\n\n        assert!(room_create_admission(&rooms, &room("alpha", "peer-b")).is_err());\n    }\n\n    #[test]\n    fn same_owner_refresh_is_idempotent_even_at_owner_limit() {\n        let mut rooms = HashMap::new();\n        for index in 0..MAX_ROOMS_PER_OWNER {\n            let id = format!("room-{index}");\n            rooms.insert(id.clone(), room(&id, "peer-a"));\n        }\n\n        assert!(room_create_admission(&rooms, &room("room-0", "peer-a")).is_ok());\n    }\n\n    #[test]\n    fn owner_room_limit_rejects_unbounded_announcements() {\n        let mut rooms = HashMap::new();\n        for index in 0..MAX_ROOMS_PER_OWNER {\n            let id = format!("room-{index}");\n            rooms.insert(id.clone(), room(&id, "peer-a"));\n        }\n\n        assert!(room_create_admission(&rooms, &room("overflow", "peer-a")).is_err());\n    }\n\n    #[test]\n    fn global_room_limit_rejects_additional_unique_owner() {\n        let mut rooms = HashMap::new();\n        for index in 0..MAX_ROOMS_TOTAL {\n            let id = format!("room-{index}");\n            let owner = format!("peer-{index}");\n            rooms.insert(id.clone(), room(&id, &owner));\n        }\n\n        assert!(room_create_admission(&rooms, &room("overflow", "new-peer")).is_err());\n    }\n}\n''' + tests_marker
+          replace_once(lib, tests_marker, room_tests)
+
+          validator = 'scripts/validate-network-test-session.ps1'
+          replace_once(
+              validator,
+              '''$inventoryNames = @()\nforeach ($entry in $inventory) {\n    Assert-True ($entry -is [pscustomobject]) 'SESSION_INFO manifest inventory entries must be JSON objects.'\n    $name = Get-StrictString (Get-RequiredProperty $entry 'path' 'SESSION_INFO manifest inventory') 'manifests.path'\n    Assert-True ([IO.Path]::GetFileName($name) -ceq $name) "SESSION_INFO manifest inventory path must be a file name only: $name"\n    Assert-True ($name -cmatch '^network-test-(tcp|quic|relay|dcutr|cgnat)-.+\\.json$') "SESSION_INFO manifest inventory contains an unexpected path: $name"\n    $inventoryNames += $name\n}\n$inventoryNames = @($inventoryNames | Sort-Object -Unique -CaseSensitive)\nAssert-True ($inventoryNames.Count -eq 5) 'SESSION_INFO manifest inventory must contain five unique paths.'\n''',
+              '''$inventoryNames = @()\n$inventoryByName = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)\nforeach ($entry in $inventory) {\n    Assert-True ($entry -is [pscustomobject]) 'SESSION_INFO manifest inventory entries must be JSON objects.'\n    $name = Get-StrictString (Get-RequiredProperty $entry 'path' 'SESSION_INFO manifest inventory') 'manifests.path'\n    Assert-True ([IO.Path]::GetFileName($name) -ceq $name) "SESSION_INFO manifest inventory path must be a file name only: $name"\n    Assert-True ($name -cmatch '^network-test-(tcp|quic|relay|dcutr|cgnat)-.+\\.json$') "SESSION_INFO manifest inventory contains an unexpected path: $name"\n    $bytes = Get-StrictInt64 (Get-RequiredProperty $entry 'bytes' 'SESSION_INFO manifest inventory') 'manifests.bytes'\n    Assert-True ($bytes -gt 0) "SESSION_INFO manifest inventory bytes must be positive: $name"\n    $sha256 = Get-StrictString (Get-RequiredProperty $entry 'sha256' 'SESSION_INFO manifest inventory') 'manifests.sha256'\n    Assert-True ($sha256 -cmatch '^[0-9a-f]{64}$') "SESSION_INFO manifest inventory SHA-256 must be canonical lowercase hexadecimal: $name"\n    Assert-True (-not $inventoryByName.ContainsKey($name)) "SESSION_INFO manifest inventory contains a duplicate path: $name"\n    $inventoryByName.Add($name, [pscustomobject]@{ bytes = $bytes; sha256 = $sha256 })\n    $inventoryNames += $name\n}\n$inventoryNames = @($inventoryNames | Sort-Object -Unique -CaseSensitive)\nAssert-True ($inventoryNames.Count -eq 5) 'SESSION_INFO manifest inventory must contain five unique paths.'\n''',
+          )
+
+          replace_once(
+              validator,
+              '''    $manifestFullPath = (Get-Item -LiteralPath $path).FullName\n    $manifestDirectory = [IO.Path]::GetFullPath((Split-Path $manifestFullPath -Parent))\n    Assert-True ([string]::Equals($manifestDirectory, $sessionDirectory, [StringComparison]::OrdinalIgnoreCase)) "Session manifest must reside beside SESSION_INFO.json; cross-directory evidence is rejected: $manifestFullPath"\n    $manifestPaths += $manifestFullPath\n''',
+              '''    $manifestItem = Get-Item -LiteralPath $path\n    $manifestFullPath = $manifestItem.FullName\n    $manifestDirectory = [IO.Path]::GetFullPath((Split-Path $manifestFullPath -Parent))\n    Assert-True ([string]::Equals($manifestDirectory, $sessionDirectory, [StringComparison]::OrdinalIgnoreCase)) "Session manifest must reside beside SESSION_INFO.json; cross-directory evidence is rejected: $manifestFullPath"\n    $manifestName = [IO.Path]::GetFileName($manifestFullPath)\n    Assert-True ($inventoryByName.ContainsKey($manifestName)) "Supplied manifest is absent from SESSION_INFO inventory: $manifestName"\n    $binding = $inventoryByName[$manifestName]\n    Assert-True ([int64]$manifestItem.Length -eq [int64]$binding.bytes) "Manifest byte count does not match SESSION_INFO inventory: $manifestName"\n    $actualManifestHash = (Get-FileHash -LiteralPath $manifestFullPath -Algorithm SHA256).Hash.ToLowerInvariant()\n    Assert-True ([string]::Equals($actualManifestHash, [string]$binding.sha256, [StringComparison]::Ordinal)) "Manifest SHA-256 does not match SESSION_INFO inventory: $manifestName"\n    $manifestPaths += $manifestFullPath\n''',
+          )
+
+          test_session = 'scripts/test-network-test-session.ps1'
+          replace_once(
+              test_session,
+              '''    $tcpManifestPath = ($manifests | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).scenario -ceq 'TCP' } | Select-Object -First 1).FullName\n\n    $foreignRoot = Join-Path $temp 'foreign-session-fragment'\n''',
+              '''    $tcpManifestPath = ($manifests | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).scenario -ceq 'TCP' } | Select-Object -First 1).FullName\n\n    $originalTcpBytes = [IO.File]::ReadAllBytes($tcpManifestPath)\n    $inventoryOnlyTamper = Get-Content -LiteralPath $tcpManifestPath -Raw | ConvertFrom-Json\n    $inventoryOnlyTamper.notes = 'harmless-looking post-session edit'\n    $inventoryOnlyTamper | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $tcpManifestPath -Encoding utf8\n    Expect-Fail 'manifest content changed after SESSION_INFO inventory was sealed' {\n        & $validator -SessionInfoPath $sessionInfoPath -Manifest $manifestPaths | Out-Null\n    }\n    [IO.File]::WriteAllBytes($tcpManifestPath, $originalTcpBytes)\n\n    $foreignRoot = Join-Path $temp 'foreign-session-fragment'\n''',
+          )
+
+          changelog = Path('CHANGELOG.md')
+          text = changelog.read_text(encoding='utf-8')
+          anchor = '## 0.4.2\n\n'
+          if text.count(anchor) != 1:
+              raise SystemExit('CHANGELOG.md: 0.4.2 anchor drifted')
+          bullets = (
+              '- hardened authenticated room lifecycle ownership: a remote peer can no longer replace an existing room ID owned by another Peer ID, same-owner refresh remains idempotent, and per-owner/global room caps bound authenticated announcement growth; local room creation uses the same admission policy and Rust regression tests cover takeover and capacity boundaries without adding Real Internet Test credit,\n'
+              '- bound real-network session evidence to its sealed `SESSION_INFO.json` inventory: validation now requires and verifies each manifest byte count plus canonical SHA-256 before semantic checks, with an adversarial post-session edit fixture proving otherwise-valid content drift fails closed; this evidence-integrity hardening adds no Real Internet Test credit,\n'
+          )
+          changelog.write_text(text.replace(anchor, anchor + bullets, 1), encoding='utf-8')
+
+          roadmap = Path('ROADMAP.md')
+          text = roadmap.read_text(encoding='utf-8')
+          anchor = 'The active milestone currently has 54 of 59 tasks complete. The remaining five tasks require real public-network evidence and fixes discovered during those tests; CI alone cannot credit them.\n\n'
+          if text.count(anchor) != 1:
+              raise SystemExit('ROADMAP.md: active milestone anchor drifted')
+          notes = (
+              '- Authenticated room announcements now preserve first-owner authority for an existing room ID and are bounded per owner/globally; local creation follows the same admission policy. This P2P state-hardening fix adds no Real Internet Test credit.\n'
+              '- Real-network session validation now verifies every manifest byte count and SHA-256 against the sealed `SESSION_INFO.json` inventory before semantic evidence checks. This promotion-evidence integrity fix adds no Real Internet Test credit.\n\n'
+          )
+          roadmap.write_text(text.replace(anchor, anchor + notes, 1), encoding='utf-8')
+
+          Path('docs/ROOM_SECURITY.md').write_text('''# Room lifecycle security\n\nKonofix room announcements travel over authenticated GossipSub, but authenticated transport identity does not authorize a peer to replace state owned by another Peer ID.\n\n## Ownership invariant\n\nThe first accepted owner of an active room ID keeps that ID until the room is closed. A later `RoomCreate` for the same ID is accepted only when it is an idempotent refresh from the same owner. Announcements from a different authenticated owner are rejected and reported as a network warning.\n\nLocal room creation uses the same admission policy before the room is inserted or published, so local and remote state follow one rule.\n\n## Resource bounds\n\nA single owner may hold at most 16 active rooms and the in-memory room map is capped at 256 active rooms. These bounds prevent one authenticated peer from growing room/UI state without limit while preserving normal temporary-room usage.\n\n## Regression coverage\n\nRust tests cover cross-owner takeover rejection, same-owner idempotent refresh, the per-owner cap and the global cap. Real Internet Test progress is unchanged because this is local protocol/state hardening rather than public-network evidence.\n''', encoding='utf-8')
+
+          workflow = Path('.github/workflows/hourly-hardening-integration.yml')
+          workflow.unlink()
+
+      - name: Format Rust
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Project audit
+        run: npm run audit
+
+      - name: Network-session integrity self-tests
+        shell: pwsh
+        run: ./scripts/test-network-test-session.ps1
+
+      - name: Diff hygiene
+        run: |
+          git diff --check
+          test ! -e .github/workflows/hourly-hardening-integration.yml
+          grep -q 'Room ID is already owned by another peer' src-tauri/src/lib.rs
+          grep -q 'Manifest SHA-256 does not match SESSION_INFO inventory' scripts/validate-network-test-session.ps1
+
+      - name: Commit verified integration
+        env:
+          BRANCH: automation/room-evidence-hardening-20260918
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Harden room ownership and session evidence integrity'
+          git push origin HEAD:$BRANCH

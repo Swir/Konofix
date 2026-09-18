@@ -153,6 +153,7 @@ The active milestone currently has 54 of 59 tasks complete. The remaining five t
 - Rust toolchain maintenance now uses `dirs` 7.0.0 in both the desktop and isolated Linux Node manifests after full platform CI verification; this does not change the 54/59 real-network count.
 - Frontend toolchain maintenance now runs TypeScript 7.0.2 with explicit Vite client ambient types and a project-audit guard for CSS/asset side-effect imports; the verified compatibility migration does not change the 54/59 real-network count.
 - Frontend bundling now uses Vite 8.3.0 after full Windows and Linux PR verification; this maintenance update does not change the 54/59 real-network count.
+- Raw `konofix-node` public-host handling now fail-closes on non-globally-routable literal IPv4/IPv6 values before identity creation or network startup, including CGNAT, documentation, benchmarking, multicast/reserved and selected IPv6 special-use/transition ranges. Controlled `--allow-private-address` output is visibly lab-only and DNS output is explicitly syntax-only; Rust plus adversarial project-audit coverage guards the boundary. This public-node configuration hardening does not add Real Internet Test credit and the milestone remains 54/59.
 - [ ] stable public/community Konofix Node
 - [ ] two PCs on independent networks in different countries
 - [ ] CGNAT ↔ public Node ↔ CGNAT test

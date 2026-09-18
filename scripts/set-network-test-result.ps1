@@ -29,10 +29,65 @@ if (-not (Test-Path -LiteralPath $manifestFull -PathType Leaf)) {
     throw "Network test manifest not found: $manifestFull"
 }
 
+$manifestDirectory = Split-Path $manifestFull -Parent
+$manifestName = [IO.Path]::GetFileName($manifestFull)
+$sessionInfoPath = Join-Path $manifestDirectory 'SESSION_INFO.json'
+$sessionValidator = Join-Path $PSScriptRoot 'validate-network-test-session.ps1'
+$sessionData = $null
+$sessionInventoryEntry = $null
+$sessionManifestPaths = @()
+$originalSessionBytes = $null
+
 try {
     $data = Get-Content -LiteralPath $manifestFull -Raw | ConvertFrom-Json
 } catch {
     throw "Network test manifest is not valid JSON: $($_.Exception.Message)"
+}
+
+if (Test-Path -LiteralPath $sessionInfoPath -PathType Leaf) {
+    if (-not (Test-Path -LiteralPath $sessionValidator -PathType Leaf)) {
+        throw "Session-aware evidence edit requires validator: $sessionValidator"
+    }
+    $sessionItem = Get-Item -LiteralPath $sessionInfoPath
+    if ($sessionItem.Length -le 0 -or $sessionItem.Length -gt 262144) {
+        throw 'SESSION_INFO.json is empty or exceeds the 262144-byte safety limit.'
+    }
+    $originalSessionBytes = [IO.File]::ReadAllBytes($sessionInfoPath)
+    try {
+        $sessionData = Get-Content -LiteralPath $sessionInfoPath -Raw | ConvertFrom-Json
+    } catch {
+        throw "SESSION_INFO.json is not valid JSON: $($_.Exception.Message)"
+    }
+    if ($sessionData -isnot [pscustomobject] -or [int]$sessionData.schema_version -ne 1 -or [string]$sessionData.product -cne 'Konofix Chat') {
+        throw 'SESSION_INFO.json does not describe a supported Konofix test session.'
+    }
+    $inventory = @($sessionData.manifests)
+    if ($inventory.Count -ne 5) { throw 'SESSION_INFO.json must inventory exactly five manifests.' }
+    $matches = @($inventory | Where-Object { [string]$_.path -ceq $manifestName })
+    if ($matches.Count -ne 1) { throw "Current manifest must occur exactly once in SESSION_INFO inventory: $manifestName" }
+    $sessionInventoryEntry = $matches[0]
+    $sessionManifestPaths = @($inventory | ForEach-Object {
+        $name = [string]$_.path
+        if ([IO.Path]::GetFileName($name) -cne $name) { throw "Unsafe SESSION_INFO manifest path: $name" }
+        Join-Path $manifestDirectory $name
+    })
+    & $sessionValidator -SessionInfoPath $sessionInfoPath -Manifest $sessionManifestPaths | Out-Null
+
+    if ([string]$sessionData.build_version -cne [string]$data.build_version -or
+        [string]$sessionData.node_version -cne [string]$data.node_version -or
+        [string]$sessionData.source_commit -cne [string]$data.source_commit -or
+        [string]$sessionData.client_a.id -cne [string]$data.client_a -or
+        [string]$sessionData.client_b.id -cne [string]$data.client_b -or
+        [string]$sessionData.client_a.country -cne [string]$data.client_a_country -or
+        [string]$sessionData.client_b.country -cne [string]$data.client_b_country -or
+        [string]$sessionData.client_a.network -cne [string]$data.client_a_network -or
+        [string]$sessionData.client_b.network -cne [string]$data.client_b_network) {
+        throw 'Manifest identity/provenance fields do not match sibling SESSION_INFO.json.'
+    }
+    $expectedBootstrap = if ([string]$data.scenario -ceq 'QUIC') { [string]$sessionData.quic_bootstrap } else { [string]$sessionData.tcp_bootstrap }
+    if ([string]$data.bootstrap -cne $expectedBootstrap) {
+        throw 'Manifest bootstrap does not match sibling SESSION_INFO.json.'
+    }
 }
 
 if ($data.schema_version -ne 3) { throw "Unsupported network evidence schema: $($data.schema_version)" }
@@ -155,6 +210,13 @@ $directory = Split-Path $manifestFull -Parent
 $manifestTemp = Join-Path $directory ('.network-manifest-' + [Guid]::NewGuid().ToString('N') + '.json')
 $markdownFull = [IO.Path]::ChangeExtension($manifestFull, '.md')
 $markdownTemp = Join-Path $directory ('.network-report-' + [Guid]::NewGuid().ToString('N') + '.md')
+$sessionTemp = Join-Path $directory ('.network-session-' + [Guid]::NewGuid().ToString('N') + '.json')
+$originalManifestBytes = [IO.File]::ReadAllBytes($manifestFull)
+$markdownExisted = Test-Path -LiteralPath $markdownFull -PathType Leaf
+$originalMarkdownBytes = if ($markdownExisted) { [IO.File]::ReadAllBytes($markdownFull) } else { $null }
+$manifestCommitted = $false
+$markdownCommitted = $false
+$sessionCommitted = $false
 
 try {
     $data | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestTemp -Encoding utf8
@@ -164,11 +226,38 @@ try {
         & $validator -Manifest $manifestTemp -RequiredScenario @([string]$data.scenario) | Out-Null
     }
 
+    if ($null -ne $sessionData) {
+        $newManifestItem = Get-Item -LiteralPath $manifestTemp -Force
+        $newManifestHash = (Get-FileHash -LiteralPath $manifestTemp -Algorithm SHA256).Hash.ToLowerInvariant()
+        $sessionInventoryEntry.bytes = [int64]$newManifestItem.Length
+        $sessionInventoryEntry.sha256 = $newManifestHash
+        $sessionData | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $sessionTemp -Encoding utf8
+    }
+
     Move-Item -LiteralPath $manifestTemp -Destination $manifestFull -Force
+    $manifestCommitted = $true
     Move-Item -LiteralPath $markdownTemp -Destination $markdownFull -Force
+    $markdownCommitted = $true
+    if ($null -ne $sessionData) {
+        Move-Item -LiteralPath $sessionTemp -Destination $sessionInfoPath -Force
+        $sessionCommitted = $true
+        & $sessionValidator -SessionInfoPath $sessionInfoPath -Manifest $sessionManifestPaths | Out-Null
+    }
+} catch {
+    $failure = $_
+    if ($manifestCommitted) { [IO.File]::WriteAllBytes($manifestFull, $originalManifestBytes) }
+    if ($markdownCommitted) {
+        if ($markdownExisted) { [IO.File]::WriteAllBytes($markdownFull, $originalMarkdownBytes) }
+        else { Remove-Item -LiteralPath $markdownFull -Force -ErrorAction SilentlyContinue }
+    }
+    if ($sessionCommitted -and $null -ne $originalSessionBytes) {
+        [IO.File]::WriteAllBytes($sessionInfoPath, $originalSessionBytes)
+    }
+    throw $failure
 } finally {
     Remove-Item -LiteralPath $manifestTemp -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $markdownTemp -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $sessionTemp -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host "Recorded $Check=$Result; overall=$($data.overall)" -ForegroundColor Green

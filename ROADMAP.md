@@ -10,6 +10,9 @@
 
 The active milestone currently has 54 of 59 tasks complete. The remaining five tasks require real public-network evidence and fixes discovered during those tests; CI alone cannot credit them.
 
+- Authenticated room announcements now preserve first-owner authority for an existing room ID and are bounded per owner/globally; local creation follows the same admission policy. This P2P state-hardening fix adds no Real Internet Test credit.
+- Real-network session validation now verifies every manifest byte count and SHA-256 against a tamper-evident `SESSION_INFO.json` inventory; the controlled evidence editor validates then reseals authorized changes, while out-of-band edits fail closed. This promotion-evidence integrity fix adds no Real Internet Test credit.
+
 - Distributed nickname trust hardening now treats unsigned Kademlia nickname leases as bounded, non-authoritative hints; only source-authenticated GossipSub claims can enforce a nickname conflict. This security fix adds no Real Internet Test credit.
 
 ## 0.1.0 — Foundation ✅

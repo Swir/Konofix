@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $target = Join-Path $PSScriptRoot 'new-network-test-session.ps1'
 $validator = Join-Path $PSScriptRoot 'validate-network-test-session.ps1'
+$editor = Join-Path $PSScriptRoot 'set-network-test-result.ps1'
 $peer = '12D3KooW9tHTtS3inCZiYykw4u5G4frbjVFqhkmJX12gSNCVeH3e'
 $otherPeer = 'QmNQa1FSTXNHmrjjfgUW3Px3Vkke4oKiFWdigWkYSux2Pi'
 $commit = '0123456789abcdef0123456789abcdef01234567'
@@ -128,6 +129,24 @@ try {
     Write-Host 'PASS: valid exact-build five-scenario session, public endpoint policy and session consistency' -ForegroundColor Green
 
     $tcpManifestPath = ($manifests | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).scenario -ceq 'TCP' } | Select-Object -First 1).FullName
+
+    & $editor -Manifest $tcpManifestPath -Check world_a_to_b -Result PASS -Evidence 'authorized session-editor observation' | Out-Null
+    & $validator -SessionInfoPath $sessionInfoPath -Manifest $manifestPaths | Out-Null
+    $resealedSession = Get-Content -LiteralPath $sessionInfoPath -Raw | ConvertFrom-Json
+    $resealedEntry = @($resealedSession.manifests | Where-Object { [string]$_.path -ceq [IO.Path]::GetFileName($tcpManifestPath) })
+    Assert-True ($resealedEntry.Count -eq 1) 'Authorized evidence edit lost SESSION_INFO inventory binding.'
+    $resealedHash = (Get-FileHash -LiteralPath $tcpManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-True ([string]$resealedEntry[0].sha256 -ceq $resealedHash) 'Authorized evidence edit did not reseal manifest SHA-256 in SESSION_INFO.'
+    Assert-True ([int64]$resealedEntry[0].bytes -eq (Get-Item -LiteralPath $tcpManifestPath).Length) 'Authorized evidence edit did not reseal manifest byte count in SESSION_INFO.'
+
+    $originalTcpBytes = [IO.File]::ReadAllBytes($tcpManifestPath)
+    $inventoryOnlyTamper = Get-Content -LiteralPath $tcpManifestPath -Raw | ConvertFrom-Json
+    $inventoryOnlyTamper.notes = 'harmless-looking post-session edit'
+    $inventoryOnlyTamper | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $tcpManifestPath -Encoding utf8
+    Expect-Fail 'manifest content changed after SESSION_INFO inventory was sealed' {
+        & $validator -SessionInfoPath $sessionInfoPath -Manifest $manifestPaths | Out-Null
+    }
+    [IO.File]::WriteAllBytes($tcpManifestPath, $originalTcpBytes)
 
     $foreignRoot = Join-Path $temp 'foreign-session-fragment'
     New-Item -ItemType Directory -Path $foreignRoot | Out-Null

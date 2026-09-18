@@ -108,7 +108,7 @@ if ($PSBoundParameters.ContainsKey('ExpectedSourceCommit')) {
 $reports = @()
 foreach ($path in $Manifest) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Manifest not found: $path" }
-    $manifestFile = Get-Item -LiteralPath $path
+    $manifestFile = Get-Item -LiteralPath $path -Force
     if ($manifestFile.Length -gt $MaxManifestBytes) {
         throw "Network evidence manifest is too large (path=$path bytes=$($manifestFile.Length) limit=$MaxManifestBytes)."
     }

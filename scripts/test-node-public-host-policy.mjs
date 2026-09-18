@@ -99,4 +99,26 @@ expectFailure(
   /Project audit/i,
 );
 
+expectFailure(
+  { packageJson: mutateOnce(baseline.packageJson, ' && node scripts/check-node-public-host-policy.mjs', '', 'deterministic audit hook') },
+  /Project audit/i,
+);
+
+expectFailure(
+  {
+    packageJson: mutateOnce(
+      baseline.packageJson,
+      'node scripts/test-node-public-host-policy.mjs && node scripts/check-node-public-host-policy.mjs',
+      'node scripts/check-node-public-host-policy.mjs && node scripts/test-node-public-host-policy.mjs',
+      'audit policy order',
+    ),
+  },
+  /Project audit/i,
+);
+
+expectFailure(
+  { packageJson: '{"scripts":' },
+  /valid JSON/i,
+);
+
 console.log('Konofix Node public-host adversarial policy tests: PASS');

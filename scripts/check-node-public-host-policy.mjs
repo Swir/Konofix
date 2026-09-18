@@ -170,8 +170,20 @@ export function checkNodePublicHostPolicySources({
     errors.push('Loopback runtime smoke must opt into the explicit lab-only override after the strict Node policy.');
   }
 
-  if (!packageJson.includes('test-node-public-host-policy.mjs') || !packageJson.includes('check-node-public-host-policy.mjs')) {
-    errors.push('Project audit must run both adversarial and deterministic Node public-host policy checks.');
+  let parsedPackage = null;
+  try {
+    parsedPackage = JSON.parse(packageJson);
+  } catch {
+    errors.push('package.json must remain valid JSON for Node public-host policy verification.');
+  }
+
+  const auditScript = parsedPackage?.scripts?.audit;
+  const adversarialCommand = 'node scripts/test-node-public-host-policy.mjs';
+  const deterministicCommand = 'node scripts/check-node-public-host-policy.mjs';
+  const adversarialIndex = typeof auditScript === 'string' ? auditScript.indexOf(adversarialCommand) : -1;
+  const deterministicIndex = typeof auditScript === 'string' ? auditScript.indexOf(deterministicCommand) : -1;
+  if (adversarialIndex < 0 || deterministicIndex < 0 || adversarialIndex > deterministicIndex) {
+    errors.push('Project audit must run Node public-host adversarial tests before the deterministic policy check.');
   }
 
   return errors;

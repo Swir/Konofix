@@ -10,6 +10,7 @@
 
 The active milestone currently has 54 of 59 tasks complete. The remaining five tasks require real public-network evidence and fixes discovered during those tests; CI alone cannot credit them.
 
+- Network-test session directory confinement now follows platform path identity: Windows remains case-insensitive while Linux/macOS reject case-variant sibling directories, with a dedicated Ubuntu PowerShell CI regression. Inventory byte/SHA-256 binding is unchanged and this hardening adds no Real Internet Test credit.
 - Authenticated room announcements now preserve first-owner authority for an existing room ID and are bounded per owner/globally; local creation follows the same admission policy. This P2P state-hardening fix adds no Real Internet Test credit.
 - Real-network session validation now verifies every manifest byte count and SHA-256 against a tamper-evident `SESSION_INFO.json` inventory; the controlled evidence editor validates then reseals authorized changes, while out-of-band edits fail closed. This promotion-evidence integrity fix adds no Real Internet Test credit.
 

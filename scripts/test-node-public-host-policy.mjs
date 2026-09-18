@@ -34,8 +34,32 @@ function expectFailure(changes, pattern) {
 assert.deepEqual(checkNodePublicHostPolicySources(baseline), []);
 
 expectFailure(
-  { nodeSource: mutateOnce(baseline.nodeSource, '"100.64.0.1"', '"100.63.255.255"', 'CGNAT Rust fixture') },
+  { nodeSource: mutateOnce(baseline.nodeSource, '"100.64.0.1"', '"100.63.255.255"', 'CGNAT IPv4 regression fixture') },
   /100\.64\.0\.1/,
+);
+
+expectFailure(
+  {
+    nodeSource: mutateOnce(
+      baseline.nodeSource,
+      '(a == 100 && (64..=127).contains(&b))',
+      '(a == 100 && (65..=127).contains(&b))',
+      'CGNAT classifier range',
+    ),
+  },
+  /CGNAT classification/i,
+);
+
+expectFailure(
+  {
+    nodeSource: mutateOnce(
+      baseline.nodeSource,
+      'segments[0] & 0xe000 != 0x2000',
+      'segments[0] & 0xf000 != 0x2000',
+      'IPv6 global-unicast boundary',
+    ),
+  },
+  /IPv6 global-unicast boundary/i,
 );
 
 expectFailure(

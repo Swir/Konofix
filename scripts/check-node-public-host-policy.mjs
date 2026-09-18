@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-const REQUIRED_BLOCKED_FIXTURES = [
+const REQUIRED_IPV4_FIXTURES = [
   '100.64.0.1',
   '192.0.0.8',
   '192.0.2.1',
@@ -14,6 +14,8 @@ const REQUIRED_BLOCKED_FIXTURES = [
   '203.0.113.1',
   '224.0.0.1',
   '240.0.0.1',
+];
+const REQUIRED_IPV6_FIXTURES = [
   '2001:2::1',
   '2001:db8::1',
   '2001:10::1',
@@ -22,6 +24,25 @@ const REQUIRED_BLOCKED_FIXTURES = [
   'ff02::1',
   '::ffff:100.64.0.1',
 ];
+
+const REQUIRED_CLASSIFIER_INVARIANTS = [
+  ['CGNAT classification', '(a == 100 && (64..=127).contains(&b))'],
+  ['IPv4 benchmark classification', '(a == 198 && (18..=19).contains(&b))'],
+  ['IPv4 multicast/reserved classification', 'a >= 224'],
+  ['IPv4-mapped IPv6 delegation', 'if let Some(mapped) = ip.to_ipv4_mapped()'],
+  ['IPv6 global-unicast boundary', 'segments[0] & 0xe000 != 0x2000'],
+  ['IPv6 benchmark classification', 'segments[0] == 0x2001 && segments[1] == 0x0002 && segments[2] == 0'],
+  ['IPv6 documentation classification', 'segments[0] == 0x2001 && segments[1] == 0x0db8'],
+  ['IPv6 ORCHID classification', '(segments[1] & 0xfff0) == 0x0010'],
+  ['IPv6 ORCHIDv2 classification', '(segments[1] & 0xfff0) == 0x0020'],
+];
+
+function sliceBetween(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  if (start < 0 || end < 0 || end <= start) return null;
+  return source.slice(start, end);
+}
 
 export function checkNodePublicHostPolicySources({
   nodeSource,
@@ -55,6 +76,21 @@ export function checkNodePublicHostPolicySources({
     errors.push('Legacy warning-only is_non_public_ip policy must not coexist with the fail-closed public-host policy.');
   }
 
+  const classifierStart = nodeSource.indexOf('fn is_globally_routable_ip(');
+  const validatorStart = nodeSource.indexOf('fn validate_public_host(', classifierStart);
+  const classifier = classifierStart >= 0 && validatorStart > classifierStart
+    ? nodeSource.slice(classifierStart, validatorStart)
+    : '';
+  if (!classifier) {
+    errors.push('Could not isolate the globally-routable IP classifier for fail-closed policy verification.');
+  } else {
+    for (const [label, invariant] of REQUIRED_CLASSIFIER_INVARIANTS) {
+      if (!classifier.includes(invariant)) {
+        errors.push(`Konofix Node ${label} invariant is missing from the public-host classifier.`);
+      }
+    }
+  }
+
   const mainIndex = nodeSource.indexOf('async fn main()');
   const validationIndex = nodeSource.indexOf('let public_host_policy =', mainIndex);
   const identityIndex = nodeSource.indexOf('let key = load_or_create_identity(', mainIndex);
@@ -62,9 +98,32 @@ export function checkNodePublicHostPolicySources({
     errors.push('Public-host policy must fail closed before identity creation and network startup side effects.');
   }
 
-  for (const fixture of REQUIRED_BLOCKED_FIXTURES) {
-    if (!nodeSource.includes(`"${fixture}"`)) {
-      errors.push(`Missing Rust regression fixture for non-global public-host class: ${fixture}`);
+  const ipv4Tests = sliceBetween(
+    nodeSource,
+    'fn public_host_ipv4_policy_matches_evidence_ranges()',
+    'fn public_host_ipv6_policy_matches_evidence_ranges()',
+  );
+  const ipv6Tests = sliceBetween(
+    nodeSource,
+    'fn public_host_ipv6_policy_matches_evidence_ranges()',
+    'fn public_host_policy_fails_closed_without_lab_override()',
+  );
+  if (!ipv4Tests) {
+    errors.push('Could not isolate the IPv4 public-host regression fixture table.');
+  } else {
+    for (const fixture of REQUIRED_IPV4_FIXTURES) {
+      if (!ipv4Tests.includes(`"${fixture}"`)) {
+        errors.push(`Missing IPv4 Rust regression fixture for non-global public-host class: ${fixture}`);
+      }
+    }
+  }
+  if (!ipv6Tests) {
+    errors.push('Could not isolate the IPv6 public-host regression fixture table.');
+  } else {
+    for (const fixture of REQUIRED_IPV6_FIXTURES) {
+      if (!ipv6Tests.includes(`"${fixture}"`)) {
+        errors.push(`Missing IPv6 Rust regression fixture for non-global public-host class: ${fixture}`);
+      }
     }
   }
 
@@ -76,7 +135,7 @@ export function checkNodePublicHostPolicySources({
     'parses_explicit_lab_override',
   ]) {
     if (!nodeSource.includes(testName)) {
-      errors.push(`Missing Konofix Node public-host regression test: ${testName}`);
+      errors.push(`Missing Konofix Node public-host regression test: ${testName}.`);
     }
   }
 

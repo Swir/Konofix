@@ -1,0 +1,444 @@
+name: Temporary public-host policy integration
+
+on:
+  push:
+    branches:
+      - codex/public-host-global-policy
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Stop after integration commit
+        id: guard
+        shell: bash
+        run: |
+          if git log -1 --pretty=%B | grep -q '\[public-host-policy-ready\]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Patch public-host policy
+        if: steps.guard.outputs.skip != 'true'
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, found {count}")
+              return text.replace(old, new, 1)
+
+          node_path = Path('src-tauri/src/bin/konofix-node.rs')
+          node = node_path.read_text(encoding='utf-8').replace('\r\n', '\n')
+          node = replace_once(node, '    net::IpAddr,\n', '    net::{IpAddr, Ipv4Addr, Ipv6Addr},\n', 'IP imports')
+          node = replace_once(node, '    public_host: Option<String>,\n    status_interval: u64,', '    public_host: Option<String>,\n    allow_private_address: bool,\n    status_interval: u64,', 'NodeArgs lab flag')
+          node = replace_once(node,
+              '    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--status-interval 60] [--health-file PATH] [--identity-file PATH]");',
+              '    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--allow-private-address] [--status-interval 60] [--health-file PATH] [--identity-file PATH]");',
+              'help usage')
+          node = replace_once(node,
+              '    println!("  --public-ip IP           Alias for --public-host");\n    println!("  --status-interval SEC    Print an operational status line every N seconds (default: 60, minimum: 10)");',
+              '    println!("  --public-ip IP           Alias for --public-host");\n    println!("  --allow-private-address  LAB ONLY: permit a non-global IP literal; never valid public-node evidence");\n    println!("  --status-interval SEC    Print an operational status line every N seconds (default: 60, minimum: 10)");',
+              'help option')
+          node = replace_once(node,
+              '    println!("  konofix-node.exe --port 45555 --public-host 203.0.113.10 --status-interval 60 --health-file C:\\\\Konofix\\\\health.json --identity-file C:\\\\Konofix\\\\node-identity.key");',
+              '    println!("  konofix-node.exe --port 45555 --public-host node.yourdomain.com --status-interval 60 --health-file C:\\\\Konofix\\\\health.json --identity-file C:\\\\Konofix\\\\node-identity.key");',
+              'help example')
+          node = replace_once(node,
+              '    let mut public_host = None;\n    let mut status_interval = DEFAULT_STATUS_INTERVAL;',
+              '    let mut public_host = None;\n    let mut allow_private_address = false;\n    let mut status_interval = DEFAULT_STATUS_INTERVAL;',
+              'parse lab default')
+          node = replace_once(node,
+              '            "--status-interval" => {',
+              '            "--allow-private-address" => {\n                allow_private_address = true;\n            }\n            "--status-interval" => {',
+              'parse lab flag')
+          node = replace_once(node,
+              '    Ok(Some(NodeArgs {\n        port,\n        public_host,\n        status_interval,',
+              '    if let Some(host) = public_host.as_deref() {\n        if let Ok(ip) = host.parse::<IpAddr>() {\n            if !is_globally_routable_ip(ip) && !allow_private_address {\n                return Err(format!(\n                    "--public-host {host} is not a globally routable IP literal. Refusing to print public bootstrap addresses. Use --allow-private-address only for controlled LAN/lab testing; lab output is not valid public-node evidence."\n                ));\n            }\n        }\n    }\n\n    Ok(Some(NodeArgs {\n        port,\n        public_host,\n        allow_private_address,\n        status_interval,',
+              'parse fail-closed guard')
+
+          old_helper = '''fn is_non_public_ip(host: &str) -> bool {
+              match host.parse::<IpAddr>() {
+                  Ok(IpAddr::V4(ip)) => {
+                      ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
+                  }
+                  Ok(IpAddr::V6(ip)) => {
+                      ip.is_loopback()
+                          || ip.is_unspecified()
+                          || ip.is_unique_local()
+                          || ip.is_unicast_link_local()
+                  }
+                  Err(_) => false,
+              }
+          }
+
+          fn print_shareable_addresses(host: &str, port: u16, peer: PeerId) {'''
+          new_helper = '''fn ipv4_in_prefix(ip: Ipv4Addr, network: Ipv4Addr, prefix: u32) -> bool {
+              debug_assert!(prefix <= 32);
+              let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+              (u32::from(ip) & mask) == (u32::from(network) & mask)
+          }
+
+          fn ipv6_in_prefix(ip: Ipv6Addr, network: Ipv6Addr, prefix: u32) -> bool {
+              debug_assert!(prefix <= 128);
+              let mask = if prefix == 0 { 0 } else { u128::MAX << (128 - prefix) };
+              (u128::from(ip) & mask) == (u128::from(network) & mask)
+          }
+
+          fn is_globally_routable_ip(ip: IpAddr) -> bool {
+              match ip {
+                  IpAddr::V4(ip) => {
+                      if ip.is_unspecified()
+                          || ip.is_loopback()
+                          || ip.is_private()
+                          || ip.is_link_local()
+                          || ip.is_multicast()
+                      {
+                          return false;
+                      }
+
+                      let special = [
+                          (Ipv4Addr::new(0, 0, 0, 0), 8),
+                          (Ipv4Addr::new(100, 64, 0, 0), 10),
+                          (Ipv4Addr::new(192, 0, 0, 0), 24),
+                          (Ipv4Addr::new(192, 0, 2, 0), 24),
+                          (Ipv4Addr::new(192, 88, 99, 0), 24),
+                          (Ipv4Addr::new(198, 18, 0, 0), 15),
+                          (Ipv4Addr::new(198, 51, 100, 0), 24),
+                          (Ipv4Addr::new(203, 0, 113, 0), 24),
+                          (Ipv4Addr::new(240, 0, 0, 0), 4),
+                      ];
+                      !special
+                          .into_iter()
+                          .any(|(network, prefix)| ipv4_in_prefix(ip, network, prefix))
+                  }
+                  IpAddr::V6(ip) => {
+                      if ip.is_unspecified()
+                          || ip.is_loopback()
+                          || ip.is_unique_local()
+                          || ip.is_unicast_link_local()
+                          || ip.is_multicast()
+                      {
+                          return false;
+                      }
+
+                      let special = [
+                          (Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0), 96),
+                          (Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0, 0), 96),
+                          (Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0), 96),
+                          (Ipv6Addr::new(0x0064, 0xff9b, 0x0001, 0, 0, 0, 0, 0), 48),
+                          (Ipv6Addr::new(0x0100, 0, 0, 0, 0, 0, 0, 0), 64),
+                          (Ipv6Addr::new(0x2001, 0x0000, 0, 0, 0, 0, 0, 0), 32),
+                          (Ipv6Addr::new(0x2001, 0x0002, 0, 0, 0, 0, 0, 0), 48),
+                          (Ipv6Addr::new(0x2001, 0x0010, 0, 0, 0, 0, 0, 0), 28),
+                          (Ipv6Addr::new(0x2001, 0x0020, 0, 0, 0, 0, 0, 0), 28),
+                          (Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32),
+                          (Ipv6Addr::new(0x2002, 0, 0, 0, 0, 0, 0, 0), 16),
+                          (Ipv6Addr::new(0x3fff, 0, 0, 0, 0, 0, 0, 0), 20),
+                          (Ipv6Addr::new(0xfec0, 0, 0, 0, 0, 0, 0, 0), 10),
+                      ];
+                      !special
+                          .into_iter()
+                          .any(|(network, prefix)| ipv6_in_prefix(ip, network, prefix))
+                  }
+              }
+          }
+
+          fn public_host_lab_override(host: &str, allow_private_address: bool) -> bool {
+              allow_private_address
+                  && host
+                      .parse::<IpAddr>()
+                      .map(|ip| !is_globally_routable_ip(ip))
+                      .unwrap_or(false)
+          }
+
+          fn print_shareable_addresses(host: &str, port: u16, peer: PeerId, lab_only: bool) {'''
+          node = replace_once(node, old_helper, new_helper, 'routability helper')
+          node = replace_once(node,
+              '    println!("=== KONOFIX SHAREABLE ADDRESSES ===");',
+              '    if lab_only {\n        println!("=== KONOFIX LAB-ONLY ADDRESSES ===");\n        println!("LAB ONLY: non-global --public-host override; NOT VALID PUBLIC-NODE EVIDENCE.");\n    } else {\n        println!("=== KONOFIX SHAREABLE ADDRESSES ===");\n    }',
+              'lab output label')
+          node = replace_once(node,
+              '    if let Some(host) = &args.public_host {\n        if is_non_public_ip(host) {\n            println!("WARNING: --public-host resolves to a non-public IP literal. Cross-network clients may not be able to reach it.");\n        }\n        print_shareable_addresses(host, port, local_peer);',
+              '    if let Some(host) = &args.public_host {\n        let lab_only = public_host_lab_override(host, args.allow_private_address);\n        print_shareable_addresses(host, port, local_peer, lab_only);',
+              'main shareable address policy')
+
+          test_anchor = '''    #[test]
+              fn persisted_identity_keeps_peer_id() {'''
+          tests = '''    #[test]
+              fn classifies_public_host_ip_literals_fail_closed() {
+                  let accepted = [
+                      "1.1.1.1",
+                      "8.8.8.8",
+                      "2001:4860:4860::8888",
+                      "2606:4700:4700::1111",
+                  ];
+                  for raw in accepted {
+                      let ip = raw.parse::<IpAddr>().expect("fixture IP should parse");
+                      assert!(is_globally_routable_ip(ip), "expected globally routable: {raw}");
+                  }
+
+                  let rejected = [
+                      "0.0.0.0",
+                      "10.0.0.1",
+                      "100.64.0.1",
+                      "127.0.0.1",
+                      "169.254.1.1",
+                      "172.16.0.1",
+                      "192.0.0.1",
+                      "192.0.2.1",
+                      "192.88.99.1",
+                      "192.168.1.1",
+                      "198.18.0.1",
+                      "198.51.100.1",
+                      "203.0.113.1",
+                      "224.0.0.1",
+                      "240.0.0.1",
+                      "255.255.255.255",
+                      "::",
+                      "::1",
+                      "::ffff:192.0.2.1",
+                      "64:ff9b::c000:201",
+                      "64:ff9b:1::1",
+                      "100::1",
+                      "2001::1",
+                      "2001:2::1",
+                      "2001:10::1",
+                      "2001:20::1",
+                      "2001:db8::1",
+                      "2002::1",
+                      "3fff::1",
+                      "fc00::1",
+                      "fe80::1",
+                      "fec0::1",
+                      "ff0e::1",
+                  ];
+                  for raw in rejected {
+                      let ip = raw.parse::<IpAddr>().expect("fixture IP should parse");
+                      assert!(!is_globally_routable_ip(ip), "expected non-global/special-use: {raw}");
+                  }
+              }
+
+              #[test]
+              fn rejects_non_global_public_host_literal_without_lab_override() {
+                  for raw in ["100.64.0.1", "192.0.2.10", "198.18.0.1", "2001:db8::1", "ff0e::1"] {
+                      let error = parse_args_from(vec!["--public-host".into(), raw.into()])
+                          .expect_err("non-global literal must fail closed");
+                      assert!(error.contains("not a globally routable IP literal"));
+                      assert!(error.contains("--allow-private-address"));
+                  }
+              }
+
+              #[test]
+              fn explicit_lab_override_is_order_independent_and_marked_lab_only() {
+                  for args in [
+                      vec!["--public-host".into(), "10.0.0.5".into(), "--allow-private-address".into()],
+                      vec!["--allow-private-address".into(), "--public-host".into(), "10.0.0.5".into()],
+                  ] {
+                      let parsed = parse_args_from(args)
+                          .expect("explicit lab override should parse")
+                          .expect("help was not requested");
+                      assert!(parsed.allow_private_address);
+                      assert!(public_host_lab_override(parsed.public_host.as_deref().unwrap(), parsed.allow_private_address));
+                  }
+              }
+
+              #[test]
+              fn public_dns_and_global_literals_remain_supported() {
+                  for raw in ["node.yourdomain.com", "1.1.1.1", "2001:4860:4860::8888"] {
+                      let parsed = parse_args_from(vec!["--public-host".into(), raw.into()])
+                          .expect("public host should parse")
+                          .expect("help was not requested");
+                      assert_eq!(parsed.public_host.as_deref(), Some(raw));
+                      assert!(!parsed.allow_private_address);
+                  }
+              }
+
+              #[test]
+              fn persisted_identity_keeps_peer_id() {'''
+          node = replace_once(node, test_anchor, tests, 'Rust public-host tests')
+          node_path.write_text(node, encoding='utf-8')
+
+          checker = r'''import fs from 'node:fs';
+
+          const rustPath = process.argv[2] ?? 'src-tauri/src/bin/konofix-node.rs';
+          const rust = fs.readFileSync(rustPath, 'utf8').replaceAll('\r\n', '\n');
+          const fail = (message) => {
+            console.error(`PUBLIC HOST POLICY ERROR: ${message}`);
+            process.exitCode = 1;
+          };
+          const requireText = (needle, message) => {
+            if (!rust.includes(needle)) fail(message);
+          };
+
+          requireText('allow_private_address: bool', 'Node arguments must track the explicit lab-only override.');
+          requireText('"--allow-private-address" => {', 'CLI lab-only override flag is missing.');
+          requireText('if !is_globally_routable_ip(ip) && !allow_private_address {', 'non-global IP literals must fail closed by default.');
+          requireText('Refusing to print public bootstrap addresses.', 'fail-closed public-host error is missing.');
+          requireText('fn is_globally_routable_ip(ip: IpAddr) -> bool {', 'global-routability policy helper is missing.');
+          requireText('(Ipv4Addr::new(100, 64, 0, 0), 10)', 'IPv4 CGNAT range must remain non-public.');
+          requireText('(Ipv4Addr::new(198, 18, 0, 0), 15)', 'IPv4 benchmarking range must remain non-public.');
+          requireText('(Ipv4Addr::new(192, 0, 2, 0), 24)', 'IPv4 documentation range must remain non-public.');
+          requireText('(Ipv4Addr::new(203, 0, 113, 0), 24)', 'IPv4 TEST-NET-3 must remain non-public.');
+          requireText('(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32)', 'IPv6 documentation range must remain non-public.');
+          requireText('(Ipv6Addr::new(0x3fff, 0, 0, 0, 0, 0, 0, 0), 20)', 'new IPv6 documentation range must remain non-public.');
+          requireText('ip.is_multicast()', 'multicast literals must remain rejected.');
+          requireText('LAB ONLY: non-global --public-host override; NOT VALID PUBLIC-NODE EVIDENCE.', 'lab-only output must be explicitly labelled as non-evidence.');
+          requireText('let lab_only = public_host_lab_override(host, args.allow_private_address);', 'shareable-address output must preserve lab/public distinction.');
+          requireText('fn classifies_public_host_ip_literals_fail_closed()', 'table-driven Rust IP policy test is missing.');
+          requireText('fn rejects_non_global_public_host_literal_without_lab_override()', 'Rust default-rejection regression test is missing.');
+          requireText('fn explicit_lab_override_is_order_independent_and_marked_lab_only()', 'Rust lab-override regression test is missing.');
+
+          if (rust.includes('fn is_non_public_ip(') || rust.includes('WARNING: --public-host resolves to a non-public IP literal')) {
+            fail('warning-only legacy public-host handling must not return.');
+          }
+
+          if (!process.exitCode) {
+            console.log('Public-host policy: non-global IP literals fail closed, explicit lab override is labelled non-evidence, and special-use coverage is enforced.');
+          }
+          '''.strip() + '\n'
+          Path('scripts/check-public-host-policy.mjs').write_text(checker, encoding='utf-8')
+
+          adversarial = r'''import fs from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          import { spawnSync } from 'node:child_process';
+
+          const checker = path.resolve('scripts/check-public-host-policy.mjs');
+          const source = fs.readFileSync('src-tauri/src/bin/konofix-node.rs', 'utf8').replaceAll('\r\n', '\n');
+          const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-public-host-policy-'));
+          const run = (text) => {
+            const fixture = path.join(tempDir, 'konofix-node.rs');
+            fs.writeFileSync(fixture, text, 'utf8');
+            return spawnSync(process.execPath, [checker, fixture], { cwd: process.cwd(), encoding: 'utf8' });
+          };
+          const mutateOnce = (text, from, to) => {
+            const first = text.indexOf(from);
+            if (first < 0) throw new Error(`Test fixture source not found: ${from}`);
+            if (text.indexOf(from, first + from.length) >= 0) throw new Error(`Test fixture source is not unique: ${from}`);
+            return text.slice(0, first) + to + text.slice(first + from.length);
+          };
+
+          const baseline = run(source);
+          if (baseline.status !== 0) {
+            console.error(baseline.stdout);
+            console.error(baseline.stderr);
+            throw new Error('Canonical public-host policy must pass before adversarial mutations run.');
+          }
+
+          const cases = [
+            ['default rejection bypassed', 'if !is_globally_routable_ip(ip) && !allow_private_address {', 'if false && !allow_private_address {', 'fail closed by default'],
+            ['CGNAT range removed', '(Ipv4Addr::new(100, 64, 0, 0), 10)', '(Ipv4Addr::new(100, 64, 0, 0), 9)', 'CGNAT'],
+            ['IPv4 benchmark range removed', '(Ipv4Addr::new(198, 18, 0, 0), 15)', '(Ipv4Addr::new(198, 18, 0, 0), 16)', 'benchmarking'],
+            ['IPv6 documentation range removed', '(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32)', '(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 48)', 'documentation range'],
+            ['multicast rejection removed', '|| ip.is_multicast()', '/* multicast check removed */', 'multicast'],
+            ['lab evidence warning removed', 'LAB ONLY: non-global --public-host override; NOT VALID PUBLIC-NODE EVIDENCE.', 'LAB MODE', 'lab-only output'],
+            ['legacy warning-only helper restored', 'fn is_globally_routable_ip(ip: IpAddr) -> bool {', 'fn is_non_public_ip(host: &str) -> bool { false }\n\nfn is_globally_routable_ip(ip: IpAddr) -> bool {', 'warning-only legacy'],
+          ];
+
+          for (const [name, from, to, expected] of cases) {
+            const result = run(mutateOnce(source, from, to));
+            const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+            if (result.status === 0) throw new Error(`Mutation '${name}' unexpectedly passed.`);
+            if (!output.includes(expected)) throw new Error(`Mutation '${name}' failed for the wrong reason. Expected '${expected}', got:\n${output}`);
+          }
+
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          console.log(`Public-host adversarial policy tests passed (${cases.length} mutations rejected).`);
+          '''.strip() + '\n'
+          Path('scripts/test-public-host-policy.mjs').write_text(adversarial, encoding='utf-8')
+
+          package_path = Path('package.json')
+          package = json.loads(package_path.read_text(encoding='utf-8'))
+          audit = package['scripts']['audit']
+          suffix = ' && node scripts/test-public-host-policy.mjs && node scripts/check-public-host-policy.mjs'
+          if 'test-public-host-policy.mjs' not in audit:
+              package['scripts']['audit'] = audit + suffix
+          package['scripts']['audit:public-host'] = 'node scripts/check-public-host-policy.mjs'
+          package['scripts']['test:public-host'] = 'node scripts/test-public-host-policy.mjs'
+          package_path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
+          node_doc = Path('docs/NODE.md')
+          text = node_doc.read_text(encoding='utf-8').replace('\r\n', '\n')
+          text = replace_once(text,
+              '- automatic generation of ready-to-use public multiaddresses\n',
+              '- automatic generation of ready-to-use public multiaddresses\n- fail-closed raw-binary validation for non-global IPv4/IPv6 literals, with an explicit lab-only override\n',
+              'NODE features')
+          marker = '''The raw binary remains available for manual operation:
+
+          ```powershell
+          src-tauri\\target\\release\\konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP
+          ```
+          '''
+          replacement = marker + '''
+          The raw binary now enforces the same safety boundary for literal addresses: private, loopback, link-local, CGNAT, documentation, benchmarking, multicast/reserved and other reviewed special-use IPv4/IPv6 literals fail closed before public bootstrap addresses are printed. `--allow-private-address` is an explicit controlled-lab override only; when used with a non-global literal, the Node labels its bootstrap output **LAB ONLY / NOT VALID PUBLIC-NODE EVIDENCE**. DNS names remain supported, but syntax alone is not proof of global reachability; use the deployment/readiness tooling when collecting evidence.
+          '''
+          text = replace_once(text, marker, replacement, 'NODE raw binary policy')
+          node_doc.write_text(text, encoding='utf-8')
+
+          linux_doc = Path('docs/NODE_LINUX.md')
+          text = linux_doc.read_text(encoding='utf-8').replace('\r\n', '\n')
+          marker = 'The Linux deployment preflight uses the same fail-closed public-host policy as the Windows readiness/evidence tooling. Literal addresses must be globally routable, while DNS names must be public-looking FQDNs and cannot live below special/private-use namespaces such as `localhost`, `.local`, `.test`, `.example`, `example.com`, `example.net`, `example.org`, `.onion`, `.alt`, `.arpa`, or `.internal`. With `--require-dns-resolution`, every compatible DNS answer must also be globally routable.\n'
+          replacement = marker + '\nDirect invocation of `konofix-node` now fails closed for non-global/special-use IP literals as well. The binary accepts `--allow-private-address` only as an explicit lab override and labels the resulting bootstrap output as not valid public-node evidence; DNS deployment evidence should still go through the installer/readiness resolution checks.\n'
+          text = replace_once(text, marker, replacement, 'Linux direct binary policy')
+          linux_doc.write_text(text, encoding='utf-8')
+
+          changelog = Path('CHANGELOG.md')
+          text = changelog.read_text(encoding='utf-8').replace('\r\n', '\n')
+          marker = '# Changelog\n\n## 0.4.2\n\n'
+          bullet = '- made raw `konofix-node --public-host` handling fail closed for non-global IPv4/IPv6 literals before any public bootstrap addresses are printed; the policy covers private/loopback/link-local, CGNAT, documentation, benchmarking, multicast/reserved and reviewed IPv6 special-use ranges, keeps DNS names supported, adds an explicit `--allow-private-address` lab override whose output is labelled non-evidence, and adds Rust plus adversarial policy coverage without changing Real Internet Test credit,\n'
+          text = replace_once(text, marker, marker + bullet, 'CHANGELOG 0.4.2')
+          changelog.write_text(text, encoding='utf-8')
+
+          roadmap = Path('ROADMAP.md')
+          text = roadmap.read_text(encoding='utf-8').replace('\r\n', '\n')
+          marker = '- Public-Node readiness now fails closed when a literal bootstrap endpoint is private, CGNAT, loopback/link-local, documentation-only, benchmark/reserved/ORCHID or otherwise non-global; DNS endpoints must be public-looking FQDNs and, for readiness evidence, resolve only to globally routable addresses. Readiness schema v2 records the resolved-address evidence while still refusing to claim a QUIC handshake that was not actually performed.\n'
+          addition = '- Raw `konofix-node --public-host` invocation now follows a fail-closed literal-IP boundary too: non-global/special-use IPv4/IPv6 literals are rejected before shareable bootstrap output unless the operator opts into the explicit lab-only override, which is visibly marked as not valid public-node evidence. DNS names remain supported and real reachability still requires the existing deployment/readiness evidence gates. This defense-in-depth hardening does not add Real Internet Test credit.\n'
+          text = replace_once(text, marker, marker + addition, 'ROADMAP raw node policy')
+          roadmap.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Verify policy and project audit
+        if: steps.guard.outputs.skip != 'true'
+        shell: bash
+        run: |
+          node scripts/test-public-host-policy.mjs
+          node scripts/check-public-host-policy.mjs
+          npm ci
+          npm run audit
+          npm run build
+
+      - name: Verify Rust formatting and Node tests
+        if: steps.guard.outputs.skip != 'true'
+        shell: bash
+        env:
+          KONOFIX_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --bin konofix-node
+          git diff --check
+
+      - name: Commit verified integration
+        if: steps.guard.outputs.skip != 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/src/bin/konofix-node.rs scripts/check-public-host-policy.mjs scripts/test-public-host-policy.mjs package.json docs/NODE.md docs/NODE_LINUX.md CHANGELOG.md ROADMAP.md
+          git commit -m "[public-host-policy-ready] Harden raw Node public-host validation"
+          git push origin HEAD:codex/public-host-global-policy

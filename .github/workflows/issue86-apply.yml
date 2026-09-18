@@ -33,10 +33,12 @@ jobs:
           components: rustfmt, clippy
 
       - name: Apply issue 86 hardening
-        run: python3 .github/issue86_apply.py
+        run: |
+          python3 .github/issue86_apply.py
+          python3 .github/issue86_policy_fix.py
 
       - name: Remove temporary integration helpers before policy audit
-        run: git rm .github/workflows/issue86-apply.yml .github/issue86_apply.py
+        run: git rm .github/workflows/issue86-apply.yml .github/issue86_apply.py .github/issue86_policy_fix.py
 
       - name: Format and verify
         run: |

@@ -35,6 +35,7 @@ const FILE_PROTOCOL: &str = "/konofix/file/1.0.0";
 const WORLD_PROVIDER_KEY: &str = "/konofix/world/providers/v1";
 const PRESENCE_TTL_SECS: u64 = 38;
 const NICK_LEASE_SECS: u64 = 42;
+const NICK_LEASE_CLOCK_SKEW_SECS: u64 = 5;
 const FILE_CHUNK_SIZE: usize = 256 * 1024;
 const MAX_FILE_OFFER_NAME_BYTES: usize = 4 * 1024;
 const MAX_FILE_REQUEST_WIRE_BYTES: u64 = 320 * 1024;
@@ -1150,6 +1151,30 @@ fn publish_nick_lease(
     }
 }
 
+fn nick_lease_hint_is_well_formed(lease: &NickLease, record_key: &RecordKey, now: u128) -> bool {
+    let Ok(peer) = lease.peer_id.parse::<PeerId>() else {
+        return false;
+    };
+    if peer.to_string() != lease.peer_id {
+        return false;
+    }
+    let Ok(valid_nick) = validate_nick(&lease.nick) else {
+        return false;
+    };
+    let expected_canonical = canonical_nick(&valid_nick);
+    if lease.canonical != expected_canonical {
+        return false;
+    }
+    let expected_key = nick_record_key(&expected_canonical);
+    if record_key != &expected_key {
+        return false;
+    }
+    let max_expires = now.saturating_add(
+        (NICK_LEASE_SECS.saturating_add(NICK_LEASE_CLOCK_SKEW_SECS) as u128).saturating_mul(1000),
+    );
+    lease.expires_at > now && lease.expires_at <= max_expires
+}
+
 fn check_nick_conflict(
     remote_peer: &str,
     remote_canonical: &str,
@@ -1824,9 +1849,13 @@ async fn network_task(
                         }
                         kad::QueryResult::GetRecord(Ok(GetRecordOk::FoundRecord(peer_record))) => {
                             if let Ok(lease) = serde_json::from_slice::<NickLease>(&peer_record.record.value) {
-                                if check_nick_conflict(&lease.peer_id, &lease.canonical, lease.expires_at, local_peer, &canonical) {
-                                    let _ = app.emit("nick-conflict", serde_json::json!({"nick": nick, "peer_id": lease.peer_id}));
-                                    break 'network;
+                                // Kademlia metadata and payload Peer IDs are not cryptographic proof of
+                                // application-level nickname ownership. Unsigned DHT leases are hints only.
+                                if !nick_lease_hint_is_well_formed(&lease, &peer_record.record.key, now_ms()) {
+                                    let _ = app.emit(
+                                        "network-warning",
+                                        "Dropped malformed or unbounded DHT nickname hint.",
+                                    );
                                 }
                             }
                         }
@@ -2425,6 +2454,60 @@ mod file_offer_admission_tests {
             .expect("test Instant must support short subtraction");
         assert!(!incoming_transfer_is_expired(fresh, now));
         assert!(incoming_transfer_is_expired(expired, now));
+    }
+}
+
+#[cfg(test)]
+mod nickname_lease_hint_tests {
+    use super::*;
+
+    fn test_peer() -> PeerId {
+        libp2p::identity::Keypair::generate_ed25519()
+            .public()
+            .to_peer_id()
+    }
+
+    fn lease(peer: PeerId, nick: &str, expires_at: u128) -> NickLease {
+        NickLease {
+            peer_id: peer.to_string(),
+            nick: nick.to_string(),
+            canonical: canonical_nick(nick),
+            expires_at,
+        }
+    }
+
+    #[test]
+    fn live_hint_requires_matching_key_identity_and_canonical_nick() {
+        let now = 1_000_000u128;
+        let lease = lease(test_peer(), "Alice", now + (NICK_LEASE_SECS as u128 * 1000));
+        let key = nick_record_key(&lease.canonical);
+        assert!(nick_lease_hint_is_well_formed(&lease, &key, now));
+
+        let wrong_key = nick_record_key("mallory");
+        assert!(!nick_lease_hint_is_well_formed(&lease, &wrong_key, now));
+
+        let mut wrong_canonical = lease.clone();
+        wrong_canonical.canonical = "mallory".into();
+        assert!(!nick_lease_hint_is_well_formed(&wrong_canonical, &key, now));
+
+        let mut invalid_peer = lease.clone();
+        invalid_peer.peer_id = "not-a-peer-id".into();
+        assert!(!nick_lease_hint_is_well_formed(&invalid_peer, &key, now));
+    }
+
+    #[test]
+    fn hint_expiration_is_fail_closed_and_bounded() {
+        let now = 2_000_000u128;
+        let expired = lease(test_peer(), "Alice", now);
+        let key = nick_record_key(&expired.canonical);
+        assert!(!nick_lease_hint_is_well_formed(&expired, &key, now));
+
+        let too_far = lease(
+            test_peer(),
+            "Alice",
+            now + ((NICK_LEASE_SECS + NICK_LEASE_CLOCK_SKEW_SECS + 1) as u128 * 1000),
+        );
+        assert!(!nick_lease_hint_is_well_formed(&too_far, &key, now));
     }
 }
 

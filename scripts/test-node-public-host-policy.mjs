@@ -24,7 +24,7 @@ function expectFailure(inputs, pattern) {
 
 assert.deepEqual(checkNodePublicHostPolicy(baseline), []);
 
-expectFailure({ ...baseline, nodeSource: mutateOnce(baseline.nodeSource, '"--allow-private-address"', '"--allow-lab"', 'raw lab flag') }, /CLI.*allow-private-address/i);
+expectFailure({ ...baseline, nodeSource: mutateOnce(baseline.nodeSource, '"--allow-private-address" => {', '"--allow-lab" => {', 'raw lab flag') }, /CLI.*allow-private-address/i);
 expectFailure({ ...baseline, nodeSource: mutateOnce(baseline.nodeSource, '(Ipv4Addr::new(100, 64, 0, 0), 10)', '(Ipv4Addr::new(100, 64, 0, 0), 9)', 'CGNAT prefix') }, /100, 64.*10/);
 expectFailure({ ...baseline, nodeSource: mutateOnce(baseline.nodeSource, 'Refusing to publish public bootstrap addresses', 'Warning about public bootstrap addresses', 'fail-closed refusal') }, /fail closed/i);
 expectFailure({ ...baseline, nodeSource: mutateOnce(baseline.nodeSource, 'NOT VALID FOR PUBLIC-NODE OR CROSS-COUNTRY PROMOTION', 'LAB MODE', 'evidence label') }, /promotion evidence/i);

@@ -105,6 +105,16 @@ const fixture = (completed, open, heading = '## 0.4.2 — Real Internet Test �
     roadmap.replace('54 of 59 verified tasks', '53 of 59 verified tasks'),
     progress,
   ), /progress-mini alt text is stale/);
+  assert.throws(() => validateEmbeddings(
+    `${readme}\n\`██████████░░ 83%\``,
+    roadmap,
+    progress,
+  ), /retired text\/Unicode progress meter/);
+  assert.throws(() => validateEmbeddings(
+    readme,
+    `${roadmap}\n\`[##########--] 83%\``,
+    progress,
+  ), /retired text\/Unicode progress meter/);
 }
 
 console.log('Progress SVG adversarial/unit tests: PASS');

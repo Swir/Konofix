@@ -32,10 +32,9 @@
 
 **Development / controlled Internet testing**
 
-**Verified checklist fraction: 54 of 59 tasks — 91.5%.** The generated SVG uses the exact checklist fraction. The existing whole-percent summary below remains CI-checked for backward-compatible textual status.
+**Verified checklist fraction: 54 of 59 tasks — 91.5%.** The generated SVG uses the exact checklist fraction. The whole-percent text summary below remains CI-checked for backward-compatible textual status.
 
-**Real Internet Test milestone: 92% complete**  
-`██████████████████░░ 92%`
+**Real Internet Test milestone: 92% complete**
 
 The active `0.4.2 — Real Internet Test` milestone has **54 of 59 tasks complete**. The remaining five tasks require real public-network evidence and fixes discovered during those tests. CI, local transport smoke tests, documentation work, or progress-graphic maintenance do not increase this percentage by themselves.
 

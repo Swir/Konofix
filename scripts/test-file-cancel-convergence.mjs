@@ -90,7 +90,7 @@ const cases = [
     file: 'i18n',
     from: "  'transfer.offerCancelled': '🚫 Incoming file offer was cancelled by the sender.',\n",
     to: '',
-    expected: 'locale EN',
+    expected: 'explicitly present in all 7 supported dictionaries',
   },
 ];
 

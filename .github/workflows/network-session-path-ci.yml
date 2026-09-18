@@ -1,0 +1,40 @@
+name: Network Session Path CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'automation/session-path-identity-*'
+    paths:
+      - 'scripts/path-identity.ps1'
+      - 'scripts/validate-network-test-session.ps1'
+      - 'scripts/test-network-session-path-identity.ps1'
+      - '.github/workflows/network-session-path-ci.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'scripts/path-identity.ps1'
+      - 'scripts/validate-network-test-session.ps1'
+      - 'scripts/test-network-session-path-identity.ps1'
+      - '.github/workflows/network-session-path-ci.yml'
+
+concurrency:
+  group: network-session-path-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  path-identity-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate case-sensitive session path identity
+        shell: pwsh
+        run: ./scripts/test-network-session-path-identity.ps1

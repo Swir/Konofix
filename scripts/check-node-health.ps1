@@ -145,6 +145,7 @@ if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Health snapshot
 $snapshot = Read-BoundedSnapshotText -SnapshotPath $Path -MaxBytes $MaxSnapshotBytes
 $snapshotText = [string]$snapshot.Text
 try { $health = $snapshotText | ConvertFrom-Json } catch { throw "Health snapshot is not valid JSON: $($_.Exception.Message)" }
+if ($health -isnot [pscustomobject]) { throw 'Health snapshot root must be a JSON object.' }
 
 $required = @('schema', 'status', 'version', 'source_commit', 'peer_id', 'uptime_seconds', 'connected_peers', 'timestamp_unix')
 foreach ($field in $required) { if ($null -eq $health.$field) { throw "Health snapshot is missing required field: $field" } }

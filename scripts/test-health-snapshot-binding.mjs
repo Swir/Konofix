@@ -55,6 +55,16 @@ const cases = [
     expected: 'required single-snapshot health guard is missing',
   },
   {
+    name: 'bounded reader permits in-place write sharing',
+    health: mutateOnce(
+      healthSource,
+      '[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete',
+      '[System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete',
+    ),
+    readiness: readinessSource,
+    expected: 'health snapshot validation must deny in-place writers',
+  },
+  {
     name: 'readiness discards structured health output',
     health: healthSource,
     readiness: mutateOnce(

@@ -33,8 +33,55 @@ fn truncate_utf8_to_bytes(value: &str, max_bytes: usize) -> &str {
     &value[..end]
 }
 
+fn is_windows_reserved_device_basename(value: &str) -> bool {
+    let upper = value.to_ascii_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+            | "COM¹"
+            | "COM²"
+            | "COM³"
+            | "LPT¹"
+            | "LPT²"
+            | "LPT³"
+    )
+}
+
+fn neutralize_windows_reserved_device_name(name: String) -> String {
+    let basename = name
+        .split_once('.')
+        .map(|(basename, _)| basename)
+        .unwrap_or(name.as_str());
+    if is_windows_reserved_device_basename(basename) {
+        format!("_{name}")
+    } else {
+        name
+    }
+}
+
 fn bounded_safe_filename(raw: &str) -> String {
-    let safe = safe_filename(raw);
+    let safe = neutralize_windows_reserved_device_name(safe_filename(raw));
     if safe.len() <= MAX_SAFE_FILENAME_BYTES {
         return safe;
     }
@@ -303,6 +350,54 @@ mod tests {
             bounded_safe_filename("report-final.txt"),
             "report-final.txt"
         );
+    }
+
+    #[test]
+    fn windows_reserved_multidot_names_are_neutralized_before_reservation() {
+        for raw in [
+            "NUL.tar.gz",
+            "nul.tar.gz",
+            "CON.backup.zip",
+            "cOn.backup.zip",
+        ] {
+            let bounded = bounded_safe_filename(raw);
+            assert!(bounded.starts_with('_'), "{raw} should be neutralized");
+            assert!(bounded.len() <= MAX_SAFE_FILENAME_BYTES);
+        }
+    }
+
+    #[test]
+    fn windows_superscript_com_lpt_aliases_are_neutralized() {
+        for raw in [
+            "COM¹",
+            "COM².txt",
+            "COM³.backup.zip",
+            "LPT¹",
+            "lPt².log",
+            "LPT³.archive.tar",
+        ] {
+            let bounded = bounded_safe_filename(raw);
+            assert!(bounded.starts_with('_'), "{raw} should be neutralized");
+            assert!(bounded.len() <= MAX_SAFE_FILENAME_BYTES);
+        }
+    }
+
+    #[test]
+    fn existing_ascii_device_guard_is_not_double_prefixed() {
+        for raw in ["CON.txt", "NUL", "LPT1.log", "com9.bin"] {
+            let bounded = bounded_safe_filename(raw);
+            assert!(bounded.starts_with('_'));
+            assert!(!bounded.starts_with("__"), "{raw} was double-prefixed");
+        }
+    }
+
+    #[test]
+    fn reserved_device_hardening_preserves_utf8_byte_budget() {
+        let raw = format!("COM¹.{}", "é".repeat(200));
+        let bounded = bounded_safe_filename(&raw);
+        assert!(bounded.starts_with("_COM¹."));
+        assert!(bounded.len() <= MAX_SAFE_FILENAME_BYTES);
+        assert!(bounded.is_char_boundary(bounded.len()));
     }
 
     #[test]

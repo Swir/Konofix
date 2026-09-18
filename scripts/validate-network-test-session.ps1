@@ -132,11 +132,18 @@ Assert-True (-not [string]::Equals($aNetwork.Trim(), $bNetwork.Trim(), [StringCo
 $inventory = @(Get-RequiredProperty $session 'manifests' 'SESSION_INFO.json')
 Assert-True ($inventory.Count -eq 5) "SESSION_INFO must inventory exactly five manifests; found $($inventory.Count)."
 $inventoryNames = @()
+$inventoryByName = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
 foreach ($entry in $inventory) {
     Assert-True ($entry -is [pscustomobject]) 'SESSION_INFO manifest inventory entries must be JSON objects.'
     $name = Get-StrictString (Get-RequiredProperty $entry 'path' 'SESSION_INFO manifest inventory') 'manifests.path'
     Assert-True ([IO.Path]::GetFileName($name) -ceq $name) "SESSION_INFO manifest inventory path must be a file name only: $name"
     Assert-True ($name -cmatch '^network-test-(tcp|quic|relay|dcutr|cgnat)-.+\.json$') "SESSION_INFO manifest inventory contains an unexpected path: $name"
+    $bytes = Get-StrictInt64 (Get-RequiredProperty $entry 'bytes' 'SESSION_INFO manifest inventory') 'manifests.bytes'
+    Assert-True ($bytes -gt 0) "SESSION_INFO manifest inventory bytes must be positive: $name"
+    $sha256 = Get-StrictString (Get-RequiredProperty $entry 'sha256' 'SESSION_INFO manifest inventory') 'manifests.sha256'
+    Assert-True ($sha256 -cmatch '^[0-9a-f]{64}$') "SESSION_INFO manifest inventory SHA-256 must be canonical lowercase hexadecimal: $name"
+    Assert-True (-not $inventoryByName.ContainsKey($name)) "SESSION_INFO manifest inventory contains a duplicate path: $name"
+    $inventoryByName.Add($name, [pscustomobject]@{ bytes = $bytes; sha256 = $sha256 })
     $inventoryNames += $name
 }
 $inventoryNames = @($inventoryNames | Sort-Object -Unique -CaseSensitive)
@@ -146,9 +153,16 @@ $manifestPaths = @()
 foreach ($path in $Manifest) {
     Assert-True (-not [string]::IsNullOrWhiteSpace($path)) 'Manifest path cannot be empty or whitespace.'
     Assert-True (Test-Path -LiteralPath $path -PathType Leaf) "Manifest not found: $path"
-    $manifestFullPath = (Get-Item -LiteralPath $path).FullName
+    $manifestItem = Get-Item -LiteralPath $path
+    $manifestFullPath = $manifestItem.FullName
     $manifestDirectory = [IO.Path]::GetFullPath((Split-Path $manifestFullPath -Parent))
     Assert-True ([string]::Equals($manifestDirectory, $sessionDirectory, [StringComparison]::OrdinalIgnoreCase)) "Session manifest must reside beside SESSION_INFO.json; cross-directory evidence is rejected: $manifestFullPath"
+    $manifestName = [IO.Path]::GetFileName($manifestFullPath)
+    Assert-True ($inventoryByName.ContainsKey($manifestName)) "Supplied manifest is absent from SESSION_INFO inventory: $manifestName"
+    $binding = $inventoryByName[$manifestName]
+    Assert-True ([int64]$manifestItem.Length -eq [int64]$binding.bytes) "Manifest byte count does not match SESSION_INFO inventory: $manifestName"
+    $actualManifestHash = (Get-FileHash -LiteralPath $manifestFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-True ([string]::Equals($actualManifestHash, [string]$binding.sha256, [StringComparison]::Ordinal)) "Manifest SHA-256 does not match SESSION_INFO inventory: $manifestName"
     $manifestPaths += $manifestFullPath
 }
 $manifestPaths = @($manifestPaths | Sort-Object -Unique)

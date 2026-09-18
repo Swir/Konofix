@@ -129,6 +129,15 @@ try {
 
     $tcpManifestPath = ($manifests | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).scenario -ceq 'TCP' } | Select-Object -First 1).FullName
 
+    $originalTcpBytes = [IO.File]::ReadAllBytes($tcpManifestPath)
+    $inventoryOnlyTamper = Get-Content -LiteralPath $tcpManifestPath -Raw | ConvertFrom-Json
+    $inventoryOnlyTamper.notes = 'harmless-looking post-session edit'
+    $inventoryOnlyTamper | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $tcpManifestPath -Encoding utf8
+    Expect-Fail 'manifest content changed after SESSION_INFO inventory was sealed' {
+        & $validator -SessionInfoPath $sessionInfoPath -Manifest $manifestPaths | Out-Null
+    }
+    [IO.File]::WriteAllBytes($tcpManifestPath, $originalTcpBytes)
+
     $foreignRoot = Join-Path $temp 'foreign-session-fragment'
     New-Item -ItemType Directory -Path $foreignRoot | Out-Null
     $foreignTcpPath = Join-Path $foreignRoot ([IO.Path]::GetFileName($tcpManifestPath))

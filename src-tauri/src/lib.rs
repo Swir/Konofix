@@ -45,6 +45,8 @@ const MAX_TRANSFERS_PER_DIRECTION: usize = 4;
 const MAX_PENDING_OFFERS_PER_PEER: usize = 1;
 const PENDING_FILE_OFFER_TTL_SECS: u64 = 45;
 const INCOMING_TRANSFER_IDLE_TTL_SECS: u64 = 120;
+const MAX_ROOMS_TOTAL: usize = 256;
+const MAX_ROOMS_PER_OWNER: usize = 16;
 
 // Production releases can ship community bootstrap peers here.
 // They are only discovery entry points; chat/file payloads are not stored there.
@@ -316,6 +318,36 @@ fn wire_event_is_well_formed(event: &WireEvent) -> bool {
             owner.parse::<PeerId>().is_ok() && room_id != "world" && valid_wire_room_id(room_id)
         }
     }
+}
+
+fn room_create_admission(
+    rooms: &HashMap<String, RoomInfo>,
+    room: &RoomInfo,
+) -> Result<(), &'static str> {
+    let Some(owner) = room.owner.as_deref() else {
+        return Err("Room owner is missing.");
+    };
+
+    if let Some(existing) = rooms.get(&room.id) {
+        return if existing.owner.as_deref() == Some(owner) {
+            Ok(())
+        } else {
+            Err("Room ID is already owned by another peer.")
+        };
+    }
+
+    let owned_count = rooms
+        .values()
+        .filter(|candidate| candidate.owner.as_deref() == Some(owner))
+        .count();
+    if owned_count >= MAX_ROOMS_PER_OWNER {
+        return Err("Room owner reached the active-room limit.");
+    }
+    if rooms.len() >= MAX_ROOMS_TOTAL {
+        return Err("Global active-room limit reached.");
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1578,10 +1610,20 @@ async fn network_task(
                     }
                     NetworkCommand::CreateRoom { mut room } => {
                         room.owner = Some(peer_id.clone());
-                        rooms.insert(room.id.clone(), room.clone());
-                        owned_rooms.insert(room.id.clone(), room.clone());
-                        let _ = app.emit("room-created", room.clone());
-                        publish(&mut swarm, &world, &WireEvent::RoomCreate(room));
+                        match room_create_admission(&rooms, &room) {
+                            Ok(()) => {
+                                rooms.insert(room.id.clone(), room.clone());
+                                owned_rooms.insert(room.id.clone(), room.clone());
+                                let _ = app.emit("room-created", room.clone());
+                                publish(&mut swarm, &world, &WireEvent::RoomCreate(room));
+                            }
+                            Err(reason) => {
+                                let _ = app.emit(
+                                    "network-warning",
+                                    format!("Room creation rejected: {reason}"),
+                                );
+                            }
+                        }
                     }
                     NetworkCommand::AddBootstrap { address, reply } => {
                         let result = add_bootstrap_to_swarm(&mut swarm, &address);
@@ -1922,8 +1964,20 @@ async fn network_task(
                             }
                             WireEvent::RoomCreate(room) => {
                                 if room.owner.as_deref() != Some(&peer_id) {
-                                    rooms.insert(room.id.clone(), room.clone());
-                                    let _ = app.emit("room-created", room);
+                                    match room_create_admission(&rooms, &room) {
+                                        Ok(()) => {
+                                            rooms.insert(room.id.clone(), room.clone());
+                                            let _ = app.emit("room-created", room);
+                                        }
+                                        Err(reason) => {
+                                            let _ = app.emit(
+                                                "network-warning",
+                                                format!(
+                                                    "Dropped room announcement from {authenticated_source}: {reason}"
+                                                ),
+                                            );
+                                        }
+                                    }
                                 }
                             }
                             WireEvent::RoomClose { room_id, owner } => {
@@ -2275,6 +2329,62 @@ fn open_github() -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     {
         Err(format!("Otwórz w przeglądarce: {URL}"))
+    }
+}
+
+#[cfg(test)]
+mod room_admission_tests {
+    use super::*;
+
+    fn room(id: &str, owner: &str) -> RoomInfo {
+        RoomInfo {
+            id: id.to_string(),
+            title: format!("# {id}"),
+            owner: Some(owner.to_string()),
+            users: Some(1),
+        }
+    }
+
+    #[test]
+    fn foreign_owner_cannot_take_over_existing_room_id() {
+        let mut rooms = HashMap::new();
+        rooms.insert("alpha".into(), room("alpha", "peer-a"));
+
+        assert!(room_create_admission(&rooms, &room("alpha", "peer-b")).is_err());
+    }
+
+    #[test]
+    fn same_owner_refresh_is_idempotent_even_at_owner_limit() {
+        let mut rooms = HashMap::new();
+        for index in 0..MAX_ROOMS_PER_OWNER {
+            let id = format!("room-{index}");
+            rooms.insert(id.clone(), room(&id, "peer-a"));
+        }
+
+        assert!(room_create_admission(&rooms, &room("room-0", "peer-a")).is_ok());
+    }
+
+    #[test]
+    fn owner_room_limit_rejects_unbounded_announcements() {
+        let mut rooms = HashMap::new();
+        for index in 0..MAX_ROOMS_PER_OWNER {
+            let id = format!("room-{index}");
+            rooms.insert(id.clone(), room(&id, "peer-a"));
+        }
+
+        assert!(room_create_admission(&rooms, &room("overflow", "peer-a")).is_err());
+    }
+
+    #[test]
+    fn global_room_limit_rejects_additional_unique_owner() {
+        let mut rooms = HashMap::new();
+        for index in 0..MAX_ROOMS_TOTAL {
+            let id = format!("room-{index}");
+            let owner = format!("peer-{index}");
+            rooms.insert(id.clone(), room(&id, &owner));
+        }
+
+        assert!(room_create_admission(&rooms, &room("overflow", "new-peer")).is_err());
     }
 }
 

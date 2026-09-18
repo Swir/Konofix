@@ -40,6 +40,15 @@ jobs:
           lines = block.splitlines()
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
           exec(compile(script, 'staged-session-reseal-patch.py', 'exec'), {'__name__': '__main__'})
+
+          editor = Path('scripts/set-network-test-result.ps1')
+          editor_text = editor.read_text(encoding='utf-8')
+          old_editor = '$newManifestItem = Get-Item -LiteralPath $manifestTemp\n'
+          new_editor = '$newManifestItem = Get-Item -LiteralPath $manifestTemp -Force\n'
+          if editor_text.count(old_editor) != 1:
+              raise SystemExit(f'editor hidden-file anchor drifted: {editor_text.count(old_editor)}')
+          editor.write_text(editor_text.replace(old_editor, new_editor, 1), encoding='utf-8')
+
           Path('.github/workflows/hourly-reseal-rescue.yml').unlink()
           hidden = Path('.github/workflows/hourly-hidden-temp-fix.yml')
           if hidden.exists():
@@ -71,6 +80,7 @@ jobs:
           grep -q 'sessionInventoryEntry.sha256' scripts/set-network-test-result.ps1
           grep -q 'Authorized evidence edit did not reseal manifest SHA-256' scripts/test-network-test-session.ps1
           grep -q 'Get-Item -LiteralPath $path -Force' scripts/validate-network-test-report.ps1
+          grep -q 'Get-Item -LiteralPath $manifestTemp -Force' scripts/set-network-test-result.ps1
 
       - name: Commit corrected integration
         env:

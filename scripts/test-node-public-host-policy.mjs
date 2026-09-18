@@ -15,6 +15,12 @@ function mutateOnce(input, pattern, replacement, label) {
   return mutated;
 }
 
+function mutateAll(input, pattern, replacement, label) {
+  const mutated = input.replaceAll(pattern, replacement);
+  assert.notEqual(mutated, input, `Adversarial mutation did not apply: ${label}`);
+  return mutated;
+}
+
 function expectFailure(rust, windows, linux, pattern) {
   const errors = checkNodePublicHostPolicySource(rust, windows, linux);
   assert.ok(errors.some((error) => pattern.test(error)), `Expected ${pattern} failure, got: ${errors.join(' | ')}`);
@@ -30,7 +36,7 @@ expectFailure(
 );
 
 expectFailure(
-  mutateOnce(rustSource, '"100.64.0.1"', '"8.8.4.4"', 'CGNAT regression fixture'),
+  mutateAll(rustSource, '"100.64.0.1"', '"8.8.4.4"', 'CGNAT regression fixture'),
   windowsSource,
   linuxSource,
   /100\.64\.0\.1/,

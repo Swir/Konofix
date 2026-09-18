@@ -10,6 +10,8 @@
 
 The active milestone currently has 54 of 59 tasks complete. The remaining five tasks require real public-network evidence and fixes discovered during those tests; CI alone cannot credit them.
 
+- Distributed nickname trust hardening now treats unsigned Kademlia nickname leases as bounded, non-authoritative hints; only source-authenticated GossipSub claims can enforce a nickname conflict. This security fix adds no Real Internet Test credit.
+
 ## 0.1.0 — Foundation ✅
 - Tauri + Rust + libp2p
 - modern desktop GUI

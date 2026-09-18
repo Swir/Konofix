@@ -141,6 +141,7 @@ blocked_v4 = tuple(ipaddress.ip_network(value) for value in (
 public_v6 = ipaddress.ip_network("2000::/3")
 blocked_v6 = tuple(ipaddress.ip_network(value) for value in (
     "2001:2::/48", "2001:db8::/32", "2001:10::/28", "2001:20::/28",
+    "3fff::/20",
 ))
 
 def is_public_evidence_address(ip: ipaddress._BaseAddress) -> bool:

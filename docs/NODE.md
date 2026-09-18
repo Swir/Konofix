@@ -14,6 +14,7 @@
 - explicit identity-file location for service/VPS deployments
 - fail-closed identity loading: an unreadable or corrupted existing key is never silently replaced
 - automatic generation of ready-to-use public multiaddresses
+- raw-binary fail-closed validation for non-global IPv4/IPv6 literals, with an explicit lab-only override
 - periodic operational status lines with uptime and connected-peer count
 - optional metadata-only JSON health snapshot for supervisors and monitoring
 - exact source-commit provenance embedded into Node health snapshots
@@ -92,6 +93,8 @@ The raw binary remains available for manual operation:
 ```powershell
 src-tauri\target\release\konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP
 ```
+
+Raw `konofix-node --public-host` now rejects non-global/special-use IP literals before printing public bootstrap addresses. The boundary covers private, loopback, link-local, CGNAT, documentation (including RFC 9637 `3fff::/20`), benchmarking, multicast/reserved and reviewed IPv6 special-use ranges. `--allow-private-address` is an explicit controlled-lab override only; its output is labelled **LAB ONLY / NOT VALID PUBLIC-NODE EVIDENCE**. DNS names remain supported, but raw syntax acceptance alone is not reachability evidence; use the deployment/readiness tooling for promotion evidence.
 
 A public DNS name is also supported:
 

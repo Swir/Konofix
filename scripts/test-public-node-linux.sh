@@ -150,6 +150,8 @@ expect_reject 'ORCHIDv1 IPv6 without lab override' \
   --public-host 2001:10::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3f --install-dir /usr/local/lib/k3f --print-unit
 expect_reject 'ORCHIDv2 IPv6 without lab override' \
   --public-host 2001:20::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3g --install-dir /usr/local/lib/k3g --print-unit
+expect_reject 'RFC 9637 documentation IPv6 without lab override' \
+  --public-host 3fff::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3g2 --install-dir /usr/local/lib/k3g2 --print-unit
 expect_reject 'ULA IPv6 without lab override' \
   --public-host fd00::1 --binary "$FAKE_NODE" --state-dir /var/lib/k3h --install-dir /usr/local/lib/k3h --print-unit
 expect_reject 'reserved DNS suffix' \

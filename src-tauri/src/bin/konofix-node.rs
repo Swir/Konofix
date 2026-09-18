@@ -312,7 +312,9 @@ fn print_help() {
     println!("  --port PORT              TCP and UDP/QUIC port (default: 45555)");
     println!("  --public-host HOST       Public IPv4, IPv6, or DNS name of this node");
     println!("  --public-ip IP           Alias for --public-host");
-    println!("  --allow-private-address  Permit non-global IP literals for controlled lab testing only");
+    println!(
+        "  --allow-private-address  Permit non-global IP literals for controlled lab testing only"
+    );
     println!("  --status-interval SEC    Print an operational status line every N seconds (default: 60, minimum: 10)");
     println!("  --health-file PATH       Atomically update a metadata-only JSON health snapshot");
     println!("  --identity-file PATH     Explicit persistent Node identity file (recommended for public/community nodes)");
@@ -474,6 +476,7 @@ fn is_globally_routable_ipv6(ip: Ipv6Addr) -> bool {
         (Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32),
         (Ipv6Addr::new(0x2001, 0x0010, 0, 0, 0, 0, 0, 0), 28),
         (Ipv6Addr::new(0x2001, 0x0020, 0, 0, 0, 0, 0, 0), 28),
+        (Ipv6Addr::new(0x3fff, 0, 0, 0, 0, 0, 0, 0), 20),
     ];
     !blocked
         .into_iter()
@@ -844,7 +847,9 @@ mod tests {
     #[test]
     fn public_host_ipv4_policy_covers_special_use_ranges() {
         for allowed in ["1.1.1.1", "8.8.8.8"] {
-            let ip = allowed.parse::<IpAddr>().expect("public IPv4 fixture should parse");
+            let ip = allowed
+                .parse::<IpAddr>()
+                .expect("public IPv4 fixture should parse");
             assert!(is_globally_routable_ip(ip), "{allowed} should be accepted");
         }
 
@@ -879,7 +884,9 @@ mod tests {
     #[test]
     fn public_host_ipv6_policy_covers_special_use_ranges() {
         for allowed in ["2606:4700:4700::1111", "2001:4860:4860::8888"] {
-            let ip = allowed.parse::<IpAddr>().expect("public IPv6 fixture should parse");
+            let ip = allowed
+                .parse::<IpAddr>()
+                .expect("public IPv6 fixture should parse");
             assert!(is_globally_routable_ip(ip), "{allowed} should be accepted");
         }
 
@@ -892,6 +899,7 @@ mod tests {
             "2001:db8::1",
             "2001:10::1",
             "2001:20::1",
+            "3fff::1",
             "fc00::1",
             "fd00::1",
             "fe80::1",

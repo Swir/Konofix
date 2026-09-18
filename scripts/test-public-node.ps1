@@ -58,6 +58,7 @@ foreach ($case in @(
   @('benchmark IPv6 rejection', '2001:2::1'),
   @('ORCHIDv1 IPv6 rejection', '2001:10::1'),
   @('ORCHIDv2 IPv6 rejection', '2001:20::1'),
+  @('RFC 9637 documentation IPv6 rejection', '3fff::1'),
   @('ULA IPv6 rejection', 'fd00::1')
 )) {
   $label = [string]$case[0]

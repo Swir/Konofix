@@ -89,7 +89,8 @@ function Test-GloballyRoutableIp([System.Net.IPAddress]$Address) {
     @('2001:2::', 48),
     @('2001:db8::', 32),
     @('2001:10::', 28),
-    @('2001:20::', 28)
+    @('2001:20::', 28),
+    @('3fff::', 20)
   )) {
     if (Test-IpInCidr -Address $Address -Network ([string]$blocked[0]) -PrefixLength ([int]$blocked[1])) {
       return $false

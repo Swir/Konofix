@@ -31,6 +31,7 @@ const IPV6_POLICY_MARKERS = [
   'Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32',
   'Ipv6Addr::new(0x2001, 0x0010, 0, 0, 0, 0, 0, 0), 28',
   'Ipv6Addr::new(0x2001, 0x0020, 0, 0, 0, 0, 0, 0), 28',
+  'Ipv6Addr::new(0x3fff, 0, 0, 0, 0, 0, 0, 0), 20',
 ];
 
 const REQUIRED_RUST_TESTS = [
@@ -95,6 +96,8 @@ export function checkNodePublicHostPolicy({ nodeSource, windowsLauncher, linuxIn
   }
 
   if (!windowsLauncher.includes("if ($AllowPrivateAddress) { $nodeArgs += '--allow-private-address' }")) {
+    if (!windowsLauncher.includes("@('3fff::', 20)")) errors.push('Windows deployment policy must reject RFC 9637 documentation prefix 3fff::/20.');
+    if (!linuxInstaller.includes('\"3fff::/20\"')) errors.push('Linux deployment policy must reject RFC 9637 documentation prefix 3fff::/20.');
     errors.push('Windows public-node launcher must forward the lab-only override to the raw Node binary.');
   }
   if (!linuxInstaller.includes('NODE_LAB_FLAG=""') ||

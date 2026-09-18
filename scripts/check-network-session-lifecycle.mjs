@@ -57,12 +57,15 @@ for (const [needle, message] of [
   ['state.transfers.clear();', 'session reset must clear stale transfer state.'],
   ['state.status = { ...EMPTY_STATUS };', 'session reset must restore offline network status.'],
   ['resetSessionView();', 'explicit frontend disconnect must share the canonical reset path.'],
-  ["await listen<string>('network-error', async event => {", 'network-error listener must own terminal recovery.'],
-  ["try { await invoke('disconnect_network'); } catch {}", 'terminal frontend recovery must make backend disconnect idempotently converge.'],
-  ['resetSessionView(message);', 'terminal network error must return the UI to login with the error surfaced.'],
 ]) {
   requireText(ui, needle, message);
 }
+
+requireText(
+  ui,
+  "await listen<string>('network-error', async event => {\n    if (!state.connected) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    resetSessionView(message);\n  });",
+  'terminal network-error recovery must idempotently disconnect the backend and return the UI to login with the error surfaced.',
+);
 
 if (!process.exitCode) {
   console.log('Network-session lifecycle policy: atomic start, channel-owned task cleanup, idempotent disconnect and terminal UI reset are enforced.');

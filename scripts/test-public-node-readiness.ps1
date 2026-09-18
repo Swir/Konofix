@@ -63,11 +63,18 @@ try {
         throw 'Readiness result must prove the public-host policy gate passed.'
     }
     if ([int]$positive.schema -ne 2) {
-        throw 'Readiness result schema must be 2 after adding public-host evidence.'
+        throw 'Readiness result schema must remain 2 for the additive DNS-binding evidence fields.'
     }
     $resolved = @($positive.resolved_addresses)
     if ($resolved.Count -ne 1 -or [string]$resolved[0] -cne '8.8.8.8') {
         throw 'Literal public endpoint should be preserved as resolved public evidence.'
+    }
+    $probeTargets = @($positive.tcp_probe_targets)
+    if ($probeTargets.Count -ne 1 -or [string]$probeTargets[0] -cne '8.8.8.8') {
+        throw 'TCP probe targets must be exactly the validated public address snapshot.'
+    }
+    if ($positive.tcp_reachable_address) {
+        throw 'Skipped TCP reachability must not claim a reachable address.'
     }
     if (-not $positive.quic_multiaddr_validated -or $positive.quic_handshake_proven) {
         throw 'Readiness result must validate the QUIC address without claiming a handshake it did not perform.'
@@ -101,6 +108,20 @@ try {
         & $validator -TcpBootstrap "/ip4/127.0.0.1/tcp/45555/p2p/$peer" -QuicBootstrap "/ip4/127.0.0.1/udp/45555/quic-v1/p2p/$peer" -HealthPath $healthPath -SkipTcpReachability -AsJson | Out-Null
     }
 
+    $validatorSource = Get-Content -LiteralPath $validator -Raw
+    if ($validatorSource -notmatch 'ConnectAsync\(\$targetAddress, \$PortValue\)') {
+        throw 'Readiness TCP probe must connect to a prevalidated IPAddress target.'
+    }
+    if ($validatorSource -match 'ConnectAsync\(\$HostName') {
+        throw 'Readiness TCP probe must not re-resolve the hostname after public-address validation.'
+    }
+    if ($validatorSource -notmatch 'Parse-Bootstrap -Address \$TcpBootstrap -ResolveDns \$true') {
+        throw 'TCP bootstrap must own the single DNS-resolution snapshot.'
+    }
+    if ($validatorSource -notmatch 'Parse-Bootstrap -Address \$QuicBootstrap -ResolveDns \$false') {
+        throw 'QUIC structural parsing must reuse the paired TCP DNS snapshot instead of resolving again.'
+    }
+
     $health.status = 'stopped'
     $health.timestamp_unix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $health | ConvertTo-Json | Set-Content -LiteralPath $healthPath -Encoding utf8
@@ -115,7 +136,7 @@ try {
         & $validator -TcpBootstrap $tcp -QuicBootstrap $quic -HealthPath $healthPath -ExpectedSourceCommit 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -SkipTcpReachability -AsJson | Out-Null
     }
 
-    Write-Host 'OK - public Node readiness validator positive and adversarial self-tests passed.' -ForegroundColor Green
+    Write-Host 'OK - public Node readiness validator positive/adversarial self-tests passed, including validated-address TCP probe binding.' -ForegroundColor Green
 } finally {
     if (Test-Path -LiteralPath $tempRoot) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -234,7 +234,10 @@ mod tests {
 
     #[test]
     fn ordinary_safe_filename_is_not_changed_by_component_bound() {
-        assert_eq!(bounded_safe_filename("report-final.txt"), "report-final.txt");
+        assert_eq!(
+            bounded_safe_filename("report-final.txt"),
+            "report-final.txt"
+        );
     }
 
     #[test]

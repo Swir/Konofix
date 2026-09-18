@@ -81,6 +81,13 @@ const cases = [
     expected: 'disconnect_network must atomically take',
   },
   {
+    name: 'frontend permits overlapping local connect attempts',
+    target: 'ui',
+    source: 'if (connectPending) return;',
+    replacement: '/* duplicate local connect allowed */',
+    expected: 'reject overlapping local connect attempts',
+  },
+  {
     name: 'frontend terminal handler ignores fatal startup errors',
     target: 'ui',
     source: 'if (!state.connected && !connectPending) return;',
@@ -93,6 +100,13 @@ const cases = [
     source: 'if (revision !== sessionRevision) return;\n    connectPending = false;\n    state.nick = result.nick;',
     replacement: 'connectPending = false;\n    state.nick = result.nick;',
     expected: 'stale successful start result',
+  },
+  {
+    name: 'stale rejected startup can overwrite reset login',
+    target: 'ui',
+    source: 'catch (e) {\n    if (revision !== sessionRevision) return;\n    connectPending = false;',
+    replacement: 'catch (e) {\n    connectPending = false;',
+    expected: 'stale rejected start result',
   },
   {
     name: 'session reset fails to invalidate in-flight startup',

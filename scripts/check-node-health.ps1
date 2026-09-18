@@ -83,7 +83,9 @@ function Read-BoundedSnapshotText {
         [Parameter(Mandatory = $true)][int64]$MaxBytes
     )
 
-    $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+    # Permit readers and atomic replacement/delete, but deny in-place writers while
+    # this exact snapshot instance is being bounded, read and validated.
+    $share = [System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete
     try {
         $stream = [System.IO.File]::Open(
             $SnapshotPath,

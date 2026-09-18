@@ -18,10 +18,12 @@ Startup/ready-handshake failures use the same channel-ownership check. They may 
 
 The frontend uses one `resetSessionView` path for both explicit disconnect and terminal network-task failure. Terminal recovery closes stale modals, marks the client disconnected, clears the local peer identity and cached UI peer/room/message/transfer state, restores the offline network status, and returns to the login view while preserving the terminal error text for the user.
 
-The terminal `network-error` listener also invokes `disconnect_network` as an idempotent convergence step before resetting the view. Nickname-conflict shutdown continues to use its existing explicit disconnect path.
+Connection startup is also treated as part of the owned lifecycle. A local `connectPending` flag prevents overlapping UI start attempts, while a monotonic `sessionRevision` identifies the currently valid asynchronous start attempt. `resetSessionView` advances that revision before rebuilding the login view, so a delayed successful or failed `start_network` promise from an older attempt cannot resurrect or overwrite a reset/newer session.
+
+The terminal `network-error` listener handles failures while either a session is connected or a start is still pending. It invokes `disconnect_network` as an idempotent convergence step before resetting the view. Nickname-conflict shutdown continues to use its existing explicit disconnect path.
 
 ## Regression policy
 
-Rust unit tests cover channel ownership, overlapping-start rejection followed by reconnect, and idempotent sender take. `scripts/check-network-session-lifecycle.mjs` is wired into the normal project audit together with adversarial mutation tests. The policy gate fails if channel ownership, atomic start, terminal-event ownership, idempotent disconnect, or frontend terminal reset behavior is removed.
+Rust unit tests cover channel ownership, overlapping-start rejection followed by reconnect, and idempotent sender take. `scripts/check-network-session-lifecycle.mjs` is wired into the normal project audit together with adversarial mutation tests. The policy gate fails if channel ownership, atomic start, startup-safe terminal recovery, stale async-start invalidation, terminal-event ownership, idempotent disconnect, or frontend terminal reset behavior is removed.
 
 This lifecycle hardening improves resilience only. It does **not** add Real Internet Test milestone credit; public cross-country/independent-network evidence remains authoritative for that milestone.

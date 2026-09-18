@@ -415,22 +415,20 @@ fn public_prefix(host: &str) -> String {
 
 fn is_public_evidence_ipv4(ip: Ipv4Addr) -> bool {
     let [a, b, c, _d] = ip.octets();
-    !(
-        a == 0
-            || a == 10
-            || (a == 100 && (64..=127).contains(&b))
-            || a == 127
-            || (a == 169 && b == 254)
-            || (a == 172 && (16..=31).contains(&b))
-            || (a == 192 && b == 0 && c == 0)
-            || (a == 192 && b == 0 && c == 2)
-            || (a == 192 && b == 88 && c == 99)
-            || (a == 192 && b == 168)
-            || (a == 198 && (b == 18 || b == 19))
-            || (a == 198 && b == 51 && c == 100)
-            || (a == 203 && b == 0 && c == 113)
-            || a >= 224
-    )
+    !(a == 0
+        || a == 10
+        || (a == 100 && (64..=127).contains(&b))
+        || a == 127
+        || (a == 169 && b == 254)
+        || (a == 172 && (16..=31).contains(&b))
+        || (a == 192 && b == 0 && c == 0)
+        || (a == 192 && b == 0 && c == 2)
+        || (a == 192 && b == 88 && c == 99)
+        || (a == 192 && b == 168)
+        || (a == 198 && (b == 18 || b == 19))
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
+        || a >= 224)
 }
 
 fn is_public_evidence_ipv6(ip: Ipv6Addr) -> bool {
@@ -494,9 +492,10 @@ fn is_public_looking_dns_name(host: &str) -> bool {
         "arpa",
         "internal",
     ];
-    if reserved_suffixes.iter().any(|suffix| {
-        normalized == *suffix || normalized.ends_with(&format!(".{suffix}"))
-    }) {
+    if reserved_suffixes
+        .iter()
+        .any(|suffix| normalized == *suffix || normalized.ends_with(&format!(".{suffix}")))
+    {
         return false;
     }
 
@@ -520,10 +519,7 @@ fn is_public_looking_dns_name(host: &str) -> bool {
 fn validate_public_host(host: &str, allow_private_address: bool) -> Result<bool, String> {
     match host.parse::<IpAddr>() {
         Ok(ip) if is_public_evidence_ip(ip) => Ok(false),
-        Ok(ip) if allow_private_address => {
-            let _ = ip;
-            Ok(true)
-        }
+        Ok(_) if allow_private_address => Ok(true),
         Ok(ip) => Err(format!(
             "--public-host address {ip} is not globally routable under the Konofix public-node evidence policy. Use --allow-private-address only for controlled lab testing; lab addresses are not valid public-node evidence."
         )),
@@ -881,9 +877,8 @@ mod tests {
             "2001:4860:4860::8888",
             "2606:4700:4700::1111",
         ] {
-            assert_eq!(
-                validate_public_host(host, false).expect("global address should pass"),
-                false,
+            assert!(
+                !validate_public_host(host, false).expect("global address should pass"),
                 "global host should not be lab-only: {host}"
             );
         }

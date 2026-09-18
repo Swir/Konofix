@@ -46,11 +46,18 @@ const cases = [
     expected: 'same_channel',
   },
   {
+    name: 'clean task exit cleanup becomes error-only',
+    target: 'rust',
+    source: 'let owned_session =\n            clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);\n        if let Err(err) = task_result {',
+    replacement: 'if let Err(err) = task_result {\n            let owned_session =\n                clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);',
+    expected: 'after every network task return',
+  },
+  {
     name: 'fatal task emits terminal error without owning active session',
     target: 'rust',
-    source: 'if clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false) {\n                let _ = app.emit("network-error", err);',
-    replacement: 'let _ = clear_network_sender_if_current(app_state.inner(), &task_tx);\n            if true {\n                let _ = app.emit("network-error", err);',
-    expected: 'only by the task',
+    source: 'if let Err(err) = task_result {\n            if owned_session {\n                let _ = app.emit("network-error", err);',
+    replacement: 'if let Err(err) = task_result {\n            if true {\n                let _ = app.emit("network-error", err);',
+    expected: 'owned fatal exit',
   },
   {
     name: 'start stops using atomic install helper',

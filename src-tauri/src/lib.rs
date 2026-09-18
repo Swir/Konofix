@@ -706,11 +706,13 @@ async fn start_network(
     let nick_for_task = nick.clone();
     let bootstrap_list = bootstrap_sources(bootstraps.unwrap_or_default());
     tauri::async_runtime::spawn(async move {
-        if let Err(err) =
-            network_task(nick_for_task, bootstrap_list, app.clone(), rx, ready_tx).await
-        {
-            let app_state = app.state::<AppState>();
-            if clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false) {
+        let task_result =
+            network_task(nick_for_task, bootstrap_list, app.clone(), rx, ready_tx).await;
+        let app_state = app.state::<AppState>();
+        let owned_session =
+            clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);
+        if let Err(err) = task_result {
+            if owned_session {
                 let _ = app.emit("network-error", err);
             }
         }
@@ -2131,6 +2133,28 @@ mod network_session_state_tests {
             .expect("state lock")
             .as_ref()
             .expect("second session should be active")
+            .clone();
+        assert!(stored.same_channel(&second_tx));
+    }
+
+    #[test]
+    fn owned_clean_exit_cleanup_allows_reconnect() {
+        let state = AppState::default();
+        let (first_tx, _first_rx) = mpsc::channel(1);
+        let (second_tx, _second_rx) = mpsc::channel(1);
+
+        install_network_sender(&state, first_tx.clone()).expect("first session should install");
+        assert!(clear_network_sender_if_current(&state, &first_tx)
+            .expect("clean owner exit should release its session"));
+        install_network_sender(&state, second_tx.clone())
+            .expect("clean exit should permit immediate reconnect");
+
+        let stored = state
+            .tx
+            .lock()
+            .expect("state lock")
+            .as_ref()
+            .expect("replacement session should be active")
             .clone();
         assert!(stored.same_channel(&second_tx));
     }

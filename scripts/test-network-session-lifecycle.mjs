@@ -58,11 +58,18 @@ const cases = [
     expected: 'start_network must use',
   },
   {
-    name: 'startup failure clears state blindly',
+    name: 'cancelled startup handshake clears state blindly',
     target: 'rust',
-    source: 'let _ = clear_network_sender_if_current(state.inner(), &startup_tx);',
-    replacement: 'let _ = state.tx.lock().map(|mut guard| guard.take());',
-    expected: 'failed ready handshake',
+    source: 'Err(_) => {\n            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);\n            return Err("Nie udało się uruchomić warstwy P2P.".to_string());\n        }',
+    replacement: 'Err(_) => {\n            let _ = state.tx.lock().map(|mut guard| guard.take());\n            return Err("Nie udało się uruchomić warstwy P2P.".to_string());\n        }',
+    expected: 'cancelled ready handshake',
+  },
+  {
+    name: 'explicit startup failure clears state blindly',
+    target: 'rust',
+    source: 'Err(err) => {\n            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);\n            Err(err)\n        }',
+    replacement: 'Err(err) => {\n            let _ = state.tx.lock().map(|mut guard| guard.take());\n            Err(err)\n        }',
+    expected: 'failed ready result',
   },
   {
     name: 'disconnect bypasses idempotent take helper',

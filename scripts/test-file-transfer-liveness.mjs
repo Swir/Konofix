@@ -107,6 +107,30 @@ const cases = [
     expected: 'only accepted transfers owned',
   },
   {
+    name: 'outgoing cleanup crosses peer ownership boundary',
+    source: '.filter(|(_, candidate)| candidate.peer == remote)',
+    replacement: '.filter(|(_, candidate)| candidate.peer != remote)',
+    expected: 'only outgoing transfers owned',
+  },
+  {
+    name: 'outgoing request metadata pruning removed',
+    source: 'outbound_requests.retain(|_, meta| !outgoing_from_peer.contains(&meta.transfer_id));',
+    replacement: '/* outgoing request metadata pruning accidentally removed */',
+    expected: 'prune only request metadata',
+  },
+  {
+    name: 'disconnect cleanup globally clears request metadata',
+    source: 'outbound_requests.retain(|_, meta| !outgoing_from_peer.contains(&meta.transfer_id));',
+    replacement: 'outbound_requests.clear();',
+    expected: 'prune only request metadata',
+  },
+  {
+    name: 'outgoing disconnect terminal failure becomes ambiguous',
+    source: '"Peer disconnected before the outgoing file transfer completed."',
+    replacement: '"Peer disconnected."',
+    expected: 'deterministic failed outgoing-transfer state',
+  },
+  {
     name: 'periodic accepted-transfer expiry disabled',
     source: 'incoming_transfer_is_expired(transfer.last_activity, now)',
     replacement: 'false /* expiry accidentally disabled */',

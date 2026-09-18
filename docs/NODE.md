@@ -94,7 +94,7 @@ The raw binary remains available for manual operation:
 src-tauri\target\release\konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP
 ```
 
-The raw binary now fails closed when `--public-host` is a non-global IP literal, before identity creation, listeners, or shareable-address output. The literal policy mirrors the deployment preflight for private, loopback, link-local, CGNAT, documentation, benchmarking, multicast/reserved and corresponding IPv6 special-use ranges. `--allow-private-address` is available only for controlled lab testing; when used, the Node labels the generated addresses **LAB-ONLY** and explicitly marks them invalid for public-node/cross-country promotion evidence. DNS names remain accepted by the binary because syntax alone does not prove reachability; use the deployment/readiness tooling when DNS resolution itself must be verified.
+The raw binary now fails closed when `--public-host` is a non-global IP literal, before identity creation, listeners, or shareable-address output. IPv4-mapped IPv6 literals are normalized to their IPv4 form before bootstrap multiaddresses are generated. The literal policy mirrors the deployment preflight for private, loopback, link-local, CGNAT, documentation, benchmarking, multicast/reserved and corresponding IPv6 special-use ranges. `--allow-private-address` is available only for controlled lab testing; when used, the Node labels the generated addresses **LAB-ONLY** and explicitly marks them invalid for public-node/cross-country promotion evidence. DNS names remain accepted by the binary because syntax alone does not prove reachability; use the deployment/readiness tooling when DNS resolution itself must be verified.
 
 A public DNS name is also supported:
 

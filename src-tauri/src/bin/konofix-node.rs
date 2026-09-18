@@ -349,9 +349,14 @@ where
             }
             "--public-host" | "--public-ip" => {
                 let raw = args.next().ok_or("Missing public host value")?;
-                let host = raw.trim().trim_matches(['[', ']']).to_string();
+                let mut host = raw.trim().trim_matches(['[', ']']).to_string();
                 if host.is_empty() || host.contains('/') || host.chars().any(char::is_whitespace) {
                     return Err(format!("Invalid public host: {raw}"));
+                }
+                if let Ok(IpAddr::V6(ip)) = host.parse::<IpAddr>() {
+                    if let Some(mapped) = ip.to_ipv4_mapped() {
+                        host = mapped.to_string();
+                    }
                 }
                 public_host = Some(host);
             }
@@ -835,6 +840,17 @@ mod tests {
         .expect("arguments should parse")
         .expect("help was not requested");
         assert!(args.allow_private_address);
+    }
+
+    #[test]
+    fn normalizes_ipv4_mapped_public_host_before_address_generation() {
+        let args = parse_args_from(vec![
+            "--public-host".to_string(),
+            "[::ffff:8.8.8.8]".to_string(),
+        ])
+        .expect("arguments should parse")
+        .expect("help was not requested");
+        assert_eq!(args.public_host.as_deref(), Some("8.8.8.8"));
     }
 
     #[test]

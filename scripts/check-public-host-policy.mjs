@@ -18,6 +18,7 @@ requireText("198.18.0.0/15 benchmarking", "IPv4 benchmarking rejection range");
 requireText("2001:db8::/32 documentation", "IPv6 documentation rejection range");
 requireText("NOT VALID FOR PUBLIC-NODE OR CROSS-COUNTRY PROMOTION", "lab-only output label");
 requireText("non-global IP literal", "fail-closed literal error");
+requireText("host = mapped.to_string()", "IPv4-mapped IPv6 normalization before multiaddr generation");
 
 if (source.includes("WARNING: --public-host resolves to a non-public IP literal")) {
   throw new Error("public-host policy check failed: warning-only legacy behavior returned");

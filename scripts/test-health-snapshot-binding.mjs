@@ -65,7 +65,17 @@ const cases = [
     expected: 'health snapshot validation must deny in-place writers',
   },
   {
-    name: 'health checker accepts a non-object JSON root',
+    name: 'health checker loses pre-parse object-root discrimination',
+    health: mutateOnce(
+      healthSource,
+      "if (-not $snapshotText.TrimStart().StartsWith('{', [System.StringComparison]::Ordinal)) { throw 'Health snapshot root must be a JSON object.' }\n",
+      '',
+    ),
+    readiness: readinessSource,
+    expected: 'required single-snapshot health guard is missing',
+  },
+  {
+    name: 'health checker loses post-parse object-root validation',
     health: mutateOnce(
       healthSource,
       "if ($health -isnot [pscustomobject]) { throw 'Health snapshot root must be a JSON object.' }\n",

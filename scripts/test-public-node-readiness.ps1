@@ -79,6 +79,12 @@ try {
     if (-not $positive.quic_multiaddr_validated -or $positive.quic_handshake_proven) {
         throw 'Readiness result must validate the QUIC address without claiming a handshake it did not perform.'
     }
+    if ([int64]$positive.health_snapshot_bytes -le 0) {
+        throw 'Readiness result must expose the byte size of the exact validated health snapshot.'
+    }
+    if ($null -eq $positive.health_snapshot_age_seconds) {
+        throw 'Readiness result must expose the age of the exact validated health snapshot.'
+    }
 
     Expect-Failure -Contains 'same Konofix Node Peer ID' -Action {
         & $validator -TcpBootstrap $tcp -QuicBootstrap "/ip4/8.8.8.8/udp/45555/quic-v1/p2p/$otherPeer" -HealthPath $healthPath -SkipTcpReachability -AsJson | Out-Null
@@ -136,7 +142,7 @@ try {
         & $validator -TcpBootstrap $tcp -QuicBootstrap $quic -HealthPath $healthPath -ExpectedSourceCommit 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -SkipTcpReachability -AsJson | Out-Null
     }
 
-    Write-Host 'OK - public Node readiness validator positive/adversarial self-tests passed, including validated-address TCP probe binding.' -ForegroundColor Green
+    Write-Host 'OK - public Node readiness validator positive/adversarial self-tests passed, including validated-address TCP probe and single-snapshot health evidence binding.' -ForegroundColor Green
 } finally {
     if (Test-Path -LiteralPath $tempRoot) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

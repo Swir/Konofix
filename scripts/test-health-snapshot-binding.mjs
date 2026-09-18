@@ -65,6 +65,16 @@ const cases = [
     expected: 'health snapshot validation must deny in-place writers',
   },
   {
+    name: 'health checker accepts a non-object JSON root',
+    health: mutateOnce(
+      healthSource,
+      "if ($health -isnot [pscustomobject]) { throw 'Health snapshot root must be a JSON object.' }\n",
+      '',
+    ),
+    readiness: readinessSource,
+    expected: 'required single-snapshot health guard is missing',
+  },
+  {
     name: 'readiness discards structured health output',
     health: healthSource,
     readiness: mutateOnce(

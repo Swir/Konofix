@@ -625,8 +625,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let port = args.port;
     let lab_only_public_host = match args.public_host.as_deref() {
-        Some(host) => validate_public_host(host, args.allow_private_address)
-            .map_err(std::io::Error::other)?,
+        Some(host) => {
+            validate_public_host(host, args.allow_private_address).map_err(std::io::Error::other)?
+        }
         None => false,
     };
     let identity_path = args
@@ -867,7 +868,10 @@ mod tests {
             "255.255.255.255",
         ] {
             let ip = raw.parse::<IpAddr>().expect("fixture must parse");
-            assert!(!is_globally_routable_ip(ip), "expected non-global IPv4: {raw}");
+            assert!(
+                !is_globally_routable_ip(ip),
+                "expected non-global IPv4: {raw}"
+            );
             let error = validate_public_host(raw, false)
                 .expect_err("non-global IPv4 must fail closed without lab override");
             assert!(error.contains("not a globally routable IP literal"));
@@ -903,7 +907,10 @@ mod tests {
             "ff02::1",
         ] {
             let ip = raw.parse::<IpAddr>().expect("fixture must parse");
-            assert!(!is_globally_routable_ip(ip), "expected non-global IPv6: {raw}");
+            assert!(
+                !is_globally_routable_ip(ip),
+                "expected non-global IPv6: {raw}"
+            );
             assert!(validate_public_host(raw, false).is_err());
             assert!(validate_public_host(raw, true).expect("lab override must be explicit"));
         }

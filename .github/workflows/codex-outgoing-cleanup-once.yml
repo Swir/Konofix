@@ -1,0 +1,94 @@
+name: One-shot outgoing disconnect cleanup patch
+
+on:
+  push:
+    branches:
+      - codex/outgoing-disconnect-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply scoped lib.rs patch
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src-tauri/src/lib.rs")
+          text = path.read_text(encoding="utf-8")
+          needle = '''                        let incoming_from_peer: Vec<String> = incoming
+                              .iter()
+                              .filter(|(_, transfer)| transfer.peer == remote)
+                              .map(|(id, _)| id.clone())
+                              .collect();
+                          for transfer_id in incoming_from_peer {
+                              if let Some(transfer) = incoming.remove(&transfer_id) {
+                                  let temp_path = transfer.temp_path.clone();
+                                  let _ = tokio::fs::remove_file(&temp_path).await;
+                                  emit_transfer(
+                                      &app,
+                                      &file_view_incoming(
+                                          &transfer_id,
+                                          &transfer,
+                                          "failed",
+                                          None,
+                                          Some("Peer disconnected before the file transfer completed.".into()),
+                                      ),
+                                  );
+                              }
+                          }
+          '''
+          replacement = needle + '''
+                          let outgoing_from_peer: Vec<String> = outgoing
+                              .iter()
+                              .filter(|(_, candidate)| candidate.peer == remote)
+                              .map(|(id, _)| id.clone())
+                              .collect();
+                          outbound_requests.retain(|_, meta| !outgoing_from_peer.contains(&meta.transfer_id));
+                          for transfer_id in outgoing_from_peer {
+                              if let Some(transfer) = outgoing.remove(&transfer_id) {
+                                  emit_transfer(
+                                      &app,
+                                      &file_view_outgoing(
+                                          &transfer_id,
+                                          &transfer,
+                                          "failed",
+                                          None,
+                                          Some("Peer disconnected before the outgoing file transfer completed.".into()),
+                                      ),
+                                  );
+                              }
+                          }
+          '''
+          count = text.count(needle)
+          if count != 1:
+              raise SystemExit(f"Expected exactly one incoming disconnect block, found {count}")
+          path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
+
+      - name: Format Rust
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check || cargo fmt --manifest-path src-tauri/Cargo.toml --all
+
+      - name: Verify file-transfer liveness policy
+        run: |
+          node scripts/test-file-transfer-liveness.mjs
+          node scripts/check-file-transfer-liveness.mjs
+
+      - name: Commit scoped implementation and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/codex-outgoing-cleanup-once.yml
+          git add src-tauri/src/lib.rs
+          git diff --cached --check
+          git commit -m "Reclaim outgoing transfers on final peer disconnect"
+          git push origin HEAD:codex/outgoing-disconnect-cleanup

@@ -1,0 +1,67 @@
+name: One-shot outgoing cleanup documentation sync
+
+on:
+  push:
+    branches:
+      - codex/outgoing-disconnect-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  sync-docs:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Synchronize changelog and roadmap without milestone credit
+        shell: python
+        run: |
+          from pathlib import Path
+
+          changelog = Path('CHANGELOG.md')
+          text = changelog.read_text(encoding='utf-8')
+          bullet = '- hardened outgoing file-transfer liveness on final peer disconnect: once `num_established == 0`, sender-side transfers owned by that Peer ID are reclaimed immediately, emit a deterministic failed terminal state, and prune only matching request/response metadata so unrelated transfers remain intact; adversarial policy coverage protects final-connection, peer-ownership and scoped-pruning invariants, and this local resilience hardening adds no Real Internet Test credit,\n'
+          if bullet not in text:
+              anchor = '## 0.4.2\n\n'
+              if text.count(anchor) != 1:
+                  raise SystemExit(f'Expected one 0.4.2 changelog anchor, found {text.count(anchor)}')
+              text = text.replace(anchor, anchor + bullet, 1)
+              changelog.write_text(text, encoding='utf-8')
+
+          roadmap = Path('ROADMAP.md')
+          text = roadmap.read_text(encoding='utf-8')
+          note = '- Outgoing file transfers now converge immediately when the final connection to their authenticated remote Peer ID closes: only that peer\'s sender-side transfer slots are reclaimed, matching outbound request metadata is pruned so late responses are ignored, and unrelated peer/request state remains untouched. Adversarial liveness coverage guards the final-connection and peer-ownership boundaries; this local resilience hardening does not add Real Internet Test credit and the milestone remains 54/59.\n'
+          if note not in text:
+              start_marker = '- Accepted incoming file transfers now have a 120-second inactivity lease'
+              start = text.find(start_marker)
+              if start < 0:
+                  raise SystemExit('Accepted incoming transfer roadmap hardening note not found.')
+              end = text.find('\n', start)
+              if end < 0:
+                  raise SystemExit('Roadmap hardening note line is unterminated.')
+              text = text[:end + 1] + note + text[end + 1:]
+              roadmap.write_text(text, encoding='utf-8')
+
+      - name: Verify liveness and progress accounting
+        run: |
+          node scripts/test-file-transfer-liveness.mjs
+          node scripts/check-file-transfer-liveness.mjs
+          node scripts/test-progress-svg.mjs
+          node scripts/progress-svg.mjs --check
+          grep -F "54 of 59 tasks — 91.5%." ROADMAP.md
+
+      - name: Commit synchronized documentation and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/codex-outgoing-docs-once.yml
+          git add CHANGELOG.md ROADMAP.md
+          git diff --cached --check
+          git commit -m "Document outgoing transfer disconnect hardening"
+          git push origin HEAD:codex/outgoing-disconnect-cleanup

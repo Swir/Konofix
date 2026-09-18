@@ -1,0 +1,72 @@
+name: Verify nickname hardening without format mutation
+
+on:
+  push:
+    branches: [ hardening/dht-nickname-hints-95 ]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: hardening/dht-nickname-hints-95
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Apply verified patcher without rewriting unrelated Rust formatting
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, textwrap
+
+          wf = Path('.github/workflows/automation-nickname-hardening-95-verified.yml').read_text(encoding='utf-8')
+          match = re.search(r"- name: Apply patch and strengthen source-policy verifier.*?python3 - <<'PY'\n(?P<body>.*?)\n          PY\n", wf, re.S)
+          if not match:
+              raise SystemExit('unable to extract verified nickname hardening patcher')
+          body = textwrap.dedent(match.group('body'))
+          exec(compile(body, '<verified-nickname-hardening-patcher>', 'exec'), {})
+          PY
+
+      - name: Verify exact unformatted source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/test-nickname-lease-trust.mjs
+          node scripts/check-nickname-lease-trust.mjs
+          npm ci
+          npm run audit
+          npm run build
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          git diff --check
+
+      - name: Commit verified patch and retire temporary workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/automation-nickname-hardening-95*.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Harden DHT nickname lease trust boundary"
+          git push origin HEAD:hardening/dht-nickname-hints-95

@@ -1,0 +1,69 @@
+name: Hourly session reseal rescue
+
+on:
+  push:
+    branches:
+      - automation/room-evidence-hardening-20260918
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Execute staged deterministic patch
+        shell: python
+        run: |
+          from pathlib import Path
+          source = Path('.github/workflows/hourly-reseal-fix.yml').read_text(encoding='utf-8')
+          marker = "      - name: Correct session inventory lifecycle\n        shell: python\n        run: |\n"
+          end_marker = "\n      - name: Install frontend dependencies"
+          if source.count(marker) != 1 or source.count(end_marker) != 1:
+              raise SystemExit('staged patch workflow markers drifted')
+          block = source.split(marker, 1)[1].split(end_marker, 1)[0]
+          lines = block.splitlines()
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
+          exec(compile(script, 'staged-session-reseal-patch.py', 'exec'), {'__name__': '__main__'})
+          Path('.github/workflows/hourly-reseal-rescue.yml').unlink()
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Project audit
+        run: npm run audit
+
+      - name: Report editor self-tests
+        shell: pwsh
+        run: ./scripts/test-network-report-editor.ps1
+
+      - name: Session lifecycle self-tests
+        shell: pwsh
+        run: ./scripts/test-network-test-session.ps1
+
+      - name: Rust format check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Diff hygiene
+        run: |
+          git diff --check
+          test ! -e .github/workflows/hourly-reseal-fix.yml
+          test ! -e .github/workflows/hourly-reseal-rescue.yml
+          grep -q 'sessionInventoryEntry.sha256' scripts/set-network-test-result.ps1
+          grep -q 'Authorized evidence edit did not reseal manifest SHA-256' scripts/test-network-test-session.ps1
+
+      - name: Commit corrected integration
+        env:
+          BRANCH: automation/room-evidence-hardening-20260918
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Reseal session manifest inventory after authorized edits'
+          git push origin HEAD:$BRANCH

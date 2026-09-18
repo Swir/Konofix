@@ -35,8 +35,18 @@ foreach ($requiredScript in @($internetTest, $healthCheck)) {
     }
 }
 
-function Parse-Bootstrap([string]$Address) {
-    $jsonText = (& $internetTest -Bootstrap $Address -ValidateOnly -AsJson -RequirePublicHost -RequireDnsResolution | Out-String).Trim()
+function Parse-Bootstrap([string]$Address, [bool]$ResolveDns) {
+    $arguments = @{
+        Bootstrap = $Address
+        ValidateOnly = $true
+        AsJson = $true
+        RequirePublicHost = $true
+    }
+    if ($ResolveDns) {
+        $arguments.RequireDnsResolution = $true
+    }
+
+    $jsonText = (& $internetTest @arguments | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($jsonText)) {
         throw "Bootstrap validation returned no structured result for: $Address"
     }
@@ -47,27 +57,52 @@ function Parse-Bootstrap([string]$Address) {
     }
 }
 
-function Test-TcpReachability([string]$HostName, [int]$PortValue, [int]$TimeoutMs) {
-    $client = [System.Net.Sockets.TcpClient]::new()
-    try {
-        try {
-            $task = $client.ConnectAsync($HostName, $PortValue)
-            if (-not $task.Wait($TimeoutMs)) {
-                throw "connection timed out after ${TimeoutMs}ms"
-            }
-            if (-not $client.Connected) {
-                throw 'socket did not reach the connected state'
-            }
-        } catch {
-            throw "Public Node TCP endpoint $HostName`:$PortValue is not reachable: $($_.Exception.GetBaseException().Message)"
-        }
-    } finally {
-        $client.Dispose()
+function Get-ValidatedTcpProbeTargets([object]$ParsedTcp) {
+    $targets = @($ParsedTcp.resolved_addresses | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+    if ($targets.Count -eq 0) {
+        throw 'TCP readiness has no validated public IP addresses to probe.'
     }
+
+    foreach ($target in $targets) {
+        $parsedAddress = $null
+        if (-not [System.Net.IPAddress]::TryParse($target, [ref]$parsedAddress)) {
+            throw "TCP readiness received a non-IP validated target: $target"
+        }
+    }
+    return @($targets)
 }
 
-$tcp = Parse-Bootstrap $TcpBootstrap
-$quic = Parse-Bootstrap $QuicBootstrap
+function Test-TcpReachability([string[]]$ValidatedAddresses, [int]$PortValue, [int]$TimeoutMs) {
+    $failures = [System.Collections.Generic.List[string]]::new()
+    foreach ($targetText in $ValidatedAddresses) {
+        $targetAddress = [System.Net.IPAddress]::Parse($targetText)
+        $client = [System.Net.Sockets.TcpClient]::new($targetAddress.AddressFamily)
+        try {
+            try {
+                $task = $client.ConnectAsync($targetAddress, $PortValue)
+                if (-not $task.Wait($TimeoutMs)) {
+                    throw "connection timed out after ${TimeoutMs}ms"
+                }
+                if (-not $client.Connected) {
+                    throw 'socket did not reach the connected state'
+                }
+                return $targetText
+            } catch {
+                $failures.Add("$targetText=$($_.Exception.GetBaseException().Message)")
+            }
+        } finally {
+            $client.Dispose()
+        }
+    }
+
+    throw "Public Node TCP endpoint validated address set on port $PortValue is not reachable: $($failures -join '; ')"
+}
+
+# Resolve the paired public host once. QUIC parsing still enforces the same public-host
+# grammar/policy, but it deliberately reuses the TCP snapshot instead of performing a
+# second DNS lookup that could observe a different answer set.
+$tcp = Parse-Bootstrap -Address $TcpBootstrap -ResolveDns $true
+$quic = Parse-Bootstrap -Address $QuicBootstrap -ResolveDns $false
 
 if (-not $tcp.public_host_validated -or -not $quic.public_host_validated) {
     throw 'Public Node readiness requires globally routable bootstrap endpoints.'
@@ -88,6 +123,11 @@ if ([int]$tcp.port -ne [int]$quic.port) {
 }
 if ([string]$tcp.peer_id -cne [string]$quic.peer_id) {
     throw "TCP and QUIC bootstrap addresses must use the same Konofix Node Peer ID. TCP=$($tcp.peer_id) QUIC=$($quic.peer_id)"
+}
+
+$tcpProbeTargets = @(Get-ValidatedTcpProbeTargets -ParsedTcp $tcp)
+if ($tcp.host_protocol -in @('dns', 'dns4', 'dns6') -and -not [bool]$tcp.dns_resolution_checked) {
+    throw 'DNS public Node readiness requires one validated DNS-resolution snapshot.'
 }
 
 $healthArgs = @{
@@ -112,14 +152,10 @@ try {
 }
 
 $tcpReachable = $false
+$tcpReachableAddress = $null
 if (-not $SkipTcpReachability) {
-    Test-TcpReachability -HostName ([string]$tcp.host) -PortValue ([int]$tcp.port) -TimeoutMs $ConnectTimeoutMs
+    $tcpReachableAddress = Test-TcpReachability -ValidatedAddresses $tcpProbeTargets -PortValue ([int]$tcp.port) -TimeoutMs $ConnectTimeoutMs
     $tcpReachable = $true
-}
-
-$resolvedAddresses = @($tcp.resolved_addresses)
-if ($resolvedAddresses.Count -eq 0 -and $tcp.host_protocol -in @('ip4', 'ip6')) {
-    $resolvedAddresses = @([string]$tcp.host)
 }
 
 $result = [ordered]@{
@@ -130,12 +166,14 @@ $result = [ordered]@{
     public_host = [string]$tcp.host
     public_host_validated = $true
     dns_resolution_checked = [bool]$tcp.dns_resolution_checked
-    resolved_addresses = @($resolvedAddresses)
+    resolved_addresses = @($tcpProbeTargets)
     port = [int]$tcp.port
     tcp_bootstrap = [string]$tcp.address
     quic_bootstrap = [string]$quic.address
     tcp_reachability_checked = (-not $SkipTcpReachability)
     tcp_reachable = $tcpReachable
+    tcp_probe_targets = @($tcpProbeTargets)
+    tcp_reachable_address = $tcpReachableAddress
     quic_multiaddr_validated = $true
     quic_handshake_proven = $false
     node_version = [string]$health.version
@@ -160,14 +198,15 @@ Write-Host "Connected peers:  $($result.connected_peers)"
 Write-Host "TCP multiaddr:    $($result.tcp_bootstrap)"
 Write-Host "QUIC multiaddr:   $($result.quic_bootstrap)"
 if ($result.resolved_addresses.Count -gt 0) {
-    Write-Host "Public address(es): $($result.resolved_addresses -join ', ')"
+    Write-Host "Validated public address(es): $($result.resolved_addresses -join ', ')"
 }
 if ($SkipTcpReachability) {
     Write-Host 'TCP reachability: skipped by request' -ForegroundColor DarkYellow
 } else {
-    Write-Host 'TCP reachability: reachable from this tester' -ForegroundColor Green
+    Write-Host "TCP reachability: reachable at validated address $($result.tcp_reachable_address)" -ForegroundColor Green
 }
 Write-Host 'Public-host gate: globally routable endpoint policy passed.' -ForegroundColor Green
+Write-Host 'DNS binding:      TCP probe targets are the exact validated address snapshot; hostname re-resolution is not used.' -ForegroundColor Green
 Write-Host 'QUIC structure:   valid and identity-aligned' -ForegroundColor Green
 Write-Host 'QUIC handshake:   not claimed by this PowerShell probe; prove it with the Konofix/libp2p real-network scenario.' -ForegroundColor DarkYellow
 Write-Host 'READY: public-host policy, identity, health, TCP/QUIC endpoint pairing and requested local readiness checks passed.' -ForegroundColor Green

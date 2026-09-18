@@ -8,7 +8,7 @@ This guide covers the headless **Konofix Node** on Linux x86_64. The desktop cha
 
 The isolated manifest is guarded against dependency drift: CI compares its package version, Rust version and shared dependency tables with `src-tauri/Cargo.toml`, copies the committed `src-tauri/Cargo.lock`, and then requires `cargo metadata --locked`, tests and the release build to succeed. A dependency gate separately fails if the Linux graph pulls in `tauri`, `tauri-build`, or `rfd`.
 
-The CI runtime smoke test does more than call `--help`. It launches the release binary, waits for a schema-v2 health snapshot, verifies version and exact embedded source commit, stops the process cleanly, restarts it with the same identity file, and requires the Peer ID to remain unchanged. The systemd installer has its own mutation-free self-tests as a separate gate.
+The CI runtime smoke test does more than call `--help`. It launches the release binary with an explicit lab-only override for its loopback test host, waits for a schema-v2 health snapshot, verifies version and exact embedded source commit, stops the process cleanly, restarts it with the same identity file, and requires the Peer ID to remain unchanged. The systemd installer has its own mutation-free self-tests as a separate gate.
 
 Pull requests stage and verify the same Linux archive shape before merge instead of postponing bundle-integrity checks until a `main` push. `NODE_BUILD_INFO.json` records the exact path, byte size and SHA-256 of every operational file in the archive in addition to source commit/version. The fail-closed verifier checks the outer checksum, inspects TAR members before extraction, rejects unsafe, duplicate, non-regular, missing or unexpected members, binds all recorded sizes and hashes to the exact build, checks executable modes and extracts only after the archive has passed verification. Positive and adversarial self-tests cover tampered content, unexpected inventory, path traversal and wrong commit/version. Only artifact upload remains push-only.
 
@@ -32,6 +32,8 @@ A public Node needs a globally reachable IP address or DNS name and the same por
 The installer never modifies a firewall. Allow the selected TCP and UDP port in the VPS/provider firewall and, when present, the host firewall. Do not claim QUIC success merely because UDP is allowed; the real QUIC scenario still has to pass the Konofix/libp2p test campaign.
 
 The Linux deployment preflight uses the same fail-closed public-host policy as the Windows readiness/evidence tooling. Literal addresses must be globally routable, while DNS names must be public-looking FQDNs and cannot live below special/private-use namespaces such as `localhost`, `.local`, `.test`, `.example`, `example.com`, `example.net`, `example.org`, `.onion`, `.alt`, `.arpa`, or `.internal`. With `--require-dns-resolution`, every compatible DNS answer must also be globally routable.
+
+The standalone `konofix-node` binary independently enforces the IP-literal boundary before identity/network side effects and before it prints bootstrap addresses. That defense-in-depth matters when the binary is launched manually outside the installer. DNS values remain syntactically supported by the raw binary, but their printed addresses are labelled DNS-unverified until deployment/evidence tooling validates current DNS resolution and real reachability.
 
 ## Preview the service first
 
@@ -57,7 +59,7 @@ Preview mode performs validation and prints the exact systemd unit without chang
 
 Canonical path validation is deliberate: the service grants write access only to the state directory while the staged executable belongs in a separate read-only system location. Inputs containing `.`/`..` components or symlink aliases are normalized before the unit is generated, so alternate spellings cannot bypass that separation.
 
-Private/CGNAT/documentation IPs are rejected by default. `--allow-private-address` exists only for controlled lab testing and must not be used as public-network evidence.
+Private/CGNAT/documentation IPs are rejected by default. `--allow-private-address` exists only for controlled lab testing and must not be used as public-network evidence. When explicitly selected, the installer propagates the same flag into the generated `konofix-node` systemd `ExecStart`, so the strict binary cannot accidentally reinterpret a reviewed lab configuration as a public one. Normal public units never include that override.
 
 To print only the generated unit:
 
@@ -147,4 +149,4 @@ bash scripts/install-public-node-linux.sh \
   --print-unit
 ```
 
-This is not public-Node or cross-country evidence. Stable promotion requires a genuinely public path and independent real networks.
+The generated unit retains `--allow-private-address` explicitly and the raw Node labels any resulting addresses as lab-only. This is not public-Node or cross-country evidence. Stable promotion requires a genuinely public path and independent real networks.

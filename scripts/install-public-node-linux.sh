@@ -193,6 +193,10 @@ if ! "$BINARY_PATH" --help 2>&1 | grep -q 'Konofix Node'; then
 fi
 
 render_unit() {
+  local lab_override=""
+  if ((ALLOW_PRIVATE)); then
+    lab_override=" --allow-private-address"
+  fi
   cat <<EOF
 [Unit]
 Description=Konofix public P2P bootstrap/relay Node
@@ -203,7 +207,7 @@ Wants=network-online.target
 Type=simple
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
-ExecStart=${INSTALLED_BINARY} --port ${PORT} --public-host ${PUBLIC_HOST} --status-interval ${STATUS_INTERVAL} --health-file ${HEALTH_FILE} --identity-file ${IDENTITY_FILE}
+ExecStart=${INSTALLED_BINARY} --port ${PORT} --public-host ${PUBLIC_HOST} --status-interval ${STATUS_INTERVAL} --health-file ${HEALTH_FILE} --identity-file ${IDENTITY_FILE}${lab_override}
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s
@@ -247,6 +251,9 @@ printf 'Installed binary:%s\n' "$INSTALLED_BINARY"
 printf 'State directory: %s\n' "$STATE_DIR"
 printf 'Identity file:   %s\n' "$IDENTITY_FILE"
 printf 'Health file:     %s\n' "$HEALTH_FILE"
+if ((ALLOW_PRIVATE)); then
+  printf 'Mode:            LAB ONLY; not valid public-node evidence.\n'
+fi
 printf 'Firewall:        NOT modified; allow TCP and UDP %s separately.\n' "$PORT"
 
 if ((PRINT_UNIT)); then

@@ -17,6 +17,7 @@ const required = [
   "2001:db8::",
   "3fff::",
   "fn validate_public_host",
+  "if lab_only && !allow_private_address",
   "Refusing to advertise it as a public Konofix Node",
   "not valid public-node evidence",
   "let lab_only_public_host",
@@ -44,7 +45,7 @@ const mutations = [
   ["drop benchmark", "        || ipv4_in_cidr(ip, Ipv4Addr::new(198, 18, 0, 0), 15)\n", ""],
   ["restore warning-only wording", "Refusing to advertise it as a public Konofix Node", "WARNING: --public-host resolves to a non-public IP literal"],
   ["drop startup host binding", "args.public_host.as_deref()", "None"],
-  ["drop explicit lab gate", "args.allow_private_address", "false"],
+  ["bypass explicit lab gate", "if lab_only && !allow_private_address", "if false"],
 ];
 for (const [name, from, to] of mutations) {
   if (!source.includes(from)) throw new Error(`${name}: mutation anchor missing`);

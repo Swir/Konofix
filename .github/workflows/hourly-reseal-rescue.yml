@@ -22,6 +22,15 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+
+          validator = Path('scripts/validate-network-test-report.ps1')
+          validator_text = validator.read_text(encoding='utf-8')
+          old = '$manifestFile = Get-Item -LiteralPath $path\n'
+          new = '$manifestFile = Get-Item -LiteralPath $path -Force\n'
+          if validator_text.count(old) != 1:
+              raise SystemExit(f'validator hidden-file anchor drifted: {validator_text.count(old)}')
+          validator.write_text(validator_text.replace(old, new, 1), encoding='utf-8')
+
           source = Path('.github/workflows/hourly-reseal-fix.yml').read_text(encoding='utf-8')
           marker = "      - name: Correct session inventory lifecycle\n        shell: python\n        run: |\n"
           end_marker = "\n      - name: Install frontend dependencies"
@@ -32,6 +41,9 @@ jobs:
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
           exec(compile(script, 'staged-session-reseal-patch.py', 'exec'), {'__name__': '__main__'})
           Path('.github/workflows/hourly-reseal-rescue.yml').unlink()
+          hidden = Path('.github/workflows/hourly-hidden-temp-fix.yml')
+          if hidden.exists():
+              hidden.unlink()
 
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
@@ -55,8 +67,10 @@ jobs:
           git diff --check
           test ! -e .github/workflows/hourly-reseal-fix.yml
           test ! -e .github/workflows/hourly-reseal-rescue.yml
+          test ! -e .github/workflows/hourly-hidden-temp-fix.yml
           grep -q 'sessionInventoryEntry.sha256' scripts/set-network-test-result.ps1
           grep -q 'Authorized evidence edit did not reseal manifest SHA-256' scripts/test-network-test-session.ps1
+          grep -q 'Get-Item -LiteralPath $path -Force' scripts/validate-network-test-report.ps1
 
       - name: Commit corrected integration
         env:

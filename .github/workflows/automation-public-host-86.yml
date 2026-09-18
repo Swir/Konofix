@@ -1,0 +1,73 @@
+name: Integrate public-host literal policy
+
+on:
+  push:
+    branches: [ automation/public-host-policy-86 ]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: automation/public-host-policy-86
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: '1.88.0'
+          components: rustfmt, clippy
+
+      - name: Apply hardening patch
+        run: python3 .automation/apply_public_host_86.py
+
+      - name: Format Rust
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
+
+      - name: Install audit dependencies
+        run: npm ci
+
+      - name: Run repository audit
+        run: npm run audit
+
+      - name: Test isolated Linux Node target
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp src-tauri/Cargo.lock node-linux/Cargo.lock
+          cargo test --manifest-path node-linux/Cargo.toml --locked --bin konofix-node
+          rm -f node-linux/Cargo.lock
+
+      - name: Verify focused policy and patch hygiene
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          node scripts/check-public-host-policy.mjs
+          node scripts/test-public-host-policy.mjs
+          git diff --check
+
+      - name: Commit verified integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/automation-public-host-86.yml .automation/apply_public_host_86.py
+          rmdir .automation 2>/dev/null || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Harden raw public-host literal validation (#86)"
+          git push origin HEAD:automation/public-host-policy-86

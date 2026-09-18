@@ -83,7 +83,14 @@ expectFailure(
 );
 
 expectFailure(
-  { runtimeSmoke: mutateOnce(baseline.runtimeSmoke, "        '--allow-private-address',\n", '', 'runtime loopback lab override') },
+  {
+    runtimeSmoke: mutateOnce(
+      baseline.runtimeSmoke,
+      /[ \t]*'--allow-private-address',\r?\n/,
+      '',
+      'runtime loopback lab override',
+    ),
+  },
   /Loopback runtime smoke/i,
 );
 

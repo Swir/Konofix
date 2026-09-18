@@ -5,15 +5,19 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const NODE_SOURCE_PATH = 'src-tauri/src/bin/konofix-node.rs';
 const LINUX_INSTALLER_PATH = 'scripts/install-public-node-linux.sh';
+const WINDOWS_LAUNCHER_PATH = 'scripts/public-node.ps1';
+const INTERNET_TEST_PATH = 'scripts/internet-test.ps1';
 
 function requireToken(errors, source, token, message) {
   if (!source.includes(token)) errors.push(message);
 }
 
-export function checkNodePublicHostPolicy(nodeSource, linuxInstallerSource) {
+export function checkNodePublicHostPolicy(nodeSource, linuxInstallerSource, windowsLauncherSource, internetTestSource) {
   const errors = [];
   nodeSource = nodeSource.replaceAll('\r\n', '\n');
   linuxInstallerSource = linuxInstallerSource.replaceAll('\r\n', '\n');
+  windowsLauncherSource = windowsLauncherSource.replaceAll('\r\n', '\n');
+  internetTestSource = internetTestSource.replaceAll('\r\n', '\n');
 
   requireToken(errors, nodeSource, 'allow_private_address: bool', 'Raw Node arguments must carry the explicit lab-only private-address override.');
   requireToken(errors, nodeSource, '"--allow-private-address" =>', 'Raw Node must parse --allow-private-address explicitly.');
@@ -60,13 +64,19 @@ export function checkNodePublicHostPolicy(nodeSource, linuxInstallerSource) {
   requireToken(errors, linuxInstallerSource, '--public-host ${PUBLIC_HOST}${NODE_ADDRESS_OVERRIDE}', 'Generated systemd ExecStart must include the raw Node lab override when requested.');
   requireToken(errors, linuxInstallerSource, 'LAB ONLY (--allow-private-address); not valid public-node evidence', 'Linux lab override must be visibly labelled as non-evidence.');
 
+  requireToken(errors, windowsLauncherSource, "@('3fff::', 20)", 'Windows public-Node launcher must reject the RFC 9637 IPv6 documentation prefix.');
+  requireToken(errors, internetTestSource, "@('3fff::', 20)", 'Internet evidence precheck must reject the RFC 9637 IPv6 documentation prefix.');
+  requireToken(errors, internetTestSource, "Public-host policy: globally routable endpoint required.", 'Internet evidence precheck must retain an explicit strict public-host mode.');
+
   return errors;
 }
 
 function main() {
   const nodeSource = fs.readFileSync(path.join(ROOT, NODE_SOURCE_PATH), 'utf8');
   const linuxInstallerSource = fs.readFileSync(path.join(ROOT, LINUX_INSTALLER_PATH), 'utf8');
-  const errors = checkNodePublicHostPolicy(nodeSource, linuxInstallerSource);
+  const windowsLauncherSource = fs.readFileSync(path.join(ROOT, WINDOWS_LAUNCHER_PATH), 'utf8');
+  const internetTestSource = fs.readFileSync(path.join(ROOT, INTERNET_TEST_PATH), 'utf8');
+  const errors = checkNodePublicHostPolicy(nodeSource, linuxInstallerSource, windowsLauncherSource, internetTestSource);
   if (errors.length > 0) {
     for (const error of errors) console.error(`NODE PUBLIC-HOST POLICY ERROR: ${error}`);
     process.exitCode = 1;

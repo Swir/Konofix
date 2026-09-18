@@ -17,6 +17,7 @@ const healthRequired = [
   '[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete',
   '$snapshot = Read-BoundedSnapshotText -SnapshotPath $Path -MaxBytes $MaxSnapshotBytes',
   '$snapshotText = [string]$snapshot.Text',
+  "$snapshotText.TrimStart().StartsWith('{', [System.StringComparison]::Ordinal)",
   '$health = $snapshotText | ConvertFrom-Json',
   "$health -isnot [pscustomobject]",
   "Health snapshot root must be a JSON object.",

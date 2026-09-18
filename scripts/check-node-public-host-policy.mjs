@@ -48,16 +48,21 @@ export function checkNodePublicHostPolicy({ nodeSource, windowsLauncher, linuxIn
   if (!nodeSource.includes('allow_private_address: bool')) {
     errors.push('Raw Node arguments must carry an explicit lab-only address override.');
   }
-  if (!nodeSource.includes('"--allow-private-address"')) {
+  if (!nodeSource.includes('"--allow-private-address" => {')) {
     errors.push('Raw Node CLI must expose --allow-private-address explicitly.');
   }
-  if (!nodeSource.includes('fn classify_public_host(')) {
+  const classifyStart = nodeSource.indexOf('fn classify_public_host(');
+  const printStart = nodeSource.indexOf('fn print_shareable_addresses(');
+  const mainStart = nodeSource.indexOf('#[tokio::main]');
+  if (classifyStart < 0 || printStart < 0 || printStart <= classifyStart) {
     errors.push('Raw Node must classify --public-host before advertising it.');
   }
-  if (!nodeSource.includes('Refusing to publish public bootstrap addresses')) {
+  const classifyRegion = classifyStart >= 0 && printStart > classifyStart ? nodeSource.slice(classifyStart, printStart) : '';
+  const printRegion = printStart >= 0 && mainStart > printStart ? nodeSource.slice(printStart, mainStart) : '';
+  if (!classifyRegion.includes('Refusing to publish public bootstrap addresses')) {
     errors.push('Non-global IP literals must fail closed instead of warning-only behavior.');
   }
-  if (!nodeSource.includes('NOT VALID FOR PUBLIC-NODE OR CROSS-COUNTRY PROMOTION')) {
+  if (!printRegion.includes('NOT VALID FOR PUBLIC-NODE OR CROSS-COUNTRY PROMOTION')) {
     errors.push('Lab-only bootstrap output must be visibly invalid for promotion evidence.');
   }
   if (!nodeSource.includes('DNS NOTE: hostname syntax is accepted here')) {

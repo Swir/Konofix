@@ -74,10 +74,13 @@ export function checkPublicHostPolicySource(source) {
     errors.push('Non-global literals may proceed only through the explicit lab override.');
   }
   if (!policy.includes('not valid public-node evidence')) {
-    errors.push('Lab override must be explicitly excluded from public-node evidence.');
+    errors.push('Lab override validation must explicitly exclude the bypass from public-node evidence.');
   }
   if (!source.includes('=== KONOFIX LAB-ONLY ADDRESSES ===')) {
     errors.push('Lab-only output must be visibly distinct from normal shareable output.');
+  }
+  if (!source.includes('println!("These addresses are NOT valid public-node or cross-country test evidence.");')) {
+    errors.push('Lab-only printed output must explicitly say it is not valid public-node or cross-country evidence.');
   }
   if (!source.includes('DNS NOTE: this output confirms syntax only')) {
     errors.push('DNS output must not claim that syntax proves Internet reachability.');

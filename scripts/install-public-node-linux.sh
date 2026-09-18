@@ -192,6 +192,11 @@ if ! "$BINARY_PATH" --help 2>&1 | grep -q 'Konofix Node'; then
   fail "Binary does not identify itself as Konofix Node: $BINARY_PATH"
 fi
 
+NODE_LAB_FLAG=""
+if ((ALLOW_PRIVATE)); then
+  NODE_LAB_FLAG=" --allow-private-address"
+fi
+
 render_unit() {
   cat <<EOF
 [Unit]
@@ -203,7 +208,7 @@ Wants=network-online.target
 Type=simple
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
-ExecStart=${INSTALLED_BINARY} --port ${PORT} --public-host ${PUBLIC_HOST} --status-interval ${STATUS_INTERVAL} --health-file ${HEALTH_FILE} --identity-file ${IDENTITY_FILE}
+ExecStart=${INSTALLED_BINARY} --port ${PORT} --public-host ${PUBLIC_HOST} --status-interval ${STATUS_INTERVAL} --health-file ${HEALTH_FILE} --identity-file ${IDENTITY_FILE}${NODE_LAB_FLAG}
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s

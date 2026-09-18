@@ -1,0 +1,59 @@
+name: One-time session path documentation sync
+
+on:
+  push:
+    branches: [ automation/session-path-identity-20260918 ]
+    paths:
+      - '.github/workflows/one-time-session-path-doc-sync.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  sync-docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+
+      - name: Insert verified documentation notes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          changelog = Path('CHANGELOG.md')
+          text = changelog.read_text(encoding='utf-8')
+          marker = '## 0.4.2\n\n'
+          note = ('- made network-test session directory confinement platform-correct: Windows keeps ordinal case-insensitive identity while Linux/macOS use ordinal case-sensitive identity, with a dedicated Ubuntu/PowerShell regression gate rejecting case-variant sibling evidence directories; inventory byte/SHA-256 binding is unchanged and this hardening adds no Real Internet Test credit,\n')
+          if note not in text:
+              if marker not in text:
+                  raise SystemExit('CHANGELOG insertion marker missing')
+              text = text.replace(marker, marker + note, 1)
+              changelog.write_text(text, encoding='utf-8', newline='\n')
+
+          roadmap = Path('ROADMAP.md')
+          text = roadmap.read_text(encoding='utf-8')
+          marker = 'The active milestone currently has 54 of 59 tasks complete. The remaining five tasks require real public-network evidence and fixes discovered during those tests; CI alone cannot credit them.\n\n'
+          note = ('- Network-test session directory confinement now follows platform path identity: Windows remains case-insensitive while Linux/macOS reject case-variant sibling directories, with a dedicated Ubuntu PowerShell CI regression. Inventory byte/SHA-256 binding is unchanged and this hardening adds no Real Internet Test credit.\n')
+          if note not in text:
+              if marker not in text:
+                  raise SystemExit('ROADMAP insertion marker missing')
+              text = text.replace(marker, marker + note, 1)
+              roadmap.write_text(text, encoding='utf-8', newline='\n')
+
+      - name: Commit documentation sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- CHANGELOG.md ROADMAP.md; then
+            echo 'Documentation already synchronized.'
+            exit 0
+          fi
+          git config user.name 'Swir'
+          git config user.email 'swirjestem@hotmail.com'
+          git add CHANGELOG.md ROADMAP.md
+          git commit -m 'Document platform-correct session path identity'
+          git push origin HEAD:automation/session-path-identity-20260918

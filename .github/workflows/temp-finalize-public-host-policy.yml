@@ -17,66 +17,149 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Finalize formatting and documentation
+      - name: Finalize policy, formatting and documentation
         shell: bash
         run: |
-          cargo fmt --manifest-path src-tauri/Cargo.toml --all
           python - <<'PY'
           from pathlib import Path
 
-          def add_after(path, needle, addition):
+          def replace_once(path, needle, replacement, label):
               p = Path(path)
-              text = p.read_text(encoding='utf-8').replace('\r\n','\n')
+              text = p.read_text(encoding='utf-8').replace('\r\n', '\n')
+              if replacement in text:
+                  return
+              count = text.count(needle)
+              if count != 1:
+                  raise SystemExit(f'{path}: {label}: expected exactly one anchor, found {count}')
+              p.write_text(text.replace(needle, replacement, 1), encoding='utf-8')
+
+          def add_after(path, needle, addition, label):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8').replace('\r\n', '\n')
               if addition.strip() in text:
                   return
-              if needle not in text:
-                  raise SystemExit(f'{path}: anchor not found')
-              text = text.replace(needle, needle + addition, 1)
-              p.write_text(text, encoding='utf-8')
+              count = text.count(needle)
+              if count != 1:
+                  raise SystemExit(f'{path}: {label}: expected exactly one anchor, found {count}')
+              p.write_text(text.replace(needle, needle + addition, 1), encoding='utf-8')
+
+          # RFC 9637 / IANA IPv6 documentation prefix 3fff::/20 is non-public evidence.
+          # Keep the raw Node and both deployment-policy implementations in lockstep.
+          add_after(
+              'src-tauri/src/bin/konofix-node.rs',
+              '        (Ipv6Addr::new(0x2001, 0x0020, 0, 0, 0, 0, 0, 0), 28),\n',
+              '        (Ipv6Addr::new(0x3fff, 0, 0, 0, 0, 0, 0, 0), 20),\n',
+              'Rust 3fff policy',
+          )
+          add_after(
+              'src-tauri/src/bin/konofix-node.rs',
+              '            "2001:20::1",\n',
+              '            "3fff::1",\n',
+              'Rust 3fff regression fixture',
+          )
+          add_after(
+              'scripts/public-node.ps1',
+              "    @('2001:20::', 28)\n",
+              ",    @('3fff::', 20)\n",
+              'PowerShell 3fff policy',
+          )
+          # Normalize the comma placement above in case PowerShell list formatting changed.
+          p = Path('scripts/public-node.ps1')
+          text = p.read_text(encoding='utf-8').replace("@('2001:20::', 28)\n,    @('3fff::', 20)", "@('2001:20::', 28),\n    @('3fff::', 20)")
+          p.write_text(text, encoding='utf-8')
+          add_after(
+              'scripts/install-public-node-linux.sh',
+              '    "2001:2::/48", "2001:db8::/32", "2001:10::/28", "2001:20::/28",\n',
+              '    "3fff::/20",\n',
+              'Linux 3fff policy',
+          )
+          add_after(
+              'scripts/test-public-node.ps1',
+              "  @('ORCHIDv2 IPv6 rejection', '2001:20::1'),\n",
+              "  @('RFC 9637 documentation IPv6 rejection', '3fff::1'),\n",
+              'PowerShell 3fff regression',
+          )
+          add_after(
+              'scripts/test-public-node-linux.sh',
+              "expect_reject 'ORCHIDv2 IPv6 without lab override' \\\n  --public-host 2001:20::1 --binary \"$FAKE_NODE\" --state-dir /var/lib/k3g --install-dir /usr/local/lib/k3g --print-unit\n",
+              "expect_reject 'RFC 9637 documentation IPv6 without lab override' \\\n  --public-host 3fff::1 --binary \"$FAKE_NODE\" --state-dir /var/lib/k3g2 --install-dir /usr/local/lib/k3g2 --print-unit\n",
+              'Linux 3fff regression',
+          )
+          add_after(
+              'scripts/check-node-public-host-policy.mjs',
+              "  'Ipv6Addr::new(0x2001, 0x0020, 0, 0, 0, 0, 0, 0), 28',\n",
+              "  'Ipv6Addr::new(0x3fff, 0, 0, 0, 0, 0, 0, 0), 20',\n",
+              'policy-checker 3fff marker',
+          )
+          add_after(
+              'scripts/check-node-public-host-policy.mjs',
+              "  if (!windowsLauncher.includes(\"if ($AllowPrivateAddress) { $nodeArgs += '--allow-private-address' }\")) {\n",
+              "    if (!windowsLauncher.includes(\"@('3fff::', 20)\")) errors.push('Windows deployment policy must reject RFC 9637 documentation prefix 3fff::/20.');\n    if (!linuxInstaller.includes('\\\"3fff::/20\\\"')) errors.push('Linux deployment policy must reject RFC 9637 documentation prefix 3fff::/20.');\n",
+              'launcher parity checks',
+          )
+          add_after(
+              'scripts/test-node-public-host-policy.mjs',
+              "expectFailure({ ...baseline, nodeSource: mutateOnce(baseline.nodeSource, '(Ipv4Addr::new(100, 64, 0, 0), 10)', '(Ipv4Addr::new(100, 64, 0, 0), 9)', 'CGNAT prefix') }, /100, 64.*10/);\n",
+              "expectFailure({ ...baseline, nodeSource: mutateOnce(baseline.nodeSource, '(Ipv6Addr::new(0x3fff, 0, 0, 0, 0, 0, 0, 0), 20)', '(Ipv6Addr::new(0x3fff, 0, 0, 0, 0, 0, 0, 0), 48)', 'RFC 9637 documentation prefix') }, /0x3fff.*20/);\n",
+              '3fff adversarial mutation',
+          )
 
           add_after(
               'docs/NODE.md',
               '- automatic generation of ready-to-use public multiaddresses\n',
               '- raw-binary fail-closed validation for non-global IPv4/IPv6 literals, with an explicit lab-only override\n',
+              'NODE feature documentation',
           )
           add_after(
               'docs/NODE.md',
               '```powershell\nsrc-tauri\\target\\release\\konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP\n```\n',
-              '\nRaw `konofix-node --public-host` now rejects non-global/special-use IP literals before printing public bootstrap addresses. The boundary covers private, loopback, link-local, CGNAT, documentation, benchmarking, multicast/reserved and reviewed IPv6 special-use ranges. `--allow-private-address` is an explicit controlled-lab override only; its output is labelled **LAB ONLY / NOT VALID PUBLIC-NODE EVIDENCE**. DNS names remain supported, but raw syntax acceptance alone is not reachability evidence; use the deployment/readiness tooling for promotion evidence.\n',
+              '\nRaw `konofix-node --public-host` now rejects non-global/special-use IP literals before printing public bootstrap addresses. The boundary covers private, loopback, link-local, CGNAT, documentation (including RFC 9637 `3fff::/20`), benchmarking, multicast/reserved and reviewed IPv6 special-use ranges. `--allow-private-address` is an explicit controlled-lab override only; its output is labelled **LAB ONLY / NOT VALID PUBLIC-NODE EVIDENCE**. DNS names remain supported, but raw syntax acceptance alone is not reachability evidence; use the deployment/readiness tooling for promotion evidence.\n',
+              'NODE raw-binary documentation',
           )
           add_after(
               'docs/NODE_LINUX.md',
               'The Linux deployment preflight uses the same fail-closed public-host policy as the Windows readiness/evidence tooling. Literal addresses must be globally routable, while DNS names must be public-looking FQDNs and cannot live below special/private-use namespaces such as `localhost`, `.local`, `.test`, `.example`, `example.com`, `example.net`, `example.org`, `.onion`, `.alt`, `.arpa`, or `.internal`. With `--require-dns-resolution`, every compatible DNS answer must also be globally routable.\n',
-              '\nDirect invocation of `konofix-node` now fails closed for non-global/special-use IP literals too. `--allow-private-address` exists only for controlled lab use and labels the resulting bootstrap output as not valid public-node evidence; DNS promotion evidence must still pass the installer/readiness resolution checks.\n',
+              '\nDirect invocation of `konofix-node` now fails closed for non-global/special-use IP literals too. `--allow-private-address` exists only for controlled lab use and labels the resulting bootstrap output as not valid public-node evidence; DNS promotion evidence must still pass the installer/readiness resolution checks. The Windows launcher, Linux installer and raw Node share the reviewed special-use boundary, including RFC 9637 `3fff::/20`.\n',
+              'Linux raw-binary documentation',
           )
           add_after(
               'CHANGELOG.md',
               '## 0.4.2\n\n',
-              '- made raw `konofix-node --public-host` fail closed for non-global IPv4/IPv6 literals before any public bootstrap addresses are printed; the reviewed policy covers private/local, CGNAT, documentation, benchmarking, multicast/reserved and IPv6 special-use ranges, keeps DNS names supported, adds an explicit `--allow-private-address` lab override with non-evidence labelling, forwards that lab intent through Windows/Linux launchers, and adds Rust plus adversarial policy coverage without changing Real Internet Test credit,\n',
+              '- made raw `konofix-node --public-host` fail closed for non-global IPv4/IPv6 literals before any public bootstrap addresses are printed; the reviewed policy covers private/local, CGNAT, documentation (including RFC 9637 `3fff::/20`), benchmarking, multicast/reserved and IPv6 special-use ranges, keeps DNS names supported, adds an explicit `--allow-private-address` lab override with non-evidence labelling, forwards that lab intent through Windows/Linux launchers, and adds Rust plus adversarial policy coverage without changing Real Internet Test credit,\n',
+              'CHANGELOG public-host entry',
           )
           add_after(
               'ROADMAP.md',
               '- Public-Node readiness now fails closed when a literal bootstrap endpoint is private, CGNAT, loopback/link-local, documentation-only, benchmark/reserved/ORCHID or otherwise non-global; DNS endpoints must be public-looking FQDNs and, for readiness evidence, resolve only to globally routable addresses. Readiness schema v2 records the resolved-address evidence while still refusing to claim a QUIC handshake that was not actually performed.\n',
-              '- Raw `konofix-node --public-host` invocation now follows a fail-closed literal-IP boundary too: non-global/special-use IPv4/IPv6 literals are rejected before shareable bootstrap output unless the operator opts into the explicit lab-only override, which is visibly marked as not valid public-node evidence. DNS names remain supported and real reachability still requires the existing deployment/readiness evidence gates. This defense-in-depth hardening does not add Real Internet Test credit.\n',
+              '- Raw `konofix-node --public-host` invocation now follows the same fail-closed literal-IP boundary: non-global/special-use IPv4/IPv6 literals, including RFC 9637 `3fff::/20`, are rejected before shareable bootstrap output unless the operator opts into the explicit lab-only override, which is visibly marked as not valid public-node evidence. DNS names remain supported and real reachability still requires the existing deployment/readiness evidence gates. This defense-in-depth hardening does not add Real Internet Test credit.\n',
+              'ROADMAP public-host entry',
           )
           PY
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all
 
       - name: Verify policy, documentation and source
         shell: bash
         run: |
+          set -euo pipefail
           npm ci --no-audit --no-fund
           node scripts/test-node-public-host-policy.mjs
           node scripts/check-node-public-host-policy.mjs
           npm run audit
           npm run build
           cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cp src-tauri/Cargo.lock node-linux/Cargo.lock
+          cargo fmt --manifest-path node-linux/Cargo.toml -- --check
           cargo test --locked --manifest-path node-linux/Cargo.toml --bin konofix-node
+          bash scripts/test-public-node-linux.sh
+          pwsh -NoLogo -NoProfile -File scripts/test-public-node.ps1
+          rm -f node-linux/Cargo.lock
           git diff --check
 
       - name: Commit verified fix and remove temporary workflow
         shell: bash
         run: |
           rm .github/workflows/temp-finalize-public-host-policy.yml
+          rm -f node-linux/Cargo.lock
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A

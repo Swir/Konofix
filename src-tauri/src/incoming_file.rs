@@ -3,7 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use tokio::fs::{self, File, OpenOptions};
+use tokio::{
+    fs::{self, File, OpenOptions},
+    io::AsyncWriteExt,
+};
 
 use super::safe_filename;
 
@@ -169,30 +172,92 @@ pub(crate) async fn reserve_incoming_file(
     reserve_incoming_file_with_hook(dir, file_name, MAX_RESERVATION_ATTEMPTS, |_, _| Ok(())).await
 }
 
+async fn commit_reserved_file_impl(
+    temp_path: &Path,
+    final_path: &Path,
+    force_copy_fallback: bool,
+) -> Result<(), String> {
+    if !force_copy_fallback {
+        match fs::hard_link(temp_path, final_path).await {
+            Ok(()) => {
+                remove_owned_temp(temp_path).await;
+                return Ok(());
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                remove_owned_temp(temp_path).await;
+                return Err(format!(
+                    "Docelowy plik {} pojawił się podczas transferu; istniejący plik nie został nadpisany.",
+                    final_path.display()
+                ));
+            }
+            Err(_) => {
+                // Some filesystems or redirected download locations do not support
+                // hard-link promotion. Fall back to an exclusive copy so the final
+                // destination still retains the same no-clobber guarantee.
+            }
+        }
+    }
+
+    let mut source = match File::open(temp_path).await {
+        Ok(source) => source,
+        Err(error) => {
+            remove_owned_temp(temp_path).await;
+            return Err(format!(
+                "Nie można ponownie otworzyć zweryfikowanego pliku tymczasowego {}: {error}",
+                temp_path.display()
+            ));
+        }
+    };
+
+    let mut destination = match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(final_path)
+        .await
+    {
+        Ok(destination) => destination,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            remove_owned_temp(temp_path).await;
+            return Err(format!(
+                "Docelowy plik {} pojawił się podczas transferu; istniejący plik nie został nadpisany.",
+                final_path.display()
+            ));
+        }
+        Err(error) => {
+            remove_owned_temp(temp_path).await;
+            return Err(format!(
+                "Nie można utworzyć bezpiecznego pliku docelowego {} po nieudanej promocji hard-link: {error}",
+                final_path.display()
+            ));
+        }
+    };
+
+    let copy_result: std::io::Result<()> = async {
+        tokio::io::copy(&mut source, &mut destination).await?;
+        destination.flush().await?;
+        destination.sync_all().await
+    }
+    .await;
+    drop(destination);
+
+    if let Err(error) = copy_result {
+        let _ = fs::remove_file(final_path).await;
+        remove_owned_temp(temp_path).await;
+        return Err(format!(
+            "Nie można bezpiecznie skopiować zweryfikowanego pliku do {}: {error}",
+            final_path.display()
+        ));
+    }
+
+    remove_owned_temp(temp_path).await;
+    Ok(())
+}
+
 pub(crate) async fn commit_reserved_file(
     temp_path: &Path,
     final_path: &Path,
 ) -> Result<(), String> {
-    match fs::hard_link(temp_path, final_path).await {
-        Ok(()) => {
-            remove_owned_temp(temp_path).await;
-            Ok(())
-        }
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            remove_owned_temp(temp_path).await;
-            Err(format!(
-                "Docelowy plik {} pojawił się podczas transferu; istniejący plik nie został nadpisany.",
-                final_path.display()
-            ))
-        }
-        Err(error) => {
-            remove_owned_temp(temp_path).await;
-            Err(format!(
-                "Nie można atomowo sfinalizować pliku {} bez ryzyka nadpisania: {error}",
-                final_path.display()
-            ))
-        }
-    }
+    commit_reserved_file_impl(temp_path, final_path, false).await
 }
 
 #[cfg(test)]
@@ -419,6 +484,44 @@ mod tests {
         assert_eq!(
             std::fs::read(&final_path).expect("read final payload"),
             b"verified-payload"
+        );
+        assert!(!temp_path.exists());
+    }
+
+    #[tokio::test]
+    async fn copy_fallback_promotes_verified_payload_without_overwrite() {
+        let dir = TestDir::new();
+        let final_path = dir.path().join("fallback.bin");
+        let temp_path = dir.path().join("fallback.bin.konofixpart");
+        std::fs::write(&temp_path, b"verified-copy-payload").expect("write temp payload");
+
+        commit_reserved_file_impl(&temp_path, &final_path, true)
+            .await
+            .expect("exclusive copy fallback should commit");
+
+        assert_eq!(
+            std::fs::read(&final_path).expect("read copied final payload"),
+            b"verified-copy-payload"
+        );
+        assert!(!temp_path.exists());
+    }
+
+    #[tokio::test]
+    async fn copy_fallback_never_overwrites_racing_destination() {
+        let dir = TestDir::new();
+        let final_path = dir.path().join("fallback-race.bin");
+        let temp_path = dir.path().join("fallback-race.bin.konofixpart");
+        std::fs::write(&temp_path, b"incoming").expect("write temp payload");
+        std::fs::write(&final_path, b"existing").expect("write existing final");
+
+        let error = commit_reserved_file_impl(&temp_path, &final_path, true)
+            .await
+            .expect_err("copy fallback must refuse overwrite");
+
+        assert!(error.contains("nie został nadpisany"));
+        assert_eq!(
+            std::fs::read(&final_path).expect("read existing final"),
+            b"existing"
         );
         assert!(!temp_path.exists());
     }

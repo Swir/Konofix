@@ -72,6 +72,11 @@ export function checkNodePublicHostPolicySources({
     }
   }
 
+  const nodeArgs = sliceBetween(nodeSource, 'struct NodeArgs {', 'enum PublicHostPolicy');
+  if (!nodeArgs || !nodeArgs.includes('allow_private_address: bool')) {
+    errors.push('NodeArgs must carry allow_private_address: bool so the lab override is explicit CLI state.');
+  }
+
   if (nodeSource.includes('fn is_non_public_ip(')) {
     errors.push('Legacy warning-only is_non_public_ip policy must not coexist with the fail-closed public-host policy.');
   }

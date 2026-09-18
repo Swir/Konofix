@@ -33,6 +33,8 @@ The installer never modifies a firewall. Allow the selected TCP and UDP port in 
 
 The Linux deployment preflight uses the same fail-closed public-host policy as the Windows readiness/evidence tooling. Literal addresses must be globally routable, while DNS names must be public-looking FQDNs and cannot live below special/private-use namespaces such as `localhost`, `.local`, `.test`, `.example`, `example.com`, `example.net`, `example.org`, `.onion`, `.alt`, `.arpa`, or `.internal`. With `--require-dns-resolution`, every compatible DNS answer must also be globally routable.
 
+The headless `konofix-node` binary now enforces a matching defense-in-depth boundary for direct invocation: a literal `--public-host`/`--public-ip` that is private, loopback/link-local, CGNAT, documentation, benchmarking, multicast/reserved or otherwise non-global fails before identity creation or network startup. `--allow-private-address` is an explicit controlled-lab escape hatch only; when it is used the binary labels generated addresses as lab-only and not valid public-node/cross-country evidence. DNS names remain accepted by the raw binary, but its output explicitly states that DNS syntax does not prove resolution or Internet reachability; use the installer with `--require-dns-resolution` for deployment evidence.
+
 ## Preview the service first
 
 Extract the verified Linux bundle, then run the installer without `--install`:

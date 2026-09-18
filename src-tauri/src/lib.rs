@@ -2284,7 +2284,10 @@ mod file_offer_admission_tests {
                     path,
                 } => {
                     assert_eq!(actual, verified);
-                    assert!(path.is_none(), "wire completion must not expose receiver-local paths");
+                    assert!(
+                        path.is_none(),
+                        "wire completion must not expose receiver-local paths"
+                    );
                 }
                 _ => unreachable!("completion helper must return FileResponse::Complete"),
             }

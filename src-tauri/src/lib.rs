@@ -36,6 +36,8 @@ const WORLD_PROVIDER_KEY: &str = "/konofix/world/providers/v1";
 const PRESENCE_TTL_SECS: u64 = 38;
 const NICK_LEASE_SECS: u64 = 42;
 const FILE_CHUNK_SIZE: usize = 256 * 1024;
+const MAX_FILE_OFFER_NAME_BYTES: usize = 4 * 1024;
+const MAX_FILE_REQUEST_WIRE_BYTES: u64 = 320 * 1024;
 const MAX_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_TRANSFERS_PER_DIRECTION: usize = 4;
 const MAX_PENDING_OFFERS_PER_PEER: usize = 1;
@@ -568,6 +570,14 @@ fn bootstrap_sources(extra: Vec<String>) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+fn file_offer_name_error(file_name: &str) -> Option<&'static str> {
+    if file_name.len() > MAX_FILE_OFFER_NAME_BYTES {
+        Some("File name exceeds the 4096-byte protocol limit.")
+    } else {
+        None
+    }
 }
 
 fn safe_filename(raw: &str) -> String {
@@ -1228,13 +1238,18 @@ async fn network_task(
 
             let rr_cfg =
                 request_response::Config::default().with_request_timeout(Duration::from_secs(300));
-            let file_transfer = request_response::cbor::Behaviour::<FileRequest, FileResponse>::new(
-                [(
-                    StreamProtocol::new(FILE_PROTOCOL),
-                    request_response::ProtocolSupport::Full,
-                )],
-                rr_cfg,
-            );
+            let file_codec =
+                request_response::cbor::codec::Codec::<FileRequest, FileResponse>::default()
+                    .set_request_size_maximum(MAX_FILE_REQUEST_WIRE_BYTES);
+            let file_transfer =
+                request_response::cbor::Behaviour::<FileRequest, FileResponse>::with_codec(
+                    file_codec,
+                    [(
+                        StreamProtocol::new(FILE_PROTOCOL),
+                        request_response::ProtocolSupport::Full,
+                    )],
+                    rr_cfg,
+                );
 
             Ok(Behaviour {
                 gossipsub,
@@ -1811,6 +1826,13 @@ async fn network_task(
                                                 let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Rejected { reason: "Invalid transfer ID.".into() });
                                                 continue;
                                             }
+                                            if let Some(reason) = file_offer_name_error(&file_name) {
+                                                let _ = swarm.behaviour_mut().file_transfer.send_response(
+                                                    channel,
+                                                    FileResponse::Rejected { reason: reason.into() },
+                                                );
+                                                continue;
+                                            }
                                             if pending_incoming.contains_key(&transfer_id)
                                                 || incoming.contains_key(&transfer_id)
                                                 || outgoing.contains_key(&transfer_id)
@@ -2214,6 +2236,32 @@ mod file_offer_admission_tests {
             Some("All incoming file-transfer slots are currently busy.")
         );
         assert_eq!(file_offer_capacity_error(0, 0, 0), None);
+    }
+
+    #[test]
+    fn inbound_offer_name_limit_is_measured_in_encoded_utf8_bytes() {
+        let ascii_at_limit = "a".repeat(MAX_FILE_OFFER_NAME_BYTES);
+        assert_eq!(file_offer_name_error(&ascii_at_limit), None);
+        assert_eq!(
+            file_offer_name_error(&(ascii_at_limit + "a")),
+            Some("File name exceeds the 4096-byte protocol limit.")
+        );
+
+        let two_byte_at_limit = "é".repeat(MAX_FILE_OFFER_NAME_BYTES / "é".len());
+        assert_eq!(two_byte_at_limit.len(), MAX_FILE_OFFER_NAME_BYTES);
+        assert_eq!(file_offer_name_error(&two_byte_at_limit), None);
+        assert!(file_offer_name_error(&(two_byte_at_limit + "é")).is_some());
+
+        let four_byte_at_limit = "🧪".repeat(MAX_FILE_OFFER_NAME_BYTES / "🧪".len());
+        assert_eq!(four_byte_at_limit.len(), MAX_FILE_OFFER_NAME_BYTES);
+        assert_eq!(file_offer_name_error(&four_byte_at_limit), None);
+        assert!(file_offer_name_error(&(four_byte_at_limit + "🧪")).is_some());
+    }
+
+    #[test]
+    fn request_codec_limit_preserves_a_large_chunk_overhead_budget() {
+        assert_eq!(MAX_FILE_REQUEST_WIRE_BYTES, 320 * 1024);
+        assert!(MAX_FILE_REQUEST_WIRE_BYTES >= (FILE_CHUNK_SIZE as u64).saturating_add(64 * 1024));
     }
 
     #[test]

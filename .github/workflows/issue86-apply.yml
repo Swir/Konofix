@@ -10,332 +10,35 @@ permissions:
 
 jobs:
   apply-and-verify:
-    if: ${{ !startsWith(github.event.head_commit.message, 'Harden raw public-host validation') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: true
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: '22'
           cache: npm
+          cache-dependency-path: package-lock.json
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
 
-      - name: Apply fail-closed public-host hardening
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import json
+      - name: Apply issue 86 hardening
+        run: python3 .github/issue86_apply.py
 
-          rust_path = Path('src-tauri/src/bin/konofix-node.rs')
-          s = rust_path.read_text(encoding='utf-8')
+      - name: Remove temporary integration helpers before policy audit
+        run: git rm .github/workflows/issue86-apply.yml .github/issue86_apply.py
 
-          def replace_once(old, new, label):
-              global s
-              if s.count(old) != 1:
-                  raise SystemExit(f'{label}: expected exactly one match, found {s.count(old)}')
-              s = s.replace(old, new, 1)
-
-          replace_once('    net::IpAddr,\n', '    net::{IpAddr, Ipv4Addr, Ipv6Addr},\n', 'net imports')
-          replace_once(
-              '    public_host: Option<String>,\n    status_interval: u64,',
-              '    public_host: Option<String>,\n    allow_private_address: bool,\n    status_interval: u64,',
-              'NodeArgs field',
-          )
-          replace_once(
-              '    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--status-interval 60] [--health-file PATH] [--identity-file PATH]");',
-              '    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--allow-private-address] [--status-interval 60] [--health-file PATH] [--identity-file PATH]");',
-              'help usage',
-          )
-          replace_once(
-              '    println!("  --public-ip IP           Alias for --public-host");\n',
-              '    println!("  --public-ip IP           Alias for --public-host");\n    println!("  --allow-private-address  LAB ONLY: allow a non-global IP literal; never valid public-node evidence");\n',
-              'help option',
-          )
-          replace_once(
-              '    println!("  konofix-node.exe --port 45555 --public-host 203.0.113.10 --status-interval 60 --health-file C:\\\\Konofix\\\\health.json --identity-file C:\\\\Konofix\\\\node-identity.key");',
-              '    println!("  konofix-node.exe --port 45555 --public-host node.example.net --status-interval 60 --health-file C:\\\\Konofix\\\\health.json --identity-file C:\\\\Konofix\\\\node-identity.key");',
-              'help example',
-          )
-          replace_once(
-              '    let mut public_host = None;\n    let mut status_interval = DEFAULT_STATUS_INTERVAL;',
-              '    let mut public_host = None;\n    let mut allow_private_address = false;\n    let mut status_interval = DEFAULT_STATUS_INTERVAL;',
-              'arg default',
-          )
-          replace_once(
-              '            "--status-interval" => {',
-              '            "--allow-private-address" => {\n                allow_private_address = true;\n            }\n            "--status-interval" => {',
-              'arg parser',
-          )
-          replace_once(
-              '        public_host,\n        status_interval,',
-              '        public_host,\n        allow_private_address,\n        status_interval,',
-              'arg construction',
-          )
-
-          old_policy = '''fn is_non_public_ip(host: &str) -> bool {
-    match host.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ip)) => {
-            ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
-        }
-        Ok(IpAddr::V6(ip)) => {
-            ip.is_loopback()
-                || ip.is_unspecified()
-                || ip.is_unique_local()
-                || ip.is_unicast_link_local()
-        }
-        Err(_) => false,
-    }
-}
-
-fn print_shareable_addresses(host: &str, port: u16, peer: PeerId) {
-'''
-          new_policy = '''fn ipv4_in_cidr(ip: Ipv4Addr, base: Ipv4Addr, prefix: u32) -> bool {
-    let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
-    (u32::from(ip) & mask) == (u32::from(base) & mask)
-}
-
-fn ipv6_in_cidr(ip: Ipv6Addr, base: Ipv6Addr, prefix: u32) -> bool {
-    let mask = if prefix == 0 { 0 } else { u128::MAX << (128 - prefix) };
-    (u128::from(ip) & mask) == (u128::from(base) & mask)
-}
-
-fn is_global_ipv4(ip: Ipv4Addr) -> bool {
-    !(
-        ipv4_in_cidr(ip, Ipv4Addr::new(0, 0, 0, 0), 8)
-            || ip.is_private()
-            || ip.is_loopback()
-            || ip.is_link_local()
-            || ipv4_in_cidr(ip, Ipv4Addr::new(100, 64, 0, 0), 10)
-            || ipv4_in_cidr(ip, Ipv4Addr::new(192, 0, 0, 0), 24)
-            || ipv4_in_cidr(ip, Ipv4Addr::new(192, 0, 2, 0), 24)
-            || ipv4_in_cidr(ip, Ipv4Addr::new(192, 88, 99, 0), 24)
-            || ipv4_in_cidr(ip, Ipv4Addr::new(198, 18, 0, 0), 15)
-            || ipv4_in_cidr(ip, Ipv4Addr::new(198, 51, 100, 0), 24)
-            || ipv4_in_cidr(ip, Ipv4Addr::new(203, 0, 113, 0), 24)
-            || ip.is_multicast()
-            || ipv4_in_cidr(ip, Ipv4Addr::new(240, 0, 0, 0), 4)
-    )
-}
-
-fn is_global_ipv6(ip: Ipv6Addr) -> bool {
-    // Fail closed for literal public-node evidence: accept only global-unicast 2000::/3,
-    // then reject special-use/documentation ranges inside that block.
-    ipv6_in_cidr(ip, "2000::".parse().expect("valid IPv6 constant"), 3)
-        && !ipv6_in_cidr(ip, "2001::".parse().expect("valid IPv6 constant"), 23)
-        && !ipv6_in_cidr(ip, "2001:db8::".parse().expect("valid IPv6 constant"), 32)
-        && !ipv6_in_cidr(ip, "3fff::".parse().expect("valid IPv6 constant"), 20)
-}
-
-fn is_global_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ip) => is_global_ipv4(ip),
-        IpAddr::V6(ip) => is_global_ipv6(ip),
-    }
-}
-
-fn public_host_is_non_global_literal(host: &str) -> bool {
-    host.parse::<IpAddr>().is_ok_and(|ip| !is_global_ip(ip))
-}
-
-fn validate_public_host(host: Option<&str>, allow_private_address: bool) -> Result<bool, String> {
-    let Some(host) = host else {
-        return Ok(false);
-    };
-    let lab_only = public_host_is_non_global_literal(host);
-    if lab_only && !allow_private_address {
-        return Err(format!(
-            "--public-host {host} is a non-global IP literal. Refusing to advertise it as a public Konofix Node. Use a globally routable address or DNS name. For controlled local/lab testing only, pass --allow-private-address."
-        ));
-    }
-    Ok(lab_only)
-}
-
-fn print_shareable_addresses(host: &str, port: u16, peer: PeerId, lab_only: bool) {
-'''
-          replace_once(old_policy, new_policy, 'public host policy')
-          replace_once(
-              '    println!("=== KONOFIX SHAREABLE ADDRESSES ===");\n',
-              '    if lab_only {\n        println!("=== KONOFIX LAB-ONLY ADDRESSES ===");\n        println!("LAB ONLY: non-global --public-host; this output is not valid public-node evidence.");\n    } else {\n        println!("=== KONOFIX SHAREABLE ADDRESSES ===");\n    }\n',
-              'shareable header',
-          )
-          replace_once(
-              '    let port = args.port;\n    let identity_path = args',
-              '    let port = args.port;\n    let lab_only_public_host = validate_public_host(\n        args.public_host.as_deref(),\n        args.allow_private_address,\n    )\n    .map_err(std::io::Error::other)?;\n    let identity_path = args',
-              'startup validation',
-          )
-          replace_once(
-              '    if let Some(host) = &args.public_host {\n        if is_non_public_ip(host) {\n            println!("WARNING: --public-host resolves to a non-public IP literal. Cross-network clients may not be able to reach it.");\n        }\n        print_shareable_addresses(host, port, local_peer);\n',
-              '    if let Some(host) = &args.public_host {\n        print_shareable_addresses(host, port, local_peer, lab_only_public_host);\n',
-              'runtime output',
-          )
-
-          test_anchor = '''    #[test]
-    fn persisted_identity_keeps_peer_id() {
-'''
-          tests = '''    #[test]
-    fn parses_private_address_lab_override() {
-        let args = parse_args_from(vec!["--allow-private-address".to_string()])
-            .expect("arguments should parse")
-            .expect("help was not requested");
-        assert!(args.allow_private_address);
-    }
-
-    #[test]
-    fn public_host_ipv4_policy_is_fail_closed() {
-        for host in ["1.1.1.1", "8.8.8.8"] {
-            let ip: Ipv4Addr = host.parse().expect("fixture IPv4");
-            assert!(is_global_ipv4(ip), "{host} should be accepted as global");
-        }
-        for host in [
-            "0.1.2.3", "10.0.0.1", "100.64.0.1", "127.0.0.1", "169.254.1.1",
-            "172.16.0.1", "192.0.0.1", "192.0.2.1", "192.168.1.1", "198.18.0.1",
-            "198.51.100.1", "203.0.113.1", "224.0.0.1", "240.0.0.1", "255.255.255.255",
-        ] {
-            let ip: Ipv4Addr = host.parse().expect("fixture IPv4");
-            assert!(!is_global_ipv4(ip), "{host} must not be public-node evidence");
-        }
-    }
-
-    #[test]
-    fn public_host_ipv6_policy_is_fail_closed() {
-        for host in ["2606:4700:4700::1111", "2001:4860:4860::8888"] {
-            let ip: Ipv6Addr = host.parse().expect("fixture IPv6");
-            assert!(is_global_ipv6(ip), "{host} should be accepted as global");
-        }
-        for host in [
-            "::", "::1", "fc00::1", "fe80::1", "ff02::1", "2001::1", "2001:2::1",
-            "2001:db8::1", "3fff::1",
-        ] {
-            let ip: Ipv6Addr = host.parse().expect("fixture IPv6");
-            assert!(!is_global_ipv6(ip), "{host} must not be public-node evidence");
-        }
-    }
-
-    #[test]
-    fn non_global_literal_requires_explicit_lab_override() {
-        let error = validate_public_host(Some("100.64.0.1"), false)
-            .expect_err("CGNAT literal must fail closed");
-        assert!(error.contains("--allow-private-address"));
-        assert!(validate_public_host(Some("100.64.0.1"), true)
-            .expect("lab override should be explicit"));
-        assert!(!validate_public_host(Some("node.example.net"), false)
-            .expect("DNS syntax stays supported"));
-        assert!(!validate_public_host(Some("1.1.1.1"), false)
-            .expect("global literal should pass"));
-    }
-
-'''
-          replace_once(test_anchor, tests + test_anchor, 'Rust policy tests')
-          rust_path.write_text(s, encoding='utf-8')
-
-          checker = r'''import fs from "node:fs";
-import path from "node:path";
-
-const sourcePath = process.argv[2] ?? path.join("src-tauri", "src", "bin", "konofix-node.rs");
-const source = fs.readFileSync(sourcePath, "utf8");
-const required = [
-  "allow_private_address: bool",
-  "--allow-private-address",
-  "fn is_global_ipv4",
-  "fn is_global_ipv6",
-  "100, 64, 0, 0), 10",
-  "198, 18, 0, 0), 15",
-  "198, 51, 100, 0), 24",
-  "203, 0, 113, 0), 24",
-  "2001:db8::",
-  "3fff::",
-  "fn validate_public_host",
-  "Refusing to advertise it as a public Konofix Node",
-  "not valid public-node evidence",
-  "validate_public_host(\n        args.public_host.as_deref(),",
-];
-for (const needle of required) {
-  if (!source.includes(needle)) throw new Error(`public-host policy missing: ${needle}`);
-}
-if (source.includes("WARNING: --public-host resolves to a non-public IP literal")) {
-  throw new Error("warning-only public-host policy returned");
-}
-console.log("public-host fail-closed policy: PASS");
-'''
-          Path('scripts/check-public-host-policy.mjs').write_text(checker, encoding='utf-8')
-
-          mutation = r'''import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { spawnSync } from "node:child_process";
-
-const source = fs.readFileSync(path.join("src-tauri", "src", "bin", "konofix-node.rs"), "utf8");
-const mutations = [
-  ["drop CGNAT", "            || ipv4_in_cidr(ip, Ipv4Addr::new(100, 64, 0, 0), 10)\n", ""],
-  ["drop benchmark", "            || ipv4_in_cidr(ip, Ipv4Addr::new(198, 18, 0, 0), 15)\n", ""],
-  ["restore warning-only wording", "Refusing to advertise it as a public Konofix Node", "WARNING: --public-host resolves to a non-public IP literal"],
-  ["drop startup validation", "    let lab_only_public_host = validate_public_host(\n        args.public_host.as_deref(),\n        args.allow_private_address,\n    )\n    .map_err(std::io::Error::other)?;\n", "    let lab_only_public_host = false;\n"],
-];
-for (const [name, from, to] of mutations) {
-  if (!source.includes(from)) throw new Error(`${name}: mutation anchor missing`);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "konofix-public-host-"));
-  const candidate = path.join(dir, "konofix-node.rs");
-  fs.writeFileSync(candidate, source.replace(from, to));
-  const run = spawnSync(process.execPath, ["scripts/check-public-host-policy.mjs", candidate], { encoding: "utf8" });
-  fs.rmSync(dir, { recursive: true, force: true });
-  if (run.status === 0) throw new Error(`${name}: checker accepted adversarial mutation`);
-}
-console.log(`public-host adversarial mutations: ${mutations.length}/${mutations.length} rejected`);
-'''
-          Path('scripts/test-public-host-policy.mjs').write_text(mutation, encoding='utf-8')
-
-          package_path = Path('package.json')
-          package = json.loads(package_path.read_text(encoding='utf-8'))
-          audit = package['scripts']['audit']
-          insertion = 'node scripts/test-public-host-policy.mjs && node scripts/check-public-host-policy.mjs'
-          if insertion not in audit:
-              marker = 'node scripts/test-windows-filename-policy.mjs && node scripts/check-windows-filename-policy.mjs'
-              if marker not in audit:
-                  raise SystemExit('package audit marker missing')
-              package['scripts']['audit'] = audit.replace(marker, marker + ' && ' + insertion)
-          package['scripts']['audit:public-host-policy'] = 'node scripts/check-public-host-policy.mjs'
-          package['scripts']['test:public-host-policy'] = 'node scripts/test-public-host-policy.mjs'
-          package_path.write_text(json.dumps(package, indent=2) + '\n', encoding='utf-8')
-
-          changelog = Path('CHANGELOG.md')
-          text = changelog.read_text(encoding='utf-8')
-          bullet = '- made raw `konofix-node --public-host` fail closed for non-global IP literals (including CGNAT, documentation, benchmarking, multicast/reserved and IPv6 special-use ranges), added an explicit `--allow-private-address` lab-only override whose output is never valid public-node evidence, and added Rust plus adversarial source-policy coverage without changing Real Internet Test credit,\n'
-          marker = '## 0.4.2\n\n'
-          if bullet not in text:
-              if marker not in text: raise SystemExit('CHANGELOG 0.4.2 marker missing')
-              text = text.replace(marker, marker + bullet, 1)
-          changelog.write_text(text, encoding='utf-8')
-
-          roadmap = Path('ROADMAP.md')
-          text = roadmap.read_text(encoding='utf-8')
-          note = '- Raw `konofix-node --public-host` now independently fail-closes on non-global IP literals before advertising bootstrap addresses; an explicit `--allow-private-address` escape hatch is labelled lab-only and cannot count as public-node evidence. Rust and adversarial source-policy tests guard CGNAT, documentation, benchmarking, multicast/reserved and IPv6 special-use cases. This hardening does not add Real Internet Test credit.\n'
-          marker = '## 0.4.2 — Real Internet Test 🚧\n'
-          if note not in text:
-              if marker not in text: raise SystemExit('ROADMAP 0.4.2 marker missing')
-              text = text.replace(marker, marker + note, 1)
-          roadmap.write_text(text, encoding='utf-8')
-
-          for doc_name in ['docs/NODE.md', 'docs/NODE_LINUX.md']:
-              p = Path(doc_name)
-              text = p.read_text(encoding='utf-8')
-              section = '''\n### Public-host literal safety\n\n`konofix-node --public-host` now rejects non-global IP literals before it prints shareable bootstrap addresses. Private, loopback/link-local, CGNAT, documentation, benchmarking, multicast/reserved and covered IPv6 special-use literals therefore fail closed. DNS names remain supported, but syntax alone is not public-reachability evidence; the deployment/readiness tooling still performs the required DNS and external checks.\n\nFor controlled LAN/lab work only, `--allow-private-address` permits a non-global literal and labels the resulting addresses **LAB ONLY**. Those addresses must never be used as public/community-Node or cross-country evidence.\n'''
-              if '### Public-host literal safety' not in text:
-                  first_heading_end = text.find('\n## ', 1)
-                  if first_heading_end == -1:
-                      text += section
-                  else:
-                      text = text[:first_heading_end] + section + text[first_heading_end:]
-              p.write_text(text, encoding='utf-8')
-          PY
-
-      - name: Format and policy verification
-        shell: bash
+      - name: Format and verify
         run: |
           cargo fmt --manifest-path src-tauri/Cargo.toml --all
           node scripts/test-public-host-policy.mjs
@@ -344,12 +47,10 @@ console.log(`public-host adversarial mutations: ${mutations.length}/${mutations.
           npm run audit
           cargo test --manifest-path src-tauri/Cargo.toml --bin konofix-node --locked
           cargo clippy --manifest-path src-tauri/Cargo.toml --bin konofix-node --locked -- -D warnings
-          git diff --check
+          git diff HEAD --check
 
       - name: Commit verified integration
-        shell: bash
         run: |
-          rm .github/workflows/issue86-apply.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A

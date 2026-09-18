@@ -18,6 +18,8 @@ const healthRequired = [
   '$snapshot = Read-BoundedSnapshotText -SnapshotPath $Path -MaxBytes $MaxSnapshotBytes',
   '$snapshotText = [string]$snapshot.Text',
   '$health = $snapshotText | ConvertFrom-Json',
+  "$health -isnot [pscustomobject]",
+  "Health snapshot root must be a JSON object.",
   '[switch]$AsJson',
   '$result | ConvertTo-Json -Depth 4 -Compress',
   'snapshot_bytes = [int64]$snapshot.Bytes',
@@ -57,4 +59,4 @@ if (!(capture >= 0 && capture < parse && parse < result)) {
   fail('readiness ordering must validate/capture one health snapshot, parse that exact result, then build readiness evidence.');
 }
 
-console.log('Health snapshot binding policy passed: one bounded non-writable file handle feeds validation and public-node readiness evidence.');
+console.log('Health snapshot binding policy passed: one bounded non-writable object-root snapshot feeds validation and public-node readiness evidence.');

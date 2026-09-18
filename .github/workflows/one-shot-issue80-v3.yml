@@ -1,0 +1,256 @@
+name: One-shot response-phase hardening v3
+
+on:
+  push:
+    branches: [ hardening/unexpected-file-responses ]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: hardening/unexpected-file-responses
+          fetch-depth: 0
+
+      - name: Apply response-phase patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def read(path): return Path(path).read_text(encoding='utf-8')
+          def write(path, text): Path(path).write_text(text, encoding='utf-8')
+          def replace_once(path, old, new):
+              text = read(path)
+              if text.count(old) != 1:
+                  raise SystemExit(f'{path}: expected one target, found {text.count(old)} for {old[:100]!r}')
+              write(path, text.replace(old, new, 1))
+
+          rust = 'src-tauri/src/lib.rs'
+          enum_block = '''#[derive(Debug, Clone, Copy)]
+          enum OutboundKind {
+              Offer,
+              Chunk,
+              Complete,
+              Cancel,
+          }
+          '''
+          policy_block = '''#[derive(Debug, Clone, Copy)]
+          enum OutboundKind {
+              Offer,
+              Chunk,
+              Complete,
+              Cancel,
+          }
+
+          fn file_response_matches_outbound_kind(kind: OutboundKind, response: &FileResponse) -> bool {
+              match kind {
+                  OutboundKind::Offer => matches!(
+                      response,
+                      FileResponse::Accepted
+                          | FileResponse::Rejected { .. }
+                          | FileResponse::Error { .. }
+                  ),
+                  OutboundKind::Chunk => matches!(
+                      response,
+                      FileResponse::Ack { .. }
+                          | FileResponse::Rejected { .. }
+                          | FileResponse::Error { .. }
+                  ),
+                  OutboundKind::Complete => matches!(
+                      response,
+                      FileResponse::Complete { .. } | FileResponse::Error { .. }
+                  ),
+                  OutboundKind::Cancel => true,
+              }
+          }
+
+          #[cfg(test)]
+          mod file_response_phase_tests {
+              use super::*;
+
+              fn variants() -> Vec<FileResponse> {
+                  vec![
+                      FileResponse::Accepted,
+                      FileResponse::Rejected { reason: "no".into() },
+                      FileResponse::Ack { received: 1 },
+                      FileResponse::Complete { verified: true, path: None },
+                      FileResponse::Error { message: "err".into() },
+                  ]
+              }
+
+              #[test]
+              fn non_cancel_phases_accept_only_documented_variants() {
+                  for response in variants() {
+                      assert_eq!(
+                          file_response_matches_outbound_kind(OutboundKind::Offer, &response),
+                          matches!(&response, FileResponse::Accepted | FileResponse::Rejected { .. } | FileResponse::Error { .. })
+                      );
+                      assert_eq!(
+                          file_response_matches_outbound_kind(OutboundKind::Chunk, &response),
+                          matches!(&response, FileResponse::Ack { .. } | FileResponse::Rejected { .. } | FileResponse::Error { .. })
+                      );
+                      assert_eq!(
+                          file_response_matches_outbound_kind(OutboundKind::Complete, &response),
+                          matches!(&response, FileResponse::Complete { .. } | FileResponse::Error { .. })
+                      );
+                  }
+              }
+
+              #[test]
+              fn cancellation_responses_are_terminally_ignored() {
+                  for response in variants() {
+                      assert!(file_response_matches_outbound_kind(OutboundKind::Cancel, &response));
+                  }
+              }
+          }
+          '''
+          replace_once(rust, enum_block, policy_block)
+
+          text = read(rust)
+          pattern = re.compile(r'(?P<i>[ \t]*)let Some\(meta\) = outbound_requests\.remove\(&request_id\) else \{ continue; \};\n(?P=i)match meta\.kind \{')
+          match = pattern.search(text)
+          if not match:
+              raise SystemExit('src-tauri/src/lib.rs: structural response dispatch target not found')
+          if pattern.search(text, match.end()):
+              raise SystemExit('src-tauri/src/lib.rs: response dispatch target is ambiguous')
+          i = match.group('i')
+          replacement = (
+              f'{i}let Some(meta) = outbound_requests.remove(&request_id) else {{ continue; }};\n'
+              f'{i}if !file_response_matches_outbound_kind(meta.kind, &response) {{\n'
+              f'{i}    if let Some(transfer) = outgoing.remove(&meta.transfer_id) {{\n'
+              f'{i}        emit_transfer(\n'
+              f'{i}            &app,\n'
+              f'{i}            &file_view_outgoing(\n'
+              f'{i}                &meta.transfer_id,\n'
+              f'{i}                &transfer,\n'
+              f'{i}                "failed",\n'
+              f'{i}                None,\n'
+              f'{i}                Some("Nieoczekiwana odpowiedź P2P dla bieżącego etapu transferu.".into()),\n'
+              f'{i}            ),\n'
+              f'{i}        );\n'
+              f'{i}    }}\n'
+              f'{i}    continue;\n'
+              f'{i}}}\n'
+              f'{i}match meta.kind {{'
+          )
+          write(rust, text[:match.start()] + replacement + text[match.end():])
+
+          write('scripts/check-file-response-phase.mjs', r'''import fs from 'node:fs';
+          const rustPath = process.argv[2] ?? 'src-tauri/src/lib.rs';
+          const rust = fs.readFileSync(rustPath, 'utf8').replaceAll('\r\n', '\n');
+          const errors = [];
+          const requireText = (haystack, needle, message) => { if (!haystack.includes(needle)) errors.push(message); };
+          const helperStart = rust.indexOf('fn file_response_matches_outbound_kind(kind: OutboundKind, response: &FileResponse) -> bool {');
+          const helperEnd = helperStart < 0 ? -1 : rust.indexOf('#[cfg(test)]\nmod file_response_phase_tests', helperStart);
+          const helper = helperStart < 0 || helperEnd < 0 ? '' : rust.slice(helperStart, helperEnd);
+          requireText(helper, 'OutboundKind::Offer => matches!(', 'Offer response policy is missing.');
+          requireText(helper, 'FileResponse::Accepted', 'Offer must accept Accepted.');
+          requireText(helper, 'OutboundKind::Chunk => matches!(', 'Chunk response policy is missing.');
+          requireText(helper, 'FileResponse::Ack { .. }', 'Chunk must accept Ack.');
+          requireText(helper, 'OutboundKind::Complete => matches!(', 'Complete response policy is missing.');
+          requireText(helper, 'FileResponse::Complete { .. } | FileResponse::Error { .. }', 'Complete must accept Complete/Error only.');
+          requireText(helper, 'OutboundKind::Cancel => true', 'Cancel must remain terminal/idempotent.');
+          const start = rust.indexOf('request_response::Message::Response { request_id, response } => {');
+          const end = start < 0 ? -1 : rust.indexOf('request_response::Event::OutboundFailure', start);
+          const handler = start < 0 || end < 0 ? '' : rust.slice(start, end);
+          const guard = 'if !file_response_matches_outbound_kind(meta.kind, &response) {';
+          const gi = handler.indexOf(guard);
+          const di = handler.indexOf('match meta.kind {');
+          if (gi < 0) errors.push('Wrong-phase response guard is missing.');
+          if (di < 0 || (gi >= 0 && gi > di)) errors.push('Wrong-phase guard must run before phase dispatch.');
+          const guarded = gi >= 0 && di > gi ? handler.slice(gi, di) : '';
+          requireText(guarded, 'outgoing.remove(&meta.transfer_id)', 'Wrong-phase response must reclaim only the matching outgoing transfer.');
+          requireText(guarded, 'Nieoczekiwana odpowiedź P2P dla bieżącego etapu transferu.', 'Wrong-phase response must emit deterministic protocol failure.');
+          if (guarded.includes('outgoing.clear()') || guarded.includes('outbound_requests.clear()')) errors.push('Wrong-phase cleanup must preserve unrelated state.');
+          if (errors.length) { for (const error of errors) console.error(`FILE RESPONSE PHASE ERROR: ${error}`); process.exit(1); }
+          console.log('File response phase policy verified.');
+          ''')
+
+          write('scripts/test-file-response-phase.mjs', r'''import fs from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          import { spawnSync } from 'node:child_process';
+          const checker = path.resolve('scripts/check-file-response-phase.mjs');
+          const canonical = fs.readFileSync('src-tauri/src/lib.rs', 'utf8').replaceAll('\r\n', '\n');
+          const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-response-phase-'));
+          const mutateOnce = (source, from, to) => {
+            const first = source.indexOf(from);
+            if (first < 0 || source.indexOf(from, first + from.length) >= 0) throw new Error(`Mutation target must exist exactly once: ${from}`);
+            return source.slice(0, first) + to + source.slice(first + from.length);
+          };
+          const run = source => { const p = path.join(dir, 'lib.rs'); fs.writeFileSync(p, source); return spawnSync(process.execPath, [checker, p], { encoding: 'utf8' }); };
+          if (run(canonical).status !== 0) throw new Error('Canonical response-phase policy failed.');
+          const cases = [
+            ['guard disabled', 'if !file_response_matches_outbound_kind(meta.kind, &response) {', 'if false && !file_response_matches_outbound_kind(meta.kind, &response) {', 'Wrong-phase response guard is missing'],
+            ['helper renamed', 'fn file_response_matches_outbound_kind(kind: OutboundKind, response: &FileResponse) -> bool {', 'fn disabled_file_response_matches_outbound_kind(kind: OutboundKind, response: &FileResponse) -> bool {', 'Offer response policy is missing'],
+            ['protocol failure removed', 'Nieoczekiwana odpowiedź P2P dla bieżącego etapu transferu.', 'ignored wrong phase', 'deterministic protocol failure'],
+            ['cancel no longer terminal', 'OutboundKind::Cancel => true,', 'OutboundKind::Cancel => false,', 'Cancel must remain terminal/idempotent'],
+          ];
+          for (const [name, from, to, expected] of cases) {
+            const result = run(mutateOnce(canonical, from, to));
+            const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+            if (result.status === 0 || !output.includes(expected)) throw new Error(`Mutation '${name}' was not rejected as expected. Output:\n${output}`);
+          }
+          fs.rmSync(dir, { recursive: true, force: true });
+          console.log(`File response phase adversarial tests passed (${cases.length} mutations rejected).`);
+          ''')
+
+          package = read('package.json')
+          old = 'node scripts/test-file-transfer-liveness.mjs && node scripts/check-file-transfer-liveness.mjs && node scripts/test-network-session-lifecycle.mjs'
+          new = 'node scripts/test-file-transfer-liveness.mjs && node scripts/check-file-transfer-liveness.mjs && node scripts/test-file-response-phase.mjs && node scripts/check-file-response-phase.mjs && node scripts/test-network-session-lifecycle.mjs'
+          if package.count(old) != 1: raise SystemExit('package.json audit insertion point changed')
+          write('package.json', package.replace(old, new, 1))
+
+          changelog = read('CHANGELOG.md')
+          marker = '## 0.4.2\n\n'
+          entry = '- made sender-side file-transfer responses phase-strict: Offer, Chunk and Complete now accept only their documented response variants; a syntactically valid wrong-phase response reclaims only that transfer and emits a deterministic protocol failure instead of stranding an outgoing slot, while terminal Cancel responses stay idempotent; Rust matrix tests plus adversarial policy mutations guard the behavior without changing Real Internet Test credit,\n'
+          if changelog.count(marker) != 1: raise SystemExit('CHANGELOG marker changed')
+          write('CHANGELOG.md', changelog.replace(marker, marker + entry, 1))
+
+          roadmap = read('ROADMAP.md')
+          marker = "- File-transfer response frames are now independently capped at 16 KiB, and successful completion acknowledgements keep the receiver's local filesystem path in the local UI only instead of sending it to the peer; the optional response field remains for compatibility and regression coverage guards the path-free wire invariant. This privacy/resource hardening does not add Real Internet Test credit and the milestone remains 54/59.\n"
+          entry = '- Outgoing file-transfer response handling is now phase-strict: valid Offer/Chunk/Complete response variants continue normally, while any wrong-phase response reclaims only the matching sender transfer with a deterministic protocol failure so a malicious peer cannot strand an outgoing slot after satisfying request/response bookkeeping. Rust and adversarial policy tests guard the matrix; this liveness hardening does not add Real Internet Test credit and the milestone remains 54/59.\n'
+          if roadmap.count(marker) != 1: raise SystemExit('ROADMAP response marker changed')
+          write('ROADMAP.md', roadmap.replace(marker, marker + entry, 1))
+
+          security = read('docs/FILE_TRANSFER_SECURITY.md')
+          marker = "Outgoing disconnect cleanup never treats a single closed transport as terminal when another connection to the same Peer ID remains established. Cleanup runs only at `num_established == 0`, so multi-connection TCP/QUIC/relay sessions cannot be failed prematurely. Late request/response events for reclaimed transfer IDs are ignored because their metadata has already been removed, while metadata for unrelated transfers remains eligible for normal completion/failure handling.\n"
+          entry = "\nSender-side response processing is also bound to the request phase. Offer accepts only Accepted/Rejected/Error, Chunk accepts only Ack/Rejected/Error, and Complete accepts only Complete/Error. A syntactically valid response from the wrong phase fails only the matching outgoing transfer immediately; it cannot satisfy request bookkeeping and leave that sender slot stranded. Cancel remains terminal/idempotent, so late cancellation responses are ignored without recreating transfer state.\n"
+          if security.count(marker) != 1: raise SystemExit('security insertion marker changed')
+          security = security.replace(marker, marker + entry, 1)
+          old = 'peer-scoped outgoing reclamation and scoped request-metadata pruning.'
+          new = 'peer-scoped outgoing reclamation, wrong-phase response rejection and scoped request-metadata pruning.'
+          if security.count(old) != 1: raise SystemExit('security regression marker changed')
+          write('docs/FILE_TRANSFER_SECURITY.md', security.replace(old, new, 1))
+
+          for workflow in ['.github/workflows/one-shot-issue80.yml', '.github/workflows/one-shot-issue80-v2.yml', '.github/workflows/one-shot-issue80-v3.yml']:
+              Path(workflow).unlink(missing_ok=True)
+          PY
+
+      - name: Verify source-level patch
+        shell: bash
+        run: |
+          node scripts/test-file-response-phase.mjs
+          node scripts/check-file-response-phase.mjs
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          git diff --check
+
+      - name: Commit patched branch
+        shell: bash
+        run: |
+          git config user.name "SWIR Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Fail closed on unexpected file-transfer responses"
+          git push origin HEAD:hardening/unexpected-file-responses

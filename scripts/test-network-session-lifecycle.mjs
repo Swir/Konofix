@@ -35,7 +35,7 @@ if (baseline.status !== 0) {
   throw new Error('Canonical lifecycle implementation must pass before adversarial mutations run.');
 }
 
-const terminalRecovery = "await listen<string>('network-error', async event => {\n    if (!state.connected) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    resetSessionView(message);\n  });";
+const terminalRecovery = "await listen<string>('network-error', async event => {\n    if (!state.connected && !connectPending) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    resetSessionView(message);\n  });";
 
 const cases = [
   {
@@ -81,17 +81,38 @@ const cases = [
     expected: 'disconnect_network must atomically take',
   },
   {
+    name: 'frontend terminal handler ignores fatal startup errors',
+    target: 'ui',
+    source: 'if (!state.connected && !connectPending) return;',
+    replacement: 'if (!state.connected) return;',
+    expected: 'both connected sessions and in-flight startup',
+  },
+  {
+    name: 'stale successful startup can resurrect reset UI',
+    target: 'ui',
+    source: 'if (revision !== sessionRevision) return;\n    connectPending = false;\n    state.nick = result.nick;',
+    replacement: 'connectPending = false;\n    state.nick = result.nick;',
+    expected: 'stale successful start result',
+  },
+  {
+    name: 'session reset fails to invalidate in-flight startup',
+    target: 'ui',
+    source: 'sessionRevision += 1;\n  connectPending = false;',
+    replacement: 'connectPending = false;',
+    expected: 'invalidate any in-flight startup',
+  },
+  {
     name: 'frontend terminal handler no longer disconnects backend',
     target: 'ui',
     source: terminalRecovery,
-    replacement: "await listen<string>('network-error', async event => {\n    if (!state.connected) return;\n    const message = t('network.error', { error: event.payload });\n    /* backend convergence removed */\n    resetSessionView(message);\n  });",
+    replacement: "await listen<string>('network-error', async event => {\n    if (!state.connected && !connectPending) return;\n    const message = t('network.error', { error: event.payload });\n    /* backend convergence removed */\n    resetSessionView(message);\n  });",
     expected: 'terminal network-error recovery',
   },
   {
     name: 'frontend terminal handler no longer resets UI',
     target: 'ui',
     source: terminalRecovery,
-    replacement: "await listen<string>('network-error', async event => {\n    if (!state.connected) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    addSystem('world', message);\n  });",
+    replacement: "await listen<string>('network-error', async event => {\n    if (!state.connected && !connectPending) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    addSystem('world', message);\n  });",
     expected: 'terminal network-error recovery',
   },
   {

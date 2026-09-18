@@ -11,6 +11,13 @@ const fail = (message) => {
   process.exit(1);
 };
 
+if (healthSource.includes('[System.IO.FileShare]::ReadWrite')) {
+  fail('health snapshot validation must deny in-place writers while the validated file handle is open.');
+}
+if (healthSource.includes('Get-Content -LiteralPath $Path -Raw')) {
+  fail('health validation must not perform a second path-based content read after bounding the snapshot.');
+}
+
 const healthRequired = [
   'function Read-BoundedSnapshotText',
   '[System.IO.File]::Open(',
@@ -27,13 +34,6 @@ const healthRequired = [
 ];
 for (const snippet of healthRequired) {
   if (!healthSource.includes(snippet)) fail(`required single-snapshot health guard is missing: ${snippet}`);
-}
-
-if (healthSource.includes('[System.IO.FileShare]::ReadWrite')) {
-  fail('health snapshot validation must deny in-place writers while the validated file handle is open.');
-}
-if (healthSource.includes('Get-Content -LiteralPath $Path -Raw')) {
-  fail('health validation must not perform a second path-based content read after bounding the snapshot.');
 }
 
 const readinessRequired = [

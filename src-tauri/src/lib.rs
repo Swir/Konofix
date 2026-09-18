@@ -456,6 +456,87 @@ enum OutboundKind {
     Cancel,
 }
 
+fn file_response_matches_outbound_kind(kind: OutboundKind, response: &FileResponse) -> bool {
+    match kind {
+        OutboundKind::Offer => matches!(
+            response,
+            FileResponse::Accepted | FileResponse::Rejected { .. } | FileResponse::Error { .. }
+        ),
+        OutboundKind::Chunk => matches!(
+            response,
+            FileResponse::Ack { .. } | FileResponse::Rejected { .. } | FileResponse::Error { .. }
+        ),
+        OutboundKind::Complete => matches!(
+            response,
+            FileResponse::Complete { .. } | FileResponse::Error { .. }
+        ),
+        OutboundKind::Cancel => true,
+    }
+}
+
+#[cfg(test)]
+mod file_response_phase_tests {
+    use super::*;
+
+    fn variants() -> Vec<FileResponse> {
+        vec![
+            FileResponse::Accepted,
+            FileResponse::Rejected {
+                reason: "no".into(),
+            },
+            FileResponse::Ack { received: 1 },
+            FileResponse::Complete {
+                verified: true,
+                path: None,
+            },
+            FileResponse::Error {
+                message: "err".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn non_cancel_phases_accept_only_documented_variants() {
+        for response in variants() {
+            assert_eq!(
+                file_response_matches_outbound_kind(OutboundKind::Offer, &response),
+                matches!(
+                    &response,
+                    FileResponse::Accepted
+                        | FileResponse::Rejected { .. }
+                        | FileResponse::Error { .. }
+                )
+            );
+            assert_eq!(
+                file_response_matches_outbound_kind(OutboundKind::Chunk, &response),
+                matches!(
+                    &response,
+                    FileResponse::Ack { .. }
+                        | FileResponse::Rejected { .. }
+                        | FileResponse::Error { .. }
+                )
+            );
+            assert_eq!(
+                file_response_matches_outbound_kind(OutboundKind::Complete, &response),
+                matches!(
+                    &response,
+                    FileResponse::Complete { .. } | FileResponse::Error { .. }
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn cancellation_responses_are_terminally_ignored() {
+        for response in variants() {
+            assert!(file_response_matches_outbound_kind(
+                OutboundKind::Cancel,
+                &response
+            ));
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct OutboundMeta {
     transfer_id: String,
@@ -2004,6 +2085,21 @@ async fn network_task(
                                 }
                                 request_response::Message::Response { request_id, response } => {
                                     let Some(meta) = outbound_requests.remove(&request_id) else { continue; };
+                                    if !file_response_matches_outbound_kind(meta.kind, &response) {
+                                        if let Some(transfer) = outgoing.remove(&meta.transfer_id) {
+                                            emit_transfer(
+                                                &app,
+                                                &file_view_outgoing(
+                                                    &meta.transfer_id,
+                                                    &transfer,
+                                                    "failed",
+                                                    None,
+                                                    Some("Nieoczekiwana odpowiedź P2P dla bieżącego etapu transferu.".into()),
+                                                ),
+                                            );
+                                        }
+                                        continue;
+                                    }
                                     match meta.kind {
                                         OutboundKind::Offer => {
                                             match response {

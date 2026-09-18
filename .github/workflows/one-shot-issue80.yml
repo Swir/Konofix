@@ -1,0 +1,365 @@
+name: One-shot response-phase hardening
+
+on:
+  push:
+    branches: [ hardening/unexpected-file-responses ]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: hardening/unexpected-file-responses
+          fetch-depth: 0
+
+      - name: Apply fail-closed response-phase hardening
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path, text):
+              Path(path).write_text(text, encoding='utf-8')
+
+          def replace_once(path, old, new):
+              text = read(path)
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one replacement target, found {count}: {old[:120]!r}')
+              write(path, text.replace(old, new, 1))
+
+          rust = 'src-tauri/src/lib.rs'
+          outbound_enum = '''#[derive(Debug, Clone, Copy)]
+          enum OutboundKind {
+              Offer,
+              Chunk,
+              Complete,
+              Cancel,
+          }
+          '''
+          response_policy = '''#[derive(Debug, Clone, Copy)]
+          enum OutboundKind {
+              Offer,
+              Chunk,
+              Complete,
+              Cancel,
+          }
+
+          fn file_response_matches_outbound_kind(kind: OutboundKind, response: &FileResponse) -> bool {
+              match kind {
+                  OutboundKind::Offer => matches!(
+                      response,
+                      FileResponse::Accepted
+                          | FileResponse::Rejected { .. }
+                          | FileResponse::Error { .. }
+                  ),
+                  OutboundKind::Chunk => matches!(
+                      response,
+                      FileResponse::Ack { .. }
+                          | FileResponse::Rejected { .. }
+                          | FileResponse::Error { .. }
+                  ),
+                  OutboundKind::Complete => matches!(
+                      response,
+                      FileResponse::Complete { .. } | FileResponse::Error { .. }
+                  ),
+                  // Cancellation is terminal/idempotent. Any late response is ignored and must
+                  // never recreate sender-side transfer state.
+                  OutboundKind::Cancel => true,
+              }
+          }
+
+          #[cfg(test)]
+          mod file_response_phase_tests {
+              use super::*;
+
+              fn response_variants() -> Vec<FileResponse> {
+                  vec![
+                      FileResponse::Accepted,
+                      FileResponse::Rejected { reason: "no".into() },
+                      FileResponse::Ack { received: 1 },
+                      FileResponse::Complete { verified: true, path: None },
+                      FileResponse::Error { message: "err".into() },
+                  ]
+              }
+
+              #[test]
+              fn non_cancel_phases_accept_only_their_documented_response_variants() {
+                  for response in response_variants() {
+                      let offer_expected = matches!(
+                          &response,
+                          FileResponse::Accepted
+                              | FileResponse::Rejected { .. }
+                              | FileResponse::Error { .. }
+                      );
+                      let chunk_expected = matches!(
+                          &response,
+                          FileResponse::Ack { .. }
+                              | FileResponse::Rejected { .. }
+                              | FileResponse::Error { .. }
+                      );
+                      let complete_expected = matches!(
+                          &response,
+                          FileResponse::Complete { .. } | FileResponse::Error { .. }
+                      );
+
+                      assert_eq!(
+                          file_response_matches_outbound_kind(OutboundKind::Offer, &response),
+                          offer_expected
+                      );
+                      assert_eq!(
+                          file_response_matches_outbound_kind(OutboundKind::Chunk, &response),
+                          chunk_expected
+                      );
+                      assert_eq!(
+                          file_response_matches_outbound_kind(OutboundKind::Complete, &response),
+                          complete_expected
+                      );
+                  }
+              }
+
+              #[test]
+              fn cancel_responses_remain_terminal_and_idempotent() {
+                  for response in response_variants() {
+                      assert!(file_response_matches_outbound_kind(
+                          OutboundKind::Cancel,
+                          &response
+                      ));
+                  }
+              }
+          }
+          '''
+          replace_once(rust, outbound_enum, response_policy)
+
+          response_start = '''                                    let Some(meta) = outbound_requests.remove(&request_id) else { continue; };
+                                    match meta.kind {
+          '''
+          response_guard = '''                                    let Some(meta) = outbound_requests.remove(&request_id) else { continue; };
+                                    if !file_response_matches_outbound_kind(meta.kind, &response) {
+                                        if let Some(transfer) = outgoing.remove(&meta.transfer_id) {
+                                            emit_transfer(
+                                                &app,
+                                                &file_view_outgoing(
+                                                    &meta.transfer_id,
+                                                    &transfer,
+                                                    "failed",
+                                                    None,
+                                                    Some("Nieoczekiwana odpowiedź P2P dla bieżącego etapu transferu.".into()),
+                                                ),
+                                            );
+                                        }
+                                        continue;
+                                    }
+                                    match meta.kind {
+          '''
+          replace_once(rust, response_start, response_guard)
+
+          checker = r'''import fs from 'node:fs';
+
+          const rustPath = process.argv[2] ?? 'src-tauri/src/lib.rs';
+          const rust = fs.readFileSync(rustPath, 'utf8').replaceAll('\r\n', '\n');
+
+          const fail = message => {
+            console.error(`FILE RESPONSE PHASE ERROR: ${message}`);
+            process.exitCode = 1;
+          };
+
+          const sliceBetween = (text, startMarker, endMarker, label) => {
+            const start = text.indexOf(startMarker);
+            if (start < 0) {
+              fail(`${label}: start marker is missing.`);
+              return '';
+            }
+            const end = text.indexOf(endMarker, start + startMarker.length);
+            if (end < 0) {
+              fail(`${label}: end marker is missing.`);
+              return text.slice(start);
+            }
+            return text.slice(start, end);
+          };
+
+          const helper = sliceBetween(
+            rust,
+            'fn file_response_matches_outbound_kind(kind: OutboundKind, response: &FileResponse) -> bool {',
+            '#[cfg(test)]\nmod file_response_phase_tests',
+            'response phase helper',
+          );
+
+          for (const marker of [
+            'OutboundKind::Offer => matches!(',
+            'FileResponse::Accepted',
+            'OutboundKind::Chunk => matches!(',
+            'FileResponse::Ack { .. }',
+            'OutboundKind::Complete => matches!(',
+            'FileResponse::Complete { .. } | FileResponse::Error { .. }',
+            'OutboundKind::Cancel => true',
+          ]) {
+            if (!helper.includes(marker)) fail(`response phase helper is missing required marker: ${marker}`);
+          }
+
+          const handler = sliceBetween(
+            rust,
+            'request_response::Message::Response { request_id, response } => {',
+            'request_response::Event::OutboundFailure',
+            'outbound response handler',
+          );
+          const guard = 'if !file_response_matches_outbound_kind(meta.kind, &response) {';
+          const guardIndex = handler.indexOf(guard);
+          const dispatchIndex = handler.indexOf('match meta.kind {');
+          if (guardIndex < 0) fail('wrong-phase response guard is missing.');
+          if (dispatchIndex < 0 || (guardIndex >= 0 && guardIndex > dispatchIndex)) {
+            fail('wrong-phase response guard must run before phase dispatch.');
+          }
+          const guarded = guardIndex < 0 || dispatchIndex < 0 ? '' : handler.slice(guardIndex, dispatchIndex);
+          if (!guarded.includes('outgoing.remove(&meta.transfer_id)')) {
+            fail('wrong-phase response must reclaim only the matching outgoing transfer.');
+          }
+          if (!guarded.includes('Nieoczekiwana odpowiedź P2P dla bieżącego etapu transferu.')) {
+            fail('wrong-phase response must emit a deterministic protocol failure.');
+          }
+          if (guarded.includes('outgoing.clear()') || guarded.includes('outbound_requests.clear()')) {
+            fail('wrong-phase response handling must preserve unrelated transfer/request state.');
+          }
+
+          if (!process.exitCode) {
+            console.log('File response phase policy: documented variants only, fail-closed wrong-phase cleanup, and terminal cancellation are enforced.');
+          }
+          '''
+          write('scripts/check-file-response-phase.mjs', checker)
+
+          tests = r'''import fs from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          import { spawnSync } from 'node:child_process';
+
+          const checker = path.resolve('scripts/check-file-response-phase.mjs');
+          const canonical = fs.readFileSync('src-tauri/src/lib.rs', 'utf8').replaceAll('\r\n', '\n');
+          const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-response-phase-'));
+
+          const mutateOnce = (text, from, to) => {
+            const first = text.indexOf(from);
+            if (first < 0) throw new Error(`Test fixture source not found: ${from}`);
+            if (text.indexOf(from, first + from.length) >= 0) throw new Error(`Test fixture source is not unique: ${from}`);
+            return text.slice(0, first) + to + text.slice(first + from.length);
+          };
+
+          const run = source => {
+            const rustPath = path.join(tempDir, 'lib.rs');
+            fs.writeFileSync(rustPath, source, 'utf8');
+            return spawnSync(process.execPath, [checker, rustPath], { encoding: 'utf8' });
+          };
+
+          const baseline = run(canonical);
+          if (baseline.status !== 0) {
+            console.error(baseline.stdout);
+            console.error(baseline.stderr);
+            throw new Error('Canonical response-phase implementation must pass before adversarial mutations run.');
+          }
+
+          const cases = [
+            {
+              name: 'phase guard is disabled',
+              from: 'if !file_response_matches_outbound_kind(meta.kind, &response) {',
+              to: 'if false && !file_response_matches_outbound_kind(meta.kind, &response) {',
+              expected: 'wrong-phase response guard is missing',
+            },
+            {
+              name: 'wrong-phase response stops reclaiming its transfer',
+              from: 'if let Some(transfer) = outgoing.remove(&meta.transfer_id) {\n                                            emit_transfer(\n                                                &app,',
+              to: 'if let Some(transfer) = outgoing.get(&meta.transfer_id) {\n                                            emit_transfer(\n                                                &app,',
+              expected: 'reclaim only the matching outgoing transfer',
+            },
+            {
+              name: 'offer acceptance disappears from policy',
+              from: 'FileResponse::Accepted\n                        | FileResponse::Rejected { .. }',
+              to: 'FileResponse::Rejected { .. }',
+              expected: 'FileResponse::Accepted',
+            },
+            {
+              name: 'cancel path can recreate state',
+              from: 'OutboundKind::Cancel => true,',
+              to: 'OutboundKind::Cancel => false,',
+              expected: 'OutboundKind::Cancel => true',
+            },
+          ];
+
+          for (const testCase of cases) {
+            const result = run(mutateOnce(canonical, testCase.from, testCase.to));
+            const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+            if (result.status === 0) throw new Error(`Mutation '${testCase.name}' unexpectedly passed.`);
+            if (!output.includes(testCase.expected)) {
+              throw new Error(`Mutation '${testCase.name}' failed for the wrong reason. Expected '${testCase.expected}', got:\n${output}`);
+            }
+          }
+
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          console.log(`File response phase adversarial tests passed (${cases.length} mutations rejected).`);
+          '''
+          write('scripts/test-file-response-phase.mjs', tests)
+
+          package = read('package.json')
+          audit_old = 'node scripts/test-file-transfer-liveness.mjs && node scripts/check-file-transfer-liveness.mjs && node scripts/test-network-session-lifecycle.mjs'
+          audit_new = 'node scripts/test-file-transfer-liveness.mjs && node scripts/check-file-transfer-liveness.mjs && node scripts/test-file-response-phase.mjs && node scripts/check-file-response-phase.mjs && node scripts/test-network-session-lifecycle.mjs'
+          if package.count(audit_old) != 1:
+              raise SystemExit('package.json: audit insertion point changed')
+          write('package.json', package.replace(audit_old, audit_new, 1))
+
+          changelog = read('CHANGELOG.md')
+          changelog_marker = '## 0.4.2\n\n'
+          changelog_entry = ('- made sender-side file-transfer responses phase-strict: Offer, Chunk and Complete now accept only their documented response variants; a syntactically valid wrong-phase response reclaims only that transfer and emits a deterministic protocol failure instead of stranding an outgoing slot, while terminal Cancel responses stay idempotent; Rust matrix tests plus adversarial policy mutations guard the behavior without changing Real Internet Test credit,\n')
+          if changelog_entry not in changelog:
+              if changelog.count(changelog_marker) != 1:
+                  raise SystemExit('CHANGELOG.md: version marker changed')
+              write('CHANGELOG.md', changelog.replace(changelog_marker, changelog_marker + changelog_entry, 1))
+
+          roadmap = read('ROADMAP.md')
+          roadmap_marker = '- File-transfer response frames are now independently capped at 16 KiB, and successful completion acknowledgements keep the receiver\'s local filesystem path in the local UI only instead of sending it to the peer; the optional response field remains for compatibility and regression coverage guards the path-free wire invariant. This privacy/resource hardening does not add Real Internet Test credit and the milestone remains 54/59.\n'
+          roadmap_entry = '- Outgoing file-transfer response handling is now phase-strict: valid Offer/Chunk/Complete response variants continue normally, while any wrong-phase response reclaims only the matching sender transfer with a deterministic protocol failure so a malicious peer cannot strand an outgoing slot after satisfying request/response bookkeeping. Rust and adversarial policy tests guard the matrix; this liveness hardening does not add Real Internet Test credit and the milestone remains 54/59.\n'
+          if roadmap_entry not in roadmap:
+              if roadmap.count(roadmap_marker) != 1:
+                  raise SystemExit('ROADMAP.md: response-hardening marker changed')
+              write('ROADMAP.md', roadmap.replace(roadmap_marker, roadmap_marker + roadmap_entry, 1))
+
+          security = read('docs/FILE_TRANSFER_SECURITY.md')
+          security_marker = "Outgoing disconnect cleanup never treats a single closed transport as terminal when another connection to the same Peer ID remains established. Cleanup runs only at `num_established == 0`, so multi-connection TCP/QUIC/relay sessions cannot be failed prematurely. Late request/response events for reclaimed transfer IDs are ignored because their metadata has already been removed, while metadata for unrelated transfers remains eligible for normal completion/failure handling.\n"
+          security_entry = "\nSender-side response processing is also bound to the request phase. Offer accepts only Accepted/Rejected/Error, Chunk accepts only Ack/Rejected/Error, and Complete accepts only Complete/Error. A syntactically valid response from the wrong phase fails only the matching outgoing transfer immediately; it cannot satisfy request bookkeeping and leave that sender slot stranded. Cancel remains terminal/idempotent, so late cancellation responses are ignored without recreating transfer state.\n"
+          if security_entry.strip() not in security:
+              if security.count(security_marker) != 1:
+                  raise SystemExit('FILE_TRANSFER_SECURITY.md: insertion marker changed')
+              security = security.replace(security_marker, security_marker + security_entry, 1)
+              regression_old = 'peer-scoped outgoing reclamation and scoped request-metadata pruning.'
+              regression_new = 'peer-scoped outgoing reclamation, wrong-phase response rejection and scoped request-metadata pruning.'
+              if security.count(regression_old) != 1:
+                  raise SystemExit('FILE_TRANSFER_SECURITY.md: regression summary marker changed')
+              security = security.replace(regression_old, regression_new, 1)
+              write('docs/FILE_TRANSFER_SECURITY.md', security)
+
+          Path('.github/workflows/one-shot-issue80.yml').unlink()
+          PY
+
+      - name: Verify focused policy before commit
+        run: |
+          node scripts/test-file-response-phase.mjs
+          node scripts/check-file-response-phase.mjs
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check || cargo fmt --manifest-path src-tauri/Cargo.toml --all
+          cargo test --locked --manifest-path src-tauri/Cargo.toml file_response_phase_tests
+
+      - name: Commit patched branch
+        shell: bash
+        run: |
+          git config user.name "SWIR Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Fail closed on unexpected file-transfer responses"
+          git push origin HEAD:hardening/unexpected-file-responses

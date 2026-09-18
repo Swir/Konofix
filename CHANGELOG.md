@@ -2,7 +2,6 @@
 
 ## 0.4.2
 
-- bounded sanitized received-file components by encoded UTF-8 size before reservation: names longer than 180 bytes are truncated only at valid character boundaries, short extensions are preserved, and the reserved budget leaves room for numbered collision suffixes plus `.konofixpart`; regression tests cover multi-byte Unicode names and worst-case retry/temp suffix geometry without changing Real Internet Test credit,
 - hardened outgoing file-transfer liveness on final peer disconnect: once `num_established == 0`, sender-side transfers owned by that Peer ID are reclaimed immediately, emit a deterministic failed terminal state, and prune only matching request/response metadata so unrelated transfers remain intact; adversarial policy coverage protects final-connection, peer-ownership and scoped-pruning invariants, and this local resilience hardening adds no Real Internet Test credit,
 - fixed bootstrap settings persistence ordering: while connected, a candidate address is now written to local storage only after the live `add_bootstrap` backend accepts it, so validation failures leave saved configuration unchanged; offline staging, trimming/de-duplication and removal remain intact, and fail-closed policy plus adversarial mutation tests guard the validation-before-save contract without adding Real Internet Test credit,
 - completed desktop P2P task-exit ownership convergence: every `network_task` return now attempts exact-channel cleanup before error-only handling, so clean nickname-conflict/task shutdowns release stale backend session state without emitting a false fatal error; regression coverage proves clean-exit reconnect, preserves stale-task and explicit-disconnect safety, and the fail-closed lifecycle audit rejects any regression back to `Err`-only cleanup without adding Real Internet Test credit,
@@ -138,3 +137,11 @@
 - expanded Internet-precheck, deployment and public-readiness adversarial tests so documentation/private/special-use endpoints can still be used for parser fixtures or explicit lab mode but can no longer be mistaken for real public-network evidence,
 - upgraded Windows `BUILD_INFO.json` to schema 2 with a complete SHA-256/byte-size inventory of every staged regular file except the self-referential manifest, made release verification inspect ZIP paths before extraction and reject traversal or duplicate/case-colliding entries, require an exact inventory with no unexpected/missing files, and added adversarial CI checks proving that a re-hashed archive with an extra file or `../` entry still fails closed,
 - bounded Windows ZIP verification before extraction by compressed archive size, entry count, path length, per-entry/total expanded bytes and high compression ratio; added re-hashed decompression-bomb adversarial CI coverage so artifact verification fails before extraction.
+
+## 0.4.1
+
+- rebranded the project as **Konofix Chat**,
+- added **by Swir** attribution in the UI,
+- added an active link to `https://github.com/Swir/Konofix`,
+- changed the protocol namespace to `konofix`,
+- changed temporary transfer files to `.konofixpart`.

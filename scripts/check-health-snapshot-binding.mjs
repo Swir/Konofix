@@ -14,7 +14,7 @@ const fail = (message) => {
 const healthRequired = [
   'function Read-BoundedSnapshotText',
   '[System.IO.File]::Open(',
-  '[System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete',
+  '[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete',
   '$snapshot = Read-BoundedSnapshotText -SnapshotPath $Path -MaxBytes $MaxSnapshotBytes',
   '$snapshotText = [string]$snapshot.Text',
   '$health = $snapshotText | ConvertFrom-Json',
@@ -26,6 +26,9 @@ for (const snippet of healthRequired) {
   if (!healthSource.includes(snippet)) fail(`required single-snapshot health guard is missing: ${snippet}`);
 }
 
+if (healthSource.includes('[System.IO.FileShare]::ReadWrite')) {
+  fail('health snapshot validation must deny in-place writers while the validated file handle is open.');
+}
 if (healthSource.includes('Get-Content -LiteralPath $Path -Raw')) {
   fail('health validation must not perform a second path-based content read after bounding the snapshot.');
 }
@@ -54,4 +57,4 @@ if (!(capture >= 0 && capture < parse && parse < result)) {
   fail('readiness ordering must validate/capture one health snapshot, parse that exact result, then build readiness evidence.');
 }
 
-console.log('Health snapshot binding policy passed: one bounded file handle feeds validation and public-node readiness evidence.');
+console.log('Health snapshot binding policy passed: one bounded non-writable file handle feeds validation and public-node readiness evidence.');

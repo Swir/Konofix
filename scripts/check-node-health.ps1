@@ -144,6 +144,7 @@ if ($PSBoundParameters.ContainsKey('ExpectedSourceCommit')) {
 if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Health snapshot not found: $Path" }
 $snapshot = Read-BoundedSnapshotText -SnapshotPath $Path -MaxBytes $MaxSnapshotBytes
 $snapshotText = [string]$snapshot.Text
+if (-not $snapshotText.TrimStart().StartsWith('{', [System.StringComparison]::Ordinal)) { throw 'Health snapshot root must be a JSON object.' }
 try { $health = $snapshotText | ConvertFrom-Json } catch { throw "Health snapshot is not valid JSON: $($_.Exception.Message)" }
 if ($health -isnot [pscustomobject]) { throw 'Health snapshot root must be a JSON object.' }
 

@@ -1,0 +1,400 @@
+name: Apply cancellation convergence patch
+
+on:
+  push:
+    branches:
+      - codex/cancel-state-convergence
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message == 'Bootstrap cancellation convergence patch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply cancellation convergence implementation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, found {count}: {old[:120]!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          lib = 'src-tauri/src/lib.rs'
+          replace_once(
+              lib,
+              '''                        let result = if let Some(transfer) = outgoing.remove(&transfer_id) {\n                            let request_id = swarm.behaviour_mut().file_transfer.send_request(''',
+              '''                        let result = if let Some(transfer) = outgoing.remove(&transfer_id) {\n                            outbound_requests.retain(|_, meta| meta.transfer_id != transfer_id);\n                            let request_id = swarm.behaviour_mut().file_transfer.send_request(''',
+          )
+          replace_once(
+              lib,
+              '''                                            if pending_matches { pending_incoming.remove(&transfer_id); }''',
+              '''                                            if pending_matches {\n                                                pending_incoming.remove(&transfer_id);\n                                                let _ = app.emit(\n                                                    "file-offer-cancelled",\n                                                    serde_json::json!({\n                                                        "transfer_id": transfer_id.clone(),\n                                                        "peer_id": peer.to_string(),\n                                                    }),\n                                                );\n                                            }''',
+          )
+          replace_once(
+              lib,
+              '''                                            if outgoing_matches {\n                                                if let Some(transfer) = outgoing.remove(&transfer_id) {''',
+              '''                                            if outgoing_matches {\n                                                outbound_requests.retain(|_, meta| meta.transfer_id != transfer_id);\n                                                if let Some(transfer) = outgoing.remove(&transfer_id) {''',
+          )
+
+          main = 'src/main.ts'
+          replace_once(
+              main,
+              '''type FileOfferExpired = { transfer_id: string; peer_id: string };''',
+              '''type FileOfferExpired = { transfer_id: string; peer_id: string };\ntype FileOfferCancelled = { transfer_id: string; peer_id: string };''',
+          )
+          expired_block = '''  await listen<FileOfferExpired>('file-offer-expired', event => {\n    const modal = document.querySelector(`#file-offer-${CSS.escape(event.payload.transfer_id)}`);\n    if (!modal) return;\n    modal.remove();\n    if (state.connected) addSystem(state.room, t('transfer.offerExpired'));\n  });'''
+          cancelled_block = '''  await listen<FileOfferCancelled>('file-offer-cancelled', event => {\n    const modal = document.querySelector(`#file-offer-${CSS.escape(event.payload.transfer_id)}`);\n    if (!modal) return;\n    modal.remove();\n    if (state.connected) addSystem(state.room, t('transfer.offerCancelled'));\n  });'''
+          replace_once(main, expired_block, expired_block + '\n' + cancelled_block)
+
+          i18n = 'src/i18n.ts'
+          replace_once(
+              i18n,
+              '''  'transfer.offerExpired': '⌛ Incoming file offer expired before it was accepted.',\n''',
+              '''  'transfer.offerExpired': '⌛ Incoming file offer expired before it was accepted.',\n  'transfer.offerCancelled': '🚫 Incoming file offer was cancelled by the sender.',\n''',
+          )
+          replace_once(
+              i18n,
+              '''  'transfer.offerExpired': '⌛ Oferta przychodzącego pliku wygasła przed akceptacją.',\n''',
+              '''  'transfer.offerExpired': '⌛ Oferta przychodzącego pliku wygasła przed akceptacją.',\n  'transfer.offerCancelled': '🚫 Nadawca anulował ofertę przychodzącego pliku.',\n''',
+          )
+          replace_once(
+              i18n,
+              '''  'transfer.reject': 'Avvis', 'transfer.accept': 'Godta',\n''',
+              '''  'transfer.reject': 'Avvis', 'transfer.accept': 'Godta',\n  'transfer.offerCancelled': '🚫 Avsenderen avbrøt det innkommende filtilbudet.',\n''',
+          )
+          replace_once(
+              i18n,
+              '''  'transfer.failed': 'Fehler', 'transfer.completed': 'Fertig', 'common.cancel': 'Abbrechen',\n''',
+              '''  'transfer.failed': 'Fehler', 'transfer.completed': 'Fertig', 'common.cancel': 'Abbrechen',\n  'transfer.offerCancelled': '🚫 Der Absender hat das eingehende Dateiangebot abgebrochen.',\n''',
+          )
+          replace_once(
+              i18n,
+              '''  'transfer.failed': 'Erreur', 'transfer.completed': 'Terminé', 'common.cancel': 'Annuler',\n''',
+              '''  'transfer.failed': 'Erreur', 'transfer.completed': 'Terminé', 'common.cancel': 'Annuler',\n  'transfer.offerCancelled': '🚫 L’expéditeur a annulé l’offre de fichier entrante.',\n''',
+          )
+          replace_once(
+              i18n,
+              '''  'transfer.failed': 'Error', 'transfer.completed': 'Completado', 'common.cancel': 'Cancelar',\n''',
+              '''  'transfer.failed': 'Error', 'transfer.completed': 'Completado', 'common.cancel': 'Cancelar',\n  'transfer.offerCancelled': '🚫 El remitente canceló la oferta de archivo entrante.',\n''',
+          )
+          replace_once(
+              i18n,
+              '''  'transfer.failed': 'Помилка', 'transfer.completed': 'Готово', 'common.cancel': 'Скасувати',\n''',
+              '''  'transfer.failed': 'Помилка', 'transfer.completed': 'Готово', 'common.cancel': 'Скасувати',\n  'transfer.offerCancelled': '🚫 Відправник скасував пропозицію вхідного файлу.',\n''',
+          )
+
+          checker = r'''import fs from 'node:fs';
+
+const rustPath = process.argv[2] ?? 'src-tauri/src/lib.rs';
+const frontendPath = process.argv[3] ?? 'src/main.ts';
+const i18nPath = process.argv[4] ?? 'src/i18n.ts';
+const read = (path) => fs.readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
+const rust = read(rustPath);
+const frontend = read(frontendPath);
+const i18n = read(i18nPath);
+
+const fail = (message) => {
+  console.error(`FILE CANCEL CONVERGENCE ERROR: ${message}`);
+  process.exitCode = 1;
+};
+
+const sliceBetween = (text, startMarker, endMarker, label) => {
+  const start = text.indexOf(startMarker);
+  if (start < 0) {
+    fail(`${label}: start marker is missing.`);
+    return '';
+  }
+  const end = text.indexOf(endMarker, start + startMarker.length);
+  if (end < 0) {
+    fail(`${label}: end marker is missing.`);
+    return text.slice(start);
+  }
+  return text.slice(start, end);
+};
+
+const requireOrdered = (text, markers, label) => {
+  let cursor = -1;
+  for (const marker of markers) {
+    const next = text.indexOf(marker, cursor + 1);
+    if (next < 0 || next <= cursor) {
+      fail(`${label}: missing/out-of-order marker: ${marker}`);
+      return;
+    }
+    cursor = next;
+  }
+};
+
+const localCancel = sliceBetween(
+  rust,
+  'NetworkCommand::CancelFile { transfer_id, reply } => {',
+  'NetworkCommand::Stop => {',
+  'local cancel',
+);
+requireOrdered(localCancel, [
+  'if let Some(transfer) = outgoing.remove(&transfer_id) {',
+  'outbound_requests.retain(|_, meta| meta.transfer_id != transfer_id);',
+  'FileRequest::Cancel { transfer_id: transfer_id.clone() }',
+  'outbound_requests.insert(request_id, OutboundMeta { transfer_id: transfer_id.clone(), kind: OutboundKind::Cancel });',
+], 'local cancel must prune stale same-transfer request metadata before tracking the cancel handshake');
+if (localCancel.includes('outbound_requests.clear()')) {
+  fail('local cancel must preserve unrelated outbound request metadata.');
+}
+
+const remoteCancel = sliceBetween(
+  rust,
+  'FileRequest::Cancel { transfer_id } => {',
+  'request_response::Message::Response',
+  'remote cancel',
+);
+requireOrdered(remoteCancel, [
+  'let pending_matches = pending_incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);',
+  'let incoming_matches = incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);',
+  'let outgoing_matches = outgoing.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);',
+  'if pending_matches {',
+  'pending_incoming.remove(&transfer_id);',
+  '"file-offer-cancelled",',
+], 'authenticated pending-offer cancellation event must remain peer-owned and ordered after state removal');
+requireOrdered(remoteCancel, [
+  'if outgoing_matches {',
+  'outbound_requests.retain(|_, meta| meta.transfer_id != transfer_id);',
+  'if let Some(transfer) = outgoing.remove(&transfer_id) {',
+], 'remote outgoing cancel must prune only authenticated same-transfer request metadata');
+if (remoteCancel.includes('outbound_requests.clear()')) {
+  fail('remote cancel must preserve unrelated outbound request metadata.');
+}
+if (!remoteCancel.includes('FileResponse::Error { message: "Transfer not found for requesting peer.".into() }')) {
+  fail('wrong-peer or unknown remote cancellation must continue to fail closed.');
+}
+
+if (!frontend.includes("type FileOfferCancelled = { transfer_id: string; peer_id: string };")) {
+  fail('frontend cancellation payload type is missing.');
+}
+const cancelledListener = sliceBetween(
+  frontend,
+  "await listen<FileOfferCancelled>('file-offer-cancelled', event => {",
+  "await listen<FileTransfer>('file-transfer', event => {",
+  'frontend cancelled-offer listener',
+);
+requireOrdered(cancelledListener, [
+  'document.querySelector(`#file-offer-${CSS.escape(event.payload.transfer_id)}`)',
+  'if (!modal) return;',
+  'modal.remove();',
+  "t('transfer.offerCancelled')",
+], 'sender cancellation must close only its transfer-specific modal and show the dedicated localized message');
+if (!frontend.includes("await listen<FileOfferExpired>('file-offer-expired', event => {")) {
+  fail('offer TTL expiry listener must remain independent from sender cancellation.');
+}
+
+const dictionaryBlock = (name) => {
+  const start = i18n.indexOf(`const ${name}`);
+  if (start < 0) return '';
+  const end = i18n.indexOf('\n};', start);
+  return end < 0 ? '' : i18n.slice(start, end);
+};
+const locales = ['EN', 'PL', 'NO', 'DE', 'FR', 'ES', 'UK'];
+for (const locale of locales) {
+  if (!dictionaryBlock(locale).includes("'transfer.offerCancelled':")) {
+    fail(`locale ${locale} is missing transfer.offerCancelled.`);
+  }
+}
+const keyCount = [...i18n.matchAll(/'transfer\.offerCancelled':/g)].length;
+if (keyCount !== locales.length) {
+  fail(`transfer.offerCancelled must be explicitly present in all ${locales.length} supported dictionaries; found ${keyCount}.`);
+}
+
+if (!process.exitCode) {
+  console.log('File cancellation convergence policy: local/remote request metadata pruning, authenticated pending-offer UI invalidation, independent TTL expiry, and seven-locale messaging are enforced.');
+}
+'''
+          Path('scripts/check-file-cancel-convergence.mjs').write_text(checker, encoding='utf-8')
+
+          test = r'''import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+
+const checker = path.resolve('scripts/check-file-cancel-convergence.mjs');
+const canonical = {
+  rust: fs.readFileSync('src-tauri/src/lib.rs', 'utf8').replaceAll('\r\n', '\n'),
+  frontend: fs.readFileSync('src/main.ts', 'utf8').replaceAll('\r\n', '\n'),
+  i18n: fs.readFileSync('src/i18n.ts', 'utf8').replaceAll('\r\n', '\n'),
+};
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-file-cancel-'));
+
+const mutateOnce = (text, from, to) => {
+  const first = text.indexOf(from);
+  if (first < 0) throw new Error(`Test fixture source not found: ${from}`);
+  if (text.indexOf(from, first + from.length) >= 0) throw new Error(`Test fixture source is not unique: ${from}`);
+  return text.slice(0, first) + to + text.slice(first + from.length);
+};
+
+const run = (inputs) => {
+  const rustPath = path.join(tempDir, 'lib.rs');
+  const frontendPath = path.join(tempDir, 'main.ts');
+  const i18nPath = path.join(tempDir, 'i18n.ts');
+  fs.writeFileSync(rustPath, inputs.rust, 'utf8');
+  fs.writeFileSync(frontendPath, inputs.frontend, 'utf8');
+  fs.writeFileSync(i18nPath, inputs.i18n, 'utf8');
+  return spawnSync(process.execPath, [checker, rustPath, frontendPath, i18nPath], { encoding: 'utf8' });
+};
+
+const baseline = run(canonical);
+if (baseline.status !== 0) {
+  console.error(baseline.stdout);
+  console.error(baseline.stderr);
+  throw new Error('Canonical cancellation implementation must pass before adversarial mutations run.');
+}
+
+const cases = [
+  {
+    name: 'local cancellation forgets stale request metadata',
+    file: 'rust',
+    from: 'if let Some(transfer) = outgoing.remove(&transfer_id) {\n                            outbound_requests.retain(|_, meta| meta.transfer_id != transfer_id);\n                            let request_id = swarm.behaviour_mut().file_transfer.send_request(',
+    to: 'if let Some(transfer) = outgoing.remove(&transfer_id) {\n                            let request_id = swarm.behaviour_mut().file_transfer.send_request(',
+    expected: 'local cancel must prune stale',
+  },
+  {
+    name: 'local cancellation clears unrelated metadata',
+    file: 'rust',
+    from: 'if let Some(transfer) = outgoing.remove(&transfer_id) {\n                            outbound_requests.retain(|_, meta| meta.transfer_id != transfer_id);\n                            let request_id = swarm.behaviour_mut().file_transfer.send_request(',
+    to: 'if let Some(transfer) = outgoing.remove(&transfer_id) {\n                            outbound_requests.clear();\n                            let request_id = swarm.behaviour_mut().file_transfer.send_request(',
+    expected: 'preserve unrelated',
+  },
+  {
+    name: 'wrong peer can claim a pending offer',
+    file: 'rust',
+    from: 'let pending_matches = pending_incoming.get(&transfer_id).map(|transfer| transfer.peer == peer).unwrap_or(false);',
+    to: 'let pending_matches = pending_incoming.get(&transfer_id).map(|transfer| transfer.peer != peer).unwrap_or(false);',
+    expected: 'peer-owned',
+  },
+  {
+    name: 'remote outgoing cancellation forgets stale metadata',
+    file: 'rust',
+    from: 'if outgoing_matches {\n                                                outbound_requests.retain(|_, meta| meta.transfer_id != transfer_id);\n                                                if let Some(transfer) = outgoing.remove(&transfer_id) {',
+    to: 'if outgoing_matches {\n                                                if let Some(transfer) = outgoing.remove(&transfer_id) {',
+    expected: 'remote outgoing cancel',
+  },
+  {
+    name: 'backend pending cancellation event disappears',
+    file: 'rust',
+    from: '"file-offer-cancelled",',
+    to: '"file-offer-cancelled-broken",',
+    expected: 'pending-offer cancellation event',
+  },
+  {
+    name: 'frontend stops listening for sender cancellation',
+    file: 'frontend',
+    from: "await listen<FileOfferCancelled>('file-offer-cancelled', event => {",
+    to: "await listen<FileOfferCancelled>('file-offer-cancelled-broken', event => {",
+    expected: 'frontend cancelled-offer listener',
+  },
+  {
+    name: 'TTL expiry path is accidentally removed',
+    file: 'frontend',
+    from: "await listen<FileOfferExpired>('file-offer-expired', event => {",
+    to: "await listen<FileOfferExpired>('file-offer-expired-broken', event => {",
+    expected: 'TTL expiry listener',
+  },
+  {
+    name: 'English sender-cancelled message is removed',
+    file: 'i18n',
+    from: "  'transfer.offerCancelled': '🚫 Incoming file offer was cancelled by the sender.',\n",
+    to: '',
+    expected: 'locale EN',
+  },
+];
+
+for (const testCase of cases) {
+  const inputs = { ...canonical };
+  inputs[testCase.file] = mutateOnce(inputs[testCase.file], testCase.from, testCase.to);
+  const result = run(inputs);
+  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  if (result.status === 0) throw new Error(`Mutation '${testCase.name}' unexpectedly passed.`);
+  if (!output.includes(testCase.expected)) {
+    throw new Error(`Mutation '${testCase.name}' failed for the wrong reason. Expected '${testCase.expected}', got:\n${output}`);
+  }
+}
+
+fs.rmSync(tempDir, { recursive: true, force: true });
+console.log(`File cancellation convergence adversarial tests passed (${cases.length} mutations rejected).`);
+'''
+          Path('scripts/test-file-cancel-convergence.mjs').write_text(test, encoding='utf-8')
+
+          pkg_path = Path('package.json')
+          pkg = json.loads(pkg_path.read_text(encoding='utf-8'))
+          audit = pkg['scripts']['audit']
+          marker = 'node scripts/test-file-transfer-liveness.mjs && node scripts/check-file-transfer-liveness.mjs'
+          addition = marker + ' && node scripts/test-file-cancel-convergence.mjs && node scripts/check-file-cancel-convergence.mjs'
+          if marker not in audit:
+              raise SystemExit('package.json audit liveness marker is missing')
+          if 'check-file-cancel-convergence.mjs' not in audit:
+              pkg['scripts']['audit'] = audit.replace(marker, addition, 1)
+          pkg_path.write_text(json.dumps(pkg, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
+          docs = 'docs/FILE_TRANSFER_SECURITY.md'
+          replace_once(
+              docs,
+              '''- The same final-connection boundary now reclaims outgoing transfers owned by that disconnected Peer ID instead of waiting for the request/response timeout. Each reclaimed sender slot emits a deterministic failed-transfer update, and only request metadata tied to those reclaimed transfer IDs is pruned; unrelated peers and requests remain untouched.\n''',
+              '''- The same final-connection boundary now reclaims outgoing transfers owned by that disconnected Peer ID instead of waiting for the request/response timeout. Each reclaimed sender slot emits a deterministic failed-transfer update, and only request metadata tied to those reclaimed transfer IDs is pruned; unrelated peers and requests remain untouched.\n- Explicit sender cancellation now converges request bookkeeping immediately: cancelling an outgoing transfer drops only older Offer/Chunk/Complete metadata for that transfer before the new Cancel handshake is tracked, while an authenticated remote cancellation prunes only metadata belonging to its matching outgoing transfer. Late responses for pruned requests remain fail-closed and unrelated transfer metadata is preserved.\n- If an authenticated sender cancels an unanswered incoming offer, the backend removes only that peer-owned pending offer and emits a transfer-specific cancellation event. The desktop closes only that offer modal and shows a dedicated localized sender-cancelled message; the independent 45-second expiry path remains unchanged, and a wrong peer cannot dismiss another sender's offer.\n''',
+          )
+          replace_once(
+              docs,
+              '''Regression tests cover pre-existing partial files with sentinel bytes, concurrent reservations for the same requested filename, a final destination appearing after temporary reservation, bounded reservation exhaustion, no-clobber finalization, successful promotion, multi-byte filename byte bounds plus retry/temporary suffix geometry, pending-offer TTL boundaries, accepted-transfer inactivity TTL boundaries, final-connection-only cleanup, peer-scoped outgoing reclamation and scoped request-metadata pruning. Cancellation, rejected/failed acceptance, hash mismatch, disconnect, inactivity timeout and finalization failure clean up only state owned by the affected transfer.\n''',
+              '''Regression tests cover pre-existing partial files with sentinel bytes, concurrent reservations for the same requested filename, a final destination appearing after temporary reservation, bounded reservation exhaustion, no-clobber finalization, successful promotion, multi-byte filename byte bounds plus retry/temporary suffix geometry, pending-offer TTL boundaries, accepted-transfer inactivity TTL boundaries, final-connection-only cleanup, peer-scoped outgoing reclamation, explicit-cancel request-metadata pruning and transfer-specific pending-offer UI invalidation. Cancellation, rejected/failed acceptance, hash mismatch, disconnect, inactivity timeout and finalization failure clean up only state owned by the affected transfer. Adversarial policy mutations cover local/remote metadata pruning, peer ownership, sender-cancelled UI routing, the independent TTL-expiry listener and explicit localization in every supported dictionary.\n''',
+          )
+
+          changelog = Path('CHANGELOG.md')
+          ctext = changelog.read_text(encoding='utf-8')
+          anchor = '## 0.4.2\n\n'
+          if ctext.count(anchor) != 1:
+              raise SystemExit('CHANGELOG 0.4.2 anchor mismatch')
+          entry = '- converged explicit file-transfer cancellation across backend request bookkeeping and receiver UX: local outgoing cancel now prunes only stale same-transfer Offer/Chunk/Complete metadata before tracking the Cancel handshake, authenticated remote cancel applies the same scoped pruning, and sender-cancelled unanswered offers emit a transfer-specific UI event with dedicated messages in all seven supported locales; focused adversarial policy tests guard peer ownership, unrelated metadata, modal targeting and the independent TTL-expiry path without changing Real Internet Test credit,\n'
+          changelog.write_text(ctext.replace(anchor, anchor + entry, 1), encoding='utf-8')
+
+          roadmap = Path('ROADMAP.md')
+          rtext = roadmap.read_text(encoding='utf-8')
+          anchor = '- Accepted incoming file transfers now have a 120-second inactivity lease that advances only after a successfully written non-empty chunk; abandoned senders can no longer retain all receive slots indefinitely, zero-byte keepalive chunks are rejected, and the final connection close for a remote Peer ID immediately clears that peer\'s unanswered offers and accepted receive state while deleting only transfer-owned `.konofixpart` files. TTL-boundary regression coverage is included and the Real Internet Test milestone stays 54/59.\n'
+          if rtext.count(anchor) != 1:
+              raise SystemExit('ROADMAP cancellation anchor mismatch')
+          note = '- Explicit file-transfer cancellation now converges both backend bookkeeping and receiver UI: stale same-transfer outbound request metadata is pruned without touching unrelated transfers, the new Cancel handshake remains tracked, and an authenticated sender cancelling an unanswered offer closes only that transfer\'s modal with a dedicated localized message while the TTL-expiry path remains independent. Focused adversarial policy coverage guards these invariants; this resilience/UX hardening does not add Real Internet Test credit and the milestone remains 54/59.\n'
+          roadmap.write_text(rtext.replace(anchor, anchor + note, 1), encoding='utf-8')
+
+          Path('.github/workflows/apply-cancel-convergence.yml').unlink()
+          PY
+      - name: Format Rust source
+        shell: bash
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Run project and adversarial audits
+        run: npm run audit
+      - name: Build TypeScript and Vite frontend
+        run: npm run build
+      - name: Verify Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git status --short
+          git commit -m "Converge file-transfer cancellation state"
+          git push origin HEAD:codex/cancel-state-convergence

@@ -26,7 +26,16 @@ requireText(rust, 'let task_tx = tx.clone();', 'spawned task must retain an owne
 requireText(rust, 'let startup_tx = tx;', 'startup handshake cleanup must retain the exact installed channel.');
 requireText(rust, 'clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false)', 'fatal task cleanup must be channel-owned.');
 requireText(rust, 'if clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false) {\n                let _ = app.emit("network-error", err);', 'terminal network-error must be emitted only by the task that successfully clears the active session.');
-requireText(rust, 'let _ = clear_network_sender_if_current(state.inner(), &startup_tx);', 'failed ready handshake must clear only its own startup session.');
+requireText(
+  rust,
+  'Err(_) => {\n            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);\n            return Err("Nie udało się uruchomić warstwy P2P.".to_string());\n        }',
+  'cancelled ready handshake must clear only its own startup session.',
+);
+requireText(
+  rust,
+  'Err(err) => {\n            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);\n            Err(err)\n        }',
+  'failed ready result must clear only its own startup session.',
+);
 requireText(rust, 'fn take_network_sender(', 'explicit disconnect must use the idempotent sender-take helper.');
 requireText(rust, 'let tx = take_network_sender(state.inner())?;', 'disconnect_network must atomically take the current sender.');
 requireText(rust, 'mod network_session_state_tests {', 'Rust lifecycle regression tests are missing.');

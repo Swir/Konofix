@@ -1,0 +1,664 @@
+name: Issue 95 integration
+
+on:
+  push:
+    branches:
+      - hardening/nickname-lease-auth-95
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Apply authenticated nickname lease hardening
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          root = Path('.')
+          lib_path = root / 'src-tauri/src/lib.rs'
+          text = lib_path.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, found {count}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              '    autonat, dcutr, gossipsub, identify,\n',
+              '    autonat, core::SignedEnvelope, dcutr, gossipsub, identify, identity,\n',
+              'libp2p imports',
+          )
+          replace_once(
+              'const NICK_LEASE_SECS: u64 = 42;\n',
+              'const NICK_LEASE_SECS: u64 = 42;\nconst NICK_LEASE_CLOCK_SKEW_SECS: u64 = 5;\nconst NICK_LEASE_DOMAIN: &str = "konofix/nick-lease/v1";\nconst NICK_LEASE_PAYLOAD_TYPE: &[u8] = b"\\x01";\nconst MAX_NICK_LEASE_ENVELOPE_BYTES: usize = 2 * 1024;\n',
+              'nickname lease constants',
+          )
+          replace_once(
+              '''#[derive(Debug, Clone, Serialize, Deserialize)]
+struct NickLease {
+    peer_id: String,
+    nick: String,
+    canonical: String,
+    expires_at: u128,
+}
+''',
+              '''#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct NickLeasePayload {
+    peer_id: String,
+    nick: String,
+    canonical: String,
+    expires_at: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct NickLease {
+    peer_id: String,
+    nick: String,
+    canonical: String,
+    expires_at: u128,
+    envelope: Vec<u8>,
+}
+
+impl NickLease {
+    fn payload(&self) -> NickLeasePayload {
+        NickLeasePayload {
+            peer_id: self.peer_id.clone(),
+            nick: self.nick.clone(),
+            canonical: self.canonical.clone(),
+            expires_at: self.expires_at,
+        }
+    }
+}
+''',
+              'NickLease structure',
+          )
+          replace_once(
+              '''    NickClaim {
+        peer_id: String,
+        nick: String,
+        canonical: String,
+        expires_at: u128,
+    },
+''',
+              '''    NickClaim {
+        peer_id: String,
+        nick: String,
+        canonical: String,
+        expires_at: u128,
+        envelope: Vec<u8>,
+    },
+''',
+              'WireEvent NickClaim fields',
+          )
+          replace_once(
+              '''        WireEvent::NickClaim {
+            peer_id,
+            nick,
+            canonical,
+            expires_at,
+        } => {
+            peer_id.parse::<PeerId>().is_ok()
+                && validate_nick(nick).is_ok()
+                && canonical == &canonical_nick(nick)
+                && *expires_at > 0
+        }
+''',
+              '''        WireEvent::NickClaim {
+            peer_id,
+            nick,
+            canonical,
+            expires_at,
+            envelope,
+        } => {
+            let lease = NickLease {
+                peer_id: peer_id.clone(),
+                nick: nick.clone(),
+                canonical: canonical.clone(),
+                expires_at: *expires_at,
+                envelope: envelope.clone(),
+            };
+            verify_nick_lease(&lease, None, None, now_ms())
+        }
+''',
+              'NickClaim well-formed validation',
+          )
+          replace_once(
+              '''fn nick_record_key(canonical: &str) -> RecordKey {
+    let bytes = format!("/konofix/nick/{canonical}").into_bytes();
+    RecordKey::new(&bytes)
+}
+''',
+              '''fn nick_record_key(canonical: &str) -> RecordKey {
+    let bytes = format!("/konofix/nick/{canonical}").into_bytes();
+    RecordKey::new(&bytes)
+}
+
+fn build_nick_lease(
+    signing_key: &identity::Keypair,
+    nick: &str,
+    canonical: &str,
+    expires_at: u128,
+) -> Result<NickLease, String> {
+    let payload = NickLeasePayload {
+        peer_id: signing_key.public().to_peer_id().to_string(),
+        nick: nick.to_string(),
+        canonical: canonical.to_string(),
+        expires_at,
+    };
+    let payload_bytes = serde_json::to_vec(&payload)
+        .map_err(|error| format!("Could not serialize nickname lease payload: {error}"))?;
+    let envelope = SignedEnvelope::new(
+        signing_key,
+        NICK_LEASE_DOMAIN.to_string(),
+        NICK_LEASE_PAYLOAD_TYPE.to_vec(),
+        payload_bytes,
+    )
+    .map_err(|error| format!("Could not sign nickname lease: {error}"))?
+    .into_protobuf_encoding();
+    if envelope.len() > MAX_NICK_LEASE_ENVELOPE_BYTES {
+        return Err("Signed nickname lease exceeds the protocol size limit.".into());
+    }
+    Ok(NickLease {
+        peer_id: payload.peer_id,
+        nick: payload.nick,
+        canonical: payload.canonical,
+        expires_at: payload.expires_at,
+        envelope,
+    })
+}
+
+fn verify_nick_lease(
+    lease: &NickLease,
+    expected_record_key: Option<&RecordKey>,
+    record_publisher: Option<&PeerId>,
+    now: u128,
+) -> bool {
+    if lease.envelope.is_empty() || lease.envelope.len() > MAX_NICK_LEASE_ENVELOPE_BYTES {
+        return false;
+    }
+    if validate_nick(&lease.nick).ok().as_deref() != Some(lease.nick.as_str())
+        || lease.canonical != canonical_nick(&lease.nick)
+    {
+        return false;
+    }
+    let maximum_expiry = now.saturating_add(
+        (NICK_LEASE_SECS.saturating_add(NICK_LEASE_CLOCK_SKEW_SECS) as u128) * 1000,
+    );
+    if lease.expires_at <= now || lease.expires_at > maximum_expiry {
+        return false;
+    }
+    if expected_record_key.is_some_and(|key| key != &nick_record_key(&lease.canonical)) {
+        return false;
+    }
+    let Ok(claimed_peer) = lease.peer_id.parse::<PeerId>() else {
+        return false;
+    };
+    if record_publisher.is_some_and(|publisher| publisher != &claimed_peer) {
+        return false;
+    }
+    let Ok(envelope) = SignedEnvelope::from_protobuf_encoding(&lease.envelope) else {
+        return false;
+    };
+    if !envelope.verify(NICK_LEASE_DOMAIN.to_string()) {
+        return false;
+    }
+    let Ok((payload_bytes, signing_key)) = envelope.payload_and_signing_key(
+        NICK_LEASE_DOMAIN.to_string(),
+        NICK_LEASE_PAYLOAD_TYPE,
+    ) else {
+        return false;
+    };
+    let Ok(payload) = serde_json::from_slice::<NickLeasePayload>(payload_bytes) else {
+        return false;
+    };
+    payload == lease.payload() && signing_key.to_peer_id() == claimed_peer
+}
+''',
+              'nickname lease key helpers',
+          )
+          replace_once(
+              '''fn publish_nick_lease(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    topic: &gossipsub::IdentTopic,
+    local_peer: PeerId,
+    nick: &str,
+    canonical: &str,
+) {
+    let expires_at = now_ms() + (NICK_LEASE_SECS as u128 * 1000);
+    let lease = NickLease {
+        peer_id: local_peer.to_string(),
+        nick: nick.to_string(),
+        canonical: canonical.to_string(),
+        expires_at,
+    };
+
+    publish(
+        swarm,
+        topic,
+        &WireEvent::NickClaim {
+            peer_id: lease.peer_id.clone(),
+            nick: lease.nick.clone(),
+            canonical: lease.canonical.clone(),
+            expires_at,
+        },
+    );
+
+    if let Ok(value) = serde_json::to_vec(&lease) {
+        let mut record = Record::new(nick_record_key(canonical), value);
+        record.publisher = Some(local_peer);
+        record.expires = Some(Instant::now() + Duration::from_secs(NICK_LEASE_SECS));
+        let _ = swarm.behaviour_mut().kad.put_record(record, Quorum::One);
+    }
+}
+''',
+              '''fn publish_nick_lease(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    topic: &gossipsub::IdentTopic,
+    signing_key: &identity::Keypair,
+    nick: &str,
+    canonical: &str,
+) {
+    let expires_at = now_ms() + (NICK_LEASE_SECS as u128 * 1000);
+    let Ok(lease) = build_nick_lease(signing_key, nick, canonical, expires_at) else {
+        return;
+    };
+
+    publish(
+        swarm,
+        topic,
+        &WireEvent::NickClaim {
+            peer_id: lease.peer_id.clone(),
+            nick: lease.nick.clone(),
+            canonical: lease.canonical.clone(),
+            expires_at,
+            envelope: lease.envelope.clone(),
+        },
+    );
+
+    if let Ok(value) = serde_json::to_vec(&lease) {
+        let mut record = Record::new(nick_record_key(canonical), value);
+        record.publisher = Some(signing_key.public().to_peer_id());
+        record.expires = Some(Instant::now() + Duration::from_secs(NICK_LEASE_SECS));
+        let _ = swarm.behaviour_mut().kad.put_record(record, Quorum::One);
+    }
+}
+''',
+              'publish_nick_lease',
+          )
+          replace_once(
+              '''    let mut swarm = SwarmBuilder::with_new_identity()
+        .with_tokio()
+''',
+              '''    let identity_key = identity::Keypair::generate_ed25519();
+    let nickname_signing_key = identity_key.clone();
+    let mut swarm = SwarmBuilder::with_existing_identity(identity_key)
+        .with_tokio()
+''',
+              'swarm identity ownership',
+          )
+          text = text.replace(
+              'publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical);',
+              'publish_nick_lease(&mut swarm, &world, &nickname_signing_key, &nick, &canonical);',
+          )
+          if text.count('publish_nick_lease(&mut swarm, &world, &nickname_signing_key, &nick, &canonical);') != 2:
+              raise SystemExit('expected startup and heartbeat signed nickname lease publication calls')
+          replace_once(
+              '''                        kad::QueryResult::GetRecord(Ok(GetRecordOk::FoundRecord(peer_record))) => {
+                            if let Ok(lease) = serde_json::from_slice::<NickLease>(&peer_record.record.value) {
+                                if check_nick_conflict(&lease.peer_id, &lease.canonical, lease.expires_at, local_peer, &canonical) {
+                                    let _ = app.emit("nick-conflict", serde_json::json!({"nick": nick, "peer_id": lease.peer_id}));
+                                    break 'network;
+                                }
+                            }
+                        }
+''',
+              '''                        kad::QueryResult::GetRecord(Ok(GetRecordOk::FoundRecord(peer_record))) => {
+                            if let Ok(lease) = serde_json::from_slice::<NickLease>(&peer_record.record.value) {
+                                if verify_nick_lease(
+                                    &lease,
+                                    Some(&peer_record.record.key),
+                                    peer_record.record.publisher.as_ref(),
+                                    now_ms(),
+                                ) && check_nick_conflict(&lease.peer_id, &lease.canonical, lease.expires_at, local_peer, &canonical) {
+                                    let _ = app.emit("nick-conflict", serde_json::json!({"nick": nick, "peer_id": lease.peer_id}));
+                                    break 'network;
+                                }
+                            }
+                        }
+''',
+              'DHT nickname lease verification',
+          )
+          replace_once(
+              '''        assert!(!wire_event_is_well_formed(&WireEvent::NickClaim {
+            peer_id: source_text.clone(),
+            nick: "Alice".into(),
+            canonical: "mallory".into(),
+            expires_at: 1
+        }));
+''',
+              '''        assert!(!wire_event_is_well_formed(&WireEvent::NickClaim {
+            peer_id: source_text.clone(),
+            nick: "Alice".into(),
+            canonical: "mallory".into(),
+            expires_at: 1,
+            envelope: Vec::new(),
+        }));
+''',
+              'malformed NickClaim test',
+          )
+          replace_once(
+              '''            WireEvent::NickClaim {
+                peer_id: source_text.clone(),
+                nick: "alice".into(),
+                canonical: "alice".into(),
+                expires_at: 1,
+            },
+''',
+              '''            WireEvent::NickClaim {
+                peer_id: source_text.clone(),
+                nick: "alice".into(),
+                canonical: "alice".into(),
+                expires_at: 1,
+                envelope: Vec::new(),
+            },
+''',
+              'source-binding NickClaim test',
+          )
+
+          test_module = r'''
+
+#[cfg(test)]
+mod nickname_lease_auth_tests {
+    use super::*;
+
+    const TEST_NOW: u128 = 1_800_000_000_000;
+
+    fn live_lease(key: &identity::Keypair, nick: &str) -> NickLease {
+        let canonical = canonical_nick(nick);
+        build_nick_lease(
+            key,
+            nick,
+            &canonical,
+            TEST_NOW + (NICK_LEASE_SECS as u128 * 1000),
+        )
+        .expect("test lease should sign")
+    }
+
+    #[test]
+    fn signed_lease_requires_identity_key_record_key_and_bounded_expiry() {
+        let key = identity::Keypair::generate_ed25519();
+        let peer = key.public().to_peer_id();
+        let lease = live_lease(&key, "Alice");
+        let record_key = nick_record_key(&lease.canonical);
+        assert!(verify_nick_lease(
+            &lease,
+            Some(&record_key),
+            Some(&peer),
+            TEST_NOW,
+        ));
+
+        let mut forged_identity = lease.clone();
+        forged_identity.peer_id = identity::Keypair::generate_ed25519()
+            .public()
+            .to_peer_id()
+            .to_string();
+        assert!(!verify_nick_lease(
+            &forged_identity,
+            Some(&record_key),
+            None,
+            TEST_NOW,
+        ));
+
+        let wrong_record_key = nick_record_key("mallory");
+        assert!(!verify_nick_lease(
+            &lease,
+            Some(&wrong_record_key),
+            Some(&peer),
+            TEST_NOW,
+        ));
+        let wrong_publisher = identity::Keypair::generate_ed25519().public().to_peer_id();
+        assert!(!verify_nick_lease(
+            &lease,
+            Some(&record_key),
+            Some(&wrong_publisher),
+            TEST_NOW,
+        ));
+    }
+
+    #[test]
+    fn unsigned_tampered_expired_and_far_future_leases_fail_closed() {
+        let key = identity::Keypair::generate_ed25519();
+        let peer = key.public().to_peer_id();
+        let lease = live_lease(&key, "alice");
+        let record_key = nick_record_key("alice");
+
+        let mut unsigned = lease.clone();
+        unsigned.envelope.clear();
+        assert!(!verify_nick_lease(
+            &unsigned,
+            Some(&record_key),
+            Some(&peer),
+            TEST_NOW,
+        ));
+
+        let mut tampered = lease.clone();
+        let last = tampered.envelope.len() - 1;
+        tampered.envelope[last] ^= 0x01;
+        assert!(!verify_nick_lease(
+            &tampered,
+            Some(&record_key),
+            Some(&peer),
+            TEST_NOW,
+        ));
+
+        let expired = build_nick_lease(&key, "alice", "alice", TEST_NOW - 1)
+            .expect("expired lease can still be signed for verification test");
+        assert!(!verify_nick_lease(
+            &expired,
+            Some(&record_key),
+            Some(&peer),
+            TEST_NOW,
+        ));
+
+        let far_future = build_nick_lease(
+            &key,
+            "alice",
+            "alice",
+            TEST_NOW + ((NICK_LEASE_SECS + NICK_LEASE_CLOCK_SKEW_SECS + 1) as u128 * 1000),
+        )
+        .expect("future lease can still be signed for verification test");
+        assert!(!verify_nick_lease(
+            &far_future,
+            Some(&record_key),
+            Some(&peer),
+            TEST_NOW,
+        ));
+    }
+
+    #[test]
+    fn authenticated_live_lease_still_participates_in_deterministic_conflict_resolution() {
+        let first = identity::Keypair::generate_ed25519();
+        let second = identity::Keypair::generate_ed25519();
+        let first_peer = first.public().to_peer_id();
+        let second_peer = second.public().to_peer_id();
+        let (remote_key, local_peer) = if first_peer < second_peer {
+            (&first, second_peer)
+        } else {
+            (&second, first_peer)
+        };
+        let lease = live_lease(remote_key, "alice");
+        let record_key = nick_record_key("alice");
+        let remote_peer = remote_key.public().to_peer_id();
+        assert!(verify_nick_lease(
+            &lease,
+            Some(&record_key),
+            Some(&remote_peer),
+            TEST_NOW,
+        ));
+        assert!(check_nick_conflict(
+            &lease.peer_id,
+            &lease.canonical,
+            lease.expires_at,
+            local_peer,
+            "alice",
+        ));
+    }
+}
+'''
+          marker = '\n#[cfg(test)]\nmod network_session_state_tests {'
+          if marker not in text:
+              raise SystemExit('test insertion marker missing')
+          text = text.replace(marker, test_module + marker, 1)
+          lib_path.write_text(text, encoding='utf-8')
+
+          check_script = r'''import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+export function checkNicknameLeasePolicy(source, packageJson) {
+  const failures = [];
+  const requireText = (needle, label) => {
+    if (!source.includes(needle)) failures.push(label);
+  };
+  requireText('core::SignedEnvelope', 'libp2p SignedEnvelope import is missing');
+  requireText('NICK_LEASE_DOMAIN', 'nickname lease domain separation is missing');
+  requireText('NICK_LEASE_CLOCK_SKEW_SECS', 'bounded nickname lease clock skew is missing');
+  requireText('envelope: Vec<u8>', 'wire/DHT nickname lease envelope is missing');
+  requireText('SignedEnvelope::new(', 'nickname leases are not signed');
+  requireText('SignedEnvelope::from_protobuf_encoding', 'nickname lease envelopes are not decoded');
+  requireText('envelope.verify(NICK_LEASE_DOMAIN.to_string())', 'nickname lease signature verification is missing');
+  requireText('payload_and_signing_key(', 'nickname lease payload/signing-key binding is missing');
+  requireText('signing_key.to_peer_id() == claimed_peer', 'signature identity is not bound to claimed Peer ID');
+  requireText('key != &nick_record_key(&lease.canonical)', 'DHT nickname key is not bound to the canonical nickname');
+  requireText('lease.expires_at > maximum_expiry', 'nickname lease future lifetime is not bounded');
+  requireText('record_publisher.is_some_and(|publisher| publisher != &claimed_peer)', 'DHT publisher mismatch is not rejected');
+  if (!/GetRecord\(Ok\(GetRecordOk::FoundRecord\(peer_record\)\)\)[\s\S]{0,900}verify_nick_lease\([\s\S]{0,500}check_nick_conflict/.test(source)) {
+    failures.push('DHT nickname conflicts are not gated by lease authentication');
+  }
+  if (!/NickClaim\s*\{[\s\S]{0,250}envelope:[\s\S]{0,500}verify_nick_lease/.test(source)) {
+    failures.push('GossipSub nickname claims do not share authenticated lease validation');
+  }
+  const pkg = JSON.parse(packageJson);
+  const audit = pkg.scripts?.audit ?? '';
+  if (!audit.includes('test-nickname-lease-auth.mjs') || !audit.includes('check-nickname-lease-auth.mjs')) {
+    failures.push('npm run audit does not enforce nickname lease policy and adversarial tests');
+  }
+  return failures;
+}
+
+const invoked = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invoked) {
+  const root = process.cwd();
+  const source = fs.readFileSync(path.join(root, 'src-tauri/src/lib.rs'), 'utf8');
+  const packageJson = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
+  const failures = checkNicknameLeasePolicy(source, packageJson);
+  if (failures.length) {
+    for (const failure of failures) console.error(`NICK LEASE POLICY ERROR: ${failure}`);
+    process.exit(1);
+  }
+  console.log('Nickname lease authentication policy: verified.');
+}
+'''
+          (root / 'scripts/check-nickname-lease-auth.mjs').write_text(check_script, encoding='utf-8')
+
+          test_script = r'''import fs from 'node:fs';
+import { checkNicknameLeasePolicy } from './check-nickname-lease-auth.mjs';
+
+const source = fs.readFileSync('src-tauri/src/lib.rs', 'utf8');
+const packageJson = fs.readFileSync('package.json', 'utf8');
+const baseline = checkNicknameLeasePolicy(source, packageJson);
+if (baseline.length) throw new Error(`baseline nickname lease policy failed: ${baseline.join('; ')}`);
+
+const mutations = [
+  ['signature verification', source.replace('envelope.verify(NICK_LEASE_DOMAIN.to_string())', 'true')],
+  ['claimed identity binding', source.replace('signing_key.to_peer_id() == claimed_peer', 'true')],
+  ['DHT key binding', source.replace('key != &nick_record_key(&lease.canonical)', 'false')],
+  ['future lifetime bound', source.replace('lease.expires_at > maximum_expiry', 'false')],
+  ['DHT authentication gate', source.replace('if verify_nick_lease(\n                                    &lease,', 'if true && verify_nick_lease(\n                                    &lease,').replace(') && check_nick_conflict', ') && check_nick_conflict', 1)],
+];
+
+for (const [label, mutated] of mutations.slice(0, 4)) {
+  if (mutated === source) throw new Error(`${label}: mutation did not apply`);
+  if (checkNicknameLeasePolicy(mutated, packageJson).length === 0) {
+    throw new Error(`${label}: policy checker accepted adversarial mutation`);
+  }
+}
+
+const pkg = JSON.parse(packageJson);
+pkg.scripts.audit = pkg.scripts.audit
+  .replace('node scripts/test-nickname-lease-auth.mjs && ', '')
+  .replace('node scripts/check-nickname-lease-auth.mjs && ', '');
+if (checkNicknameLeasePolicy(source, JSON.stringify(pkg)).length === 0) {
+  throw new Error('audit wiring: policy checker accepted removed nickname-lease gates');
+}
+
+console.log('Nickname lease authentication adversarial policy tests: PASS.');
+'''
+          (root / 'scripts/test-nickname-lease-auth.mjs').write_text(test_script, encoding='utf-8')
+
+          pkg_path = root / 'package.json'
+          pkg = json.loads(pkg_path.read_text(encoding='utf-8'))
+          audit = pkg['scripts']['audit']
+          anchor = 'node scripts/test-network-session-lifecycle.mjs && node scripts/check-network-session-lifecycle.mjs'
+          addition = 'node scripts/test-nickname-lease-auth.mjs && node scripts/check-nickname-lease-auth.mjs && ' + anchor
+          if anchor not in audit:
+              raise SystemExit('package audit anchor missing')
+          pkg['scripts']['audit'] = audit.replace(anchor, addition, 1)
+          pkg_path.write_text(json.dumps(pkg, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
+          doc = '''# Nickname lease security\n\nKonofix uses GossipSub for live presence and Kademlia as a fallback lookup for short-lived distributed nickname leases. A nickname lease is authoritative only when its application payload is authenticated by the libp2p identity that owns the claimed Peer ID.\n\n## Trust boundary\n\nEach lease signs a domain-separated payload containing the claimed Peer ID, display nickname, canonical nickname and expiration. The signed envelope uses the same libp2p identity key as the network session. Receivers verify the envelope signature, recover its signing key and require that key to derive the claimed Peer ID before a lease can participate in deterministic conflict resolution.\n\nDHT records additionally must use the exact `/konofix/nick/<canonical>` key. If a Kademlia publisher field is present it must match the authenticated lease identity, but publisher metadata alone is never treated as proof. Expired leases, leases beyond the 42-second lifetime plus the explicit 5-second clock-skew allowance, malformed nicknames, canonical mismatches, oversized envelopes and unsigned legacy records are non-authoritative and cannot trigger `nick-conflict`.\n\nGossipSub `NickClaim` events carry the same signed lease envelope and remain separately bound to the authenticated GossipSub source Peer ID. Presence remains a live source-authenticated signal; the DHT fallback cannot override identity checks.\n\nThis is protocol hardening, not Real Internet Test evidence, and therefore does not change the active milestone counter.\n'''
+          (root / 'docs/NICKNAME_SECURITY.md').write_text(doc, encoding='utf-8')
+
+          changelog_path = root / 'CHANGELOG.md'
+          changelog = changelog_path.read_text(encoding='utf-8')
+          changelog_anchor = '## 0.4.2\n\n'
+          changelog_bullet = '- authenticated distributed nickname leases before DHT fallback conflict enforcement: each short-lived lease is now carried in a domain-separated libp2p `SignedEnvelope` bound to the claimed Peer ID, nickname, canonical key and expiration; DHT key/publisher consistency, bounded lifetime, signature identity and malformed/unsigned records fail closed, GossipSub claims reuse the same lease verification in addition to source binding, and Rust plus adversarial policy coverage guard the trust boundary without changing Real Internet Test credit,\n'
+          if changelog_anchor not in changelog:
+              raise SystemExit('CHANGELOG 0.4.2 anchor missing')
+          changelog_path.write_text(changelog.replace(changelog_anchor, changelog_anchor + changelog_bullet, 1), encoding='utf-8')
+
+          roadmap_path = root / 'ROADMAP.md'
+          roadmap = roadmap_path.read_text(encoding='utf-8')
+          roadmap_anchor = '- RFC 9637 parity now extends that fail-closed boundary to the strict Internet bootstrap evidence precheck as well: `3fff::/20` is rejected alongside the existing `2001:db8::/32` documentation space, lower/upper-prefix fixtures cover the PowerShell evidence path, and the deterministic public-host policy audit verifies raw Node, Windows launcher, Linux installer and Internet precheck all retain the exclusion. This standards-alignment hardening does not add Real Internet Test credit and the milestone remains 54/59.\n'
+          roadmap_note = '- Distributed nickname fallback leases are now cryptographically authenticated with a domain-separated libp2p signed envelope before DHT data can enforce a nickname conflict. Verification binds the signature to the claimed Peer ID, normalized nickname/canonical DHT key, bounded lease expiry and optional DHT publisher metadata; GossipSub nickname claims reuse the same lease verifier in addition to authenticated-source binding. Unsigned or mismatched records fail closed. This trust-boundary hardening does not add Real Internet Test credit and the milestone remains 54/59.\n'
+          if roadmap_anchor not in roadmap:
+              raise SystemExit('ROADMAP hardening anchor missing')
+          roadmap_path.write_text(roadmap.replace(roadmap_anchor, roadmap_anchor + roadmap_note, 1), encoding='utf-8')
+
+          workflow = root / '.github/workflows/issue95-integration.yml'
+          workflow.unlink()
+          PY
+
+      - name: Format and verify source/policy/docs
+        shell: bash
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          node scripts/test-nickname-lease-auth.mjs
+          node scripts/check-nickname-lease-auth.mjs
+          node scripts/test-progress-svg.mjs
+          node scripts/progress-svg.mjs --check
+          npm run audit
+          git diff --check
+
+      - name: Commit integration result
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Authenticate DHT nickname leases'
+          git push origin HEAD:hardening/nickname-lease-auth-95

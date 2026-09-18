@@ -56,6 +56,8 @@ The active milestone currently has 54 of 59 tasks complete. The remaining five t
 - [x] public-bootstrap precheck script
 
 ## 0.4.2 — Real Internet Test 🚧
+
+**Public-node hardening (no milestone credit):** raw `konofix-node --public-host` now rejects non-global IPv4/IPv6 literals by default before startup side effects. `--allow-private-address` is lab-only and its output is explicitly invalid for promotion evidence; DNS names remain supported, with resolution evidence still enforced by deployment/readiness tooling.
 - [x] fixed Windows CI and restored `tsconfig.json`
 - [x] Windows/Tauri packaging and production app/Node build pipeline
 - [x] `Konofix Node --public-host` ready TCP/QUIC bootstrap addresses

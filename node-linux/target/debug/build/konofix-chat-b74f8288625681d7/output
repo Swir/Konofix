@@ -1,0 +1,4 @@
+cargo:rerun-if-env-changed=GITHUB_SHA
+cargo:rerun-if-changed=../.git/HEAD
+cargo:rerun-if-changed=../.git/refs/heads/automation/public-host-policy-86
+cargo:rustc-env=KONOFIX_SOURCE_COMMIT=75588830983327f0260cea530f555903ade19f0a

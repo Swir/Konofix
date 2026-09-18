@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     io::Write,
-    net::IpAddr,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     path::{Component, Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -30,6 +30,7 @@ const SOURCE_COMMIT: &str = env!("KONOFIX_SOURCE_COMMIT");
 struct NodeArgs {
     port: u16,
     public_host: Option<String>,
+    allow_private_address: bool,
     status_interval: u64,
     health_file: Option<PathBuf>,
     identity_file: Option<PathBuf>,
@@ -305,19 +306,22 @@ fn print_help() {
     println!("Konofix Node {}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("Usage:");
-    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--status-interval 60] [--health-file PATH] [--identity-file PATH]");
+    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--allow-private-address] [--status-interval 60] [--health-file PATH] [--identity-file PATH]");
     println!();
     println!("Options:");
     println!("  --port PORT              TCP and UDP/QUIC port (default: 45555)");
     println!("  --public-host HOST       Public IPv4, IPv6, or DNS name of this node");
     println!("  --public-ip IP           Alias for --public-host");
+    println!(
+        "  --allow-private-address  Allow a non-global IP literal for controlled lab testing only"
+    );
     println!("  --status-interval SEC    Print an operational status line every N seconds (default: 60, minimum: 10)");
     println!("  --health-file PATH       Atomically update a metadata-only JSON health snapshot");
     println!("  --identity-file PATH     Explicit persistent Node identity file (recommended for public/community nodes)");
     println!("  -h, --help               Show this help");
     println!();
     println!("Example:");
-    println!("  konofix-node.exe --port 45555 --public-host 203.0.113.10 --status-interval 60 --health-file C:\\Konofix\\health.json --identity-file C:\\Konofix\\node-identity.key");
+    println!("  konofix-node.exe --port 45555 --public-host node.yourdomain.com --status-interval 60 --health-file C:\\Konofix\\health.json --identity-file C:\\Konofix\\node-identity.key");
 }
 
 fn parse_args_from<I>(args: I) -> Result<Option<NodeArgs>, String>
@@ -326,6 +330,7 @@ where
 {
     let mut port = DEFAULT_PORT;
     let mut public_host = None;
+    let mut allow_private_address = false;
     let mut status_interval = DEFAULT_STATUS_INTERVAL;
     let mut health_file = None;
     let mut identity_file = None;
@@ -349,6 +354,9 @@ where
                     return Err(format!("Invalid public host: {raw}"));
                 }
                 public_host = Some(host);
+            }
+            "--allow-private-address" => {
+                allow_private_address = true;
             }
             "--status-interval" => {
                 let raw = args.next().ok_or("Missing value after --status-interval")?;
@@ -384,6 +392,7 @@ where
     Ok(Some(NodeArgs {
         port,
         public_host,
+        allow_private_address,
         status_interval,
         health_file,
         identity_file,
@@ -402,32 +411,112 @@ fn public_prefix(host: &str) -> String {
     }
 }
 
-fn is_non_public_ip(host: &str) -> bool {
-    match host.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ip)) => {
-            ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
+fn ipv4_in_cidr(address: Ipv4Addr, network: Ipv4Addr, prefix: u32) -> bool {
+    debug_assert!(prefix <= 32);
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix)
+    };
+    (u32::from(address) & mask) == (u32::from(network) & mask)
+}
+
+fn ipv6_in_cidr(address: Ipv6Addr, network: Ipv6Addr, prefix: u32) -> bool {
+    debug_assert!(prefix <= 128);
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u128::MAX << (128 - prefix)
+    };
+    (u128::from(address) & mask) == (u128::from(network) & mask)
+}
+
+fn is_globally_routable_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let blocked = [
+                (Ipv4Addr::new(0, 0, 0, 0), 8),       // 0.0.0.0/8 this network
+                (Ipv4Addr::new(10, 0, 0, 0), 8),      // 10.0.0.0/8 private
+                (Ipv4Addr::new(100, 64, 0, 0), 10),   // 100.64.0.0/10 CGNAT
+                (Ipv4Addr::new(127, 0, 0, 0), 8),     // 127.0.0.0/8 loopback
+                (Ipv4Addr::new(169, 254, 0, 0), 16),  // 169.254.0.0/16 link-local
+                (Ipv4Addr::new(172, 16, 0, 0), 12),   // 172.16.0.0/12 private
+                (Ipv4Addr::new(192, 0, 0, 0), 24),    // 192.0.0.0/24 special-use
+                (Ipv4Addr::new(192, 0, 2, 0), 24),    // 192.0.2.0/24 documentation
+                (Ipv4Addr::new(192, 88, 99, 0), 24),  // 192.88.99.0/24 deprecated relay
+                (Ipv4Addr::new(192, 168, 0, 0), 16),  // 192.168.0.0/16 private
+                (Ipv4Addr::new(198, 18, 0, 0), 15),   // 198.18.0.0/15 benchmarking
+                (Ipv4Addr::new(198, 51, 100, 0), 24), // 198.51.100.0/24 documentation
+                (Ipv4Addr::new(203, 0, 113, 0), 24),  // 203.0.113.0/24 documentation
+                (Ipv4Addr::new(224, 0, 0, 0), 4),     // 224.0.0.0/4 multicast
+                (Ipv4Addr::new(240, 0, 0, 0), 4),     // 240.0.0.0/4 reserved/broadcast
+            ];
+            !blocked
+                .iter()
+                .any(|(network, prefix)| ipv4_in_cidr(ip, *network, *prefix))
         }
-        Ok(IpAddr::V6(ip)) => {
-            ip.is_loopback()
-                || ip.is_unspecified()
-                || ip.is_unique_local()
-                || ip.is_unicast_link_local()
+        IpAddr::V6(ip) => {
+            if let Some(mapped) = ip.to_ipv4_mapped() {
+                return is_globally_routable_ip(IpAddr::V4(mapped));
+            }
+
+            // Public-node evidence accepts globally routable IPv6 unicast only. Keeping
+            // this explicit mirrors scripts/public-node.ps1 without relying on unstable
+            // std::net global-address helpers.
+            if !ipv6_in_cidr(ip, Ipv6Addr::new(0x2000, 0, 0, 0, 0, 0, 0, 0), 3) {
+                return false;
+            }
+            let blocked = [
+                (Ipv6Addr::new(0x2001, 0x0002, 0, 0, 0, 0, 0, 0), 48), // 2001:2::/48 benchmarking
+                (Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32), // 2001:db8::/32 documentation
+                (Ipv6Addr::new(0x2001, 0x0010, 0, 0, 0, 0, 0, 0), 28), // 2001:10::/28 ORCHID
+                (Ipv6Addr::new(0x2001, 0x0020, 0, 0, 0, 0, 0, 0), 28), // 2001:20::/28 ORCHIDv2
+            ];
+            !blocked
+                .iter()
+                .any(|(network, prefix)| ipv6_in_cidr(ip, *network, *prefix))
         }
-        Err(_) => false,
     }
 }
 
-fn print_shareable_addresses(host: &str, port: u16, peer: PeerId) {
+fn validate_public_host(host: &str, allow_private_address: bool) -> Result<bool, String> {
+    let Ok(ip) = host.parse::<IpAddr>() else {
+        // DNS syntax alone is not reachability evidence. The deployment/readiness
+        // tooling performs DNS resolution and public-answer validation when required.
+        return Ok(false);
+    };
+
+    if is_globally_routable_ip(ip) {
+        return Ok(false);
+    }
+    if allow_private_address {
+        return Ok(true);
+    }
+
+    Err(format!(
+        "Public host '{host}' is a non-global IP literal (private, local, CGNAT, documentation, benchmarking, multicast/reserved, or other special-use range). Use --allow-private-address only for controlled lab testing."
+    ))
+}
+
+fn print_shareable_addresses(host: &str, port: u16, peer: PeerId, lab_only: bool) {
     let prefix = public_prefix(host);
     let tcp = format!("{prefix}/tcp/{port}/p2p/{peer}");
     let quic = format!("{prefix}/udp/{port}/quic-v1/p2p/{peer}");
 
     println!();
-    println!("=== KONOFIX SHAREABLE ADDRESSES ===");
+    if lab_only {
+        println!("=== KONOFIX LAB-ONLY ADDRESSES ===");
+        println!("EVIDENCE      : NOT VALID FOR PUBLIC-NODE OR CROSS-COUNTRY PROMOTION");
+    } else {
+        println!("=== KONOFIX SHAREABLE ADDRESSES ===");
+    }
     println!("BOOTSTRAP TCP : {tcp}");
     println!("BOOTSTRAP QUIC: {quic}");
     println!("RECOMMENDED   : {tcp}");
     println!();
+    if lab_only {
+        println!("LAB ONLY: these addresses are for controlled local/private testing, not promotion evidence.");
+    }
     println!("Paste RECOMMENDED into Konofix Chat -> Network settings -> Bootstrap.");
     println!("Alternatively set the environment variable:");
     println!("  KONOFIX_BOOTSTRAPS={tcp}");
@@ -534,6 +623,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Some(args) = parse_args().map_err(std::io::Error::other)? else {
         return Ok(());
     };
+    let public_host_lab_only = match args.public_host.as_deref() {
+        Some(host) => {
+            validate_public_host(host, args.allow_private_address).map_err(std::io::Error::other)?
+        }
+        None => false,
+    };
     let port = args.port;
     let identity_path = args
         .identity_file
@@ -617,10 +712,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Privacy: this node does not persist chat history or transferred files.");
 
     if let Some(host) = &args.public_host {
-        if is_non_public_ip(host) {
-            println!("WARNING: --public-host resolves to a non-public IP literal. Cross-network clients may not be able to reach it.");
-        }
-        print_shareable_addresses(host, port, local_peer);
+        print_shareable_addresses(host, port, local_peer, public_host_lab_only);
     } else {
         println!();
         println!("TIP: start with --public-host <PUBLIC_IP_OR_DNS> to print ready-to-share bootstrap addresses.");
@@ -731,6 +823,77 @@ mod tests {
         let error = parse_args_from(vec!["--identity-file".to_string(), "   ".to_string()])
             .expect_err("empty identity path must fail");
         assert!(error.contains("Identity file path cannot be empty"));
+    }
+
+    #[test]
+    fn parses_explicit_lab_override() {
+        let args = parse_args_from(vec![
+            "--public-host".to_string(),
+            "10.0.0.5".to_string(),
+            "--allow-private-address".to_string(),
+        ])
+        .expect("arguments should parse")
+        .expect("help was not requested");
+        assert!(args.allow_private_address);
+    }
+
+    #[test]
+    fn public_host_literal_policy_matches_deployment_preflight() {
+        let public = [
+            "1.1.1.1",
+            "8.8.8.8",
+            "::ffff:8.8.8.8",
+            "2606:4700:4700::1111",
+            "2001:4860:4860::8888",
+        ];
+        for raw in public {
+            let ip = raw.parse::<IpAddr>().expect("public fixture should parse");
+            assert!(is_globally_routable_ip(ip), "expected public: {raw}");
+            assert_eq!(validate_public_host(raw, false), Ok(false));
+        }
+
+        let blocked = [
+            "0.0.0.0",
+            "10.0.0.1",
+            "100.64.0.1",
+            "127.0.0.1",
+            "169.254.1.1",
+            "172.16.0.1",
+            "192.0.0.1",
+            "192.0.2.1",
+            "192.88.99.1",
+            "192.168.1.1",
+            "198.18.0.1",
+            "198.51.100.1",
+            "203.0.113.1",
+            "224.0.0.1",
+            "240.0.0.1",
+            "::",
+            "::1",
+            "::ffff:192.168.1.1",
+            "100::1",
+            "fc00::1",
+            "fe80::1",
+            "fec0::1",
+            "ff02::1",
+            "2001:2::1",
+            "2001:db8::1",
+            "2001:10::1",
+            "2001:20::1",
+        ];
+        for raw in blocked {
+            let ip = raw.parse::<IpAddr>().expect("blocked fixture should parse");
+            assert!(!is_globally_routable_ip(ip), "expected blocked: {raw}");
+            let error = validate_public_host(raw, false)
+                .expect_err("non-global literal must fail closed by default");
+            assert!(error.contains("non-global IP literal"));
+            assert_eq!(validate_public_host(raw, true), Ok(true));
+        }
+
+        assert_eq!(
+            validate_public_host("node.yourdomain.com", false),
+            Ok(false)
+        );
     }
 
     #[test]

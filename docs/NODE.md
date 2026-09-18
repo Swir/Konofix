@@ -14,6 +14,7 @@
 - explicit identity-file location for service/VPS deployments
 - fail-closed identity loading: an unreadable or corrupted existing key is never silently replaced
 - automatic generation of ready-to-use public multiaddresses
+- fail-closed validation of non-global IPv4/IPv6 `--public-host` literals in the raw Node binary, with an explicit lab-only override
 - periodic operational status lines with uptime and connected-peer count
 - optional metadata-only JSON health snapshot for supervisors and monitoring
 - exact source-commit provenance embedded into Node health snapshots
@@ -92,6 +93,8 @@ The raw binary remains available for manual operation:
 ```powershell
 src-tauri\target\release\konofix-node.exe --port 45555 --public-host YOUR_PUBLIC_IP
 ```
+
+The raw binary now fails closed when `--public-host` is a non-global IP literal, before identity creation, listeners, or shareable-address output. The literal policy mirrors the deployment preflight for private, loopback, link-local, CGNAT, documentation, benchmarking, multicast/reserved and corresponding IPv6 special-use ranges. `--allow-private-address` is available only for controlled lab testing; when used, the Node labels the generated addresses **LAB-ONLY** and explicitly marks them invalid for public-node/cross-country promotion evidence. DNS names remain accepted by the binary because syntax alone does not prove reachability; use the deployment/readiness tooling when DNS resolution itself must be verified.
 
 A public DNS name is also supported:
 
@@ -196,7 +199,7 @@ For DNS names, the Node uses the generic `/dns/...` multiaddr form so the hostna
 
 Paste the `RECOMMENDED` address into **Network settings → Bootstrap**. The client stores it locally.
 
-Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, private IPv4 addresses, IPv6 unique-local/link-local addresses, documentation ranges and other special-use ranges are not global bootstrap addresses. The Node binary can print a warning for obviously non-public literals, while the recommended deployment/readiness tooling is stricter and rejects such configurations before they can be used as promotion evidence unless the explicit lab override is supplied where supported.
+Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, private IPv4 addresses, IPv6 unique-local/link-local addresses, CGNAT, documentation, benchmarking, multicast/reserved and other special-use ranges are not global bootstrap addresses. The raw Node binary now rejects those IP literals by default instead of merely warning. `--allow-private-address` is restricted to controlled lab testing and produces LAB-ONLY output that is not valid promotion evidence. The deployment/readiness tooling remains stricter for DNS because it can resolve the name and validate every returned address.
 
 A public IP or DNS name plus reachable TCP and UDP ports are required for a proper Internet test.
 

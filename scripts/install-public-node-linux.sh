@@ -140,14 +140,14 @@ blocked_v4 = tuple(ipaddress.ip_network(value) for value in (
 ))
 public_v6 = ipaddress.ip_network("2000::/3")
 blocked_v6 = tuple(ipaddress.ip_network(value) for value in (
-    "2001:2::/48", "2001:db8::/32", "2001:10::/28", "2001:20::/28",
+    "2001:2::/48", "2001:db8::/32", "2001:10::/28", "2001:20::/28", "3fff::/20",
 ))
 
 def is_public_evidence_address(ip: ipaddress._BaseAddress) -> bool:
     if isinstance(ip, ipaddress.IPv4Address):
         return not any(ip in network for network in blocked_v4)
     if ip.ipv4_mapped is not None:
-        return is_public_evidence_address(ip.ipv4_mapped)
+        return False
     if ip.is_unspecified or ip.is_loopback or ip.is_link_local or ip.is_multicast:
         return False
     return ip in public_v6 and not any(ip in network for network in blocked_v6)
@@ -192,6 +192,11 @@ if ! "$BINARY_PATH" --help 2>&1 | grep -q 'Konofix Node'; then
   fail "Binary does not identify itself as Konofix Node: $BINARY_PATH"
 fi
 
+NODE_ADDRESS_OVERRIDE=""
+if ((ALLOW_PRIVATE)); then
+  NODE_ADDRESS_OVERRIDE=" --allow-private-address"
+fi
+
 render_unit() {
   cat <<EOF
 [Unit]
@@ -203,7 +208,7 @@ Wants=network-online.target
 Type=simple
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
-ExecStart=${INSTALLED_BINARY} --port ${PORT} --public-host ${PUBLIC_HOST} --status-interval ${STATUS_INTERVAL} --health-file ${HEALTH_FILE} --identity-file ${IDENTITY_FILE}
+ExecStart=${INSTALLED_BINARY} --port ${PORT} --public-host ${PUBLIC_HOST}${NODE_ADDRESS_OVERRIDE} --status-interval ${STATUS_INTERVAL} --health-file ${HEALTH_FILE} --identity-file ${IDENTITY_FILE}
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s
@@ -247,6 +252,9 @@ printf 'Installed binary:%s\n' "$INSTALLED_BINARY"
 printf 'State directory: %s\n' "$STATE_DIR"
 printf 'Identity file:   %s\n' "$IDENTITY_FILE"
 printf 'Health file:     %s\n' "$HEALTH_FILE"
+if ((ALLOW_PRIVATE)); then
+  printf 'Address mode:    LAB ONLY (--allow-private-address); not valid public-node evidence.\n'
+fi
 printf 'Firewall:        NOT modified; allow TCP and UDP %s separately.\n' "$PORT"
 
 if ((PRINT_UNIT)); then

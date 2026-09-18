@@ -236,6 +236,9 @@ $nodeArgs = @(
   '--identity-file', $identityFull,
   '--health-file', $healthFull
 )
+if ($AllowPrivateAddress) {
+  $nodeArgs += '--allow-private-address'
+}
 
 $config = [ordered]@{
   schema = 1

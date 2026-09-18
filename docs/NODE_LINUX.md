@@ -33,6 +33,8 @@ The installer never modifies a firewall. Allow the selected TCP and UDP port in 
 
 The Linux deployment preflight uses the same fail-closed public-host policy as the Windows readiness/evidence tooling. Literal addresses must be globally routable, while DNS names must be public-looking FQDNs and cannot live below special/private-use namespaces such as `localhost`, `.local`, `.test`, `.example`, `example.com`, `example.net`, `example.org`, `.onion`, `.alt`, `.arpa`, or `.internal`. With `--require-dns-resolution`, every compatible DNS answer must also be globally routable.
 
+The raw `konofix-node` binary now independently rejects non-global IPv4/IPv6 literals before it can print shareable bootstrap output. This second guard matters because an operator can invoke the binary without the installer. `--allow-private-address` is accepted only as an explicit controlled-lab override and causes non-global output to be labelled lab-only and invalid for public-Node release evidence. A DNS name can still be accepted syntactically by the raw binary, but syntax is not proof that DNS answers or TCP/UDP ports are globally reachable; the installer/readiness path and real probes remain authoritative for that evidence.
+
 ## Preview the service first
 
 Extract the verified Linux bundle, then run the installer without `--install`:
@@ -57,7 +59,7 @@ Preview mode performs validation and prints the exact systemd unit without chang
 
 Canonical path validation is deliberate: the service grants write access only to the state directory while the staged executable belongs in a separate read-only system location. Inputs containing `.`/`..` components or symlink aliases are normalized before the unit is generated, so alternate spellings cannot bypass that separation.
 
-Private/CGNAT/documentation IPs are rejected by default. `--allow-private-address` exists only for controlled lab testing and must not be used as public-network evidence.
+Private/CGNAT/documentation IPs are rejected by default. `--allow-private-address` exists only for controlled lab testing and must not be used as public-network evidence. When the override is selected, the installer propagates the raw-Node `--allow-private-address` switch into the generated systemd `ExecStart`; public service units deliberately omit it.
 
 To print only the generated unit:
 
@@ -147,4 +149,4 @@ bash scripts/install-public-node-linux.sh \
   --print-unit
 ```
 
-This is not public-Node or cross-country evidence. Stable promotion requires a genuinely public path and independent real networks.
+The generated unit includes the same `--allow-private-address` switch for the raw Node, preventing a mismatch between installer validation and runtime validation. This is not public-Node or cross-country evidence. Stable promotion requires a genuinely public path and independent real networks.

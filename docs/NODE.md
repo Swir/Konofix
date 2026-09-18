@@ -14,6 +14,7 @@
 - explicit identity-file location for service/VPS deployments
 - fail-closed identity loading: an unreadable or corrupted existing key is never silently replaced
 - automatic generation of ready-to-use public multiaddresses
+- fail-closed raw-Node validation for non-global IPv4/IPv6 literals, with an explicit lab-only override
 - periodic operational status lines with uptime and connected-peer count
 - optional metadata-only JSON health snapshot for supervisors and monitoring
 - exact source-commit provenance embedded into Node health snapshots
@@ -45,7 +46,7 @@ Then launch the same validated configuration:
   -Start
 ```
 
-The preflight rejects non-globally-routable literals, including private, loopback, link-local, CGNAT, documentation, benchmark, deprecated relay-anycast, reserved and other special-use ranges. Public DNS input must be a public-looking FQDN; special/private-use namespaces such as `localhost`, `.local`, `.test`, `.example`, `example.com`, `example.net`, `example.org`, `.onion`, `.alt`, `.arpa`, and `.internal` are rejected. When DNS resolution is required (and before `-Start`), every returned address must satisfy the same globally-routable policy instead of accepting a mixed public/private answer set. The preflight also refuses identity/health path collisions and pins an explicit persistent identity path. `-AllowPrivateAddress` exists only for controlled LAN/lab tests. Use `-AsJson` to obtain normalized launch metadata and bootstrap address templates without starting the Node.
+The preflight rejects non-globally-routable literals, including private, loopback, link-local, CGNAT, documentation, benchmark, deprecated relay-anycast, reserved and other special-use ranges. Public DNS input must be a public-looking FQDN; special/private-use namespaces such as `localhost`, `.local`, `.test`, `.example`, `example.com`, `example.net`, `example.org`, `.onion`, `.alt`, `.arpa`, and `.internal` are rejected. When DNS resolution is required (and before `-Start`), every returned address must satisfy the same globally-routable policy instead of accepting a mixed public/private answer set. The preflight also refuses identity/health path collisions and pins an explicit persistent identity path. `-AllowPrivateAddress` exists only for controlled LAN/lab tests; when it is used, the wrapper propagates the matching raw-Node `--allow-private-address` switch instead of weakening the binary's default policy. Use `-AsJson` to obtain normalized launch metadata and bootstrap address templates without starting the Node.
 
 ### Supervised startup task
 
@@ -98,6 +99,8 @@ A public DNS name is also supported:
 ```powershell
 konofix-node.exe --port 45555 --public-host node.yourdomain.com
 ```
+
+The raw binary now independently applies a fail-closed policy to IP literals before it can print shareable bootstrap output. Private, loopback, link-local, CGNAT, documentation, benchmark, multicast, reserved and other non-global literals stop startup by default. `--allow-private-address` is an explicit controlled-lab override; when enabled for a non-global literal, the Node labels the output **LAB-ONLY** and states that it is not valid public-Node release evidence. DNS syntax remains supported by the raw binary, but accepting a hostname is not proof that its answers or ports are globally reachable. Use the deployment/readiness tools with DNS resolution plus real external probes for that evidence.
 
 ### Stable public identity
 
@@ -182,21 +185,19 @@ Do not replace or delete the configured identity file if the bootstrap address s
 
 ## Ready bootstrap address
 
-When `--public-host` is provided, the Node prints entries such as:
+When `--public-host` is provided with a globally valid IP literal or DNS name, the Node prints entries such as:
 
 ```text
-BOOTSTRAP TCP : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
-BOOTSTRAP QUIC: /ip4/203.0.113.10/udp/45555/quic-v1/p2p/12D3KooW...
-RECOMMENDED   : /ip4/203.0.113.10/tcp/45555/p2p/12D3KooW...
+BOOTSTRAP TCP : /dns/node.yourdomain.com/tcp/45555/p2p/12D3KooW...
+BOOTSTRAP QUIC: /dns/node.yourdomain.com/udp/45555/quic-v1/p2p/12D3KooW...
+RECOMMENDED   : /dns/node.yourdomain.com/tcp/45555/p2p/12D3KooW...
 ```
 
-The values above use an IANA documentation address only to illustrate multiaddr syntax; the production deployment/readiness tools deliberately reject it as public evidence.
-
-For DNS names, the Node uses the generic `/dns/...` multiaddr form so the hostname is not artificially restricted to IPv4-only resolution.
+For DNS names, the Node uses the generic `/dns/...` multiaddr form so the hostname is not artificially restricted to IPv4-only resolution. The raw binary intentionally does not treat DNS syntax as reachability proof; use preflight/readiness resolution and external tests before counting the address as public evidence.
 
 Paste the `RECOMMENDED` address into **Network settings → Bootstrap**. The client stores it locally.
 
-Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, private IPv4 addresses, IPv6 unique-local/link-local addresses, documentation ranges and other special-use ranges are not global bootstrap addresses. The Node binary can print a warning for obviously non-public literals, while the recommended deployment/readiness tooling is stricter and rejects such configurations before they can be used as promotion evidence unless the explicit lab override is supplied where supported.
+Addresses such as `0.0.0.0`, `127.0.0.1`, `::`, private IPv4 addresses, IPv6 unique-local/link-local addresses, CGNAT, documentation/benchmark ranges, multicast and other reserved/special-use literals are rejected by the raw Node by default. A controlled lab can opt in with `--allow-private-address`, but the resulting addresses are explicitly labelled lab-only and must never satisfy public-Node or release-readiness gates.
 
 A public IP or DNS name plus reachable TCP and UDP ports are required for a proper Internet test.
 

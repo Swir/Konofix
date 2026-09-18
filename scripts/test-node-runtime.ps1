@@ -115,6 +115,7 @@ function Start-SmokeNode {
     $arguments = @(
         '--port', [string]$port,
         '--public-host', '127.0.0.1',
+        '--allow-private-address',
         '--status-interval', '10',
         '--health-file', $HealthPath,
         '--identity-file', $IdentityPath

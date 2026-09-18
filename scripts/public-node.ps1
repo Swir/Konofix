@@ -89,7 +89,8 @@ function Test-GloballyRoutableIp([System.Net.IPAddress]$Address) {
     @('2001:2::', 48),
     @('2001:db8::', 32),
     @('2001:10::', 28),
-    @('2001:20::', 28)
+    @('2001:20::', 28),
+    @('3fff::', 20)
   )) {
     if (Test-IpInCidr -Address $Address -Network ([string]$blocked[0]) -PrefixLength ([int]$blocked[1])) {
       return $false
@@ -236,6 +237,9 @@ $nodeArgs = @(
   '--identity-file', $identityFull,
   '--health-file', $healthFull
 )
+if ($AllowPrivateAddress) {
+  $nodeArgs += '--allow-private-address'
+}
 
 $config = [ordered]@{
   schema = 1
@@ -249,6 +253,7 @@ $config = [ordered]@{
   identity_file = $identityFull
   health_file = $healthFull
   node_path = $nodeFull
+  lab_only = [bool]$AllowPrivateAddress
   args = $nodeArgs
 }
 
@@ -266,6 +271,9 @@ Write-Host "Health file:      $healthFull"
 Write-Host "Node executable:  $nodeFull"
 Write-Host "TCP template:     $($config.bootstrap_tcp_template)"
 Write-Host "QUIC template:    $($config.bootstrap_quic_template)"
+if ($AllowPrivateAddress) {
+  Write-Host 'Mode:             LAB ONLY — not valid public-node evidence.' -ForegroundColor Yellow
+}
 Write-Host 'Firewall/NAT: open or forward both TCP and UDP on the configured port.' -ForegroundColor Yellow
 
 if (-not $Start) {

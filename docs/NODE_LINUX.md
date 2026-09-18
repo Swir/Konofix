@@ -33,6 +33,8 @@ The installer never modifies a firewall. Allow the selected TCP and UDP port in 
 
 The Linux deployment preflight uses the same fail-closed public-host policy as the Windows readiness/evidence tooling. Literal addresses must be globally routable, while DNS names must be public-looking FQDNs and cannot live below special/private-use namespaces such as `localhost`, `.local`, `.test`, `.example`, `example.com`, `example.net`, `example.org`, `.onion`, `.alt`, `.arpa`, or `.internal`. With `--require-dns-resolution`, every compatible DNS answer must also be globally routable.
 
+The raw `konofix-node` binary now enforces that literal-address boundary independently, before identity creation and network listener startup. It rejects private/local, CGNAT, documentation, benchmark, multicast/reserved, IPv4-mapped IPv6 and other non-global literals by default, including the IPv6 documentation ranges `2001:db8::/32` and `3fff::/20`. A public-looking DNS hostname is accepted syntactically, but the binary explicitly does not claim that DNS syntax proves resolution or Internet reachability; the installer/readiness tooling remains the authoritative deployment check.
+
 ## Preview the service first
 
 Extract the verified Linux bundle, then run the installer without `--install`:
@@ -57,7 +59,7 @@ Preview mode performs validation and prints the exact systemd unit without chang
 
 Canonical path validation is deliberate: the service grants write access only to the state directory while the staged executable belongs in a separate read-only system location. Inputs containing `.`/`..` components or symlink aliases are normalized before the unit is generated, so alternate spellings cannot bypass that separation.
 
-Private/CGNAT/documentation IPs are rejected by default. `--allow-private-address` exists only for controlled lab testing and must not be used as public-network evidence.
+Private/CGNAT/documentation IPs are rejected by default. `--allow-private-address` exists only for controlled lab testing and must not be used as public-network evidence. When this override is selected, the generated systemd `ExecStart` propagates `--allow-private-address` into the raw Node as well, so the installer and runtime cannot disagree about the lab-only configuration. Preview output labels that mode as non-evidence.
 
 To print only the generated unit:
 
@@ -147,4 +149,4 @@ bash scripts/install-public-node-linux.sh \
   --print-unit
 ```
 
-This is not public-Node or cross-country evidence. Stable promotion requires a genuinely public path and independent real networks.
+The rendered service command carries the same `--allow-private-address` flag into `konofix-node`, and both the installer preview and raw Node label the result as lab-only. This is not public-Node or cross-country evidence. Stable promotion requires a genuinely public path and independent real networks.

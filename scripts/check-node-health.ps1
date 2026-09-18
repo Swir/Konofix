@@ -18,7 +18,9 @@ param(
 
     [int64]$MinUptimeSeconds = 0,
 
-    [int64]$MaxSnapshotBytes = 65536
+    [int64]$MaxSnapshotBytes = 65536,
+
+    [switch]$AsJson
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,6 +77,56 @@ function Test-SourceCommitFormat {
     return $Value -eq 'unknown' -or $Value -cmatch '^[0-9a-f]{40}$'
 }
 
+function Read-BoundedSnapshotText {
+    param(
+        [Parameter(Mandatory = $true)][string]$SnapshotPath,
+        [Parameter(Mandatory = $true)][int64]$MaxBytes
+    )
+
+    $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+    try {
+        $stream = [System.IO.File]::Open(
+            $SnapshotPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            $share
+        )
+    } catch {
+        throw "Health snapshot could not be opened: $($_.Exception.GetBaseException().Message)"
+    }
+
+    try {
+        if ($stream.Length -gt $MaxBytes) {
+            throw "Health snapshot is too large (bytes=$($stream.Length) limit=$MaxBytes)."
+        }
+
+        $buffer = [byte[]]::new([int]$MaxBytes + 1)
+        $totalRead = 0
+        while ($totalRead -lt $buffer.Length) {
+            $read = $stream.Read($buffer, $totalRead, $buffer.Length - $totalRead)
+            if ($read -eq 0) { break }
+            $totalRead += $read
+        }
+        if ($totalRead -gt $MaxBytes) {
+            throw "Health snapshot is too large (bytes>=$totalRead limit=$MaxBytes)."
+        }
+
+        try {
+            $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+            $text = $utf8.GetString($buffer, 0, $totalRead)
+        } catch {
+            throw "Health snapshot is not valid UTF-8: $($_.Exception.GetBaseException().Message)"
+        }
+
+        return [pscustomobject]@{
+            Text = $text
+            Bytes = [int64]$totalRead
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 if ($MaxAgeSeconds -lt 10 -or $MaxAgeSeconds -gt 86400) { throw 'MaxAgeSeconds must be between 10 and 86400.' }
 if ($MaxFutureSkewSeconds -lt 0 -or $MaxFutureSkewSeconds -gt 300) { throw 'MaxFutureSkewSeconds must be between 0 and 300.' }
 if ($MinUptimeSeconds -lt 0) { throw 'MinUptimeSeconds cannot be negative.' }
@@ -88,10 +140,9 @@ if ($PSBoundParameters.ContainsKey('ExpectedSourceCommit')) {
 }
 
 if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Health snapshot not found: $Path" }
-$snapshotFile = Get-Item -LiteralPath $Path
-if ($snapshotFile.Length -gt $MaxSnapshotBytes) { throw "Health snapshot is too large (bytes=$($snapshotFile.Length) limit=$MaxSnapshotBytes)." }
-
-try { $health = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json } catch { throw "Health snapshot is not valid JSON: $($_.Exception.Message)" }
+$snapshot = Read-BoundedSnapshotText -SnapshotPath $Path -MaxBytes $MaxSnapshotBytes
+$snapshotText = [string]$snapshot.Text
+try { $health = $snapshotText | ConvertFrom-Json } catch { throw "Health snapshot is not valid JSON: $($_.Exception.Message)" }
 
 $required = @('schema', 'status', 'version', 'source_commit', 'peer_id', 'uptime_seconds', 'connected_peers', 'timestamp_unix')
 foreach ($field in $required) { if ($null -eq $health.$field) { throw "Health snapshot is missing required field: $field" } }
@@ -128,4 +179,23 @@ $requiredPeers = $MinConnectedPeers
 if ($RequirePeer -and $requiredPeers -lt 1) { $requiredPeers = 1 }
 if ($peerCount -lt $requiredPeers) { throw "Konofix Node does not meet the required connected-peer quorum (connected=$peerCount required=$requiredPeers)." }
 
-Write-Host "Konofix Node healthy: version=$version source_commit=$sourceCommit peer_id=$peerId uptime=${uptime}s connected_peers=$peerCount required_peers=$requiredPeers snapshot_age=${age}s max_age=${MaxAgeSeconds}s future_skew_limit=${MaxFutureSkewSeconds}s snapshot_bytes=$($snapshotFile.Length) max_snapshot_bytes=$MaxSnapshotBytes"
+$result = [ordered]@{
+    schema = [int64]$schema
+    status = $status
+    version = $version
+    source_commit = $sourceCommit
+    peer_id = $peerId
+    uptime_seconds = [int64]$uptime
+    connected_peers = [int64]$peerCount
+    timestamp_unix = [int64]$timestamp
+    snapshot_age_seconds = [int64]$age
+    required_peers = [int64]$requiredPeers
+    snapshot_bytes = [int64]$snapshot.Bytes
+}
+
+if ($AsJson) {
+    $result | ConvertTo-Json -Depth 4 -Compress
+    return
+}
+
+Write-Host "Konofix Node healthy: version=$version source_commit=$sourceCommit peer_id=$peerId uptime=${uptime}s connected_peers=$peerCount required_peers=$requiredPeers snapshot_age=${age}s max_age=${MaxAgeSeconds}s future_skew_limit=${MaxFutureSkewSeconds}s snapshot_bytes=$($snapshot.Bytes) max_snapshot_bytes=$MaxSnapshotBytes"

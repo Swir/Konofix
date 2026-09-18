@@ -15,8 +15,8 @@ concurrency:
 jobs:
   integrate:
     if: ${{ !contains(github.event.head_commit.message, '[issue-86-finalized]') }}
-    runs-on: windows-latest
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout integration branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -25,16 +25,18 @@ jobs:
           fetch-depth: 0
 
       - name: Normalize checkout line endings
-        shell: pwsh
+        shell: bash
         run: |
+          set -euo pipefail
           git config core.autocrlf false
           git reset --hard HEAD
 
       - name: Apply final fail-closed policy patch
-        shell: pwsh
+        shell: bash
         run: |
-          python .github/issue-86-finalize.py
-          python .github/issue-86-extra.py
+          set -euo pipefail
+          python3 .github/issue-86-finalize.py
+          python3 .github/issue-86-extra.py
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -43,15 +45,13 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Setup Rust MSVC
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
-          targets: x86_64-pc-windows-msvc
           toolchain: stable
           components: rustfmt, clippy
 
       - name: Format Rust patch
-        shell: pwsh
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
 
       - name: Install frontend dependencies
@@ -60,34 +60,41 @@ jobs:
       - name: Project audit including adversarial public-host policy
         run: npm run audit
 
-      - name: Windows public-node deployment self-tests
-        shell: pwsh
-        run: .\scripts\test-public-node.ps1
+      - name: Linux public-node deployment self-tests
+        run: bash scripts/test-public-node-linux.sh
 
       - name: TypeScript and Vite build
         run: npm run build
 
       - name: Rust format check
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo fmt --manifest-path node-linux/Cargo.toml -- --check
+
+      - name: Prepare isolated Node lockfile
+        run: cp src-tauri/Cargo.lock node-linux/Cargo.lock
 
       - name: Raw Node unit tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --bin konofix-node
+        run: cargo test --manifest-path node-linux/Cargo.toml --locked --bin konofix-node
 
       - name: Raw Node Clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --bin konofix-node -- -D warnings
+        run: cargo clippy --manifest-path node-linux/Cargo.toml --locked --bin konofix-node -- -D warnings
 
       - name: Patch hygiene
-        shell: pwsh
         run: git diff --check
 
       - name: Commit verified patch and remove integration helpers
-        shell: pwsh
+        shell: bash
         run: |
+          set -euo pipefail
           git rm .github/issue-86-finalize.py .github/issue-86-extra.py .github/workflows/issue-86-final-policy.yml
           git diff --check
           git add -A
-          if (git diff --cached --quiet) { throw 'Final integration produced no changes.' }
+          if git diff --cached --quiet; then
+            echo 'Final integration produced no changes.' >&2
+            exit 1
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'Complete fail-closed public-host special-use policy [issue-86-finalized]'
-          git push origin HEAD:${{ github.ref_name }}
+          git push origin HEAD:${GITHUB_REF_NAME}

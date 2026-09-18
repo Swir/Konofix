@@ -12,6 +12,8 @@ function requireToken(errors, source, token, message) {
 
 export function checkNodePublicHostPolicy(nodeSource, linuxInstallerSource) {
   const errors = [];
+  nodeSource = nodeSource.replaceAll('\r\n', '\n');
+  linuxInstallerSource = linuxInstallerSource.replaceAll('\r\n', '\n');
 
   requireToken(errors, nodeSource, 'allow_private_address: bool', 'Raw Node arguments must carry the explicit lab-only private-address override.');
   requireToken(errors, nodeSource, '"--allow-private-address" =>', 'Raw Node must parse --allow-private-address explicitly.');

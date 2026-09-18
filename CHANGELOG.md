@@ -2,6 +2,7 @@
 
 ## 0.4.2
 
+- fixed bootstrap settings persistence ordering: while connected, a candidate address is now written to local storage only after the live `add_bootstrap` backend accepts it, so validation failures leave saved configuration unchanged; offline staging, trimming/de-duplication and removal remain intact, and fail-closed policy plus adversarial mutation tests guard the validation-before-save contract without adding Real Internet Test credit,
 - completed desktop P2P task-exit ownership convergence: every `network_task` return now attempts exact-channel cleanup before error-only handling, so clean nickname-conflict/task shutdowns release stale backend session state without emitting a false fatal error; regression coverage proves clean-exit reconnect, preserves stale-task and explicit-disconnect safety, and the fail-closed lifecycle audit rejects any regression back to `Err`-only cleanup without adding Real Internet Test credit,
 - hardened fatal desktop P2P session recovery: network starts now install their command sender atomically, task shutdown clears state only when the exiting task still owns the exact Tokio channel, startup-handshake failures use the same ownership check, explicit disconnect is idempotent, and terminal `network-error` now resets stale peer/room/message/transfer UI state back to login; Rust regression tests plus an adversarial project-audit policy guard cover stale-task, overlapping-start/reconnect and frontend-reset regressions without adding Real Internet Test credit,
 - hardened accepted incoming file-transfer liveness: receive slots now expire after 120 seconds without a successfully written non-empty chunk, zero-byte chunks cannot refresh the timer, and the last closed connection to a remote Peer ID immediately releases that peer's pending/accepted receive state and transfer-owned `.konofixpart` files; the TTL boundary has Rust regression coverage and this local hardening adds no Real Internet Test credit,
@@ -41,7 +42,7 @@
 - packaged the operational bootstrap, network-evidence, Node-health and Node-soak PowerShell tools inside every Windows test archive and added their hashes/sizes to verified `BUILD_INFO.json` provenance,
 - added release gating, packaged artifact verification, ZIP + SHA-256 generation and the first `v0.4.2-test1` pre-release,
 - added automatic operating-system locale detection with English fallback,
-- added the first multilingual UI compatibility layer for English, Polish, Norwegian, German, French, Spanish, and Ukrainian,
+- added the first multilingual UI compatibility layer for English, Polish, Norwegian, German, French, Spanish, Ukrainian,
 - switched repository-facing documentation and operational tooling to English-only and added CI auditing for that policy,
 - documented localization architecture and typed-key migration,
 - completed the runtime localization migration to a typed `MessageKey` + `t()` API with parameterized dynamic values and per-key English fallback,
@@ -85,7 +86,7 @@
 - added multi-snapshot public Node soak validation that rejects identity/version/source-commit drift, restarts, stale samples, monitoring gaps and inconsistent uptime cadence,
 - made stable promotion require Node soak evidence and bind that soak to the exact bootstrap Peer ID used by the validated cross-country network evidence,
 - added adversarial Node soak self-tests to Windows CI, added an all-target Rust test pass, and included the Node soak operator guide in Windows artifacts,
-- added `scripts/collect-node-soak.ps1` to capture only health snapshots that pass the strict Node-health validator, retry short read races, deduplicate identical samples and reject conflicting same-timestamp evidence instead of overwriting it,
+- added `scripts/collect-node-soak.ps1` to capture only health snapshots that pass the strict Node-health validator, retry short read races, deduplicate identical samples and reject conflicting samples with the same timestamp instead of overwriting it,
 - added adversarial collector self-tests to Windows CI/local preflight and bundled the collector into Windows artifacts with provenance/hash verification,
 - aligned `scripts/check.ps1` with the CI preflight path so local checks run release/network/bootstrap/public-Node/readiness/health/soak/promotion gates, project audit, deterministic `npm ci`, frontend build, locked Rust metadata/tests and application/Node checks,
 - added machine-readable Windows artifact provenance (`BUILD_INFO.json`) with exact commit/version plus SHA-256 and sizes for the Node, dependency lockfiles, bundled test tools and every installer,

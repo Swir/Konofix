@@ -16,7 +16,8 @@ function Assert-Fails([string]$Label, [string]$ExpectedText, [scriptblock]$Actio
       throw "$Label failed with an unexpected error: $($_.Exception.Message)"
     }
   }
-  if (-not $failed) { throw "$Label was expected to fail." }
+  if (-not $failed) { throw "$Label was expected to fail."
+  }
 }
 
 Write-Host '=== Konofix Public Node preflight self-tests ===' -ForegroundColor Cyan
@@ -56,6 +57,7 @@ foreach ($case in @(
   @('benchmark IPv4 rejection', '198.18.0.1'),
   @('reserved IPv4 rejection', '240.0.0.1'),
   @('documentation IPv6 rejection', '2001:db8::1'),
+  @('RFC 9637 documentation IPv6 rejection', '3fff::1'),
   @('benchmark IPv6 rejection', '2001:2::1'),
   @('ORCHIDv1 IPv6 rejection', '2001:10::1'),
   @('ORCHIDv2 IPv6 rejection', '2001:20::1'),

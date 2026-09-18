@@ -227,7 +227,7 @@ try {
     }
 
     if ($null -ne $sessionData) {
-        $newManifestItem = Get-Item -LiteralPath $manifestTemp
+        $newManifestItem = Get-Item -LiteralPath $manifestTemp -Force
         $newManifestHash = (Get-FileHash -LiteralPath $manifestTemp -Algorithm SHA256).Hash.ToLowerInvariant()
         $sessionInventoryEntry.bytes = [int64]$newManifestItem.Length
         $sessionInventoryEntry.sha256 = $newManifestHash

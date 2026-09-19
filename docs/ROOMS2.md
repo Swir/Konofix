@@ -32,6 +32,21 @@ The wire layer now also owns the deterministic transition helpers needed by the 
 - forged-source or unknown-room input is rejected before member counts can change,
 - integration tests exercise the publisher/apply boundary so the remaining runtime wiring does not need to duplicate protocol policy.
 
+## Stage 1.75 runtime coordinator implemented in this development branch
+
+`src-tauri/src/room_membership_runtime.rs` now provides the stateful coordinator that the desktop network loop can wire directly instead of reimplementing membership policy in `lib.rs`:
+
+- one bounded known-room registry shared by local and remote transitions,
+- one total-count view combining the local peer with authenticated remote memberships,
+- local room changes that return both the next monotonic snapshot and the exact room-count deltas for UI emission,
+- authenticated remote snapshot application mapped to total room counts,
+- explicit loopback-snapshot rejection so a locally echoed GossipSub event cannot double-count the current user,
+- last-connection/goodbye cleanup through `remove_remote_peer`,
+- room-close cleanup that purges remote membership, removes local membership and returns a publishable local snapshot when required,
+- atomic batch room registration validation and a 256-room runtime bound matching the existing desktop active-room ceiling.
+
+`src-tauri/tests/room_membership_runtime.rs` makes this coordinator part of `cargo test --all-targets` and covers two-peer convergence, disconnect cleanup and idempotent room close. This materially reduces the remaining Stage 2 desktop-loop integration surface while still making no claim that Rooms 2.0 is user-visible yet.
+
 ## Wire protocol planned for Stage 2
 
 The desktop network loop will publish a source-authenticated membership snapshot whenever the local peer changes temporary rooms. The wire payload is:
@@ -57,15 +72,15 @@ Snapshot semantics are preferred over join/leave deltas because GossipSub delive
 
 ## Remaining integration work
 
-Stage 1.5 is **not** user-visible Rooms 2.0 completion. The next implementation checkpoint must:
+Stage 1.75 is **not** user-visible Rooms 2.0 completion. The next implementation checkpoint must:
 
 - add the authenticated membership snapshot to `WireEvent`,
-- connect room switching/creation to a backend membership command,
-- publish a new local revision when membership changes,
-- apply accepted remote snapshots through the combined wire/tracker helper,
-- clear tracker state on peer expiry/goodbye and room close,
-- emit room-count updates to the frontend,
+- instantiate `RoomMembershipRuntime` inside the desktop network task,
+- connect room switching/creation to backend membership updates and publish returned local snapshots,
+- apply accepted remote snapshots through the runtime coordinator,
+- call runtime cleanup on peer expiry, final connection close, goodbye and room close,
+- emit returned room-count deltas to the frontend,
 - show the synchronized count in room buttons and the active-room header,
-- add runtime malformed/replay/capacity Rust tests and frontend/project-audit regression coverage.
+- add malformed/replay/capacity runtime wiring tests and frontend/project-audit regression coverage.
 
 Only after that end-to-end path is green should the roadmap items `full room-member synchronization` and `accurate per-room user count` be considered for completion.

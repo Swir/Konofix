@@ -111,9 +111,11 @@ if ($requireArtifactBinding -and -not ($PSBoundParameters.ContainsKey('ExpectedN
 
 $samples = @()
 foreach ($path in $Snapshot) {
-    $snapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxSnapshotBytes -Label 'Node soak snapshot'
-    $health = $snapshot.Data
-    $validatedPath = [string]$snapshot.Path
+    # PowerShell variable names are case-insensitive, so this must not be named $snapshot:
+    # that would collide with the typed [string[]]$Snapshot parameter and coerce the object.
+    $capturedSnapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxSnapshotBytes -Label 'Node soak snapshot'
+    $health = $capturedSnapshot.Data
+    $validatedPath = [string]$capturedSnapshot.Path
 
     $required = @('schema', 'status', 'version', 'source_commit', 'peer_id', 'uptime_seconds', 'connected_peers', 'timestamp_unix')
     foreach ($field in $required) { if ($null -eq $health.$field) { throw "Node soak snapshot is missing required field '$field': $validatedPath" } }
@@ -160,8 +162,8 @@ foreach ($path in $Snapshot) {
 
     $samples += [pscustomobject]@{
         path = $validatedPath
-        bytes = [int64]$snapshot.Bytes
-        sha256 = [string]$snapshot.Sha256
+        bytes = [int64]$capturedSnapshot.Bytes
+        sha256 = [string]$capturedSnapshot.Sha256
         version = $version
         source_commit = $sourceCommit
         peer_id = $peerId

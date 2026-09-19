@@ -7,6 +7,7 @@ const helper = read('scripts/evidence-snapshot.ps1');
 const report = read('scripts/validate-network-test-report.ps1');
 const session = read('scripts/validate-network-test-session.ps1');
 const gate = read('scripts/release-gate.ps1');
+const promotion = read('scripts/check-promotion-evidence.ps1');
 
 const fail = (message) => {
   console.error(`PROMOTION EVIDENCE SNAPSHOT POLICY ERROR: ${message}`);
@@ -24,8 +25,10 @@ if (helper.includes('[System.IO.FileShare]::ReadWrite')) {
 }
 requireAll(helper, 'evidence snapshot helper', [
   'function Read-KonofixBoundedJsonSnapshot',
+  'function Open-KonofixVerifiedExecutable',
   '[System.IO.File]::Open(',
   '[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete',
+  '[System.IO.FileShare]::Read',
   '[System.Text.UTF8Encoding]::new($false, $true)',
   ".TrimStart().StartsWith('{', [System.StringComparison]::Ordinal)",
   '$capturedBytes = [byte[]]::new($totalRead)',
@@ -70,7 +73,47 @@ if (gate.includes('Get-Content -LiteralPath $manifestPath')) {
 requireAll(gate, 'release gate', [
   "validate-network-test-report.ps1') @validatorArgs -AsJson",
   '$expectedBootstrapPeer = [string]$networkValidation.bootstrap_peer_id',
-  "Network evidence validator did not return the expected PASS aggregate.",
+  'Network evidence validator did not return the expected PASS aggregate.',
 ]);
 
-console.log('Promotion evidence snapshot binding policy passed: release/session/report decisions stay bound to validated exact bytes.');
+for (const forbidden of [
+  'function Read-BuildInfo',
+  'Get-Content -LiteralPath $buildInfoFullPath',
+  'Get-FileHash -LiteralPath $buildInfoFullPath',
+  'Get-Item -LiteralPath $nodeBinaryPath',
+  'Get-FileHash -LiteralPath $nodeBinaryPath',
+  'Get-Content -LiteralPath $manifestPath',
+  '& $networkValidator',
+]) {
+  if (promotion.includes(forbidden)) {
+    fail(`stable promotion preflight restored a split path trust boundary: ${forbidden}`);
+  }
+}
+requireAll(promotion, 'stable promotion preflight', [
+  ". $snapshotHelper",
+  "$buildInfoSnapshot = Read-KonofixBoundedJsonSnapshot -Path $BuildInfoPath -MaxBytes $MaxBuildInfoBytes -Label 'BUILD_INFO.json'",
+  '$buildInfoFullPath = [string]$buildInfoSnapshot.Path',
+  '$buildInfo = $buildInfoSnapshot.Data',
+  '$actualBuildInfoHash = [string]$buildInfoSnapshot.Sha256',
+  '$verifiedNode = Open-KonofixVerifiedExecutable',
+  '-ExpectedBytes $nodeBytes',
+  '-ExpectedSha256 $nodeHash',
+  '$actualNodeBytes = [int64]$verifiedNode.Bytes',
+  '$actualNodeHash = [string]$verifiedNode.Sha256',
+  '$sessionValidationJson = (& $sessionValidator',
+  '-RequirePassingEvidence',
+  '-AsJson | Out-String).Trim()',
+  '$bootstrapPeer = [string]$bootstrapPeerProperty.Value',
+  '$verifiedNode.Stream.Dispose()',
+]);
+
+const nodeLockIndex = promotion.indexOf('$verifiedNode = Open-KonofixVerifiedExecutable');
+const sessionValidationIndex = promotion.indexOf('$sessionValidationJson = (& $sessionValidator');
+const clientValidationIndex = promotion.indexOf('$clientProbeResult = (& $clientNetprobeValidator');
+const soakValidationIndex = promotion.indexOf('& $soakValidator');
+const disposeIndex = promotion.lastIndexOf('$verifiedNode.Stream.Dispose()');
+if (!(nodeLockIndex >= 0 && nodeLockIndex < sessionValidationIndex && sessionValidationIndex < clientValidationIndex && clientValidationIndex < soakValidationIndex && soakValidationIndex < disposeIndex)) {
+  fail('stable promotion preflight must hold the verified Node lock across session, client and soak validation until final cleanup.');
+}
+
+console.log('Promotion evidence snapshot binding policy passed: release/session/report decisions and the stable promotion preflight stay bound to validated exact bytes.');

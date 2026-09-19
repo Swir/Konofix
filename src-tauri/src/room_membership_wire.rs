@@ -27,8 +27,8 @@ impl RoomMembershipSnapshot {
         &self,
         authenticated_source: &PeerId,
     ) -> Result<(), MembershipWireError> {
-        let claimed = PeerId::from_str(&self.peer_id)
-            .map_err(|_| MembershipWireError::InvalidClaimedPeer)?;
+        let claimed =
+            PeerId::from_str(&self.peer_id).map_err(|_| MembershipWireError::InvalidClaimedPeer)?;
         if &claimed != authenticated_source {
             return Err(MembershipWireError::SourceMismatch);
         }

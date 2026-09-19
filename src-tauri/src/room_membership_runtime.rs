@@ -73,6 +73,17 @@ impl RoomMembershipRuntime {
         self.local.rooms()
     }
 
+    pub fn current_local_snapshot(&self) -> Option<RoomMembershipSnapshot> {
+        if self.local.revision() == 0 {
+            return None;
+        }
+        Some(RoomMembershipSnapshot {
+            peer_id: self.local_peer.to_string(),
+            revision: self.local.revision(),
+            rooms: self.local.rooms().iter().cloned().collect(),
+        })
+    }
+
     pub fn register_room(&mut self, room_id: &str) -> Result<bool, MembershipRuntimeError> {
         if !valid_temporary_room_id(room_id) {
             return Err(MembershipRuntimeError::InvalidRoomId(room_id.to_string()));
@@ -311,6 +322,40 @@ mod tests {
         assert_eq!(moved.snapshot.expect("publish").revision, 2);
         assert_eq!(runtime.total_count("alpha"), 1);
         assert_eq!(runtime.total_count("beta"), 2);
+    }
+
+    #[test]
+    fn current_snapshot_reuses_latest_revision_without_advancing_it() {
+        let local_peer = peer_id();
+        let mut runtime = RoomMembershipRuntime::new(local_peer.clone());
+        runtime.register_room("alpha").expect("register alpha");
+        assert_eq!(runtime.current_local_snapshot(), None);
+
+        runtime
+            .set_local_rooms(["alpha"])
+            .expect("local joins alpha");
+        let first = runtime
+            .current_local_snapshot()
+            .expect("current snapshot after membership change");
+        let second = runtime
+            .current_local_snapshot()
+            .expect("repeated current snapshot");
+        assert_eq!(first, second);
+        assert_eq!(first.peer_id, local_peer.to_string());
+        assert_eq!(first.revision, 1);
+        assert_eq!(first.rooms, vec!["alpha"]);
+
+        let unchanged = runtime
+            .set_local_rooms(["alpha"])
+            .expect("idempotent local membership");
+        assert!(unchanged.snapshot.is_none());
+        assert_eq!(
+            runtime
+                .current_local_snapshot()
+                .expect("snapshot must remain available")
+                .revision,
+            1
+        );
     }
 
     #[test]

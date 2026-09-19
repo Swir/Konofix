@@ -46,7 +46,7 @@ const cases = [
       '$snapshot = [pscustomobject]@{ Text = (Get-Content -LiteralPath $Path -Raw); Bytes = 1 }',
     ),
     readiness: readinessSource,
-    expected: 'required single-snapshot health guard is missing',
+    expected: 'health validation must not perform a second path-based content read',
   },
   {
     name: 'bounded reader no longer opens a stable file handle',

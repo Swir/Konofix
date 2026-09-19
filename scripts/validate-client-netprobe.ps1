@@ -11,26 +11,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$snapshotHelper = Join-Path $PSScriptRoot 'evidence-snapshot.ps1'
+if (-not (Test-Path -LiteralPath $snapshotHelper -PathType Leaf)) {
+    throw "Required bounded evidence snapshot helper is missing: $snapshotHelper"
+}
+. $snapshotHelper
+
 function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
-}
-
-function ConvertFrom-JsonPreserveStrings([string]$Json) {
-    $command = Get-Command ConvertFrom-Json -ErrorAction Stop
-    if ($command.Parameters.ContainsKey('DateKind')) {
-        return $Json | ConvertFrom-Json -DateKind String
-    }
-    return $Json | ConvertFrom-Json
-}
-
-function Read-BoundedJson([string]$Path, [int64]$MaxBytes, [string]$Label) {
-    Assert-True (Test-Path -LiteralPath $Path -PathType Leaf) "$Label is missing: $Path"
-    $item = Get-Item -LiteralPath $Path
-    Assert-True ($item.Length -gt 0) "$Label is empty: $Path"
-    Assert-True ($item.Length -le $MaxBytes) "$Label exceeds the maximum supported size of $MaxBytes bytes: $Path"
-    $raw = Get-Content -LiteralPath $Path -Raw
-    Assert-True ($raw.TrimStart().StartsWith('{', [StringComparison]::Ordinal)) "$Label root must be a JSON object: $Path"
-    try { return ConvertFrom-JsonPreserveStrings -Json $raw } catch { throw "$Label is not valid JSON: $Path`n$($_.Exception.Message)" }
 }
 
 function Get-RequiredString($Object, [string]$Name, [string]$Label) {
@@ -100,8 +88,12 @@ function Validate-Probe($Probe, [string]$Label, [string]$ExpectedTransport, [str
 
 $sessionInfoPath = [IO.Path]::GetFullPath($SessionInfoPath)
 $buildInfoPath = [IO.Path]::GetFullPath($BuildInfoPath)
-$session = Read-BoundedJson -Path $sessionInfoPath -MaxBytes 262144 -Label 'SESSION_INFO.json'
-$buildInfo = Read-BoundedJson -Path $buildInfoPath -MaxBytes 262144 -Label 'BUILD_INFO.json'
+$sessionSnapshot = Read-KonofixBoundedJsonSnapshot -Path $sessionInfoPath -MaxBytes 262144 -Label 'SESSION_INFO.json'
+$buildInfoSnapshot = Read-KonofixBoundedJsonSnapshot -Path $buildInfoPath -MaxBytes 262144 -Label 'BUILD_INFO.json'
+$sessionInfoPath = [string]$sessionSnapshot.Path
+$buildInfoPath = [string]$buildInfoSnapshot.Path
+$session = $sessionSnapshot.Data
+$buildInfo = $buildInfoSnapshot.Data
 Assert-True ($session -is [pscustomobject]) 'SESSION_INFO root must be a JSON object.'
 Assert-True ($buildInfo -is [pscustomobject]) 'BUILD_INFO root must be a JSON object.'
 Assert-True ((Get-RequiredInt64 $session 'schema_version' 'SESSION_INFO') -eq 1) 'Unsupported SESSION_INFO schema.'
@@ -115,8 +107,8 @@ Assert-Ordinal (Get-RequiredString $session 'build_version' 'SESSION_INFO') $ver
 Assert-Ordinal (Get-RequiredString $session 'node_version' 'SESSION_INFO') $version 'SESSION_INFO node_version does not match BUILD_INFO.'
 Assert-Ordinal (Get-RequiredString $session 'source_commit' 'SESSION_INFO') $commit 'SESSION_INFO source_commit does not match BUILD_INFO.'
 
-$actualBuildInfoHash = (Get-FileHash -LiteralPath $buildInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
-$actualSessionInfoHash = (Get-FileHash -LiteralPath $sessionInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$actualBuildInfoHash = [string]$buildInfoSnapshot.Sha256
+$actualSessionInfoHash = [string]$sessionSnapshot.Sha256
 Assert-Ordinal (Get-RequiredString $session 'build_info_sha256' 'SESSION_INFO') $actualBuildInfoHash 'SESSION_INFO build_info_sha256 does not match BUILD_INFO.'
 $peerId = Get-RequiredString $session 'bootstrap_peer_id' 'SESSION_INFO'
 $tcpBootstrap = Get-RequiredString $session 'tcp_bootstrap' 'SESSION_INFO'
@@ -167,7 +159,9 @@ $resolvedEvidence = @(Resolve-EvidencePaths $Evidence)
 $rolesSeen = @()
 $records = @()
 foreach ($path in $resolvedEvidence) {
-    $data = Read-BoundedJson -Path $path -MaxBytes $MaxEvidenceBytes -Label 'Client netprobe evidence'
+    $evidenceSnapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxEvidenceBytes -Label 'Client netprobe evidence'
+    $path = [string]$evidenceSnapshot.Path
+    $data = $evidenceSnapshot.Data
     Assert-True ($data -is [pscustomobject]) "Client netprobe evidence root must be an object: $path"
     $evidenceSchema = Get-RequiredInt64 $data 'schema_version' $path
     Assert-True ($evidenceSchema -in @(1,2)) "Unsupported client netprobe evidence schema: $path"
@@ -222,6 +216,8 @@ foreach ($path in $resolvedEvidence) {
         path = $path
         created_utc = $createdRaw
         schema_version = $evidenceSchema
+        snapshot_bytes = [int64]$evidenceSnapshot.Bytes
+        snapshot_sha256 = [string]$evidenceSnapshot.Sha256
         host_fingerprint = $hostFingerprint
         network_fingerprint = $networkFingerprint
     }
@@ -248,6 +244,7 @@ $result = [ordered]@{
     version = $version
     source_commit = $commit
     bootstrap_peer_id = $peerId
+    build_info_sha256 = $actualBuildInfoHash
     session_info_sha256 = $actualSessionInfoHash
     netprobe_sha256 = $actualNetprobeHash
     evidence_count = $resolvedEvidence.Count

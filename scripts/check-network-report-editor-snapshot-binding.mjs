@@ -26,6 +26,8 @@ for (const forbidden of [
   '[IO.File]::ReadAllBytes($sessionInfoPath)',
   'Get-Content -LiteralPath $sessionInfoPath -Raw | ConvertFrom-Json',
   '[IO.File]::ReadAllBytes($manifestFull)',
+  'Get-FileHash -LiteralPath $manifestFull',
+  'Get-FileHash -LiteralPath $sessionInfoPath',
   'Get-Item -LiteralPath $manifestTemp -Force',
   'Get-FileHash -LiteralPath $manifestTemp',
   'Set-Content -LiteralPath $manifestTemp',
@@ -40,9 +42,11 @@ requireAll(editor, 'network report editor', [
   '$manifestFull = [string]$manifestSnapshot.Path',
   '$data = $manifestSnapshot.Data',
   '$originalManifestBytes = [byte[]]$manifestSnapshot.ContentBytes',
+  '$originalManifestSha256 = [string]$manifestSnapshot.Sha256',
   "$sessionSnapshot = Read-KonofixBoundedJsonSnapshot -Path $sessionInfoPath -MaxBytes (256KB) -Label 'SESSION_INFO.json'",
   '$sessionData = $sessionSnapshot.Data',
   '$originalSessionBytes = [byte[]]$sessionSnapshot.ContentBytes',
+  '$originalSessionSha256 = [string]$sessionSnapshot.Sha256',
   'function ConvertTo-KonofixUtf8JsonBytes',
   'function Get-KonofixSha256Hex',
   '$newManifestBytes = ConvertTo-KonofixUtf8JsonBytes -Value $data -Depth 8',
@@ -74,4 +78,4 @@ if (!(manifestSnapshotIndex < sessionSnapshotIndex && sessionSnapshotIndex < ses
   fail('network report editor must snapshot authoritative inputs, validate the full session, then serialize and commit replacements.');
 }
 
-console.log('Network report editor snapshot binding policy passed: authoritative input semantics/rollback bytes share exact snapshots and replacement manifest/session provenance is derived from one serialized byte sequence each.');
+console.log('Network report editor snapshot binding policy passed: authoritative input semantics/rollback bytes/SHA-256 values share exact snapshots and replacement manifest/session provenance is derived from one serialized byte sequence each.');

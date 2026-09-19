@@ -85,3 +85,63 @@ function Read-KonofixBoundedJsonSnapshot {
         $stream.Dispose()
     }
 }
+
+function Open-KonofixVerifiedExecutable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][int64]$ExpectedBytes,
+        [Parameter(Mandatory = $true)][string]$ExpectedSha256,
+        [string]$Label = 'Executable'
+    )
+
+    if ($ExpectedBytes -le 0) {
+        throw "$Label expected byte count must be positive."
+    }
+    if ($ExpectedSha256 -cnotmatch '^[0-9a-f]{64}$') {
+        throw "$Label expected SHA-256 must be canonical lowercase hexadecimal."
+    }
+
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    try {
+        # FileShare.Read permits process-loader reads while denying writers and
+        # delete/rename attempts for the full lifetime of the returned stream.
+        $stream = [System.IO.File]::Open(
+            $fullPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::Read
+        )
+    } catch {
+        throw "$Label could not be locked against writes/replacement: $($_.Exception.GetBaseException().Message)"
+    }
+
+    try {
+        if ([int64]$stream.Length -ne $ExpectedBytes) {
+            throw "$Label size does not match the verified build manifest: $fullPath"
+        }
+
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $digest = $sha.ComputeHash($stream)
+        } finally {
+            $sha.Dispose()
+        }
+        $actualSha256 = ([Convert]::ToHexString($digest)).ToLowerInvariant()
+        $stream.Position = 0
+
+        if (-not [string]::Equals($actualSha256, $ExpectedSha256, [StringComparison]::Ordinal)) {
+            throw "$Label SHA-256 does not match the verified build manifest: $fullPath"
+        }
+
+        return [pscustomobject]@{
+            Path = $fullPath
+            Bytes = [int64]$stream.Length
+            Sha256 = $actualSha256
+            Stream = $stream
+        }
+    } catch {
+        $stream.Dispose()
+        throw
+    }
+}

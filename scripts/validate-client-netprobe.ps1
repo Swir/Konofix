@@ -134,141 +134,163 @@ Assert-True ($netprobeBytes -gt 0) 'BUILD_INFO netprobe.bytes must be positive.'
 $netprobeHash = Get-RequiredString $netprobeMeta 'sha256' 'BUILD_INFO.netprobe'
 Assert-CanonicalSha256 $netprobeHash 'BUILD_INFO netprobe.sha256'
 $netprobePath = Join-Path (Split-Path $buildInfoPath -Parent) $netprobeRelativePath
-Assert-True (Test-Path -LiteralPath $netprobePath -PathType Leaf) "Netprobe binary referenced by BUILD_INFO is missing: $netprobePath"
-Assert-True ([int64](Get-Item -LiteralPath $netprobePath).Length -eq $netprobeBytes) 'konofix-netprobe.exe size does not match BUILD_INFO.'
-$actualNetprobeHash = (Get-FileHash -LiteralPath $netprobePath -Algorithm SHA256).Hash.ToLowerInvariant()
-Assert-Ordinal $actualNetprobeHash $netprobeHash 'konofix-netprobe.exe SHA-256 does not match BUILD_INFO.'
 
-$clientA = $session.PSObject.Properties['client_a'].Value
-$clientB = $session.PSObject.Properties['client_b'].Value
-Assert-True ($clientA -is [pscustomobject] -and $clientB -is [pscustomobject]) 'SESSION_INFO client metadata must contain client_a and client_b objects.'
-$expectedClients = @{
-    A = [ordered]@{
-        id = Get-RequiredString $clientA 'id' 'SESSION_INFO.client_a'
-        country = Get-RequiredString $clientA 'country' 'SESSION_INFO.client_a'
-        network = Get-RequiredString $clientA 'network' 'SESSION_INFO.client_a'
-    }
-    B = [ordered]@{
-        id = Get-RequiredString $clientB 'id' 'SESSION_INFO.client_b'
-        country = Get-RequiredString $clientB 'country' 'SESSION_INFO.client_b'
-        network = Get-RequiredString $clientB 'network' 'SESSION_INFO.client_b'
-    }
-}
-
-$resolvedEvidence = @(Resolve-EvidencePaths $Evidence)
-$rolesSeen = @()
-$records = @()
-foreach ($path in $resolvedEvidence) {
-    $evidenceSnapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxEvidenceBytes -Label 'Client netprobe evidence'
-    $path = [string]$evidenceSnapshot.Path
-    $data = $evidenceSnapshot.Data
-    Assert-True ($data -is [pscustomobject]) "Client netprobe evidence root must be an object: $path"
-    $evidenceSchema = Get-RequiredInt64 $data 'schema_version' $path
-    Assert-True ($evidenceSchema -in @(1,2)) "Unsupported client netprobe evidence schema: $path"
-    if ($RequireBothClients -and $evidenceSchema -ne 2) {
-        throw "Stable promotion requires client Netprobe evidence schema 2 with session-scoped host/network separation fingerprints: $path"
-    }
-    Assert-Ordinal (Get-RequiredString $data 'product' $path) 'Konofix Chat' "Client netprobe evidence product mismatch: $path"
-    $role = Get-RequiredString $data 'client_role' $path
-    Assert-True ($role -in @('A','B')) "Client netprobe evidence role must be A or B: $path"
-    Assert-True ($rolesSeen -notcontains $role) "Duplicate client netprobe evidence role '$role'."
-    $rolesSeen += $role
-    $expected = $expectedClients[$role]
-    Assert-Ordinal (Get-RequiredString $data 'client_id' $path) $expected.id "Client netprobe evidence client_id does not match SESSION_INFO for role $role."
-    Assert-Ordinal (Get-RequiredString $data 'client_country' $path) $expected.country "Client netprobe evidence client_country does not match SESSION_INFO for role $role."
-    Assert-Ordinal (Get-RequiredString $data 'client_network' $path) $expected.network "Client netprobe evidence client_network does not match SESSION_INFO for role $role."
-    Assert-Ordinal (Get-RequiredString $data 'build_version' $path) $version "Client netprobe evidence build_version mismatch: $path"
-    Assert-Ordinal (Get-RequiredString $data 'source_commit' $path) $commit "Client netprobe evidence source_commit mismatch: $path"
-    Assert-Ordinal (Get-RequiredString $data 'build_info_sha256' $path) $actualBuildInfoHash "Client netprobe evidence BUILD_INFO hash mismatch: $path"
-    Assert-Ordinal (Get-RequiredString $data 'session_info_sha256' $path) $actualSessionInfoHash "Client netprobe evidence SESSION_INFO hash mismatch: $path"
-    Assert-Ordinal (Get-RequiredString $data 'netprobe_sha256' $path) $actualNetprobeHash "Client netprobe evidence Netprobe hash mismatch: $path"
-    Assert-Ordinal (Get-RequiredString $data 'bootstrap_peer_id' $path) $peerId "Client netprobe evidence bootstrap Peer ID mismatch: $path"
-    Assert-Ordinal (Get-RequiredString $data 'tcp_bootstrap' $path) $tcpBootstrap "Client netprobe evidence TCP bootstrap mismatch: $path"
-    Assert-Ordinal (Get-RequiredString $data 'quic_bootstrap' $path) $quicBootstrap "Client netprobe evidence QUIC bootstrap mismatch: $path"
-
-    $hostFingerprint = ''
-    $networkFingerprint = ''
-    if ($evidenceSchema -eq 2) {
-        Assert-True ((Get-RequiredInt64 $data 'context_schema' $path) -eq 1) "Client netprobe context schema must be 1: $path"
-        Assert-Ordinal (Get-RequiredString $data 'host_fingerprint_method' $path) 'windows-machine-guid-session-sha256-v1' "Client host fingerprint method mismatch: $path"
-        Assert-Ordinal (Get-RequiredString $data 'network_fingerprint_method' $path) 'windows-default-route-session-sha256-v1' "Client network fingerprint method mismatch: $path"
-        $hostFingerprint = Get-RequiredString $data 'host_fingerprint' $path
-        $networkFingerprint = Get-RequiredString $data 'network_fingerprint' $path
-        Assert-CanonicalSha256 $hostFingerprint "Client host_fingerprint in $path"
-        Assert-CanonicalSha256 $networkFingerprint "Client network_fingerprint in $path"
+$verifiedNetprobe = $null
+try {
+    try {
+        $verifiedNetprobe = Open-KonofixVerifiedExecutable `
+            -Path $netprobePath `
+            -ExpectedBytes $netprobeBytes `
+            -ExpectedSha256 $netprobeHash `
+            -Label 'konofix-netprobe.exe'
+    } catch {
+        $verificationError = [string]$_.Exception.Message
+        if ($verificationError.Contains('size does not match the verified build manifest', [StringComparison]::Ordinal)) {
+            throw 'konofix-netprobe.exe size does not match BUILD_INFO.'
+        }
+        if ($verificationError.Contains('SHA-256 does not match the verified build manifest', [StringComparison]::Ordinal)) {
+            throw 'konofix-netprobe.exe SHA-256 does not match BUILD_INFO.'
+        }
+        throw
     }
 
-    $createdRaw = Get-RequiredString $data 'created_utc' $path
-    $created = [DateTimeOffset]::MinValue
-    Assert-True ([DateTimeOffset]::TryParse($createdRaw, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$created)) "Client netprobe evidence has invalid created_utc: $path"
-    $created = $created.ToUniversalTime()
-    $age = [DateTimeOffset]::UtcNow - $created
-    Assert-True ($age.TotalMinutes -ge -5) "Client netprobe evidence timestamp is in the future: $path"
-    Assert-True ($age.TotalDays -le $MaxAgeDays) "Client netprobe evidence is older than $MaxAgeDays days: $path"
+    $actualNetprobeHash = [string]$verifiedNetprobe.Sha256
 
-    $tcpProbe = $data.PSObject.Properties['tcp_probe'].Value
-    $quicProbe = $data.PSObject.Properties['quic_probe'].Value
-    Validate-Probe -Probe $tcpProbe -Label "$path tcp_probe" -ExpectedTransport 'tcp' -ExpectedTarget $tcpBootstrap -Version $version -Commit $commit -PeerId $peerId -EvidenceTime $created
-    Validate-Probe -Probe $quicProbe -Label "$path quic_probe" -ExpectedTransport 'quic-v1' -ExpectedTarget $quicBootstrap -Version $version -Commit $commit -PeerId $peerId -EvidenceTime $created
+    $clientA = $session.PSObject.Properties['client_a'].Value
+    $clientB = $session.PSObject.Properties['client_b'].Value
+    Assert-True ($clientA -is [pscustomobject] -and $clientB -is [pscustomobject]) 'SESSION_INFO client metadata must contain client_a and client_b objects.'
+    $expectedClients = @{
+        A = [ordered]@{
+            id = Get-RequiredString $clientA 'id' 'SESSION_INFO.client_a'
+            country = Get-RequiredString $clientA 'country' 'SESSION_INFO.client_a'
+            network = Get-RequiredString $clientA 'network' 'SESSION_INFO.client_a'
+        }
+        B = [ordered]@{
+            id = Get-RequiredString $clientB 'id' 'SESSION_INFO.client_b'
+            country = Get-RequiredString $clientB 'country' 'SESSION_INFO.client_b'
+            network = Get-RequiredString $clientB 'network' 'SESSION_INFO.client_b'
+        }
+    }
 
-    $records += [pscustomobject]@{
-        role = $role
-        path = $path
-        created_utc = $createdRaw
-        schema_version = $evidenceSchema
-        snapshot_bytes = [int64]$evidenceSnapshot.Bytes
-        snapshot_sha256 = [string]$evidenceSnapshot.Sha256
-        host_fingerprint = $hostFingerprint
-        network_fingerprint = $networkFingerprint
+    $resolvedEvidence = @(Resolve-EvidencePaths $Evidence)
+    $rolesSeen = @()
+    $records = @()
+    foreach ($path in $resolvedEvidence) {
+        $evidenceSnapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxEvidenceBytes -Label 'Client netprobe evidence'
+        $path = [string]$evidenceSnapshot.Path
+        $data = $evidenceSnapshot.Data
+        Assert-True ($data -is [pscustomobject]) "Client netprobe evidence root must be an object: $path"
+        $evidenceSchema = Get-RequiredInt64 $data 'schema_version' $path
+        Assert-True ($evidenceSchema -in @(1,2)) "Unsupported client netprobe evidence schema: $path"
+        if ($RequireBothClients -and $evidenceSchema -ne 2) {
+            throw "Stable promotion requires client Netprobe evidence schema 2 with session-scoped host/network separation fingerprints: $path"
+        }
+        Assert-Ordinal (Get-RequiredString $data 'product' $path) 'Konofix Chat' "Client netprobe evidence product mismatch: $path"
+        $role = Get-RequiredString $data 'client_role' $path
+        Assert-True ($role -in @('A','B')) "Client netprobe evidence role must be A or B: $path"
+        Assert-True ($rolesSeen -notcontains $role) "Duplicate client netprobe evidence role '$role'."
+        $rolesSeen += $role
+        $expected = $expectedClients[$role]
+        Assert-Ordinal (Get-RequiredString $data 'client_id' $path) $expected.id "Client netprobe evidence client_id does not match SESSION_INFO for role $role."
+        Assert-Ordinal (Get-RequiredString $data 'client_country' $path) $expected.country "Client netprobe evidence client_country does not match SESSION_INFO for role $role."
+        Assert-Ordinal (Get-RequiredString $data 'client_network' $path) $expected.network "Client netprobe evidence client_network does not match SESSION_INFO for role $role."
+        Assert-Ordinal (Get-RequiredString $data 'build_version' $path) $version "Client netprobe evidence build_version mismatch: $path"
+        Assert-Ordinal (Get-RequiredString $data 'source_commit' $path) $commit "Client netprobe evidence source_commit mismatch: $path"
+        Assert-Ordinal (Get-RequiredString $data 'build_info_sha256' $path) $actualBuildInfoHash "Client netprobe evidence BUILD_INFO hash mismatch: $path"
+        Assert-Ordinal (Get-RequiredString $data 'session_info_sha256' $path) $actualSessionInfoHash "Client netprobe evidence SESSION_INFO hash mismatch: $path"
+        Assert-Ordinal (Get-RequiredString $data 'netprobe_sha256' $path) $actualNetprobeHash "Client netprobe evidence Netprobe hash mismatch: $path"
+        Assert-Ordinal (Get-RequiredString $data 'bootstrap_peer_id' $path) $peerId "Client netprobe evidence bootstrap Peer ID mismatch: $path"
+        Assert-Ordinal (Get-RequiredString $data 'tcp_bootstrap' $path) $tcpBootstrap "Client netprobe evidence TCP bootstrap mismatch: $path"
+        Assert-Ordinal (Get-RequiredString $data 'quic_bootstrap' $path) $quicBootstrap "Client netprobe evidence QUIC bootstrap mismatch: $path"
+
+        $hostFingerprint = ''
+        $networkFingerprint = ''
+        if ($evidenceSchema -eq 2) {
+            Assert-True ((Get-RequiredInt64 $data 'context_schema' $path) -eq 1) "Client netprobe context schema must be 1: $path"
+            Assert-Ordinal (Get-RequiredString $data 'host_fingerprint_method' $path) 'windows-machine-guid-session-sha256-v1' "Client host fingerprint method mismatch: $path"
+            Assert-Ordinal (Get-RequiredString $data 'network_fingerprint_method' $path) 'windows-default-route-session-sha256-v1' "Client network fingerprint method mismatch: $path"
+            $hostFingerprint = Get-RequiredString $data 'host_fingerprint' $path
+            $networkFingerprint = Get-RequiredString $data 'network_fingerprint' $path
+            Assert-CanonicalSha256 $hostFingerprint "Client host_fingerprint in $path"
+            Assert-CanonicalSha256 $networkFingerprint "Client network_fingerprint in $path"
+        }
+
+        $createdRaw = Get-RequiredString $data 'created_utc' $path
+        $created = [DateTimeOffset]::MinValue
+        Assert-True ([DateTimeOffset]::TryParse($createdRaw, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$created)) "Client netprobe evidence has invalid created_utc: $path"
+        $created = $created.ToUniversalTime()
+        $age = [DateTimeOffset]::UtcNow - $created
+        Assert-True ($age.TotalMinutes -ge -5) "Client netprobe evidence timestamp is in the future: $path"
+        Assert-True ($age.TotalDays -le $MaxAgeDays) "Client netprobe evidence is older than $MaxAgeDays days: $path"
+
+        $tcpProbe = $data.PSObject.Properties['tcp_probe'].Value
+        $quicProbe = $data.PSObject.Properties['quic_probe'].Value
+        Validate-Probe -Probe $tcpProbe -Label "$path tcp_probe" -ExpectedTransport 'tcp' -ExpectedTarget $tcpBootstrap -Version $version -Commit $commit -PeerId $peerId -EvidenceTime $created
+        Validate-Probe -Probe $quicProbe -Label "$path quic_probe" -ExpectedTransport 'quic-v1' -ExpectedTarget $quicBootstrap -Version $version -Commit $commit -PeerId $peerId -EvidenceTime $created
+
+        $records += [pscustomobject]@{
+            role = $role
+            path = $path
+            created_utc = $createdRaw
+            schema_version = $evidenceSchema
+            snapshot_bytes = [int64]$evidenceSnapshot.Bytes
+            snapshot_sha256 = [string]$evidenceSnapshot.Sha256
+            host_fingerprint = $hostFingerprint
+            network_fingerprint = $networkFingerprint
+        }
+    }
+
+    $contextRecords = @($records | Where-Object { $_.schema_version -eq 2 })
+    $distinctHosts = $false
+    $distinctNetworks = $false
+    if ($contextRecords.Count -eq $records.Count -and $records.Count -gt 0) {
+        $distinctHosts = (@($contextRecords.host_fingerprint | Sort-Object -Unique -CaseSensitive).Count -eq $contextRecords.Count)
+        $distinctNetworks = (@($contextRecords.network_fingerprint | Sort-Object -Unique -CaseSensitive).Count -eq $contextRecords.Count)
+    }
+
+    if ($RequireBothClients) {
+        Assert-True ($resolvedEvidence.Count -eq 2) 'Stable promotion requires exactly two client netprobe evidence files.'
+        Assert-True ($rolesSeen -contains 'A' -and $rolesSeen -contains 'B') 'Stable promotion requires authenticated TCP and QUIC evidence from both Client A and Client B.'
+        Assert-True ($distinctHosts) 'Stable promotion requires Client A and Client B evidence captured on distinct Windows hosts; session-scoped host fingerprints are identical.'
+        Assert-True ($distinctNetworks) 'Stable promotion requires Client A and Client B evidence captured on distinct default-route network contexts; session-scoped network fingerprints are identical.'
+    }
+
+    $result = [ordered]@{
+        schema = 2
+        status = 'PASS'
+        version = $version
+        source_commit = $commit
+        bootstrap_peer_id = $peerId
+        build_info_sha256 = $actualBuildInfoHash
+        session_info_sha256 = $actualSessionInfoHash
+        netprobe_sha256 = $actualNetprobeHash
+        evidence_count = $resolvedEvidence.Count
+        client_roles = @($rolesSeen | Sort-Object)
+        authenticated_tcp = $true
+        authenticated_quic_v1 = $true
+        context_evidence_count = $contextRecords.Count
+        distinct_hosts = $distinctHosts
+        distinct_network_contexts = $distinctNetworks
+    }
+
+    if ($AsJson) {
+        $result | ConvertTo-Json -Depth 4
+        return
+    }
+
+    Write-Host '=== Konofix client Netprobe evidence ===' -ForegroundColor Cyan
+    Write-Host "Build:      $version / $commit"
+    Write-Host "Peer ID:    $peerId"
+    Write-Host "Session:    $actualSessionInfoHash"
+    Write-Host "Clients:    $($result.client_roles -join ', ')"
+    Write-Host "Netprobe:   $actualNetprobeHash"
+    if ($contextRecords.Count -gt 0) {
+        Write-Host "Hosts:      $(if ($distinctHosts) { 'distinct' } else { 'not proven distinct' })"
+        Write-Host "Networks:   $(if ($distinctNetworks) { 'distinct' } else { 'not proven distinct' })"
+    }
+    Write-Host 'PASS - exact-build Noise-authenticated TCP and QUIC-v1 probes match the exact test session.' -ForegroundColor Green
+} finally {
+    if ($null -ne $verifiedNetprobe -and $null -ne $verifiedNetprobe.Stream) {
+        $verifiedNetprobe.Stream.Dispose()
     }
 }
-
-$contextRecords = @($records | Where-Object { $_.schema_version -eq 2 })
-$distinctHosts = $false
-$distinctNetworks = $false
-if ($contextRecords.Count -eq $records.Count -and $records.Count -gt 0) {
-    $distinctHosts = (@($contextRecords.host_fingerprint | Sort-Object -Unique -CaseSensitive).Count -eq $contextRecords.Count)
-    $distinctNetworks = (@($contextRecords.network_fingerprint | Sort-Object -Unique -CaseSensitive).Count -eq $contextRecords.Count)
-}
-
-if ($RequireBothClients) {
-    Assert-True ($resolvedEvidence.Count -eq 2) 'Stable promotion requires exactly two client netprobe evidence files.'
-    Assert-True ($rolesSeen -contains 'A' -and $rolesSeen -contains 'B') 'Stable promotion requires authenticated TCP and QUIC evidence from both Client A and Client B.'
-    Assert-True ($distinctHosts) 'Stable promotion requires Client A and Client B evidence captured on distinct Windows hosts; session-scoped host fingerprints are identical.'
-    Assert-True ($distinctNetworks) 'Stable promotion requires Client A and Client B evidence captured on distinct default-route network contexts; session-scoped network fingerprints are identical.'
-}
-
-$result = [ordered]@{
-    schema = 2
-    status = 'PASS'
-    version = $version
-    source_commit = $commit
-    bootstrap_peer_id = $peerId
-    build_info_sha256 = $actualBuildInfoHash
-    session_info_sha256 = $actualSessionInfoHash
-    netprobe_sha256 = $actualNetprobeHash
-    evidence_count = $resolvedEvidence.Count
-    client_roles = @($rolesSeen | Sort-Object)
-    authenticated_tcp = $true
-    authenticated_quic_v1 = $true
-    context_evidence_count = $contextRecords.Count
-    distinct_hosts = $distinctHosts
-    distinct_network_contexts = $distinctNetworks
-}
-
-if ($AsJson) {
-    $result | ConvertTo-Json -Depth 4
-    return
-}
-
-Write-Host '=== Konofix client Netprobe evidence ===' -ForegroundColor Cyan
-Write-Host "Build:      $version / $commit"
-Write-Host "Peer ID:    $peerId"
-Write-Host "Session:    $actualSessionInfoHash"
-Write-Host "Clients:    $($result.client_roles -join ', ')"
-Write-Host "Netprobe:   $actualNetprobeHash"
-if ($contextRecords.Count -gt 0) {
-    Write-Host "Hosts:      $(if ($distinctHosts) { 'distinct' } else { 'not proven distinct' })"
-    Write-Host "Networks:   $(if ($distinctNetworks) { 'distinct' } else { 'not proven distinct' })"
-}
-Write-Host 'PASS - exact-build Noise-authenticated TCP and QUIC-v1 probes match the exact test session.' -ForegroundColor Green

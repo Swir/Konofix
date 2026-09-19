@@ -41,6 +41,10 @@ jobs:
         shell: pwsh
         run: .\scripts\release-gate.ps1
 
+      - name: Release artifact naming self-tests
+        shell: pwsh
+        run: .\scripts\test-release-artifact-name.ps1
+
       - name: Network evidence snapshot self-tests
         shell: pwsh
         run: .\scripts\test-evidence-snapshot.ps1
@@ -262,23 +266,30 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $zip = 'Konofix-Chat-0.4.2-test1-Windows.zip'
+          $package = Get-Content 'package.json' -Raw | ConvertFrom-Json
+          $zip = & .\scripts\release-artifact-name.ps1 -Version ([string]$package.version) -Commit ([string]$env:GITHUB_SHA)
+          if ([string]::IsNullOrWhiteSpace($zip)) { throw 'Release artifact naming helper returned an empty path.' }
+          "RELEASE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           if (Test-Path $zip) { Remove-Item $zip -Force }
           Compress-Archive -Path 'artifact\*' -DestinationPath $zip -CompressionLevel Optimal
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $zip" | Set-Content "$zip.sha256" -Encoding ascii
+          Write-Host "Archive: $zip"
           Write-Host "SHA256: $hash"
 
       - name: Verify release artifact integrity
         shell: pwsh
-        run: .\scripts\verify-release.ps1
+        run: .\scripts\verify-release.ps1 -ZipPath $env:RELEASE_ZIP -ChecksumPath "$env:RELEASE_ZIP.sha256"
 
       - name: Adversarial Windows bundle provenance smoke
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $sourceZip = 'Konofix-Chat-0.4.2-test1-Windows.zip'
+          $sourceZip = [string]$env:RELEASE_ZIP
+          if ([string]::IsNullOrWhiteSpace($sourceZip) -or -not (Test-Path -LiteralPath $sourceZip -PathType Leaf)) {
+            throw 'Canonical exact-build release ZIP is unavailable to adversarial verification.'
+          }
 
           function Add-ZipEntry([string]$ZipPath, [string]$EntryName, [string]$Content) {
             $archive = [System.IO.Compression.ZipFile]::Open($ZipPath, [System.IO.Compression.ZipArchiveMode]::Update)
@@ -298,16 +309,26 @@ jobs:
             "$hash  $RecordedName" | Set-Content $ChecksumPath -Encoding ascii
           }
 
+          function New-CanonicalTempCopy {
+            $directory = Join-Path $env:RUNNER_TEMP ("konofix-" + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+            $zip = Join-Path $directory ([IO.Path]::GetFileName($sourceZip))
+            Copy-Item -LiteralPath $sourceZip -Destination $zip -Force
+            return [pscustomobject]@{
+              Directory = $directory
+              Zip = $zip
+              Checksum = "$zip.sha256"
+            }
+          }
+
           function Expect-VerifyFailure([string]$Label, [string]$EntryName, [string]$ExpectedPattern, [string]$Content = 'tamper-test') {
-            $badZip = Join-Path $env:RUNNER_TEMP ("konofix-" + [guid]::NewGuid().ToString('N') + '.zip')
-            $badChecksum = "$badZip.sha256"
-            Copy-Item $sourceZip $badZip -Force
+            $copy = New-CanonicalTempCopy
             try {
-              Add-ZipEntry -ZipPath $badZip -EntryName $EntryName -Content $Content
-              Write-ZipChecksum -ZipPath $badZip -ChecksumPath $badChecksum
+              Add-ZipEntry -ZipPath $copy.Zip -EntryName $EntryName -Content $Content
+              Write-ZipChecksum -ZipPath $copy.Zip -ChecksumPath $copy.Checksum
               $rejected = $false
               try {
-                & .\scripts\verify-release.ps1 -ZipPath $badZip -ChecksumPath $badChecksum | Out-Null
+                & .\scripts\verify-release.ps1 -ZipPath $copy.Zip -ChecksumPath $copy.Checksum | Out-Null
               } catch {
                 if ($_.Exception.Message -notmatch $ExpectedPattern) {
                   throw "${Label}: verifier rejected the archive for an unexpected reason: $($_.Exception.Message)"
@@ -317,19 +338,17 @@ jobs:
               if (-not $rejected) { throw "${Label}: verifier accepted a tampered archive." }
               Write-Host "Expected rejection passed: $Label"
             } finally {
-              Remove-Item $badZip, $badChecksum -Force -ErrorAction SilentlyContinue
+              Remove-Item -LiteralPath $copy.Directory -Recurse -Force -ErrorAction SilentlyContinue
             }
           }
 
           function Expect-ChecksumNameFailure {
-            $badZip = Join-Path $env:RUNNER_TEMP ("konofix-" + [guid]::NewGuid().ToString('N') + '.zip')
-            $badChecksum = "$badZip.sha256"
-            Copy-Item $sourceZip $badZip -Force
+            $copy = New-CanonicalTempCopy
             try {
-              Write-ZipChecksum -ZipPath $badZip -ChecksumPath $badChecksum -RecordedName 'different-release.zip'
+              Write-ZipChecksum -ZipPath $copy.Zip -ChecksumPath $copy.Checksum -RecordedName 'different-release.zip'
               $rejected = $false
               try {
-                & .\scripts\verify-release.ps1 -ZipPath $badZip -ChecksumPath $badChecksum | Out-Null
+                & .\scripts\verify-release.ps1 -ZipPath $copy.Zip -ChecksumPath $copy.Checksum | Out-Null
               } catch {
                 if ($_.Exception.Message -notmatch 'names a different archive') {
                   throw "checksum filename binding: verifier rejected the checksum for an unexpected reason: $($_.Exception.Message)"
@@ -339,11 +358,36 @@ jobs:
               if (-not $rejected) { throw 'checksum filename binding: verifier accepted a checksum naming a different archive.' }
               Write-Host 'Expected rejection passed: checksum filename binding'
             } finally {
-              Remove-Item $badZip, $badChecksum -Force -ErrorAction SilentlyContinue
+              Remove-Item -LiteralPath $copy.Directory -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+          function Expect-ArchiveNameFailure {
+            $directory = Join-Path $env:RUNNER_TEMP ("konofix-renamed-" + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+            $badZip = Join-Path $directory 'renamed-release.zip'
+            $badChecksum = "$badZip.sha256"
+            Copy-Item -LiteralPath $sourceZip -Destination $badZip -Force
+            try {
+              Write-ZipChecksum -ZipPath $badZip -ChecksumPath $badChecksum
+              $rejected = $false
+              try {
+                & .\scripts\verify-release.ps1 -ZipPath $badZip -ChecksumPath $badChecksum | Out-Null
+              } catch {
+                if ($_.Exception.Message -notmatch 'filename is not bound to exact build identity') {
+                  throw "archive filename binding: verifier rejected the renamed archive for an unexpected reason: $($_.Exception.Message)"
+                }
+                $rejected = $true
+              }
+              if (-not $rejected) { throw 'archive filename binding: verifier accepted a renamed exact-build archive.' }
+              Write-Host 'Expected rejection passed: archive filename binding'
+            } finally {
+              Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
             }
           }
 
           Expect-ChecksumNameFailure
+          Expect-ArchiveNameFailure
           Expect-VerifyFailure -Label 'unexpected file inventory' -EntryName 'UNEXPECTED.txt' -ExpectedPattern 'inventory'
           Expect-VerifyFailure -Label 'parent-directory traversal entry' -EntryName '../escape.txt' -ExpectedPattern 'unsafe|parent-directory'
           Expect-VerifyFailure -Label 'reserved Windows device alias' -EntryName 'NUL.txt' -ExpectedPattern 'reserved Windows device'
@@ -357,7 +401,7 @@ jobs:
           name: Konofix-Chat-0.4.2-Windows-${{ github.sha }}
           path: |
             artifact
-            Konofix-Chat-0.4.2-test1-Windows.zip
-            Konofix-Chat-0.4.2-test1-Windows.zip.sha256
+            Konofix-Chat-*-Windows-${{ github.sha }}.zip
+            Konofix-Chat-*-Windows-${{ github.sha }}.zip.sha256
           if-no-files-found: error
           retention-days: 14

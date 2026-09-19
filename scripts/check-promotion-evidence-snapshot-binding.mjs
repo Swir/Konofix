@@ -83,7 +83,6 @@ for (const forbidden of [
   'Get-Item -LiteralPath $nodeBinaryPath',
   'Get-FileHash -LiteralPath $nodeBinaryPath',
   'Get-Content -LiteralPath $manifestPath',
-  '& $networkValidator',
 ]) {
   if (promotion.includes(forbidden)) {
     fail(`stable promotion preflight restored a split path trust boundary: ${forbidden}`);
@@ -100,20 +99,29 @@ requireAll(promotion, 'stable promotion preflight', [
   '-ExpectedSha256 $nodeHash',
   '$actualNodeBytes = [int64]$verifiedNode.Bytes',
   '$actualNodeHash = [string]$verifiedNode.Sha256',
+  '$networkValidationJson = (& $networkValidator',
+  '-MaxAgeDays $NetworkEvidenceMaxAgeDays',
+  '-RequireSingleBootstrapPeer',
   '$sessionValidationJson = (& $sessionValidator',
-  '-RequirePassingEvidence',
   '-AsJson | Out-String).Trim()',
-  '$bootstrapPeer = [string]$bootstrapPeerProperty.Value',
+  '$networkBootstrapPeer = [string]$networkBootstrapProperty.Value',
+  '$bootstrapPeer = [string]$sessionBootstrapProperty.Value',
+  '$networkSnapshots = @($networkValidation.manifests)',
+  '$sessionSnapshots = @($sessionValidation.manifest_snapshots)',
+  '[int64]$snapshot.bytes -ne [int64]$sessionSnapshot.bytes',
+  '[string]$snapshot.sha256 -cne [string]$sessionSnapshot.sha256',
   '$verifiedNode.Stream.Dispose()',
 ]);
 
 const nodeLockIndex = promotion.indexOf('$verifiedNode = Open-KonofixVerifiedExecutable');
+const networkValidationIndex = promotion.indexOf('$networkValidationJson = (& $networkValidator');
 const sessionValidationIndex = promotion.indexOf('$sessionValidationJson = (& $sessionValidator');
+const snapshotCompareIndex = promotion.indexOf('[string]$snapshot.sha256 -cne [string]$sessionSnapshot.sha256');
 const clientValidationIndex = promotion.indexOf('$clientProbeResult = (& $clientNetprobeValidator');
 const soakValidationIndex = promotion.indexOf('& $soakValidator');
 const disposeIndex = promotion.lastIndexOf('$verifiedNode.Stream.Dispose()');
-if (!(nodeLockIndex >= 0 && nodeLockIndex < sessionValidationIndex && sessionValidationIndex < clientValidationIndex && clientValidationIndex < soakValidationIndex && soakValidationIndex < disposeIndex)) {
-  fail('stable promotion preflight must hold the verified Node lock across session, client and soak validation until final cleanup.');
+if (!(nodeLockIndex >= 0 && nodeLockIndex < networkValidationIndex && networkValidationIndex < sessionValidationIndex && sessionValidationIndex < snapshotCompareIndex && snapshotCompareIndex < clientValidationIndex && clientValidationIndex < soakValidationIndex && soakValidationIndex < disposeIndex)) {
+  fail('stable promotion preflight must hold the verified Node lock across report/session byte binding, client validation and soak validation until final cleanup.');
 }
 
 console.log('Promotion evidence snapshot binding policy passed: release/session/report decisions and the stable promotion preflight stay bound to validated exact bytes.');

@@ -21,9 +21,20 @@ The state engine:
 
 The tracker itself uses only the Rust standard library; the wire validator uses the project's existing `libp2p` and `serde` dependencies. Existing `cargo test --all-targets` CI compiles and exercises both modules through the integration test even before the desktop network loop is wired to the new protocol.
 
+## Stage 1.5 implemented in this development branch
+
+The wire layer now also owns the deterministic transition helpers needed by the desktop loop:
+
+- `LocalRoomMembershipState` converts local room-set changes into strictly monotonic revisioned snapshots and emits nothing for idempotent room sets,
+- local validation happens before revision/state mutation, so duplicate, invalid or over-limit room sets fail closed,
+- snapshots are normalized into deterministic room ordering before publication,
+- `apply_authenticated_snapshot` joins authenticated-source validation, known-room validation and tracker mutation in one fail-closed call,
+- forged-source or unknown-room input is rejected before member counts can change,
+- integration tests exercise the publisher/apply boundary so the remaining runtime wiring does not need to duplicate protocol policy.
+
 ## Wire protocol planned for Stage 2
 
-The desktop network loop will publish a source-authenticated membership snapshot whenever the local peer changes temporary rooms. The planned wire payload is conceptually:
+The desktop network loop will publish a source-authenticated membership snapshot whenever the local peer changes temporary rooms. The wire payload is:
 
 ```text
 RoomMembershipSnapshot {
@@ -46,15 +57,15 @@ Snapshot semantics are preferred over join/leave deltas because GossipSub delive
 
 ## Remaining integration work
 
-Stage 1 is **not** user-visible Rooms 2.0 completion. The next implementation checkpoint must:
+Stage 1.5 is **not** user-visible Rooms 2.0 completion. The next implementation checkpoint must:
 
 - add the authenticated membership snapshot to `WireEvent`,
 - connect room switching/creation to a backend membership command,
 - publish a new local revision when membership changes,
-- apply accepted remote snapshots to the tracker,
+- apply accepted remote snapshots through the combined wire/tracker helper,
 - clear tracker state on peer expiry/goodbye and room close,
 - emit room-count updates to the frontend,
 - show the synchronized count in room buttons and the active-room header,
-- add malformed/replay/capacity Rust tests and frontend/project-audit regression coverage.
+- add runtime malformed/replay/capacity Rust tests and frontend/project-audit regression coverage.
 
 Only after that end-to-end path is green should the roadmap items `full room-member synchronization` and `accurate per-room user count` be considered for completion.

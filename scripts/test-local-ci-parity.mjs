@@ -53,6 +53,17 @@ try {
   const localFixture = writeFixture('check.ps1', localSource);
   expectPass('baseline repository parity', workflowFixture, localFixture);
 
+  const missingReleaseNaming = removeLineContaining(localSource, "& '.\\scripts\\test-release-artifact-name.ps1'");
+  const missingReleaseNamingFixture = writeFixture('check-missing-release-artifact-name.ps1', missingReleaseNaming);
+  expectFail('missing release artifact naming gate', workflowFixture, missingReleaseNamingFixture);
+
+  const workflowMissingReleaseNaming = removeLineContaining(
+    workflowSource,
+    'run: .\\scripts\\test-release-artifact-name.ps1',
+  );
+  const workflowMissingReleaseNamingFixture = writeFixture('windows-ci-missing-release-artifact-name.yml', workflowMissingReleaseNaming);
+  expectFail('Windows CI cannot silently drop the release artifact naming gate', workflowMissingReleaseNamingFixture, localFixture);
+
   const missingNetprobeEvidence = removeLineContaining(localSource, "& '.\\scripts\\test-client-netprobe-evidence.ps1'");
   const missingGateFixture = writeFixture('check-missing-netprobe-evidence.ps1', missingNetprobeEvidence);
   expectFail('missing Netprobe evidence gate', workflowFixture, missingGateFixture);

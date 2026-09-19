@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_MEMBERSHIP_ROOMS_PER_PEER: usize = 64;
 pub const MAX_TRACKED_MEMBERSHIPS: usize = 16_384;
+pub const MAX_TRACKED_MEMBERSHIP_PEERS: usize = 2_048;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomCountChange {
@@ -37,6 +38,7 @@ struct PeerMembership {
 struct MembershipLimits {
     rooms_per_peer: usize,
     memberships_total: usize,
+    peers_total: usize,
 }
 
 impl Default for MembershipLimits {
@@ -44,6 +46,7 @@ impl Default for MembershipLimits {
         Self {
             rooms_per_peer: MAX_MEMBERSHIP_ROOMS_PER_PEER,
             memberships_total: MAX_TRACKED_MEMBERSHIPS,
+            peers_total: MAX_TRACKED_MEMBERSHIP_PEERS,
         }
     }
 }
@@ -87,6 +90,9 @@ impl RoomMembershipTracker {
         }
         if revision == 0 {
             return Err(SnapshotError::InvalidRevision);
+        }
+        if !self.peers.contains_key(peer_id) && self.peers.len() >= self.limits.peers_total {
+            return Err(SnapshotError::CapacityExceeded);
         }
 
         let mut next_rooms = BTreeSet::new();
@@ -382,6 +388,7 @@ mod tests {
         let mut tracker = RoomMembershipTracker::new(MembershipLimits {
             rooms_per_peer: 2,
             memberships_total: 2,
+            peers_total: 1,
         });
         assert_eq!(
             tracker.apply_snapshot("peer-a", 1, ["a", "b", "c"]),
@@ -392,6 +399,10 @@ mod tests {
             .expect("within limit");
         assert_eq!(
             tracker.apply_snapshot("peer-b", 1, ["a"]),
+            Err(SnapshotError::CapacityExceeded)
+        );
+        assert_eq!(
+            tracker.apply_snapshot("peer-b", 1, std::iter::empty::<&str>()),
             Err(SnapshotError::CapacityExceeded)
         );
         assert_eq!(tracker.member_count("a"), 1);

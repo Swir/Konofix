@@ -16,7 +16,7 @@ The state engine:
 - removes all memberships for a disconnected peer,
 - purges membership indexes for a closed room,
 - rejects `world`, invalid room identifiers, duplicate room IDs and zero revisions,
-- caps one peer at 64 temporary-room memberships and caps total tracked memberships at 16,384.
+- caps one peer at 64 temporary-room memberships, caps total tracked memberships at 16,384, and caps retained peer membership states at 2,048.
 
 The module intentionally uses only the Rust standard library. Existing `cargo test --all-targets` CI compiles and exercises it through the integration test even before the desktop network loop is wired to the new protocol.
 

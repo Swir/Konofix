@@ -152,11 +152,22 @@ $actualBuildInfoHash = [string]$buildInfoSnapshot.Sha256
 $verifiedNode = $null
 
 try {
-  $verifiedNode = Open-KonofixVerifiedExecutable `
-    -Path $nodeBinaryPath `
-    -ExpectedBytes $nodeBytes `
-    -ExpectedSha256 $nodeHash `
-    -Label 'Node binary'
+  try {
+    $verifiedNode = Open-KonofixVerifiedExecutable `
+      -Path $nodeBinaryPath `
+      -ExpectedBytes $nodeBytes `
+      -ExpectedSha256 $nodeHash `
+      -Label 'Node binary'
+  } catch {
+    $verificationError = $_.Exception.Message
+    if ($verificationError.Contains('size does not match the verified build manifest')) {
+      throw "Node binary size does not match BUILD_INFO. expected=$nodeBytes"
+    }
+    if ($verificationError.Contains('SHA-256 does not match the verified build manifest')) {
+      throw "Node binary SHA-256 does not match BUILD_INFO. expected=$nodeHash"
+    }
+    throw
+  }
   $actualNodeBytes = [int64]$verifiedNode.Bytes
   $actualNodeHash = [string]$verifiedNode.Sha256
 

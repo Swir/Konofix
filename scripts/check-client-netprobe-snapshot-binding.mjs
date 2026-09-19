@@ -33,8 +33,23 @@ requireAll(helper, 'shared evidence snapshot helper', [
   '$digest = $sha.ComputeHash($capturedBytes)',
   'ContentBytes = $capturedBytes',
   'function Open-KonofixVerifiedExecutable',
-  '[System.IO.FileShare]::Read,\n            4096,',
 ]);
+
+const verifierStart = helper.indexOf('function Open-KonofixVerifiedExecutable');
+if (verifierStart < 0) fail('shared helper is missing Open-KonofixVerifiedExecutable.');
+const executableVerifier = helper.slice(verifierStart);
+requireAll(executableVerifier, 'verified executable helper', [
+  '[System.IO.FileAccess]::Read,\n            [System.IO.FileShare]::Read\n        )',
+  '$digest = $sha.ComputeHash($stream)',
+  '$stream.Position = 0',
+  'Stream = $stream',
+]);
+if (executableVerifier.includes('[System.IO.FileShare]::ReadWrite')) {
+  fail('verified executable helper must deny writers for the lifetime of the returned stream.');
+}
+if (executableVerifier.includes('[System.IO.FileShare]::Delete')) {
+  fail('verified executable helper must deny delete/rename while the exact executable is trusted.');
+}
 
 for (const forbidden of [
   'function Read-BoundedJson',

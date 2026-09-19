@@ -96,8 +96,8 @@ expectFail(
   'verified executable replacement-sharing regression',
   validator,
   helper.replace(
-    '[System.IO.FileShare]::Read,\n            4096,',
-    '[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete,\n            4096,',
+    '[System.IO.FileAccess]::Read,\n            [System.IO.FileShare]::Read\n        )',
+    '[System.IO.FileAccess]::Read,\n            [System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete\n        )',
   ),
 );
 

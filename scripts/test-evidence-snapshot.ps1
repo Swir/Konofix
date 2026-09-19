@@ -23,6 +23,23 @@ try {
     if ([int]$snapshot.Data.schema -ne 1 -or [string]$snapshot.Data.status -cne 'PASS') { throw 'Snapshot data parse mismatch.' }
     Write-Host 'PASS: exact-byte UTF-8 JSON snapshot captured, hashed and parsed.'
 
+    $writer = [IO.File]::Open(
+        $valid,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::Write,
+        [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+    )
+    try {
+        Expect-Reject 'snapshot while an in-place writer is active' {
+            Read-KonofixBoundedJsonSnapshot -Path $valid -MaxBytes 4096 -Label 'fixture' | Out-Null
+        }
+    } finally {
+        $writer.Dispose()
+    }
+    $postWriterSnapshot = Read-KonofixBoundedJsonSnapshot -Path $valid -MaxBytes 4096 -Label 'fixture'
+    if ([string]$postWriterSnapshot.Sha256 -cne $expectedHash) { throw 'Snapshot did not recover after the writer handle was released.' }
+    Write-Host 'PASS: writable evidence cannot be accepted as an exact snapshot.'
+
     $array = Join-Path $temp 'array.json'
     [IO.File]::WriteAllText($array, '[{"schema":1,"status":"PASS"}]', [Text.UTF8Encoding]::new($false))
     Expect-Reject 'array JSON root' { Read-KonofixBoundedJsonSnapshot -Path $array -MaxBytes 4096 -Label 'fixture' | Out-Null }

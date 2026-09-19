@@ -32,7 +32,8 @@ try {
   $firstBytes = [System.IO.File]::ReadAllBytes($first)
   $secondBytes = [System.IO.File]::ReadAllBytes($second)
   Assert-True ($firstBytes.Length -gt 0) 'Generated tester handoff is empty.'
-  Assert-True ([System.Linq.Enumerable]::SequenceEqual($firstBytes, $secondBytes)) 'Tester handoff generation is not deterministic for identical inputs.'
+  Assert-True ($firstBytes.Length -eq $secondBytes.Length) 'Tester handoff byte length changed for identical inputs.'
+  Assert-True ([Convert]::ToBase64String($firstBytes) -ceq [Convert]::ToBase64String($secondBytes)) 'Tester handoff generation is not deterministic for identical inputs.'
 
   $text = [System.Text.Encoding]::UTF8.GetString($firstBytes)
   Assert-True ($text.Contains('<!-- KONOFIX-TESTER-HANDOFF-BUILD:v1 -->')) 'Generated handoff is missing the exact-build marker.'
@@ -42,8 +43,8 @@ try {
   Assert-True ($text.Contains('test evidence only, not a published GitHub Release')) 'Generated handoff does not clearly distinguish test evidence from a published release.'
   Assert-True ($text.Contains('BUILD_INFO.json')) 'Generated handoff does not identify BUILD_INFO.json as bundle authority.'
   Assert-True ($text.Contains('check-promotion-evidence.ps1')) 'Generated handoff is missing the promotion preflight step.'
-  Assert-True ($text.Contains('historical `v0.4.2-test1` prerelease is a separate published preview')) 'Generated handoff does not separate the historical prerelease from the exact build.'
-  Assert-True ($text -notmatch '^#\s+Konofix Chat 0\.4\.2 Test 1' ) 'Generated handoff regressed to the historical test-release heading.'
+  Assert-True ($text.Contains('historical v0.4.2-test1 prerelease is a separate published preview')) 'Generated handoff does not separate the historical prerelease from the exact build.'
+  Assert-True ($text -notmatch '^#\s+Konofix Chat 0\.4\.2 Test 1') 'Generated handoff regressed to the historical test-release heading.'
 
   Expect-Failure 'short SHA' { & $generator -OutputPath (Join-Path $temp 'bad-sha.md') -Version '0.4.2' -Commit '01234567' -WorkflowRun $runId } '40-character Git SHA'
   Expect-Failure 'uppercase SHA' { & $generator -OutputPath (Join-Path $temp 'upper-sha.md') -Version '0.4.2' -Commit '0123456789ABCDEF0123456789ABCDEF01234567' -WorkflowRun $runId } '40-character Git SHA'

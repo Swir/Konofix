@@ -71,6 +71,22 @@ try {
     & $validator -Snapshot $paths -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedVersion $version -ExpectedPeerId $peerId -ExpectedSourceCommit $sourceCommit -ExpectedNodeSha256 $nodeHash -ExpectedBuildInfoSha256 $buildInfoHash -RequirePeerObserved
     Write-Host 'Positive exact-build-bound Node soak self-test passed.'
 
+    $writer = [IO.File]::Open(
+        $paths[1],
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::Write,
+        [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+    )
+    try {
+        Assert-Rejected {
+            & $validator -Snapshot $paths -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedVersion $version -ExpectedPeerId $peerId -ExpectedSourceCommit $sourceCommit -ExpectedNodeSha256 $nodeHash -ExpectedBuildInfoSha256 $buildInfoHash -RequirePeerObserved
+        } 'snapshot while an in-place writer is active'
+    } finally {
+        $writer.Dispose()
+    }
+    & $validator -Snapshot $paths -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 -ExpectedVersion $version -ExpectedPeerId $peerId -ExpectedSourceCommit $sourceCommit -ExpectedNodeSha256 $nodeHash -ExpectedBuildInfoSha256 $buildInfoHash -RequirePeerObserved
+    Write-Host 'Writer-rejection Node soak self-test recovered after the writer handle was released.'
+
     $changedPeer = Copy-MutatedSet 'changed-peer' { param($set) Mutate-Json $set[2] { param($d) $d.peer_id = '12D3KooWChangedPeer987654321' } }
     Assert-Rejected { & $validator -Snapshot $changedPeer -MinSpanSeconds 180 -MaxGapSeconds 75 -MaxAgeSeconds 60 } 'Peer ID changed during soak'
 

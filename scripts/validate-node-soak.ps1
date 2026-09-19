@@ -30,6 +30,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'evidence-snapshot.ps1')
 
 function Get-StrictJsonInt64 {
     param(
@@ -110,13 +111,12 @@ if ($requireArtifactBinding -and -not ($PSBoundParameters.ContainsKey('ExpectedN
 
 $samples = @()
 foreach ($path in $Snapshot) {
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Node soak snapshot not found: $path" }
-    $file = Get-Item -LiteralPath $path
-    if ($file.Length -gt $MaxSnapshotBytes) { throw "Node soak snapshot is too large: $path (bytes=$($file.Length) limit=$MaxSnapshotBytes)." }
+    $snapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxSnapshotBytes -Label 'Node soak snapshot'
+    $health = $snapshot.Data
+    $validatedPath = [string]$snapshot.Path
 
-    try { $health = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json } catch { throw "Node soak snapshot is not valid JSON: $path - $($_.Exception.Message)" }
     $required = @('schema', 'status', 'version', 'source_commit', 'peer_id', 'uptime_seconds', 'connected_peers', 'timestamp_unix')
-    foreach ($field in $required) { if ($null -eq $health.$field) { throw "Node soak snapshot is missing required field '$field': $path" } }
+    foreach ($field in $required) { if ($null -eq $health.$field) { throw "Node soak snapshot is missing required field '$field': $validatedPath" } }
 
     $schema = Get-StrictJsonInt64 -Value $health.schema -Field 'schema'
     if ($schema -ne 2) { throw "Unsupported Node health snapshot schema: $schema" }
@@ -126,7 +126,7 @@ foreach ($path in $Snapshot) {
     $sourceCommit = Get-StrictJsonString -Value $health.source_commit -Field 'source_commit'
     $peerId = Get-StrictJsonString -Value $health.peer_id -Field 'peer_id'
     if (-not (Test-SourceCommitFormat $sourceCommit)) { throw "Node soak source_commit is not a canonical lowercase Git SHA or 'unknown': $sourceCommit" }
-    if (-not (Test-OrdinalEqual $status 'running')) { throw "Node soak snapshot is not running: $path (status=$status)." }
+    if (-not (Test-OrdinalEqual $status 'running')) { throw "Node soak snapshot is not running: $validatedPath (status=$status)." }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and -not (Test-OrdinalEqual $version $ExpectedVersion)) { throw "Node soak version mismatch (expected=$ExpectedVersion actual=$version)." }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedPeerId) -and -not (Test-OrdinalEqual $peerId $ExpectedPeerId)) { throw "Node soak Peer ID mismatch (expected=$ExpectedPeerId actual=$peerId)." }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedSourceCommit) -and -not (Test-OrdinalEqual $sourceCommit $ExpectedSourceCommit)) { throw "Node soak source commit mismatch (expected=$ExpectedSourceCommit actual=$sourceCommit)." }
@@ -137,14 +137,14 @@ foreach ($path in $Snapshot) {
     $bindingFieldsPresent = $null -ne $health.evidence_binding_schema -or $null -ne $health.node_binary_sha256 -or $null -ne $health.build_info_sha256
     if ($bindingFieldsPresent -or $requireArtifactBinding) {
         foreach ($field in @('evidence_binding_schema', 'node_binary_sha256', 'build_info_sha256')) {
-            if ($null -eq $health.$field) { throw "Node soak snapshot is missing exact-build binding field '$field': $path" }
+            if ($null -eq $health.$field) { throw "Node soak snapshot is missing exact-build binding field '$field': $validatedPath" }
         }
         $bindingSchema = Get-StrictJsonInt64 -Value $health.evidence_binding_schema -Field 'evidence_binding_schema'
         if ($bindingSchema -ne 1) { throw "Unsupported Node soak evidence binding schema: $bindingSchema" }
         $nodeSha256 = Get-StrictJsonString -Value $health.node_binary_sha256 -Field 'node_binary_sha256'
         $buildInfoSha256 = Get-StrictJsonString -Value $health.build_info_sha256 -Field 'build_info_sha256'
-        if (-not (Test-CanonicalSha256 $nodeSha256)) { throw "Node soak node_binary_sha256 is not a canonical lowercase SHA-256: $path" }
-        if (-not (Test-CanonicalSha256 $buildInfoSha256)) { throw "Node soak build_info_sha256 is not a canonical lowercase SHA-256: $path" }
+        if (-not (Test-CanonicalSha256 $nodeSha256)) { throw "Node soak node_binary_sha256 is not a canonical lowercase SHA-256: $validatedPath" }
+        if (-not (Test-CanonicalSha256 $buildInfoSha256)) { throw "Node soak build_info_sha256 is not a canonical lowercase SHA-256: $validatedPath" }
         if ($requireArtifactBinding -and -not (Test-OrdinalEqual $nodeSha256 $ExpectedNodeSha256)) { throw "Node soak exact Node binary SHA-256 mismatch (expected=$ExpectedNodeSha256 actual=$nodeSha256)." }
         if ($requireArtifactBinding -and -not (Test-OrdinalEqual $buildInfoSha256 $ExpectedBuildInfoSha256)) { throw "Node soak exact BUILD_INFO SHA-256 mismatch (expected=$ExpectedBuildInfoSha256 actual=$buildInfoSha256)." }
     }
@@ -159,7 +159,9 @@ foreach ($path in $Snapshot) {
     if ($peers -lt $MinConnectedPeers) { throw "Node soak peer quorum failed (connected=$peers required=$MinConnectedPeers)." }
 
     $samples += [pscustomobject]@{
-        path = $path
+        path = $validatedPath
+        bytes = [int64]$snapshot.Bytes
+        sha256 = [string]$snapshot.Sha256
         version = $version
         source_commit = $sourceCommit
         peer_id = $peerId

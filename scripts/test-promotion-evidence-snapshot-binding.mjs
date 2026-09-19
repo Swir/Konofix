@@ -116,8 +116,8 @@ const cases = [
   {
     name: 'stable promotion preflight drops configurable evidence age policy',
     file: 'scripts/check-promotion-evidence.ps1',
-    from: '    -MaxAgeDays $NetworkEvidenceMaxAgeDays `\n',
-    to: '',
+    from: '    -RequireAllChecks `\n    -MaxAgeDays $NetworkEvidenceMaxAgeDays `\n',
+    to: '    -RequireAllChecks `\n',
     expected: 'is missing required guard',
   },
   {

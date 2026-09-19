@@ -6,10 +6,11 @@
 
 **Verified checklist fraction: 54 of 59 tasks — 91.5%.** The generated mini card uses the exact checklist fraction; release readiness remains a separate evidence gate.
 
-**Real Internet Test milestone: 92% complete**
+**Real Internet Test milestone: 91.5% complete**
 
 The active milestone currently has 54 of 59 tasks complete. The remaining five tasks require real public-network evidence and fixes discovered during those tests; CI alone cannot credit them.
 
+- Stable-promotion network-test session bootstrap now binds `BUILD_INFO.json` parsing, provenance and the session-local copy to one exact bounded strict-UTF-8 snapshot, and keeps the verified `konofix-node.exe` under a read-share lock until `SESSION_INFO.json` provenance has been written; deterministic policy/mutation coverage and Windows runtime tests guard split rereads, replacement and early-lock-release regressions. This evidence-integrity hardening adds no Real Internet Test credit.
 - Stable-promotion client Netprobe capture now binds `SESSION_INFO.json` and `BUILD_INFO.json` parsing/provenance to exact bounded strict-UTF-8 snapshots and holds the verified `konofix-netprobe.exe` bytes under a read-share lock through both TCP and QUIC launches, denying writes/delete/rename while preserving process-loader reads; Windows writer/replacement/launch regressions plus fail-closed source/mutation tests guard the capture boundary. This evidence-integrity hardening adds no Real Internet Test credit.
 - Stable-promotion client Netprobe validation now consumes `BUILD_INFO.json`, `SESSION_INFO.json` and every Client A/B evidence record through one bounded strict-UTF-8 snapshot instance, deriving trusted parsing, canonical paths, byte counts and SHA-256 provenance from those exact captured bytes; shared writer-contention coverage plus fail-closed source/mutation tests prevent path rereads or writer-sharing regressions. This evidence-integrity hardening adds no Real Internet Test credit.
 - Stable-promotion Node soak validation now consumes each sample through one bounded strict-UTF-8 snapshot instance and derives trusted parsing, byte count and SHA-256 from those exact captured bytes; fail-closed policy tests prevent path rereads or writer-sharing regressions. This evidence-integrity hardening adds no Real Internet Test credit.

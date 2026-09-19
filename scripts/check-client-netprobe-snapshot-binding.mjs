@@ -28,7 +28,10 @@ requireAll(helper, 'shared evidence snapshot helper', [
   '[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete',
   '[System.Text.UTF8Encoding]::new($false, $true)',
   ".TrimStart().StartsWith('{', [System.StringComparison]::Ordinal)",
-  '$sha.ComputeHash($buffer, 0, $totalRead)',
+  '$capturedBytes = [byte[]]::new($totalRead)',
+  '[Array]::Copy($buffer, 0, $capturedBytes, 0, $totalRead)',
+  '$digest = $sha.ComputeHash($capturedBytes)',
+  'ContentBytes = $capturedBytes',
 ]);
 
 for (const forbidden of [

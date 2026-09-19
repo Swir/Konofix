@@ -87,7 +87,7 @@ if (milestoneStart < 0) {
   if (totalTasks === 0) {
     fail('The active roadmap milestone contains no checklist tasks.');
   } else {
-    const progressPercent = Math.round((completedTasks / totalTasks) * 100);
+    const progressPercent = ((completedTasks / totalTasks) * 100).toFixed(1);
     const progressSummary = `Real Internet Test milestone: ${progressPercent}% complete`;
     const taskSummary = `${completedTasks} of ${totalTasks} tasks complete`;
 
@@ -270,7 +270,7 @@ if (!/ExpectedSourceCommit/.test(soakValidator) || !/source_commit/.test(soakVal
 if (!/schema_version\s*=\s*3/.test(reportGenerator) || !/source_commit/.test(reportGenerator)) fail('Network report generation must emit schema-v3 exact source-commit evidence.');
 if (!/schema_version\s+-ne\s+3/.test(evidenceValidator) || !/ExpectedSourceCommit/.test(evidenceValidator)) fail('Network evidence validation must enforce schema v3 and exact source commits.');
 if (!/Stable promotion requires a check_evidence object/.test(evidenceValidator) || !/64-character SHA-256 digest/.test(evidenceValidator)) fail('Stable promotion evidence validation must require concrete PASS notes and full file-transfer SHA-256 digests.');
-if (!/requires a non-empty evidence note/.test(reportEditor) || !/64-character SHA-256 digest/.test(reportEditor)) fail('Network report editing must reject evidence-free PASS\/FAIL results and file PASS results without a full digest.');
+if (!/requires a non-empty evidence note/.test(reportEditor) || !/64-character SHA-256 digest/.test(reportEditor)) fail('Network report editing must reject evidence-free PASS/FAIL results and file PASS results without a full digest.');
 if (!/ExpectedSourceCommit/.test(releaseGate) || !/ExpectedSourceCommit\s*=\s*\$targetSourceCommit/.test(releaseGate)) fail('Release gate must propagate the exact target source commit into promotion evidence validation.');
 if (!/wrong source commit|mixed source commits/i.test(evidenceSelfTest)) fail('Network evidence self-tests must cover source-commit mismatch attacks.');
 if (!/promotion PASS without check_evidence object/i.test(evidenceSelfTest) || !/file PASS without explicit SHA-256 digest/i.test(evidenceSelfTest)) fail('Network evidence self-tests must cover evidence-free PASS and missing file-digest promotion attacks.');

@@ -107,8 +107,13 @@ try {
     canonicalHero.replace('</svg>', '<script>alert("x")</script></svg>'),
   );
   runChecker(
+    'rounded-progress',
+    canonical.replace('Real Internet Test milestone: 91.5% complete', 'Real Internet Test milestone: 92% complete'),
+    false,
+  );
+  runChecker(
     'false-completion',
-    canonical.replace('Real Internet Test milestone: 92% complete', 'Real Internet Test milestone: 100% complete'),
+    canonical.replace('Real Internet Test milestone: 91.5% complete', 'Real Internet Test milestone: 100% complete'),
     false,
   );
   runChecker('missing-prerelease-truth', canonical.replaceAll('v0.4.2-test1', 'v0.4.2'), false);

@@ -28,9 +28,12 @@ requireAll(helper, 'evidence snapshot helper', [
   '[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete',
   '[System.Text.UTF8Encoding]::new($false, $true)',
   ".TrimStart().StartsWith('{', [System.StringComparison]::Ordinal)",
-  '$sha.ComputeHash($buffer, 0, $totalRead)',
+  '$capturedBytes = [byte[]]::new($totalRead)',
+  '[Array]::Copy($buffer, 0, $capturedBytes, 0, $totalRead)',
+  '$digest = $sha.ComputeHash($capturedBytes)',
   'Bytes = [int64]$totalRead',
   'Sha256 = $sha256',
+  'ContentBytes = $capturedBytes',
   'Data = $value',
 ]);
 
@@ -70,4 +73,4 @@ requireAll(gate, 'release gate', [
   "Network evidence validator did not return the expected PASS aggregate.",
 ]);
 
-console.log('Promotion evidence snapshot binding policy passed: release/session/report decisions stay bound to validated bytes.');
+console.log('Promotion evidence snapshot binding policy passed: release/session/report decisions stay bound to validated exact bytes.');

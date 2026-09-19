@@ -28,7 +28,10 @@ requireAll(helper, 'shared evidence snapshot helper', [
   '[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete',
   '[System.Text.UTF8Encoding]::new($false, $true)',
   ".TrimStart().StartsWith('{', [System.StringComparison]::Ordinal)",
-  '$sha.ComputeHash($buffer, 0, $totalRead)',
+  '$capturedBytes = [byte[]]::new($totalRead)',
+  '[Array]::Copy($buffer, 0, $capturedBytes, 0, $totalRead)',
+  '$digest = $sha.ComputeHash($capturedBytes)',
+  'ContentBytes = $capturedBytes',
 ]);
 
 for (const forbidden of [
@@ -51,4 +54,4 @@ requireAll(validator, 'node soak validator', [
   'sha256 = [string]$capturedSnapshot.Sha256',
 ]);
 
-console.log('Node soak snapshot binding policy passed: stable-promotion soak parsing stays bound to bounded strict-UTF-8 captured bytes without typed-parameter shadowing.');
+console.log('Node soak snapshot binding policy passed: stable-promotion soak parsing stays bound to exact bounded strict-UTF-8 captured bytes without typed-parameter shadowing.');

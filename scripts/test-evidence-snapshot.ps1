@@ -20,8 +20,13 @@ try {
     try { $expectedHash = ([Convert]::ToHexString($sha.ComputeHash($expectedBytes))).ToLowerInvariant() } finally { $sha.Dispose() }
     if ([int64]$snapshot.Bytes -ne [int64]$expectedBytes.Length) { throw 'Snapshot byte count did not come from captured bytes.' }
     if ([string]$snapshot.Sha256 -cne $expectedHash) { throw 'Snapshot SHA-256 did not come from captured bytes.' }
+    if ([Convert]::ToBase64String([byte[]]$snapshot.ContentBytes) -cne [Convert]::ToBase64String($expectedBytes)) { throw 'Snapshot did not expose the exact captured bytes.' }
     if ([int]$snapshot.Data.schema -ne 1 -or [string]$snapshot.Data.status -cne 'PASS') { throw 'Snapshot data parse mismatch.' }
-    Write-Host 'PASS: exact-byte UTF-8 JSON snapshot captured, hashed and parsed.'
+    $roundTrip = Join-Path $temp 'round-trip.json'
+    [IO.File]::WriteAllBytes($roundTrip, [byte[]]$snapshot.ContentBytes)
+    $roundTripHash = (Get-FileHash -LiteralPath $roundTrip -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($roundTripHash -cne $expectedHash) { throw 'Exact snapshot-byte round trip changed SHA-256 provenance.' }
+    Write-Host 'PASS: exact-byte UTF-8 JSON snapshot captured, hashed, parsed and reproduced byte-for-byte.'
 
     $writer = [IO.File]::Open(
         $valid,

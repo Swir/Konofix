@@ -41,9 +41,12 @@ function Read-KonofixBoundedJsonSnapshot {
             throw "$Label exceeds the maximum supported size of $MaxBytes bytes: $fullPath"
         }
 
+        $capturedBytes = [byte[]]::new($totalRead)
+        [Array]::Copy($buffer, 0, $capturedBytes, 0, $totalRead)
+
         try {
             $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
-            $raw = $utf8.GetString($buffer, 0, $totalRead)
+            $raw = $utf8.GetString($capturedBytes)
         } catch {
             throw "$Label is not valid UTF-8: $($_.Exception.GetBaseException().Message)"
         }
@@ -68,7 +71,7 @@ function Read-KonofixBoundedJsonSnapshot {
 
         $sha = [System.Security.Cryptography.SHA256]::Create()
         try {
-            $digest = $sha.ComputeHash($buffer, 0, $totalRead)
+            $digest = $sha.ComputeHash($capturedBytes)
         } finally {
             $sha.Dispose()
         }
@@ -78,6 +81,7 @@ function Read-KonofixBoundedJsonSnapshot {
             Path = $fullPath
             Bytes = [int64]$totalRead
             Sha256 = $sha256
+            ContentBytes = $capturedBytes
             Text = $raw
             Data = $value
         }

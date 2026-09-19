@@ -35,6 +35,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$snapshotHelper = Join-Path $PSScriptRoot 'evidence-snapshot.ps1'
+if (-not (Test-Path -LiteralPath $snapshotHelper -PathType Leaf)) {
+  throw "Required bounded evidence snapshot helper is missing: $snapshotHelper"
+}
+. $snapshotHelper
+
 function Get-RequiredProperty {
   param(
     [Parameter(Mandatory = $true)]$Object,
@@ -78,22 +84,6 @@ function Get-StrictInt64 {
   try { return [Convert]::ToInt64($Value) } catch { throw "BUILD_INFO field '$Field' is outside the signed 64-bit range." }
 }
 
-function Read-BuildInfo([string]$Path) {
-  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-    throw "BUILD_INFO file is missing: $Path"
-  }
-  $item = Get-Item -LiteralPath $Path
-  if ($item.Length -le 0) { throw "BUILD_INFO file is empty: $Path" }
-  if ($item.Length -gt $MaxBuildInfoBytes) {
-    throw "BUILD_INFO exceeds the maximum allowed size of $MaxBuildInfoBytes bytes: $Path"
-  }
-  $raw = Get-Content -LiteralPath $Path -Raw
-  if (-not $raw.TrimStart().StartsWith('{', [StringComparison]::Ordinal)) {
-    throw "BUILD_INFO root must be a JSON object: $Path"
-  }
-  try { return $raw | ConvertFrom-Json } catch { throw "BUILD_INFO is not valid JSON: $($_.Exception.Message)" }
-}
-
 function Resolve-EvidencePaths {
   param(
     [Parameter(Mandatory = $true)][string[]]$InputPath,
@@ -126,18 +116,18 @@ function Resolve-EvidencePaths {
 }
 
 $scriptRoot = $PSScriptRoot
-$networkValidator = Join-Path $scriptRoot 'validate-network-test-report.ps1'
 $sessionValidator = Join-Path $scriptRoot 'validate-network-test-session.ps1'
 $clientNetprobeValidator = Join-Path $scriptRoot 'validate-client-netprobe.ps1'
 $soakValidator = Join-Path $scriptRoot 'validate-node-soak.ps1'
-foreach ($tool in @($networkValidator, $sessionValidator, $clientNetprobeValidator, $soakValidator)) {
+foreach ($tool in @($sessionValidator, $clientNetprobeValidator, $soakValidator)) {
   if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
     throw "Required promotion validator is missing: $tool"
   }
 }
 
-$buildInfoFullPath = [IO.Path]::GetFullPath($BuildInfoPath)
-$buildInfo = Read-BuildInfo $buildInfoFullPath
+$buildInfoSnapshot = Read-KonofixBoundedJsonSnapshot -Path $BuildInfoPath -MaxBytes $MaxBuildInfoBytes -Label 'BUILD_INFO.json'
+$buildInfoFullPath = [string]$buildInfoSnapshot.Path
+$buildInfo = $buildInfoSnapshot.Data
 if ($buildInfo -isnot [pscustomobject]) { throw 'BUILD_INFO root must be a JSON object.' }
 $schema = Get-StrictInt64 (Get-RequiredProperty $buildInfo 'schema' $buildInfoFullPath) 'schema'
 if ($schema -ne 2) { throw "Stable promotion requires BUILD_INFO schema 2 with sealed Netprobe metadata; found schema $schema." }
@@ -157,126 +147,122 @@ if ($nodeHash -cnotmatch '^[0-9a-f]{64}$') { throw 'BUILD_INFO node.sha256 must 
 
 $artifactRoot = Split-Path $buildInfoFullPath -Parent
 $nodeBinaryPath = Join-Path $artifactRoot $nodePath
-if (-not (Test-Path -LiteralPath $nodeBinaryPath -PathType Leaf)) {
-  throw "Node binary referenced by BUILD_INFO is missing beside the artifact metadata: $nodeBinaryPath"
-}
-$actualNodeBytes = [int64](Get-Item -LiteralPath $nodeBinaryPath).Length
-if ($actualNodeBytes -ne $nodeBytes) {
-  throw "Node binary size does not match BUILD_INFO. expected=$nodeBytes actual=$actualNodeBytes"
-}
-$actualNodeHash = (Get-FileHash -LiteralPath $nodeBinaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
-if (-not [string]::Equals($actualNodeHash, $nodeHash, [StringComparison]::Ordinal)) {
-  throw "Node binary SHA-256 does not match BUILD_INFO. expected=$nodeHash actual=$actualNodeHash"
-}
-$actualBuildInfoHash = (Get-FileHash -LiteralPath $buildInfoFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$actualBuildInfoHash = [string]$buildInfoSnapshot.Sha256
+$verifiedNode = $null
 
-$resolvedNetworkEvidence = @(Resolve-EvidencePaths -InputPath $NetworkEvidence -Label 'Network evidence')
-$resolvedClientNetprobeEvidence = @(Resolve-EvidencePaths -InputPath $ClientNetprobeEvidence -Label 'Client Netprobe evidence')
-$resolvedNodeSoakEvidence = @(Resolve-EvidencePaths -InputPath $NodeSoakEvidence -Label 'Node soak evidence')
+try {
+  $verifiedNode = Open-KonofixVerifiedExecutable `
+    -Path $nodeBinaryPath `
+    -ExpectedBytes $nodeBytes `
+    -ExpectedSha256 $nodeHash `
+    -Label 'Node binary'
+  $actualNodeBytes = [int64]$verifiedNode.Bytes
+  $actualNodeHash = [string]$verifiedNode.Sha256
 
-& $networkValidator `
-  -Manifest $resolvedNetworkEvidence `
-  -RequireAllChecks `
-  -MaxAgeDays $NetworkEvidenceMaxAgeDays `
-  -ExpectedBuildVersion $version `
-  -ExpectedNodeVersion $version `
-  -ExpectedSourceCommit $commit `
-  -RequireSingleBootstrapPeer
+  $resolvedNetworkEvidence = @(Resolve-EvidencePaths -InputPath $NetworkEvidence -Label 'Network evidence')
+  $resolvedClientNetprobeEvidence = @(Resolve-EvidencePaths -InputPath $ClientNetprobeEvidence -Label 'Client Netprobe evidence')
+  $resolvedNodeSoakEvidence = @(Resolve-EvidencePaths -InputPath $NodeSoakEvidence -Label 'Node soak evidence')
 
-$bootstrapPeers = @()
-foreach ($manifestPath in $resolvedNetworkEvidence) {
-  $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-  $bootstrap = [string]$manifest.bootstrap
-  $match = [regex]::Match($bootstrap, '/p2p/([^/]+)$')
-  if (-not $match.Success) { throw "Validated network evidence has no terminal bootstrap Peer ID: $manifestPath" }
-  $bootstrapPeers += $match.Groups[1].Value
+  $sessionValidationJson = (& $sessionValidator `
+    -SessionInfoPath $SessionInfoPath `
+    -Manifest $resolvedNetworkEvidence `
+    -ExpectedBuildVersion $version `
+    -ExpectedNodeVersion $version `
+    -ExpectedSourceCommit $commit `
+    -ExpectedBuildInfoSha256 $actualBuildInfoHash `
+    -ExpectedNodeSha256 $actualNodeHash `
+    -RequirePassingEvidence `
+    -AsJson | Out-String).Trim()
+  if ([string]::IsNullOrWhiteSpace($sessionValidationJson)) {
+    throw 'Network session validator returned no structured PASS aggregate.'
+  }
+  try { $sessionValidation = $sessionValidationJson | ConvertFrom-Json }
+  catch { throw "Network session validator returned invalid JSON: $($_.Exception.Message)" }
+  if ($sessionValidation -isnot [pscustomobject] -or [string]$sessionValidation.status -cne 'PASS') {
+    throw 'Network session validator did not return the expected PASS aggregate.'
+  }
+  $bootstrapPeerProperty = $sessionValidation.PSObject.Properties['bootstrap_peer_id']
+  if ($null -eq $bootstrapPeerProperty -or $bootstrapPeerProperty.Value -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$bootstrapPeerProperty.Value)) {
+    throw 'Network session validator PASS aggregate is missing bootstrap_peer_id.'
+  }
+  $bootstrapPeer = [string]$bootstrapPeerProperty.Value
+
+  $clientProbeResult = (& $clientNetprobeValidator `
+    -Evidence $resolvedClientNetprobeEvidence `
+    -SessionInfoPath $SessionInfoPath `
+    -BuildInfoPath $buildInfoFullPath `
+    -MaxAgeDays $NetworkEvidenceMaxAgeDays `
+    -RequireBothClients `
+    -AsJson) | ConvertFrom-Json
+  if ($clientProbeResult.status -cne 'PASS') { throw 'Client Netprobe evidence validator did not return PASS.' }
+  if ([int]$clientProbeResult.evidence_count -ne 2) { throw 'Stable promotion requires exactly two authenticated client Netprobe evidence records.' }
+  if (-not [bool]$clientProbeResult.authenticated_tcp -or -not [bool]$clientProbeResult.authenticated_quic_v1) {
+    throw 'Stable promotion requires authenticated direct TCP and QUIC-v1 evidence from both clients.'
+  }
+  if (-not [bool]$clientProbeResult.distinct_hosts) {
+    throw 'Stable promotion requires client evidence captured on two distinct Windows hosts.'
+  }
+  if (-not [bool]$clientProbeResult.distinct_network_contexts) {
+    throw 'Stable promotion requires client evidence captured from two distinct default-route network contexts.'
+  }
+  if ([string]$clientProbeResult.bootstrap_peer_id -cne $bootstrapPeer) {
+    throw 'Client Netprobe evidence Peer ID does not match the validated network evidence bootstrap Peer ID.'
+  }
+
+  & $soakValidator `
+    -Snapshot $resolvedNodeSoakEvidence `
+    -MinSpanSeconds $NodeSoakMinSpanSeconds `
+    -MaxGapSeconds $NodeSoakMaxGapSeconds `
+    -MaxAgeSeconds $NodeSoakMaxAgeSeconds `
+    -ExpectedVersion $version `
+    -ExpectedPeerId $bootstrapPeer `
+    -ExpectedSourceCommit $commit `
+    -ExpectedNodeSha256 $actualNodeHash `
+    -ExpectedBuildInfoSha256 $actualBuildInfoHash `
+    -RequirePeerObserved
+
+  $result = [ordered]@{
+    schema = 4
+    status = 'PASS'
+    product = $product
+    version = $version
+    source_commit = $commit
+    bootstrap_peer_id = $bootstrapPeer
+    network_manifest_count = $resolvedNetworkEvidence.Count
+    client_netprobe_evidence_count = [int]$clientProbeResult.evidence_count
+    authenticated_direct_tcp = [bool]$clientProbeResult.authenticated_tcp
+    authenticated_direct_quic_v1 = [bool]$clientProbeResult.authenticated_quic_v1
+    distinct_client_hosts = [bool]$clientProbeResult.distinct_hosts
+    distinct_client_network_contexts = [bool]$clientProbeResult.distinct_network_contexts
+    netprobe_sha256 = [string]$clientProbeResult.netprobe_sha256
+    node_soak_snapshot_count = $resolvedNodeSoakEvidence.Count
+    node_soak_exact_build_binding = $true
+    node_binary_bytes = $actualNodeBytes
+    node_binary_sha256 = $actualNodeHash
+    build_info_sha256 = $actualBuildInfoHash
+    coherent_test_session = $true
+  }
+
+  if ($AsJson) {
+    $result | ConvertTo-Json -Depth 3
+    return
+  }
+
+  Write-Host '=== Konofix Stable Promotion Evidence ===' -ForegroundColor Cyan
+  Write-Host "Build version:            $version"
+  Write-Host "Source commit:            $commit"
+  Write-Host "Bootstrap Peer ID:        $bootstrapPeer"
+  Write-Host "Network manifests:        $($resolvedNetworkEvidence.Count)"
+  Write-Host "Client Netprobe records:  $($clientProbeResult.evidence_count)"
+  Write-Host "Authenticated TCP/QUIC:   PASS / PASS"
+  Write-Host 'Distinct client hosts:    PASS'
+  Write-Host 'Distinct client networks: PASS'
+  Write-Host "Node soak snapshots:      $($resolvedNodeSoakEvidence.Count)"
+  Write-Host 'Node soak artifact bind:  PASS'
+  Write-Host "Node SHA-256:             $actualNodeHash"
+  Write-Host 'PASS - packaged Node/Netprobe provenance, exact-build-bound public-Node soak history, authenticated TCP+QUIC probes from two distinct Windows hosts and default-route network contexts, one coherent cross-country test session, required network scenarios and public-Node soak evidence all match the exact verified Windows build.' -ForegroundColor Green
+} finally {
+  if ($null -ne $verifiedNode -and $null -ne $verifiedNode.Stream) {
+    $verifiedNode.Stream.Dispose()
+  }
 }
-$bootstrapPeers = @($bootstrapPeers | Sort-Object -Unique -CaseSensitive)
-if ($bootstrapPeers.Count -ne 1) { throw 'Promotion evidence must reference exactly one bootstrap Peer ID.' }
-$bootstrapPeer = $bootstrapPeers[0]
-
-& $sessionValidator `
-  -SessionInfoPath $SessionInfoPath `
-  -Manifest $resolvedNetworkEvidence `
-  -ExpectedBuildVersion $version `
-  -ExpectedNodeVersion $version `
-  -ExpectedSourceCommit $commit `
-  -ExpectedBuildInfoSha256 $actualBuildInfoHash `
-  -ExpectedNodeSha256 $actualNodeHash `
-  -ExpectedBootstrapPeerId $bootstrapPeer `
-  -RequirePassingEvidence | Out-Null
-
-$clientProbeResult = (& $clientNetprobeValidator `
-  -Evidence $resolvedClientNetprobeEvidence `
-  -SessionInfoPath $SessionInfoPath `
-  -BuildInfoPath $buildInfoFullPath `
-  -MaxAgeDays $NetworkEvidenceMaxAgeDays `
-  -RequireBothClients `
-  -AsJson) | ConvertFrom-Json
-if ($clientProbeResult.status -cne 'PASS') { throw 'Client Netprobe evidence validator did not return PASS.' }
-if ([int]$clientProbeResult.evidence_count -ne 2) { throw 'Stable promotion requires exactly two authenticated client Netprobe evidence records.' }
-if (-not [bool]$clientProbeResult.authenticated_tcp -or -not [bool]$clientProbeResult.authenticated_quic_v1) {
-  throw 'Stable promotion requires authenticated direct TCP and QUIC-v1 evidence from both clients.'
-}
-if (-not [bool]$clientProbeResult.distinct_hosts) {
-  throw 'Stable promotion requires client evidence captured on two distinct Windows hosts.'
-}
-if (-not [bool]$clientProbeResult.distinct_network_contexts) {
-  throw 'Stable promotion requires client evidence captured from two distinct default-route network contexts.'
-}
-if ([string]$clientProbeResult.bootstrap_peer_id -cne $bootstrapPeer) {
-  throw 'Client Netprobe evidence Peer ID does not match the validated network evidence bootstrap Peer ID.'
-}
-
-& $soakValidator `
-  -Snapshot $resolvedNodeSoakEvidence `
-  -MinSpanSeconds $NodeSoakMinSpanSeconds `
-  -MaxGapSeconds $NodeSoakMaxGapSeconds `
-  -MaxAgeSeconds $NodeSoakMaxAgeSeconds `
-  -ExpectedVersion $version `
-  -ExpectedPeerId $bootstrapPeer `
-  -ExpectedSourceCommit $commit `
-  -ExpectedNodeSha256 $actualNodeHash `
-  -ExpectedBuildInfoSha256 $actualBuildInfoHash `
-  -RequirePeerObserved
-
-$result = [ordered]@{
-  schema = 4
-  status = 'PASS'
-  product = $product
-  version = $version
-  source_commit = $commit
-  bootstrap_peer_id = $bootstrapPeer
-  network_manifest_count = $resolvedNetworkEvidence.Count
-  client_netprobe_evidence_count = [int]$clientProbeResult.evidence_count
-  authenticated_direct_tcp = [bool]$clientProbeResult.authenticated_tcp
-  authenticated_direct_quic_v1 = [bool]$clientProbeResult.authenticated_quic_v1
-  distinct_client_hosts = [bool]$clientProbeResult.distinct_hosts
-  distinct_client_network_contexts = [bool]$clientProbeResult.distinct_network_contexts
-  netprobe_sha256 = [string]$clientProbeResult.netprobe_sha256
-  node_soak_snapshot_count = $resolvedNodeSoakEvidence.Count
-  node_soak_exact_build_binding = $true
-  node_binary_bytes = $actualNodeBytes
-  node_binary_sha256 = $actualNodeHash
-  build_info_sha256 = $actualBuildInfoHash
-  coherent_test_session = $true
-}
-
-if ($AsJson) {
-  $result | ConvertTo-Json -Depth 3
-  return
-}
-
-Write-Host '=== Konofix Stable Promotion Evidence ===' -ForegroundColor Cyan
-Write-Host "Build version:            $version"
-Write-Host "Source commit:            $commit"
-Write-Host "Bootstrap Peer ID:        $bootstrapPeer"
-Write-Host "Network manifests:        $($resolvedNetworkEvidence.Count)"
-Write-Host "Client Netprobe records:  $($clientProbeResult.evidence_count)"
-Write-Host "Authenticated TCP/QUIC:   PASS / PASS"
-Write-Host 'Distinct client hosts:    PASS'
-Write-Host 'Distinct client networks: PASS'
-Write-Host "Node soak snapshots:      $($resolvedNodeSoakEvidence.Count)"
-Write-Host 'Node soak artifact bind:  PASS'
-Write-Host "Node SHA-256:             $actualNodeHash"
-Write-Host 'PASS - packaged Node/Netprobe provenance, exact-build-bound public-Node soak history, authenticated TCP+QUIC probes from two distinct Windows hosts and default-route network contexts, one coherent cross-country test session, required network scenarios and public-Node soak evidence all match the exact verified Windows build.' -ForegroundColor Green

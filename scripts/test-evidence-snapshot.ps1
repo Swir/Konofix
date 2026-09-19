@@ -12,7 +12,7 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) ('konofix-evidence-snapshot-' + [gu
 New-Item -ItemType Directory -Path $temp | Out-Null
 try {
     $valid = Join-Path $temp 'valid.json'
-    $payload = '{"schema":1,"status":"PASS","message":"zażółć"}'
+    $payload = '{"schema":1,"status":"PASS","message":"snapshot-ok"}'
     [IO.File]::WriteAllText($valid, $payload, [Text.UTF8Encoding]::new($false))
     $snapshot = Read-KonofixBoundedJsonSnapshot -Path $valid -MaxBytes 4096 -Label 'fixture'
     $expectedBytes = [IO.File]::ReadAllBytes($valid)

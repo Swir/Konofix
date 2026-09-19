@@ -128,6 +128,27 @@ const cases = [
     expected: 'is missing required guard',
   },
   {
+    name: 'stable promotion preflight stops validating the session aggregate hash',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: "  if ($validatedSessionInfoHash -cnotmatch '^[0-9a-f]{64}$') {\n    throw 'Network session validator PASS aggregate is missing a canonical session_info_sha256.'\n  }\n",
+    to: '',
+    expected: 'is missing required guard',
+  },
+  {
+    name: 'stable promotion preflight stops binding client BUILD_INFO to promotion BUILD_INFO',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: "  if ($clientBuildInfoHash -cne $actualBuildInfoHash) {\n    throw 'Client Netprobe validator BUILD_INFO hash changed after stable promotion BUILD_INFO validation.'\n  }\n",
+    to: '',
+    expected: 'is missing required guard',
+  },
+  {
+    name: 'stable promotion preflight stops binding client SESSION_INFO to validated session bytes',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: "  if ($clientSessionInfoHash -cne $validatedSessionInfoHash) {\n    throw 'Client Netprobe validator SESSION_INFO hash changed after network session validation.'\n  }\n",
+    to: '',
+    expected: 'is missing required guard',
+  },
+  {
     name: 'stable promotion preflight drops the held Node lock cleanup',
     file: 'scripts/check-promotion-evidence.ps1',
     from: '    $verifiedNode.Stream.Dispose()\n',

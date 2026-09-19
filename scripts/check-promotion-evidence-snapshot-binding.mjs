@@ -109,6 +109,13 @@ requireAll(promotion, 'stable promotion preflight', [
   '$sessionSnapshots = @($sessionValidation.manifest_snapshots)',
   '[int64]$snapshot.bytes -ne [int64]$sessionSnapshot.bytes',
   '[string]$snapshot.sha256 -cne [string]$sessionSnapshot.sha256',
+  '$validatedSessionInfoHash = [string]$sessionValidation.session_info_sha256',
+  "if ($validatedSessionInfoHash -cnotmatch '^[0-9a-f]{64}$')",
+  '$clientBuildInfoHash = [string]$clientProbeResult.build_info_sha256',
+  '$clientBuildInfoHash -cne $actualBuildInfoHash',
+  '$clientSessionInfoHash = [string]$clientProbeResult.session_info_sha256',
+  '$clientSessionInfoHash -cne $validatedSessionInfoHash',
+  'session_info_sha256 = $validatedSessionInfoHash',
   '$verifiedNode.Stream.Dispose()',
 ]);
 
@@ -117,10 +124,12 @@ const networkValidationIndex = promotion.indexOf('$networkValidationJson = (& $n
 const sessionValidationIndex = promotion.indexOf('$sessionValidationJson = (& $sessionValidator');
 const snapshotCompareIndex = promotion.indexOf('[string]$snapshot.sha256 -cne [string]$sessionSnapshot.sha256');
 const clientValidationIndex = promotion.indexOf('$clientProbeResult = (& $clientNetprobeValidator');
+const clientBuildBindingIndex = promotion.indexOf('$clientBuildInfoHash -cne $actualBuildInfoHash');
+const clientSessionBindingIndex = promotion.indexOf('$clientSessionInfoHash -cne $validatedSessionInfoHash');
 const soakValidationIndex = promotion.indexOf('& $soakValidator');
 const disposeIndex = promotion.lastIndexOf('$verifiedNode.Stream.Dispose()');
-if (!(nodeLockIndex >= 0 && nodeLockIndex < networkValidationIndex && networkValidationIndex < sessionValidationIndex && sessionValidationIndex < snapshotCompareIndex && snapshotCompareIndex < clientValidationIndex && clientValidationIndex < soakValidationIndex && soakValidationIndex < disposeIndex)) {
-  fail('stable promotion preflight must hold the verified Node lock across report/session byte binding, client validation and soak validation until final cleanup.');
+if (!(nodeLockIndex >= 0 && nodeLockIndex < networkValidationIndex && networkValidationIndex < sessionValidationIndex && sessionValidationIndex < snapshotCompareIndex && snapshotCompareIndex < clientValidationIndex && clientValidationIndex < clientBuildBindingIndex && clientBuildBindingIndex < clientSessionBindingIndex && clientSessionBindingIndex < soakValidationIndex && soakValidationIndex < disposeIndex)) {
+  fail('stable promotion preflight must hold the verified Node lock across report/session byte binding, client BUILD_INFO/SESSION_INFO cross-binding and soak validation until final cleanup.');
 }
 
-console.log('Promotion evidence snapshot binding policy passed: release/session/report decisions and the stable promotion preflight stay bound to validated exact bytes.');
+console.log('Promotion evidence snapshot binding policy passed: release/session/report/client decisions and the stable promotion preflight stay bound to validated exact bytes.');

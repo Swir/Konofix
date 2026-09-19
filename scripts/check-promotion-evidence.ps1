@@ -260,6 +260,18 @@ try {
     -RequireBothClients `
     -AsJson) | ConvertFrom-Json
   if ($clientProbeResult.status -cne 'PASS') { throw 'Client Netprobe evidence validator did not return PASS.' }
+  $validatedSessionInfoHash = [string]$sessionValidation.session_info_sha256
+  if ($validatedSessionInfoHash -cnotmatch '^[0-9a-f]{64}$') {
+    throw 'Network session validator PASS aggregate is missing a canonical session_info_sha256.'
+  }
+  $clientBuildInfoHash = [string]$clientProbeResult.build_info_sha256
+  if ($clientBuildInfoHash -cne $actualBuildInfoHash) {
+    throw 'Client Netprobe validator BUILD_INFO hash changed after stable promotion BUILD_INFO validation.'
+  }
+  $clientSessionInfoHash = [string]$clientProbeResult.session_info_sha256
+  if ($clientSessionInfoHash -cne $validatedSessionInfoHash) {
+    throw 'Client Netprobe validator SESSION_INFO hash changed after network session validation.'
+  }
   if ([int]$clientProbeResult.evidence_count -ne 2) { throw 'Stable promotion requires exactly two authenticated client Netprobe evidence records.' }
   if (-not [bool]$clientProbeResult.authenticated_tcp -or -not [bool]$clientProbeResult.authenticated_quic_v1) {
     throw 'Stable promotion requires authenticated direct TCP and QUIC-v1 evidence from both clients.'
@@ -305,6 +317,7 @@ try {
     node_binary_bytes = $actualNodeBytes
     node_binary_sha256 = $actualNodeHash
     build_info_sha256 = $actualBuildInfoHash
+    session_info_sha256 = $validatedSessionInfoHash
     coherent_test_session = $true
   }
 

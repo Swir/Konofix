@@ -9,6 +9,7 @@ const files = [
   'scripts/validate-network-test-report.ps1',
   'scripts/validate-network-test-session.ps1',
   'scripts/release-gate.ps1',
+  'scripts/check-promotion-evidence.ps1',
 ];
 const canonical = Object.fromEntries(files.map((name) => [name, fs.readFileSync(name, 'utf8').replaceAll('\r\n', '\n')]));
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-promotion-evidence-binding-'));
@@ -66,7 +67,7 @@ const cases = [
   {
     name: 'session validator hashes path separately',
     file: 'scripts/validate-network-test-session.ps1',
-    from: '    $snapshot = Read-KonofixBoundedJsonSnapshot -Path $manifestFullPath -MaxBytes 262144 -Label \'Network manifest\'',
+    from: "    $snapshot = Read-KonofixBoundedJsonSnapshot -Path $manifestFullPath -MaxBytes 262144 -Label 'Network manifest'",
     to: "    $snapshot = Read-KonofixBoundedJsonSnapshot -Path $manifestFullPath -MaxBytes 262144 -Label 'Network manifest'\n    $legacyHash = Get-FileHash -LiteralPath $manifestFullPath -Algorithm SHA256",
     expected: 'must bind inventory/hash/parse',
   },
@@ -89,6 +90,69 @@ const cases = [
     file: 'scripts/release-gate.ps1',
     from: "validate-network-test-report.ps1') @validatorArgs -AsJson",
     to: "validate-network-test-report.ps1') @validatorArgs",
+    expected: 'is missing required guard',
+  },
+  {
+    name: 'stable promotion preflight reparses BUILD_INFO from the path',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: '$buildInfo = $buildInfoSnapshot.Data',
+    to: '$buildInfo = Get-Content -LiteralPath $buildInfoFullPath -Raw | ConvertFrom-Json',
+    expected: 'restored a split path trust boundary',
+  },
+  {
+    name: 'stable promotion preflight restores split Node size verification',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: '$actualNodeBytes = [int64]$verifiedNode.Bytes',
+    to: '$actualNodeBytes = [int64](Get-Item -LiteralPath $nodeBinaryPath).Length',
+    expected: 'restored a split path trust boundary',
+  },
+  {
+    name: 'stable promotion preflight reopens a validated manifest',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: '$bootstrapPeer = [string]$sessionBootstrapProperty.Value',
+    to: "$manifestPath = $resolvedNetworkEvidence[0]\n  $legacyManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json\n  $bootstrapPeer = [string]$sessionBootstrapProperty.Value",
+    expected: 'restored a split path trust boundary',
+  },
+  {
+    name: 'stable promotion preflight drops configurable evidence age policy',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: '    -RequireAllChecks `\n    -MaxAgeDays $NetworkEvidenceMaxAgeDays `\n',
+    to: '    -RequireAllChecks `\n',
+    expected: 'is missing required guard',
+  },
+  {
+    name: 'stable promotion preflight stops binding report and session hashes',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: '    if ([string]$snapshot.sha256 -cne [string]$sessionSnapshot.sha256) {\n      throw "Network evidence SHA-256 changed between report and session validation: $name"\n    }\n',
+    to: '',
+    expected: 'is missing required guard',
+  },
+  {
+    name: 'stable promotion preflight stops validating the session aggregate hash',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: "  if ($validatedSessionInfoHash -cnotmatch '^[0-9a-f]{64}$') {\n    throw 'Network session validator PASS aggregate is missing a canonical session_info_sha256.'\n  }\n",
+    to: '',
+    expected: 'is missing required guard',
+  },
+  {
+    name: 'stable promotion preflight stops binding client BUILD_INFO to promotion BUILD_INFO',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: "  if ($clientBuildInfoHash -cne $actualBuildInfoHash) {\n    throw 'Client Netprobe validator BUILD_INFO hash changed after stable promotion BUILD_INFO validation.'\n  }\n",
+    to: '',
+    expected: 'is missing required guard',
+  },
+  {
+    name: 'stable promotion preflight stops binding client SESSION_INFO to validated session bytes',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: "  if ($clientSessionInfoHash -cne $validatedSessionInfoHash) {\n    throw 'Client Netprobe validator SESSION_INFO hash changed after network session validation.'\n  }\n",
+    to: '',
+    expected: 'is missing required guard',
+  },
+  {
+    name: 'stable promotion preflight drops the held Node lock cleanup',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: '    $verifiedNode.Stream.Dispose()\n',
+    to: '',
     expected: 'is missing required guard',
   },
 ];

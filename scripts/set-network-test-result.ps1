@@ -24,40 +24,67 @@ if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) {
     throw "Network evidence validator not found: $validator"
 }
 
-$manifestFull = [IO.Path]::GetFullPath($Manifest)
-if (-not (Test-Path -LiteralPath $manifestFull -PathType Leaf)) {
-    throw "Network test manifest not found: $manifestFull"
+$snapshotHelper = Join-Path $PSScriptRoot 'evidence-snapshot.ps1'
+if (-not (Test-Path -LiteralPath $snapshotHelper -PathType Leaf)) {
+    throw "Required evidence snapshot helper is missing: $snapshotHelper"
+}
+. $snapshotHelper
+
+function ConvertTo-KonofixUtf8JsonBytes {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [ValidateRange(2, 100)][int]$Depth = 8
+    )
+    $json = $Value | ConvertTo-Json -Depth $Depth
+    $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    return $utf8.GetBytes($json + [Environment]::NewLine)
 }
 
+function ConvertTo-KonofixUtf8TextBytes {
+    param([Parameter(Mandatory = $true)][string]$Value)
+    $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    return $utf8.GetBytes($Value)
+}
+
+function Get-KonofixSha256Hex {
+    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $sha.ComputeHash($Bytes)
+    } finally {
+        $sha.Dispose()
+    }
+    return ([Convert]::ToHexString($digest)).ToLowerInvariant()
+}
+
+$manifestSnapshot = Read-KonofixBoundedJsonSnapshot -Path $Manifest -MaxBytes (256KB) -Label 'Network test manifest'
+$manifestFull = [string]$manifestSnapshot.Path
 $manifestDirectory = Split-Path $manifestFull -Parent
 $manifestName = [IO.Path]::GetFileName($manifestFull)
+$data = $manifestSnapshot.Data
+$originalManifestBytes = [byte[]]$manifestSnapshot.ContentBytes
+$originalManifestSha256 = [string]$manifestSnapshot.Sha256
+
 $sessionInfoPath = Join-Path $manifestDirectory 'SESSION_INFO.json'
 $sessionValidator = Join-Path $PSScriptRoot 'validate-network-test-session.ps1'
 $sessionData = $null
+$sessionSnapshot = $null
 $sessionInventoryEntry = $null
 $sessionManifestPaths = @()
 $originalSessionBytes = $null
-
-try {
-    $data = Get-Content -LiteralPath $manifestFull -Raw | ConvertFrom-Json
-} catch {
-    throw "Network test manifest is not valid JSON: $($_.Exception.Message)"
-}
+$originalSessionSha256 = $null
 
 if (Test-Path -LiteralPath $sessionInfoPath -PathType Leaf) {
     if (-not (Test-Path -LiteralPath $sessionValidator -PathType Leaf)) {
         throw "Session-aware evidence edit requires validator: $sessionValidator"
     }
-    $sessionItem = Get-Item -LiteralPath $sessionInfoPath
-    if ($sessionItem.Length -le 0 -or $sessionItem.Length -gt 262144) {
-        throw 'SESSION_INFO.json is empty or exceeds the 262144-byte safety limit.'
-    }
-    $originalSessionBytes = [IO.File]::ReadAllBytes($sessionInfoPath)
-    try {
-        $sessionData = Get-Content -LiteralPath $sessionInfoPath -Raw | ConvertFrom-Json
-    } catch {
-        throw "SESSION_INFO.json is not valid JSON: $($_.Exception.Message)"
-    }
+
+    $sessionSnapshot = Read-KonofixBoundedJsonSnapshot -Path $sessionInfoPath -MaxBytes (256KB) -Label 'SESSION_INFO.json'
+    $sessionInfoPath = [string]$sessionSnapshot.Path
+    $sessionData = $sessionSnapshot.Data
+    $originalSessionBytes = [byte[]]$sessionSnapshot.ContentBytes
+    $originalSessionSha256 = [string]$sessionSnapshot.Sha256
+
     if ($sessionData -isnot [pscustomobject] -or [int]$sessionData.schema_version -ne 1 -or [string]$sessionData.product -cne 'Konofix Chat') {
         throw 'SESSION_INFO.json does not describe a supported Konofix test session.'
     }
@@ -71,6 +98,8 @@ if (Test-Path -LiteralPath $sessionInfoPath -PathType Leaf) {
         if ([IO.Path]::GetFileName($name) -cne $name) { throw "Unsafe SESSION_INFO manifest path: $name" }
         Join-Path $manifestDirectory $name
     })
+
+    # Preserve the full coherent-session gate before any authorized mutation.
     & $sessionValidator -SessionInfoPath $sessionInfoPath -Manifest $sessionManifestPaths | Out-Null
 
     if ([string]$sessionData.build_version -cne [string]$data.build_version -or
@@ -211,7 +240,6 @@ $manifestTemp = Join-Path $directory ('.network-manifest-' + [Guid]::NewGuid().T
 $markdownFull = [IO.Path]::ChangeExtension($manifestFull, '.md')
 $markdownTemp = Join-Path $directory ('.network-report-' + [Guid]::NewGuid().ToString('N') + '.md')
 $sessionTemp = Join-Path $directory ('.network-session-' + [Guid]::NewGuid().ToString('N') + '.json')
-$originalManifestBytes = [IO.File]::ReadAllBytes($manifestFull)
 $markdownExisted = Test-Path -LiteralPath $markdownFull -PathType Leaf
 $originalMarkdownBytes = if ($markdownExisted) { [IO.File]::ReadAllBytes($markdownFull) } else { $null }
 $manifestCommitted = $false
@@ -219,19 +247,24 @@ $markdownCommitted = $false
 $sessionCommitted = $false
 
 try {
-    $data | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestTemp -Encoding utf8
-    Set-Content -LiteralPath $markdownTemp -Value $markdown -Encoding utf8
+    # Serialize each replacement authority once. The same exact bytes are written,
+    # hashed and recorded in SESSION_INFO.json; no path re-open is trusted for provenance.
+    $newManifestBytes = ConvertTo-KonofixUtf8JsonBytes -Value $data -Depth 8
+    $newManifestSha256 = Get-KonofixSha256Hex -Bytes $newManifestBytes
+    [IO.File]::WriteAllBytes($manifestTemp, $newManifestBytes)
+
+    $newMarkdownBytes = ConvertTo-KonofixUtf8TextBytes -Value $markdown
+    [IO.File]::WriteAllBytes($markdownTemp, $newMarkdownBytes)
 
     if ($Finalize) {
         & $validator -Manifest $manifestTemp -RequiredScenario @([string]$data.scenario) | Out-Null
     }
 
     if ($null -ne $sessionData) {
-        $newManifestItem = Get-Item -LiteralPath $manifestTemp -Force
-        $newManifestHash = (Get-FileHash -LiteralPath $manifestTemp -Algorithm SHA256).Hash.ToLowerInvariant()
-        $sessionInventoryEntry.bytes = [int64]$newManifestItem.Length
-        $sessionInventoryEntry.sha256 = $newManifestHash
-        $sessionData | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $sessionTemp -Encoding utf8
+        $sessionInventoryEntry.bytes = [int64]$newManifestBytes.Length
+        $sessionInventoryEntry.sha256 = $newManifestSha256
+        $newSessionBytes = ConvertTo-KonofixUtf8JsonBytes -Value $sessionData -Depth 8
+        [IO.File]::WriteAllBytes($sessionTemp, $newSessionBytes)
     }
 
     Move-Item -LiteralPath $manifestTemp -Destination $manifestFull -Force
@@ -263,4 +296,7 @@ try {
 Write-Host "Recorded $Check=$Result; overall=$($data.overall)" -ForegroundColor Green
 Write-Host "Manifest: $manifestFull"
 Write-Host "Report:   $markdownFull"
+if ($null -ne $sessionData) {
+    Write-Host "Snapshot provenance: manifest=$originalManifestSha256 session=$originalSessionSha256" -ForegroundColor DarkGray
+}
 if ($Finalize) { Write-Host 'Final schema-v3 scenario validation passed.' -ForegroundColor Green }

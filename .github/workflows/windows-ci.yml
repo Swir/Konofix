@@ -45,6 +45,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-release-artifact-name.ps1
 
+      - name: Exact-build tester handoff self-tests
+        shell: pwsh
+        run: .\scripts\test-tester-handoff.ps1
+
       - name: Network evidence snapshot self-tests
         shell: pwsh
         run: .\scripts\test-evidence-snapshot.ps1
@@ -154,7 +158,8 @@ jobs:
           Copy-Item 'docs\TESTING.md' 'artifact\TESTING.md'
           Copy-Item 'docs\NODE.md' 'artifact\NODE.md'
           Copy-Item 'docs\NODE_SOAK.md' 'artifact\NODE_SOAK.md'
-          Copy-Item 'docs\RELEASE_0.4.2_TEST1.md' 'artifact\RELEASE_NOTES.md'
+          $package = Get-Content 'package.json' -Raw | ConvertFrom-Json
+          & .\scripts\new-tester-handoff.ps1 -OutputPath 'artifact\TESTER_HANDOFF.md' -Version ([string]$package.version) -Commit ([string]$env:GITHUB_SHA) -WorkflowRun ([string]$env:GITHUB_RUN_ID)
 
           $testTools = @(
             'internet-test.ps1',
@@ -223,7 +228,6 @@ jobs:
           })
           if ($completeInventory.Count -lt 10) { throw 'Windows bundle inventory is unexpectedly small.' }
 
-          $package = Get-Content 'package.json' -Raw | ConvertFrom-Json
           $buildInfo = [ordered]@{
             schema = 2
             product = 'Konofix Chat'

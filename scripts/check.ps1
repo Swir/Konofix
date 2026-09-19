@@ -25,6 +25,9 @@ try {
   Write-Host 'Release metadata gate...' -ForegroundColor Yellow
   & '.\scripts\release-gate.ps1'
 
+  Write-Host 'Network evidence snapshot self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-evidence-snapshot.ps1'
+
   Write-Host 'Network evidence validator self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-network-evidence-gate.ps1'
 

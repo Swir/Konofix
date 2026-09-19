@@ -9,6 +9,7 @@ const files = [
   'scripts/validate-network-test-report.ps1',
   'scripts/validate-network-test-session.ps1',
   'scripts/release-gate.ps1',
+  'scripts/check-promotion-evidence.ps1',
 ];
 const canonical = Object.fromEntries(files.map((name) => [name, fs.readFileSync(name, 'utf8').replaceAll('\r\n', '\n')]));
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-promotion-evidence-binding-'));
@@ -66,7 +67,7 @@ const cases = [
   {
     name: 'session validator hashes path separately',
     file: 'scripts/validate-network-test-session.ps1',
-    from: '    $snapshot = Read-KonofixBoundedJsonSnapshot -Path $manifestFullPath -MaxBytes 262144 -Label \'Network manifest\'',
+    from: "    $snapshot = Read-KonofixBoundedJsonSnapshot -Path $manifestFullPath -MaxBytes 262144 -Label 'Network manifest'",
     to: "    $snapshot = Read-KonofixBoundedJsonSnapshot -Path $manifestFullPath -MaxBytes 262144 -Label 'Network manifest'\n    $legacyHash = Get-FileHash -LiteralPath $manifestFullPath -Algorithm SHA256",
     expected: 'must bind inventory/hash/parse',
   },
@@ -89,6 +90,41 @@ const cases = [
     file: 'scripts/release-gate.ps1',
     from: "validate-network-test-report.ps1') @validatorArgs -AsJson",
     to: "validate-network-test-report.ps1') @validatorArgs",
+    expected: 'is missing required guard',
+  },
+  {
+    name: 'stable promotion preflight reparses BUILD_INFO from the path',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: '$buildInfo = $buildInfoSnapshot.Data',
+    to: '$buildInfo = Get-Content -LiteralPath $buildInfoFullPath -Raw | ConvertFrom-Json',
+    expected: 'restored a split path trust boundary',
+  },
+  {
+    name: 'stable promotion preflight restores split Node size verification',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: '$actualNodeBytes = [int64]$verifiedNode.Bytes',
+    to: '$actualNodeBytes = [int64](Get-Item -LiteralPath $nodeBinaryPath).Length',
+    expected: 'restored a split path trust boundary',
+  },
+  {
+    name: 'stable promotion preflight reopens a validated manifest',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: '$bootstrapPeer = [string]$bootstrapPeerProperty.Value',
+    to: "$manifestPath = $resolvedNetworkEvidence[0]\n  $legacyManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json\n  $bootstrapPeer = [string]$bootstrapPeerProperty.Value",
+    expected: 'restored a split path trust boundary',
+  },
+  {
+    name: 'stable promotion preflight stops requiring passing session evidence',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: '    -RequirePassingEvidence `\n',
+    to: '',
+    expected: 'is missing required guard',
+  },
+  {
+    name: 'stable promotion preflight drops the held Node lock cleanup',
+    file: 'scripts/check-promotion-evidence.ps1',
+    from: '    $verifiedNode.Stream.Dispose()\n',
+    to: '',
     expected: 'is missing required guard',
   },
 ];

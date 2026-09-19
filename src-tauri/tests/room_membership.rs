@@ -111,7 +111,10 @@ fn rooms2_local_publisher_is_monotonic_idempotent_and_fail_closed() {
         Err(LocalMembershipError::DuplicateRoomId("alpha".into()))
     );
     assert_eq!(local.revision(), 1);
-    assert_eq!(local.rooms(), &BTreeSet::from(["alpha".into(), "beta".into()]));
+    assert_eq!(
+        local.rooms(),
+        &BTreeSet::from(["alpha".into(), "beta".into()])
+    );
 }
 
 #[test]

@@ -35,19 +35,20 @@ for (const forbidden of [
   'Get-Item -LiteralPath $path',
   'Get-Content -LiteralPath $path',
   'Get-FileHash -LiteralPath $path',
+  '$snapshot = Read-KonofixBoundedJsonSnapshot',
 ]) {
   if (validator.includes(forbidden)) {
-    fail(`node soak validator must not reopen evidence paths after snapshot capture: ${forbidden}`);
+    fail(`node soak validator must not restore an unsafe path reread or collide with the typed Snapshot parameter: ${forbidden}`);
   }
 }
 
 requireAll(validator, 'node soak validator', [
   ". (Join-Path $PSScriptRoot 'evidence-snapshot.ps1')",
-  "$snapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxSnapshotBytes -Label 'Node soak snapshot'",
-  '$health = $snapshot.Data',
-  '$validatedPath = [string]$snapshot.Path',
-  'bytes = [int64]$snapshot.Bytes',
-  'sha256 = [string]$snapshot.Sha256',
+  "$capturedSnapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxSnapshotBytes -Label 'Node soak snapshot'",
+  '$health = $capturedSnapshot.Data',
+  '$validatedPath = [string]$capturedSnapshot.Path',
+  'bytes = [int64]$capturedSnapshot.Bytes',
+  'sha256 = [string]$capturedSnapshot.Sha256',
 ]);
 
-console.log('Node soak snapshot binding policy passed: stable-promotion soak parsing stays bound to bounded strict-UTF-8 captured bytes.');
+console.log('Node soak snapshot binding policy passed: stable-promotion soak parsing stays bound to bounded strict-UTF-8 captured bytes without typed-parameter shadowing.');

@@ -98,7 +98,7 @@ impl RoomMembershipTracker {
         let mut next_rooms = BTreeSet::new();
         for raw in room_ids {
             let room_id = raw.as_ref();
-            if !valid_room_id(room_id) {
+            if !valid_temporary_room_id(room_id) {
                 return Err(SnapshotError::InvalidRoomId(room_id.to_string()));
             }
             if !next_rooms.insert(room_id.to_string()) {
@@ -247,7 +247,7 @@ impl RoomMembershipTracker {
     }
 }
 
-fn valid_room_id(room_id: &str) -> bool {
+pub fn valid_temporary_room_id(room_id: &str) -> bool {
     !room_id.is_empty()
         && room_id != "world"
         && room_id.chars().count() <= 64

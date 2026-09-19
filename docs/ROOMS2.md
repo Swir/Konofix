@@ -4,10 +4,11 @@ Rooms 2.0 is the next product-development milestone after the externally gated `
 
 ## Stage 1 implemented in this development branch
 
-The first Rooms 2.0 checkpoint introduces a bounded, deterministic room-membership state engine in `src-tauri/src/room_membership.rs` plus an integration test under `src-tauri/tests/room_membership.rs`.
+The first Rooms 2.0 checkpoint introduces a bounded, deterministic room-membership state engine in `src-tauri/src/room_membership.rs`, a source-authenticated wire snapshot validator in `src-tauri/src/room_membership_wire.rs`, and integration tests under `src-tauri/tests/room_membership.rs`.
 
 The state engine:
 
+- validates that each wire snapshot claims the same libp2p Peer ID as its authenticated GossipSub source,
 - tracks unique room members by authenticated peer identity,
 - derives accurate per-room user counts from unique membership sets,
 - applies revisioned snapshots atomically,
@@ -18,7 +19,7 @@ The state engine:
 - rejects `world`, invalid room identifiers, duplicate room IDs and zero revisions,
 - caps one peer at 64 temporary-room memberships, caps total tracked memberships at 16,384, and caps retained peer membership states at 2,048.
 
-The module intentionally uses only the Rust standard library. Existing `cargo test --all-targets` CI compiles and exercises it through the integration test even before the desktop network loop is wired to the new protocol.
+The tracker itself uses only the Rust standard library; the wire validator uses the project's existing `libp2p` and `serde` dependencies. Existing `cargo test --all-targets` CI compiles and exercises both modules through the integration test even before the desktop network loop is wired to the new protocol.
 
 ## Wire protocol planned for Stage 2
 

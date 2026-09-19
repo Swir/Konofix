@@ -356,8 +356,7 @@ mod tests {
             SnapshotApply::Conflict
         );
         assert_eq!(
-            tracker
-                .apply_snapshot("peer-b", 0, ["beta"]),
+            tracker.apply_snapshot("peer-b", 0, ["beta"]),
             Err(SnapshotError::InvalidRevision)
         );
     }

@@ -116,10 +116,11 @@ function Resolve-EvidencePaths {
 }
 
 $scriptRoot = $PSScriptRoot
+$networkValidator = Join-Path $scriptRoot 'validate-network-test-report.ps1'
 $sessionValidator = Join-Path $scriptRoot 'validate-network-test-session.ps1'
 $clientNetprobeValidator = Join-Path $scriptRoot 'validate-client-netprobe.ps1'
 $soakValidator = Join-Path $scriptRoot 'validate-node-soak.ps1'
-foreach ($tool in @($sessionValidator, $clientNetprobeValidator, $soakValidator)) {
+foreach ($tool in @($networkValidator, $sessionValidator, $clientNetprobeValidator, $soakValidator)) {
   if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
     throw "Required promotion validator is missing: $tool"
   }
@@ -163,6 +164,24 @@ try {
   $resolvedClientNetprobeEvidence = @(Resolve-EvidencePaths -InputPath $ClientNetprobeEvidence -Label 'Client Netprobe evidence')
   $resolvedNodeSoakEvidence = @(Resolve-EvidencePaths -InputPath $NodeSoakEvidence -Label 'Node soak evidence')
 
+  $networkValidationJson = (& $networkValidator `
+    -Manifest $resolvedNetworkEvidence `
+    -RequireAllChecks `
+    -MaxAgeDays $NetworkEvidenceMaxAgeDays `
+    -ExpectedBuildVersion $version `
+    -ExpectedNodeVersion $version `
+    -ExpectedSourceCommit $commit `
+    -RequireSingleBootstrapPeer `
+    -AsJson | Out-String).Trim()
+  if ([string]::IsNullOrWhiteSpace($networkValidationJson)) {
+    throw 'Network evidence validator returned no structured PASS aggregate.'
+  }
+  try { $networkValidation = $networkValidationJson | ConvertFrom-Json }
+  catch { throw "Network evidence validator returned invalid JSON: $($_.Exception.Message)" }
+  if ($networkValidation -isnot [pscustomobject] -or [string]$networkValidation.status -cne 'PASS') {
+    throw 'Network evidence validator did not return the expected PASS aggregate.'
+  }
+
   $sessionValidationJson = (& $sessionValidator `
     -SessionInfoPath $SessionInfoPath `
     -Manifest $resolvedNetworkEvidence `
@@ -171,7 +190,6 @@ try {
     -ExpectedSourceCommit $commit `
     -ExpectedBuildInfoSha256 $actualBuildInfoHash `
     -ExpectedNodeSha256 $actualNodeHash `
-    -RequirePassingEvidence `
     -AsJson | Out-String).Trim()
   if ([string]::IsNullOrWhiteSpace($sessionValidationJson)) {
     throw 'Network session validator returned no structured PASS aggregate.'
@@ -181,11 +199,47 @@ try {
   if ($sessionValidation -isnot [pscustomobject] -or [string]$sessionValidation.status -cne 'PASS') {
     throw 'Network session validator did not return the expected PASS aggregate.'
   }
-  $bootstrapPeerProperty = $sessionValidation.PSObject.Properties['bootstrap_peer_id']
-  if ($null -eq $bootstrapPeerProperty -or $bootstrapPeerProperty.Value -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$bootstrapPeerProperty.Value)) {
+
+  $networkBootstrapProperty = $networkValidation.PSObject.Properties['bootstrap_peer_id']
+  $sessionBootstrapProperty = $sessionValidation.PSObject.Properties['bootstrap_peer_id']
+  if ($null -eq $networkBootstrapProperty -or $networkBootstrapProperty.Value -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$networkBootstrapProperty.Value)) {
+    throw 'Network evidence validator PASS aggregate is missing bootstrap_peer_id.'
+  }
+  if ($null -eq $sessionBootstrapProperty -or $sessionBootstrapProperty.Value -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$sessionBootstrapProperty.Value)) {
     throw 'Network session validator PASS aggregate is missing bootstrap_peer_id.'
   }
-  $bootstrapPeer = [string]$bootstrapPeerProperty.Value
+  $networkBootstrapPeer = [string]$networkBootstrapProperty.Value
+  $bootstrapPeer = [string]$sessionBootstrapProperty.Value
+  if ($networkBootstrapPeer -cne $bootstrapPeer) {
+    throw 'Network evidence bootstrap Peer ID changed between report and session validation.'
+  }
+
+  $networkSnapshots = @($networkValidation.manifests)
+  $sessionSnapshots = @($sessionValidation.manifest_snapshots)
+  if ($networkSnapshots.Count -ne $resolvedNetworkEvidence.Count -or $sessionSnapshots.Count -ne $resolvedNetworkEvidence.Count) {
+    throw 'Promotion validators returned an unexpected manifest snapshot count.'
+  }
+  $sessionSnapshotsByName = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
+  foreach ($snapshot in $sessionSnapshots) {
+    $name = [IO.Path]::GetFileName([string]$snapshot.path)
+    if ([string]::IsNullOrWhiteSpace($name) -or $sessionSnapshotsByName.ContainsKey($name)) {
+      throw 'Network session validator returned an invalid or duplicate manifest snapshot path.'
+    }
+    $sessionSnapshotsByName.Add($name, $snapshot)
+  }
+  foreach ($snapshot in $networkSnapshots) {
+    $name = [IO.Path]::GetFileName([string]$snapshot.path)
+    if (-not $sessionSnapshotsByName.ContainsKey($name)) {
+      throw "Network evidence validator returned a manifest absent from the validated session: $name"
+    }
+    $sessionSnapshot = $sessionSnapshotsByName[$name]
+    if ([int64]$snapshot.bytes -ne [int64]$sessionSnapshot.bytes) {
+      throw "Network evidence bytes changed between report and session validation: $name"
+    }
+    if ([string]$snapshot.sha256 -cne [string]$sessionSnapshot.sha256) {
+      throw "Network evidence SHA-256 changed between report and session validation: $name"
+    }
+  }
 
   $clientProbeResult = (& $clientNetprobeValidator `
     -Evidence $resolvedClientNetprobeEvidence `

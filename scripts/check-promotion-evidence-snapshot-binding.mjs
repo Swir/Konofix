@@ -19,6 +19,9 @@ const requireAll = (source, label, snippets) => {
   }
 };
 
+if (helper.includes('[System.IO.FileShare]::ReadWrite')) {
+  fail('evidence snapshot helper must deny in-place writers while exact bytes are captured.');
+}
 requireAll(helper, 'evidence snapshot helper', [
   'function Read-KonofixBoundedJsonSnapshot',
   '[System.IO.File]::Open(',
@@ -30,10 +33,10 @@ requireAll(helper, 'evidence snapshot helper', [
   'Sha256 = $sha256',
   'Data = $value',
 ]);
-if (helper.includes('[System.IO.FileShare]::ReadWrite')) {
-  fail('evidence snapshot helper must deny in-place writers while exact bytes are captured.');
-}
 
+if (report.includes('Get-Content -LiteralPath $path') || report.includes('Get-FileHash -LiteralPath $path')) {
+  fail('network evidence validator must not reopen manifest paths after snapshot capture.');
+}
 requireAll(report, 'network evidence validator', [
   ". (Join-Path $PSScriptRoot 'evidence-snapshot.ps1')",
   '$snapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxManifestBytes',
@@ -43,10 +46,10 @@ requireAll(report, 'network evidence validator', [
   'bytes = [int64]$snapshot.Bytes',
   'sha256 = [string]$snapshot.Sha256',
 ]);
-if (report.includes('Get-Content -LiteralPath $path') || report.includes('Get-FileHash -LiteralPath $path')) {
-  fail('network evidence validator must not reopen manifest paths after snapshot capture.');
-}
 
+if (session.includes('Get-FileHash -LiteralPath $manifestFullPath') || session.includes('Get-Content -LiteralPath $path -Raw')) {
+  fail('network session validator must bind inventory/hash/parse to captured manifest snapshots.');
+}
 requireAll(session, 'network session validator', [
   ". (Join-Path $PSScriptRoot 'evidence-snapshot.ps1')",
   '$sessionSnapshot = Read-KonofixBoundedJsonSnapshot',
@@ -57,17 +60,14 @@ requireAll(session, 'network session validator', [
   '[string]$validatedManifest.sha256 -ceq [string]$captured.Sha256',
   'session_info_sha256 = [string]$sessionSnapshot.Sha256',
 ]);
-if (session.includes('Get-FileHash -LiteralPath $manifestFullPath') || session.includes('Get-Content -LiteralPath $path -Raw')) {
-  fail('network session validator must bind inventory/hash/parse to captured manifest snapshots.');
-}
 
+if (gate.includes('Get-Content -LiteralPath $manifestPath')) {
+  fail('release gate must consume the validated aggregate instead of reopening network evidence manifests.');
+}
 requireAll(gate, 'release gate', [
   "validate-network-test-report.ps1') @validatorArgs -AsJson",
   '$expectedBootstrapPeer = [string]$networkValidation.bootstrap_peer_id',
   "Network evidence validator did not return the expected PASS aggregate.",
 ]);
-if (gate.includes('Get-Content -LiteralPath $manifestPath')) {
-  fail('release gate must consume the validated aggregate instead of reopening network evidence manifests.');
-}
 
 console.log('Promotion evidence snapshot binding policy passed: release/session/report decisions stay bound to validated bytes.');

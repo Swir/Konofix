@@ -45,7 +45,7 @@ try {
   expectReject(
     'path reread regression',
     validator.replace(
-      '$health = $snapshot.Data',
+      '$health = $capturedSnapshot.Data',
       '$health = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json',
     ),
   );
@@ -53,9 +53,16 @@ try {
   expectReject(
     'size precheck regression',
     validator.replace(
-      '$snapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxSnapshotBytes -Label \'Node soak snapshot\'',
-      '$file = Get-Item -LiteralPath $path\n    $snapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxSnapshotBytes -Label \'Node soak snapshot\'',
+      '$capturedSnapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxSnapshotBytes -Label \'Node soak snapshot\'',
+      '$file = Get-Item -LiteralPath $path\n    $capturedSnapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxSnapshotBytes -Label \'Node soak snapshot\'',
     ),
+  );
+
+  expectReject(
+    'typed Snapshot parameter shadowing regression',
+    validator
+      .replace('$capturedSnapshot = Read-KonofixBoundedJsonSnapshot', '$snapshot = Read-KonofixBoundedJsonSnapshot')
+      .replaceAll('$capturedSnapshot.', '$snapshot.'),
   );
 
   expectReject(
@@ -69,10 +76,10 @@ try {
 
   expectReject(
     'snapshot hash traceability regression',
-    validator.replace('sha256 = [string]$snapshot.Sha256', 'sha256 = \'unknown\''),
+    validator.replace('sha256 = [string]$capturedSnapshot.Sha256', 'sha256 = \'unknown\''),
   );
 
-  console.log('Node soak snapshot binding adversarial policy tests passed (4 mutations rejected).');
+  console.log('Node soak snapshot binding adversarial policy tests passed (5 mutations rejected).');
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

@@ -28,6 +28,9 @@ try {
   Write-Host 'Release artifact naming self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-release-artifact-name.ps1'
 
+  Write-Host 'Exact-build tester handoff self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-tester-handoff.ps1'
+
   Write-Host 'Network evidence snapshot self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-evidence-snapshot.ps1'
 
@@ -103,7 +106,7 @@ try {
   cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-netprobe
   if ($LASTEXITCODE -ne 0) { throw "cargo check --locked --bin konofix-netprobe failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'OK - local preflight matches CI source gates, exact-build release archive naming, promotion evidence, dual-client Netprobe evidence, atomic exact-build network-session creation, network report editing, public-Node/bootstrap/startup-task/readiness/health/soak collection validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/high-signal Clippy/tests and application/Node/Netprobe checks.' -ForegroundColor Green
+  Write-Host 'OK - local preflight matches CI source gates, exact-build release archive naming and tester handoff, promotion evidence, dual-client Netprobe evidence, atomic exact-build network-session creation, network report editing, public-Node/bootstrap/startup-task/readiness/health/soak collection validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/high-signal Clippy/tests and application/Node/Netprobe checks.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

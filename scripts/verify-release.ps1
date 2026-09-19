@@ -169,7 +169,7 @@ try {
     'TESTING.md',
     'NODE.md',
     'NODE_SOAK.md',
-    'RELEASE_NOTES.md',
+    'TESTER_HANDOFF.md',
     'BUILD_INFO.json',
     'package-lock.json',
     'Cargo.lock'
@@ -180,6 +180,7 @@ try {
     Assert-True (Test-Path -LiteralPath $path -PathType Leaf) "Release archive does not contain: $name"
     Assert-True ((Get-Item -LiteralPath $path).Length -gt 0) "Release file is empty: $name"
   }
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $temp 'RELEASE_NOTES.md') -PathType Leaf)) 'Fresh exact-build test bundle must not contain historical RELEASE_NOTES.md.'
 
   $node = Join-Path $temp 'konofix-node.exe'
   Assert-True ((Get-Item -LiteralPath $node).Length -gt 1MB) 'konofix-node.exe appears to be an incomplete build.'
@@ -211,10 +212,22 @@ try {
   if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_SHA)) {
     Assert-True ([string]::Equals($commit, [string]$env:GITHUB_SHA, [System.StringComparison]::Ordinal)) "BUILD_INFO.json commit does not match the workflow commit. expected=$env:GITHUB_SHA actual=$commit"
   }
+  $workflowRun = [string]$buildInfo.workflow_run
+  Assert-True ($workflowRun -match '^[0-9]+$') 'BUILD_INFO.json workflow_run is not a decimal GitHub Actions run ID.'
 
   $expectedArchiveName = & $artifactNameHelper -Version $expectedVersion -Commit $commit
   $actualArchiveName = [IO.Path]::GetFileName((Resolve-Path -LiteralPath $ZipPath).Path)
   Assert-True ([string]::Equals($actualArchiveName, $expectedArchiveName, [System.StringComparison]::Ordinal)) "Release archive filename is not bound to exact build identity. expected=$expectedArchiveName actual=$actualArchiveName"
+
+  $testerHandoff = Get-Content -LiteralPath (Join-Path $temp 'TESTER_HANDOFF.md') -Raw
+  Assert-True ($testerHandoff.Contains('<!-- KONOFIX-TESTER-HANDOFF-BUILD:v1 -->')) 'TESTER_HANDOFF.md is missing the exact-build marker.'
+  Assert-True ($testerHandoff.Contains("- Build version: $expectedVersion")) 'TESTER_HANDOFF.md version does not match BUILD_INFO.json.'
+  Assert-True ($testerHandoff.Contains("- Source commit: $commit")) 'TESTER_HANDOFF.md source commit does not match BUILD_INFO.json.'
+  Assert-True ($testerHandoff.Contains("- Workflow run: $workflowRun")) 'TESTER_HANDOFF.md workflow run does not match BUILD_INFO.json.'
+  Assert-True ($testerHandoff.Contains('test evidence only, not a published GitHub Release')) 'TESTER_HANDOFF.md does not distinguish test evidence from a published release.'
+  Assert-True ($testerHandoff.Contains('BUILD_INFO.json')) 'TESTER_HANDOFF.md does not identify BUILD_INFO.json as bundle authority.'
+  Assert-True ($testerHandoff.Contains('check-promotion-evidence.ps1')) 'TESTER_HANDOFF.md is missing the final promotion preflight step.'
+  Assert-True ($testerHandoff -notmatch '^#\s+Konofix Chat 0\.4\.2 Test 1') 'TESTER_HANDOFF.md regressed to the historical test-release heading.'
 
   Assert-MetadataFile -Metadata $buildInfo.node -ExpectedPath 'konofix-node.exe' -ActualPath $node -Label 'Konofix Node'
   Assert-MetadataFile -Metadata $buildInfo.netprobe -ExpectedPath 'konofix-netprobe.exe' -ActualPath $netprobe -Label 'Konofix Netprobe'
@@ -263,7 +276,7 @@ try {
   foreach ($meta in $toolMetadata) {
     $relative = [string]$meta.path
     Assert-SafeRelativePath -PathValue $relative -Label 'BUILD_INFO tool'
-    Assert-True ($seenTools.Add($relative)) "BUILD_INFO.json contains a duplicate/case-colliding tool path: $relative"
+    Assert-True ($seenTools.Add($relative)) "BUILD_INFO.json contains a duplicate/case-colliding test tool path: $relative"
     Assert-True ($expectedTools.Contains($relative)) "BUILD_INFO.json contains an unexpected test tool: $relative"
   }
   foreach ($tool in $toolFiles) {
@@ -309,10 +322,7 @@ try {
     Assert-True ($seenMetadata.Contains($relative)) "Release archive contains a file missing from the sealed inventory: $relative"
   }
 
-  $releaseNotes = Get-Content -LiteralPath (Join-Path $temp 'RELEASE_NOTES.md') -Raw
-  Assert-True ($releaseNotes -match '0\.4\.2 Test 1') 'RELEASE_NOTES.md does not describe the expected test release.'
-
-  Write-Host "OK - ZIP safety budgets, exact-build archive identity, complete sealed file inventory, provenance metadata, Node + Netprobe, committed frontend/Rust dependency inputs, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
+  Write-Host "OK - ZIP safety budgets, exact-build archive identity, exact-build tester handoff, complete sealed file inventory, provenance metadata, Node + Netprobe, committed frontend/Rust dependency inputs, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
   Write-Host "SHA256: $actual"
   Write-Host "Build commit: $commit"
 } finally {

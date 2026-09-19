@@ -22,6 +22,7 @@ const runtimeOnlyPowerShellGates = new Set([
 ]);
 const requiredPowerShellGates = [
   'release-gate.ps1',
+  'test-release-artifact-name.ps1',
   'test-network-evidence-gate.ps1',
   'test-client-netprobe-evidence.ps1',
   'test-promotion-evidence.ps1',

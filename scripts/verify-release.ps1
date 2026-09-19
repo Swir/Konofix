@@ -1,6 +1,6 @@
 param(
-  [string]$ZipPath = 'Konofix-Chat-0.4.2-test1-Windows.zip',
-  [string]$ChecksumPath = 'Konofix-Chat-0.4.2-test1-Windows.zip.sha256'
+  [string]$ZipPath = '',
+  [string]$ChecksumPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -106,6 +106,22 @@ function Assert-MetadataFile($Metadata, [string]$ExpectedPath, [string]$ActualPa
   Assert-Hash -Path $ActualPath -Expected ([string]$Metadata.sha256) -Label $Label
 }
 
+$artifactNameHelper = Join-Path $PSScriptRoot 'release-artifact-name.ps1'
+Assert-True (Test-Path -LiteralPath $artifactNameHelper -PathType Leaf) 'Release artifact naming helper is missing.'
+
+if ([string]::IsNullOrWhiteSpace($ZipPath)) {
+  $packageForName = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
+  $commitForName = [string]$env:GITHUB_SHA
+  if ([string]::IsNullOrWhiteSpace($commitForName)) {
+    $commitForName = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -Last 1).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the repository commit for the default release archive name.' }
+  }
+  $ZipPath = & $artifactNameHelper -Version ([string]$packageForName.version) -Commit $commitForName
+}
+if ([string]::IsNullOrWhiteSpace($ChecksumPath)) {
+  $ChecksumPath = "$ZipPath.sha256"
+}
+
 Write-Host '=== Konofix Chat - RELEASE ARTIFACT VERIFY ===' -ForegroundColor Cyan
 
 Assert-True (Test-Path -LiteralPath $ZipPath -PathType Leaf) "Release archive is missing: $ZipPath"
@@ -195,6 +211,10 @@ try {
   if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_SHA)) {
     Assert-True ([string]::Equals($commit, [string]$env:GITHUB_SHA, [System.StringComparison]::Ordinal)) "BUILD_INFO.json commit does not match the workflow commit. expected=$env:GITHUB_SHA actual=$commit"
   }
+
+  $expectedArchiveName = & $artifactNameHelper -Version $expectedVersion -Commit $commit
+  $actualArchiveName = [IO.Path]::GetFileName((Resolve-Path -LiteralPath $ZipPath).Path)
+  Assert-True ([string]::Equals($actualArchiveName, $expectedArchiveName, [System.StringComparison]::Ordinal)) "Release archive filename is not bound to exact build identity. expected=$expectedArchiveName actual=$actualArchiveName"
 
   Assert-MetadataFile -Metadata $buildInfo.node -ExpectedPath 'konofix-node.exe' -ActualPath $node -Label 'Konofix Node'
   Assert-MetadataFile -Metadata $buildInfo.netprobe -ExpectedPath 'konofix-netprobe.exe' -ActualPath $netprobe -Label 'Konofix Netprobe'
@@ -292,7 +312,7 @@ try {
   $releaseNotes = Get-Content -LiteralPath (Join-Path $temp 'RELEASE_NOTES.md') -Raw
   Assert-True ($releaseNotes -match '0\.4\.2 Test 1') 'RELEASE_NOTES.md does not describe the expected test release.'
 
-  Write-Host "OK - ZIP safety budgets, complete sealed file inventory, provenance metadata, Node + Netprobe, committed frontend/Rust dependency inputs, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
+  Write-Host "OK - ZIP safety budgets, exact-build archive identity, complete sealed file inventory, provenance metadata, Node + Netprobe, committed frontend/Rust dependency inputs, $($toolFiles.Count) test tools, documentation and $($installers.Count) Windows installer(s) verified." -ForegroundColor Green
   Write-Host "SHA256: $actual"
   Write-Host "Build commit: $commit"
 } finally {

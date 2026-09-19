@@ -9,16 +9,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$snapshotHelper = Join-Path $PSScriptRoot 'evidence-snapshot.ps1'
+if (-not (Test-Path -LiteralPath $snapshotHelper -PathType Leaf)) {
+    throw "Required capture hardening helper is missing: $snapshotHelper"
+}
+. $snapshotHelper
+
 function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
-}
-
-function Read-BoundedJson([string]$Path, [int64]$MaxBytes, [string]$Label) {
-    Assert-True (Test-Path -LiteralPath $Path -PathType Leaf) "$Label is missing: $Path"
-    $item = Get-Item -LiteralPath $Path
-    Assert-True ($item.Length -gt 0) "$Label is empty: $Path"
-    Assert-True ($item.Length -le $MaxBytes) "$Label exceeds the maximum supported size of $MaxBytes bytes."
-    try { return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json } catch { throw "$Label is not valid JSON: $($_.Exception.Message)" }
 }
 
 function Get-RequiredString($Object, [string]$Name, [string]$Label) {
@@ -169,8 +167,12 @@ if ([string]::IsNullOrWhiteSpace($BuildInfoPath)) {
     }
 }
 $buildInfoPath = [IO.Path]::GetFullPath($BuildInfoPath)
-$session = Read-BoundedJson -Path $sessionInfoPath -MaxBytes 262144 -Label 'SESSION_INFO.json'
-$buildInfo = Read-BoundedJson -Path $buildInfoPath -MaxBytes 262144 -Label 'BUILD_INFO.json'
+$sessionSnapshot = Read-KonofixBoundedJsonSnapshot -Path $sessionInfoPath -MaxBytes 262144 -Label 'SESSION_INFO.json'
+$buildInfoSnapshot = Read-KonofixBoundedJsonSnapshot -Path $buildInfoPath -MaxBytes 262144 -Label 'BUILD_INFO.json'
+$sessionInfoPath = [string]$sessionSnapshot.Path
+$buildInfoPath = [string]$buildInfoSnapshot.Path
+$session = $sessionSnapshot.Data
+$buildInfo = $buildInfoSnapshot.Data
 Assert-True ($session -is [pscustomobject] -and $buildInfo -is [pscustomobject]) 'SESSION_INFO and BUILD_INFO roots must be JSON objects.'
 Assert-True ((Get-RequiredInt64 $session 'schema_version' 'SESSION_INFO') -eq 1) 'Unsupported SESSION_INFO schema.'
 Assert-True ((Get-RequiredInt64 $buildInfo 'schema' 'BUILD_INFO') -eq 2) 'Authenticated client probes require BUILD_INFO schema 2.'
@@ -181,8 +183,8 @@ Assert-True ($commit -cmatch '^[0-9a-f]{40}$') 'BUILD_INFO commit must be a cano
 Assert-True ([string]::Equals((Get-RequiredString $session 'build_version' 'SESSION_INFO'), $version, [StringComparison]::Ordinal)) 'SESSION_INFO build_version does not match BUILD_INFO.'
 Assert-True ([string]::Equals((Get-RequiredString $session 'source_commit' 'SESSION_INFO'), $commit, [StringComparison]::Ordinal)) 'SESSION_INFO source_commit does not match BUILD_INFO.'
 
-$actualBuildInfoHash = (Get-FileHash -LiteralPath $buildInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
-$actualSessionInfoHash = (Get-FileHash -LiteralPath $sessionInfoPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$actualBuildInfoHash = [string]$buildInfoSnapshot.Sha256
+$actualSessionInfoHash = [string]$sessionSnapshot.Sha256
 Assert-True ([string]::Equals((Get-RequiredString $session 'build_info_sha256' 'SESSION_INFO'), $actualBuildInfoHash, [StringComparison]::Ordinal)) 'SESSION_INFO does not bind to this BUILD_INFO.json.'
 
 $netprobeMeta = $buildInfo.PSObject.Properties['netprobe'].Value
@@ -193,34 +195,37 @@ $netprobeBytes = Get-RequiredInt64 $netprobeMeta 'bytes' 'BUILD_INFO.netprobe'
 $netprobeHash = Get-RequiredString $netprobeMeta 'sha256' 'BUILD_INFO.netprobe'
 Assert-True ($netprobeBytes -gt 0 -and $netprobeHash -cmatch '^[0-9a-f]{64}$') 'BUILD_INFO netprobe metadata is invalid.'
 $netprobePath = Join-Path (Split-Path $buildInfoPath -Parent) $netprobeRelativePath
-Assert-True (Test-Path -LiteralPath $netprobePath -PathType Leaf) "Verified Netprobe binary is missing beside BUILD_INFO.json: $netprobePath"
-Assert-True ([int64](Get-Item -LiteralPath $netprobePath).Length -eq $netprobeBytes) 'Refusing to execute Netprobe: binary size does not match BUILD_INFO.'
-$actualNetprobeHash = (Get-FileHash -LiteralPath $netprobePath -Algorithm SHA256).Hash.ToLowerInvariant()
-Assert-True ([string]::Equals($actualNetprobeHash, $netprobeHash, [StringComparison]::Ordinal)) 'Refusing to execute Netprobe: binary SHA-256 does not match BUILD_INFO.'
+$netprobeLock = Open-KonofixVerifiedExecutable -Path $netprobePath -ExpectedBytes $netprobeBytes -ExpectedSha256 $netprobeHash -Label 'Konofix Netprobe'
+$netprobePath = [string]$netprobeLock.Path
+$actualNetprobeHash = [string]$netprobeLock.Sha256
 
-$clientObject = if ($Client -ceq 'A') { $session.PSObject.Properties['client_a'].Value } else { $session.PSObject.Properties['client_b'].Value }
-Assert-True ($clientObject -is [pscustomobject]) "SESSION_INFO is missing metadata for Client $Client."
-$clientId = Get-RequiredString $clientObject 'id' "SESSION_INFO.client_$($Client.ToLowerInvariant())"
-$clientCountry = Get-RequiredString $clientObject 'country' "SESSION_INFO.client_$($Client.ToLowerInvariant())"
-$clientNetwork = Get-RequiredString $clientObject 'network' "SESSION_INFO.client_$($Client.ToLowerInvariant())"
-$peerId = Get-RequiredString $session 'bootstrap_peer_id' 'SESSION_INFO'
-$tcpBootstrap = Get-RequiredString $session 'tcp_bootstrap' 'SESSION_INFO'
-$quicBootstrap = Get-RequiredString $session 'quic_bootstrap' 'SESSION_INFO'
+try {
+    $clientObject = if ($Client -ceq 'A') { $session.PSObject.Properties['client_a'].Value } else { $session.PSObject.Properties['client_b'].Value }
+    Assert-True ($clientObject -is [pscustomobject]) "SESSION_INFO is missing metadata for Client $Client."
+    $clientId = Get-RequiredString $clientObject 'id' "SESSION_INFO.client_$($Client.ToLowerInvariant())"
+    $clientCountry = Get-RequiredString $clientObject 'country' "SESSION_INFO.client_$($Client.ToLowerInvariant())"
+    $clientNetwork = Get-RequiredString $clientObject 'network' "SESSION_INFO.client_$($Client.ToLowerInvariant())"
+    $peerId = Get-RequiredString $session 'bootstrap_peer_id' 'SESSION_INFO'
+    $tcpBootstrap = Get-RequiredString $session 'tcp_bootstrap' 'SESSION_INFO'
+    $quicBootstrap = Get-RequiredString $session 'quic_bootstrap' 'SESSION_INFO'
 
-$internetTest = Join-Path $PSScriptRoot 'internet-test.ps1'
-Assert-True (Test-Path -LiteralPath $internetTest -PathType Leaf) "Required bootstrap validator is missing: $internetTest"
-& $internetTest -Bootstrap $tcpBootstrap -ValidateOnly -RequirePublicHost -RequireDnsResolution | Out-Null
-& $internetTest -Bootstrap $quicBootstrap -ValidateOnly -RequirePublicHost -RequireDnsResolution | Out-Null
+    $internetTest = Join-Path $PSScriptRoot 'internet-test.ps1'
+    Assert-True (Test-Path -LiteralPath $internetTest -PathType Leaf) "Required bootstrap validator is missing: $internetTest"
+    & $internetTest -Bootstrap $tcpBootstrap -ValidateOnly -RequirePublicHost -RequireDnsResolution | Out-Null
+    & $internetTest -Bootstrap $quicBootstrap -ValidateOnly -RequirePublicHost -RequireDnsResolution | Out-Null
 
-# These fingerprints are salted by the exact SESSION_INFO hash before being written.
-# Raw MachineGuid, gateway, profile, DNS and address-prefix material never leaves the client.
-$hostFingerprint = Get-SessionHostFingerprint $actualSessionInfoHash
-$networkFingerprint = Get-SessionNetworkFingerprint $actualSessionInfoHash
+    # These fingerprints are salted by the exact SESSION_INFO hash before being written.
+    # Raw MachineGuid, gateway, profile, DNS and address-prefix material never leaves the client.
+    $hostFingerprint = Get-SessionHostFingerprint $actualSessionInfoHash
+    $networkFingerprint = Get-SessionNetworkFingerprint $actualSessionInfoHash
 
-Write-Host "Running exact-build authenticated TCP probe from Client $Client ($clientId)..." -ForegroundColor Cyan
-$tcpProbe = Invoke-Netprobe -NetprobePath $netprobePath -Target $tcpBootstrap -Timeout $TimeoutSeconds
-Write-Host "Running exact-build authenticated QUIC-v1 probe from Client $Client ($clientId)..." -ForegroundColor Cyan
-$quicProbe = Invoke-Netprobe -NetprobePath $netprobePath -Target $quicBootstrap -Timeout $TimeoutSeconds
+    Write-Host "Running exact-build authenticated TCP probe from Client $Client ($clientId)..." -ForegroundColor Cyan
+    $tcpProbe = Invoke-Netprobe -NetprobePath $netprobePath -Target $tcpBootstrap -Timeout $TimeoutSeconds
+    Write-Host "Running exact-build authenticated QUIC-v1 probe from Client $Client ($clientId)..." -ForegroundColor Cyan
+    $quicProbe = Invoke-Netprobe -NetprobePath $netprobePath -Target $quicBootstrap -Timeout $TimeoutSeconds
+} finally {
+    $netprobeLock.Stream.Dispose()
+}
 
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $sessionDirectory ("client-{0}-netprobe.json" -f $Client.ToLowerInvariant())

@@ -60,6 +60,63 @@ try {
     [IO.File]::WriteAllText($oversized, '{"padding":"' + ('x' * 5000) + '"}', [Text.UTF8Encoding]::new($false))
     Expect-Reject 'oversized snapshot' { Read-KonofixBoundedJsonSnapshot -Path $oversized -MaxBytes 1024 -Label 'fixture' | Out-Null }
 
+    if ($env:OS -ceq 'Windows_NT') {
+        $sourceExecutable = [string](Get-Command cmd.exe -ErrorAction Stop).Source
+        $lockedExecutable = Join-Path $temp 'konofix-lock-fixture.exe'
+        Copy-Item -LiteralPath $sourceExecutable -Destination $lockedExecutable
+        $expectedExecutableBytes = [int64](Get-Item -LiteralPath $lockedExecutable).Length
+        $expectedExecutableHash = (Get-FileHash -LiteralPath $lockedExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        $activeWriter = [IO.File]::Open(
+            $lockedExecutable,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+        )
+        try {
+            Expect-Reject 'verified executable while an in-place writer is active' {
+                Open-KonofixVerifiedExecutable -Path $lockedExecutable -ExpectedBytes $expectedExecutableBytes -ExpectedSha256 $expectedExecutableHash -Label 'fixture executable' | Out-Null
+            }
+        } finally {
+            $activeWriter.Dispose()
+        }
+
+        $locked = Open-KonofixVerifiedExecutable -Path $lockedExecutable -ExpectedBytes $expectedExecutableBytes -ExpectedSha256 $expectedExecutableHash -Label 'fixture executable'
+        try {
+            if ([string]$locked.Sha256 -cne $expectedExecutableHash) { throw 'Executable lock SHA-256 mismatch.' }
+            Expect-Reject 'writer while verified executable lock is active' {
+                $blockedWriter = [IO.File]::Open(
+                    $lockedExecutable,
+                    [IO.FileMode]::Open,
+                    [IO.FileAccess]::Write,
+                    [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+                )
+                $blockedWriter.Dispose()
+            }
+            Expect-Reject 'path replacement while verified executable lock is active' {
+                Move-Item -LiteralPath $lockedExecutable -Destination (Join-Path $temp 'replacement-attempt.exe') -ErrorAction Stop
+            }
+
+            & $locked.Path /d /c 'exit 0' | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Locked executable failed to launch successfully: exit $LASTEXITCODE" }
+            Write-Host 'PASS: verified executable remains launchable while writes and replacement are denied.'
+        } finally {
+            $locked.Stream.Dispose()
+        }
+
+        $postLockWriter = [IO.File]::Open(
+            $lockedExecutable,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+        )
+        $postLockWriter.Dispose()
+        $renamedExecutable = Join-Path $temp 'renamed-after-lock.exe'
+        Move-Item -LiteralPath $lockedExecutable -Destination $renamedExecutable -ErrorAction Stop
+        Move-Item -LiteralPath $renamedExecutable -Destination $lockedExecutable -ErrorAction Stop
+        Write-Host 'PASS: executable writes/replacement recover after the verified lock is released.'
+    }
+
     Write-Host 'Promotion evidence snapshot helper self-tests passed.'
 } finally {
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue

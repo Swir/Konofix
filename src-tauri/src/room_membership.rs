@@ -233,14 +233,8 @@ impl RoomMembershipTracker {
 
         self.memberships = self.memberships.saturating_sub(members.len());
         for peer_id in &members {
-            let should_drop_peer = if let Some(state) = self.peers.get_mut(peer_id) {
+            if let Some(state) = self.peers.get_mut(peer_id) {
                 state.rooms.remove(room_id);
-                state.rooms.is_empty()
-            } else {
-                false
-            };
-            if should_drop_peer {
-                self.peers.remove(peer_id);
             }
         }
         members.into_iter().collect()
@@ -355,6 +349,17 @@ mod tests {
         assert_eq!(tracker.remove_room("alpha"), vec!["peer-b"]);
         assert_eq!(tracker.member_count("alpha"), 0);
         assert!(tracker.rooms_for_peer("peer-b").is_empty());
+        assert_eq!(
+            tracker
+                .apply_snapshot("peer-b", 1, ["beta"])
+                .expect("closed-room cleanup keeps the revision tombstone"),
+            SnapshotApply::Conflict
+        );
+        assert_eq!(
+            tracker
+                .apply_snapshot("peer-b", 0, ["beta"]),
+            Err(SnapshotError::InvalidRevision)
+        );
     }
 
     #[test]

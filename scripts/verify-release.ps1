@@ -138,6 +138,8 @@ try {
     'scripts/set-network-test-result.ps1',
     'scripts/validate-network-test-report.ps1',
     'scripts/validate-network-test-session.ps1',
+    'scripts/evidence-snapshot.ps1',
+    'scripts/path-identity.ps1',
     'scripts/check-promotion-evidence.ps1',
     'scripts/check-node-health.ps1',
     'scripts/test-node-runtime.ps1',

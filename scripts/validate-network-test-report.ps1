@@ -7,10 +7,12 @@ param(
     [string]$ExpectedNodeVersion = '',
     [string]$ExpectedSourceCommit = '',
     [switch]$RequireSingleBootstrapPeer,
-    [int64]$MaxManifestBytes = 262144
+    [int64]$MaxManifestBytes = 262144,
+    [switch]$AsJson
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'evidence-snapshot.ps1')
 $allowed = @('LAN','TCP','QUIC','Relay','DCUtR','CGNAT')
 $requiredChecks = @('world_a_to_b','world_b_to_a','room_discovery','file_a_to_b_sha256','file_b_to_a_sha256','client_reconnect','node_restart_recovery','relay_observed','dcutr_direct_upgrade','nickname_conflict')
 $coreChecks = @('world_a_to_b','world_b_to_a','room_discovery','file_a_to_b_sha256','file_b_to_a_sha256','client_reconnect','node_restart_recovery','nickname_conflict')
@@ -69,29 +71,6 @@ function Get-RequiredProperty {
     return $property.Value
 }
 
-function Convert-StrictManifestJson {
-    param(
-        [Parameter(Mandatory = $true)][string]$Raw,
-        [Parameter(Mandatory = $true)][string]$Path
-    )
-
-    if (-not $Raw.TrimStart().StartsWith('{', [System.StringComparison]::Ordinal)) {
-        throw "Network evidence root must be a JSON object: $Path"
-    }
-
-    try {
-        $convertCommand = Get-Command ConvertFrom-Json -ErrorAction Stop
-        if ($convertCommand.Parameters.ContainsKey('DateKind')) {
-            # PowerShell 7.5+ otherwise converts ISO-8601 JSON strings to DateTime values,
-            # which destroys the original JSON token type before our strict schema check.
-            return $Raw | ConvertFrom-Json -DateKind String
-        }
-        return $Raw | ConvertFrom-Json
-    } catch {
-        throw "Invalid JSON manifest: $Path`n$($_.Exception.Message)"
-    }
-}
-
 function Test-OrdinalEqual([string]$Left, [string]$Right) {
     return [string]::Equals($Left, $Right, [System.StringComparison]::Ordinal)
 }
@@ -107,15 +86,8 @@ if ($PSBoundParameters.ContainsKey('ExpectedSourceCommit')) {
 
 $reports = @()
 foreach ($path in $Manifest) {
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Manifest not found: $path" }
-    $manifestFile = Get-Item -LiteralPath $path -Force
-    if ($manifestFile.Length -gt $MaxManifestBytes) {
-        throw "Network evidence manifest is too large (path=$path bytes=$($manifestFile.Length) limit=$MaxManifestBytes)."
-    }
-
-    $raw = Get-Content -LiteralPath $path -Raw
-    $data = Convert-StrictManifestJson -Raw $raw -Path $path
-    if ($data -isnot [pscustomobject]) { throw "Network evidence root must be a JSON object: $path" }
+    $snapshot = Read-KonofixBoundedJsonSnapshot -Path $path -MaxBytes $MaxManifestBytes -Label 'Network evidence manifest'
+    $data = $snapshot.Data
 
     # Keep an explicit schema-v3 fast-fail for the project audit, then apply strict token typing below.
     # A JSON string "3" can pass this compatibility comparison, but Get-StrictJsonInt64 rejects it.
@@ -219,6 +191,9 @@ foreach ($path in $Manifest) {
         source_commit = $sourceCommit
         bootstrap = $bootstrap
         overall = $overall
+        path = $snapshot.Path
+        bytes = [int64]$snapshot.Bytes
+        sha256 = [string]$snapshot.Sha256
     }
 }
 
@@ -235,11 +210,29 @@ if ($sourceCommits.Count -ne 1) { throw "Evidence mixes source commits: $($sourc
 
 $bootstrapPeerIds = @($reports | ForEach-Object { if ($_.bootstrap -cmatch '/p2p/([^/]+)$') { $Matches[1] } } | Sort-Object -Unique -CaseSensitive)
 if ($RequireSingleBootstrapPeer -and $bootstrapPeerIds.Count -ne 1) { throw "Promotion evidence must target one stable public Node Peer ID; found: $($bootstrapPeerIds -join ', ')" }
+$scenarios = @($reports.scenario | Sort-Object -Unique -CaseSensitive)
+$result = [ordered]@{
+    schema = 1
+    status = 'PASS'
+    build_version = [string]$versions[0]
+    node_version = [string]$nodeVersions[0]
+    source_commit = [string]$sourceCommits[0]
+    manifest_count = [int]$reports.Count
+    scenarios = $scenarios
+    bootstrap_peer_ids = $bootstrapPeerIds
+    bootstrap_peer_id = if ($bootstrapPeerIds.Count -eq 1) { [string]$bootstrapPeerIds[0] } else { $null }
+    manifests = @($reports | ForEach-Object { [ordered]@{ path = $_.path; scenario = $_.scenario; bytes = $_.bytes; sha256 = $_.sha256 } })
+}
+
+if ($AsJson) {
+    $result | ConvertTo-Json -Depth 5 -Compress
+    return
+}
 
 Write-Host 'Network evidence gate passed.'
 Write-Host "Client build: $($versions[0])"
 Write-Host "Node build: $($nodeVersions[0])"
 Write-Host "Source commit: $($sourceCommits[0])"
 Write-Host "Passing manifests: $($reports.Count)"
-Write-Host "Scenarios: $((@($reports.scenario | Sort-Object -Unique -CaseSensitive)) -join ', ')"
+Write-Host "Scenarios: $($scenarios -join ', ')"
 if ($bootstrapPeerIds.Count -gt 0) { Write-Host "Bootstrap Peer IDs: $($bootstrapPeerIds -join ', ')" }

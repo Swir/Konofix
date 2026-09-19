@@ -41,6 +41,10 @@ jobs:
         shell: pwsh
         run: .\scripts\release-gate.ps1
 
+      - name: Network evidence snapshot self-tests
+        shell: pwsh
+        run: .\scripts\test-evidence-snapshot.ps1
+
       - name: Network evidence gate self-tests
         shell: pwsh
         run: .\scripts\test-network-evidence-gate.ps1
@@ -160,6 +164,8 @@ jobs:
             'set-network-test-result.ps1',
             'validate-network-test-report.ps1',
             'validate-network-test-session.ps1',
+            'evidence-snapshot.ps1',
+            'path-identity.ps1',
             'check-promotion-evidence.ps1',
             'check-node-health.ps1',
             'test-node-runtime.ps1',

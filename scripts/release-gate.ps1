@@ -126,20 +126,18 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($targetSourceCommit)) { $validatorArgs.ExpectedSourceCommit = $targetSourceCommit }
     if ($RequireNetworkEvidence) { $validatorArgs.RequireSingleBootstrapPeer = $true }
 
-    & (Join-Path $PSScriptRoot 'validate-network-test-report.ps1') @validatorArgs
+    $networkValidationText = (& (Join-Path $PSScriptRoot 'validate-network-test-report.ps1') @validatorArgs -AsJson | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($networkValidationText)) { throw 'Network evidence validator returned no structured result.' }
+    try { $networkValidation = $networkValidationText | ConvertFrom-Json } catch { throw "Network evidence validator returned invalid structured JSON: $($_.Exception.Message)" }
+    if ([int]$networkValidation.schema -ne 1 -or [string]$networkValidation.status -cne 'PASS') {
+      throw 'Network evidence validator did not return the expected PASS aggregate.'
+    }
 
     if ($RequireNetworkEvidence) {
-      $bootstrapPeers = @()
-      foreach ($manifestPath in $NetworkEvidence) {
-        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-        $bootstrap = [string]$manifest.bootstrap
-        $match = [regex]::Match($bootstrap, '/p2p/([^/]+)$')
-        if (-not $match.Success) { throw "Promotion evidence has no terminal bootstrap Peer ID: $manifestPath" }
-        $bootstrapPeers += $match.Groups[1].Value
+      $expectedBootstrapPeer = [string]$networkValidation.bootstrap_peer_id
+      if ([string]::IsNullOrWhiteSpace($expectedBootstrapPeer)) {
+        throw 'Stable promotion evidence validator did not return exactly one validated bootstrap Peer ID.'
       }
-      $bootstrapPeers = @($bootstrapPeers | Sort-Object -Unique -CaseSensitive)
-      if ($bootstrapPeers.Count -ne 1) { throw 'Stable promotion evidence must reference exactly one bootstrap Peer ID.' }
-      $expectedBootstrapPeer = $bootstrapPeers[0]
 
       Write-Host 'Validating coherent cross-country test session...' -ForegroundColor Cyan
       $sessionArgs = @{

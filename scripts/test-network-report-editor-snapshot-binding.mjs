@@ -88,6 +88,12 @@ run(
   'manifest rollback path-reread regression',
 );
 run(
+  sourceEditor.replace('$originalSessionBytes = [byte[]]$sessionSnapshot.ContentBytes', '$originalSessionBytes = [IO.File]::ReadAllBytes($sessionInfoPath)'),
+  sourceSnapshot,
+  false,
+  'session rollback path-reread regression',
+);
+run(
   sourceEditor,
   sourceSnapshot.replace('ContentBytes = $capturedBytes', 'ContentBytes = $buffer'),
   false,

@@ -143,14 +143,12 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedSourceCommit)) {
     $healthArgs.ExpectedSourceCommit = $ExpectedSourceCommit
 }
 
-$healthJsonText = (& $healthCheck @healthArgs -AsJson | Out-String).Trim()
-if ([string]::IsNullOrWhiteSpace($healthJsonText)) {
-    throw 'Health validation returned no structured result.'
-}
+& $healthCheck @healthArgs *> $null
+
 try {
-    $health = $healthJsonText | ConvertFrom-Json
+    $health = Get-Content -LiteralPath $HealthPath -Raw | ConvertFrom-Json
 } catch {
-    throw "Health validation returned invalid JSON: $($_.Exception.Message)"
+    throw "Health snapshot became unreadable after validation: $($_.Exception.Message)"
 }
 
 $tcpReachable = $false
@@ -183,8 +181,6 @@ $result = [ordered]@{
     uptime_seconds = [int64]$health.uptime_seconds
     connected_peers = [int64]$health.connected_peers
     health_timestamp_unix = [int64]$health.timestamp_unix
-    health_snapshot_age_seconds = [int64]$health.snapshot_age_seconds
-    health_snapshot_bytes = [int64]$health.snapshot_bytes
 }
 
 if ($AsJson) {
@@ -211,7 +207,6 @@ if ($SkipTcpReachability) {
 }
 Write-Host 'Public-host gate: globally routable endpoint policy passed.' -ForegroundColor Green
 Write-Host 'DNS binding:      TCP probe targets are the exact validated address snapshot; hostname re-resolution is not used.' -ForegroundColor Green
-Write-Host 'Health binding:   readiness fields come from the exact bounded snapshot instance validated by check-node-health.ps1.' -ForegroundColor Green
 Write-Host 'QUIC structure:   valid and identity-aligned' -ForegroundColor Green
 Write-Host 'QUIC handshake:   not claimed by this PowerShell probe; prove it with the Konofix/libp2p real-network scenario.' -ForegroundColor DarkYellow
 Write-Host 'READY: public-host policy, identity, health, TCP/QUIC endpoint pairing and requested local readiness checks passed.' -ForegroundColor Green

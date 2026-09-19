@@ -15,6 +15,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'path-identity.ps1')
+. (Join-Path $PSScriptRoot 'evidence-snapshot.ps1')
 
 function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
@@ -49,23 +50,6 @@ function Get-StrictInt64 {
     catch { throw "Session field '$Field' is outside the supported signed 64-bit integer range." }
 }
 
-function Read-BoundedJsonObject([string]$Path, [int64]$MaxBytes, [string]$Label) {
-    Assert-True (Test-Path -LiteralPath $Path -PathType Leaf) "$Label is missing: $Path"
-    $item = Get-Item -LiteralPath $Path
-    Assert-True ($item.Length -gt 0) "$Label is empty: $Path"
-    Assert-True ($item.Length -le $MaxBytes) "$Label exceeds the maximum supported size of $MaxBytes bytes: $Path"
-    $raw = Get-Content -LiteralPath $Path -Raw
-    Assert-True ($raw.TrimStart().StartsWith('{', [StringComparison]::Ordinal)) "$Label root must be a JSON object: $Path"
-    try {
-        $convert = Get-Command ConvertFrom-Json -ErrorAction Stop
-        $value = if ($convert.Parameters.ContainsKey('DateKind')) { $raw | ConvertFrom-Json -DateKind String } else { $raw | ConvertFrom-Json }
-    } catch {
-        throw "$Label is not valid JSON: $($_.Exception.Message)"
-    }
-    Assert-True ($value -is [pscustomobject]) "$Label root must be a JSON object: $Path"
-    return $value
-}
-
 function Parse-Bootstrap([string]$Address) {
     $internetTest = Join-Path $PSScriptRoot 'internet-test.ps1'
     Assert-True (Test-Path -LiteralPath $internetTest -PathType Leaf) "Required bootstrap validator is missing: $internetTest"
@@ -84,7 +68,8 @@ function Assert-OptionalPin([string]$Name, [string]$Actual, [string]$Expected, [
 
 $sessionFullPath = [IO.Path]::GetFullPath($SessionInfoPath)
 $sessionDirectory = [IO.Path]::GetFullPath((Split-Path $sessionFullPath -Parent))
-$session = Read-BoundedJsonObject -Path $sessionFullPath -MaxBytes $MaxSessionInfoBytes -Label 'SESSION_INFO.json'
+$sessionSnapshot = Read-KonofixBoundedJsonSnapshot -Path $sessionFullPath -MaxBytes $MaxSessionInfoBytes -Label 'SESSION_INFO.json'
+$session = $sessionSnapshot.Data
 $schema = Get-StrictInt64 (Get-RequiredProperty $session 'schema_version' 'SESSION_INFO.json') 'schema_version'
 Assert-True ($schema -eq 1) "Unsupported SESSION_INFO schema: $schema"
 $product = Get-StrictString (Get-RequiredProperty $session 'product' 'SESSION_INFO.json') 'product'
@@ -151,20 +136,22 @@ $inventoryNames = @($inventoryNames | Sort-Object -Unique -CaseSensitive)
 Assert-True ($inventoryNames.Count -eq 5) 'SESSION_INFO manifest inventory must contain five unique paths.'
 
 $manifestPaths = @()
+$manifestSnapshotsByName = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
 foreach ($path in $Manifest) {
     Assert-True (-not [string]::IsNullOrWhiteSpace($path)) 'Manifest path cannot be empty or whitespace.'
-    Assert-True (Test-Path -LiteralPath $path -PathType Leaf) "Manifest not found: $path"
-    $manifestItem = Get-Item -LiteralPath $path
-    $manifestFullPath = $manifestItem.FullName
+    $manifestFullPath = [IO.Path]::GetFullPath($path)
     $manifestDirectory = [IO.Path]::GetFullPath((Split-Path $manifestFullPath -Parent))
     Assert-True (Test-KonofixSameDirectory -Left $manifestDirectory -Right $sessionDirectory) "Session manifest must reside beside SESSION_INFO.json; cross-directory evidence is rejected: $manifestFullPath"
     $manifestName = [IO.Path]::GetFileName($manifestFullPath)
     Assert-True ($inventoryByName.ContainsKey($manifestName)) "Supplied manifest is absent from SESSION_INFO inventory: $manifestName"
+    Assert-True (-not $manifestSnapshotsByName.ContainsKey($manifestName)) "Supplied session manifests contain a duplicate file name: $manifestName"
+
+    $snapshot = Read-KonofixBoundedJsonSnapshot -Path $manifestFullPath -MaxBytes 262144 -Label 'Network manifest'
     $binding = $inventoryByName[$manifestName]
-    Assert-True ([int64]$manifestItem.Length -eq [int64]$binding.bytes) "Manifest byte count does not match SESSION_INFO inventory: $manifestName"
-    $actualManifestHash = (Get-FileHash -LiteralPath $manifestFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    Assert-True ([string]::Equals($actualManifestHash, [string]$binding.sha256, [StringComparison]::Ordinal)) "Manifest SHA-256 does not match SESSION_INFO inventory: $manifestName"
-    $manifestPaths += $manifestFullPath
+    Assert-True ([int64]$snapshot.Bytes -eq [int64]$binding.bytes) "Manifest byte count does not match SESSION_INFO inventory: $manifestName"
+    Assert-True ([string]::Equals([string]$snapshot.Sha256, [string]$binding.sha256, [StringComparison]::Ordinal)) "Manifest SHA-256 does not match SESSION_INFO inventory: $manifestName"
+    $manifestSnapshotsByName.Add($manifestName, $snapshot)
+    $manifestPaths += $snapshot.Path
 }
 $manifestPaths = @($manifestPaths | Sort-Object -Unique)
 Assert-True ($manifestPaths.Count -eq 5) "A network test session must contain exactly five unique manifests; found $($manifestPaths.Count)."
@@ -177,7 +164,10 @@ for ($i = 0; $i -lt $inventoryNames.Count; $i++) {
 $expectedScenarios = @('CGNAT','DCUtR','QUIC','Relay','TCP')
 $seen = @{}
 foreach ($path in $manifestPaths) {
-    $data = Read-BoundedJsonObject -Path $path -MaxBytes 262144 -Label 'Network manifest'
+    $manifestName = [IO.Path]::GetFileName($path)
+    $snapshot = $manifestSnapshotsByName[$manifestName]
+    Assert-True ($null -ne $snapshot) "Validated manifest snapshot is missing: $manifestName"
+    $data = $snapshot.Data
     $scenario = Get-StrictString (Get-RequiredProperty $data 'scenario' $path) 'manifest.scenario'
     Assert-True ($scenario -cin $expectedScenarios) "Unexpected session scenario '$scenario' in $path"
     Assert-True (-not $seen.ContainsKey($scenario)) "Duplicate session scenario '$scenario'."
@@ -211,13 +201,27 @@ foreach ($scenario in $expectedScenarios) { Assert-True ($seen.ContainsKey($scen
 if ($RequirePassingEvidence) {
     $validator = Join-Path $PSScriptRoot 'validate-network-test-report.ps1'
     Assert-True (Test-Path -LiteralPath $validator -PathType Leaf) "Required network evidence validator is missing: $validator"
-    & $validator `
+    $reportJson = (& $validator `
         -Manifest $manifestPaths `
         -RequireAllChecks `
         -ExpectedBuildVersion $buildVersion `
         -ExpectedNodeVersion $nodeVersion `
         -ExpectedSourceCommit $sourceCommit `
-        -RequireSingleBootstrapPeer | Out-Null
+        -RequireSingleBootstrapPeer `
+        -AsJson | Out-String).Trim()
+    Assert-True (-not [string]::IsNullOrWhiteSpace($reportJson)) 'Network evidence validator returned no structured result.'
+    try { $reportValidation = $reportJson | ConvertFrom-Json } catch { throw "Network evidence validator returned invalid structured JSON: $($_.Exception.Message)" }
+    Assert-True ([int]$reportValidation.schema -eq 1 -and [string]$reportValidation.status -ceq 'PASS') 'Network evidence validator did not return the expected PASS aggregate.'
+    Assert-True ([string]$reportValidation.bootstrap_peer_id -ceq $bootstrapPeer) 'Network evidence validator bootstrap Peer ID does not match SESSION_INFO.'
+    $validatedManifests = @($reportValidation.manifests)
+    Assert-True ($validatedManifests.Count -eq $manifestSnapshotsByName.Count) 'Network evidence validator returned an unexpected manifest snapshot count.'
+    foreach ($validatedManifest in $validatedManifests) {
+        $validatedName = [IO.Path]::GetFileName([string]$validatedManifest.path)
+        Assert-True ($manifestSnapshotsByName.ContainsKey($validatedName)) "Network evidence validator returned an unknown manifest snapshot: $validatedName"
+        $captured = $manifestSnapshotsByName[$validatedName]
+        Assert-True ([int64]$validatedManifest.bytes -eq [int64]$captured.Bytes) "Network evidence bytes changed between session and report validation: $validatedName"
+        Assert-True ([string]$validatedManifest.sha256 -ceq [string]$captured.Sha256) "Network evidence SHA-256 changed between session and report validation: $validatedName"
+    }
 }
 
 $result = [ordered]@{
@@ -230,10 +234,13 @@ $result = [ordered]@{
     public_host_validated = $true
     client_a = $aId
     client_b = $bId
+    session_info_bytes = [int64]$sessionSnapshot.Bytes
+    session_info_sha256 = [string]$sessionSnapshot.Sha256
     manifest_count = $manifestPaths.Count
+    manifest_snapshots = @($manifestSnapshotsByName.GetEnumerator() | Sort-Object Key | ForEach-Object { [ordered]@{ path = $_.Key; bytes = [int64]$_.Value.Bytes; sha256 = [string]$_.Value.Sha256 } })
     passing_evidence_required = [bool]$RequirePassingEvidence
 }
-if ($AsJson) { $result | ConvertTo-Json -Depth 3; return }
+if ($AsJson) { $result | ConvertTo-Json -Depth 5 -Compress; return }
 Write-Host 'Network test session consistency passed.' -ForegroundColor Green
 Write-Host "Build: $buildVersion / $sourceCommit"
 Write-Host "Bootstrap Peer ID: $bootstrapPeer"

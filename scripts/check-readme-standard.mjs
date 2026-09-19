@@ -125,11 +125,25 @@ if (!heroBlock.includes(HERO_PATH)) {
   fail(`Centered hero must use the local ${HERO_PATH} asset.`);
 }
 
-if (!/Real Internet Test milestone: \d+% complete/.test(readme)) {
+const progressMatch = readme.match(/Real Internet Test milestone: (\d+(?:\.\d+)?)% complete/);
+if (!progressMatch) {
   fail(`${README_PATH} must expose the truthful active milestone percentage.`);
 }
-if (!/\d+ of \d+ tasks complete/.test(readme)) {
+
+const taskCountMatch = readme.match(/\b(\d+) of (\d+) tasks complete\b/);
+if (!taskCountMatch) {
   fail(`${README_PATH} must expose the truthful active milestone task count.`);
+} else if (progressMatch) {
+  const completedTasks = Number(taskCountMatch[1]);
+  const totalTasks = Number(taskCountMatch[2]);
+  if (!Number.isInteger(completedTasks) || !Number.isInteger(totalTasks) || totalTasks <= 0 || completedTasks < 0 || completedTasks > totalTasks) {
+    fail(`${README_PATH} contains an invalid active milestone task fraction.`);
+  } else {
+    const expectedProgress = ((completedTasks / totalTasks) * 100).toFixed(1);
+    if (progressMatch[1] !== expectedProgress) {
+      fail(`${README_PATH} milestone percentage must match the exact task fraction: expected ${expectedProgress}%, found ${progressMatch[1]}%.`);
+    }
+  }
 }
 
 if (/\b100% complete\b/i.test(readme)) {
@@ -141,5 +155,5 @@ if (!/v0\.4\.2-test1/.test(readme) || !/prerelease/i.test(readme)) {
 }
 
 if (!process.exitCode) {
-  console.log(`SWIR README PRO v2: ${README_PATH} passes marker, root-hero geometry, local-hero safety/branding, information architecture, keyword, progress-truthfulness and footer checks.`);
+  console.log(`SWIR README PRO v2: ${README_PATH} passes marker, root-hero geometry, local-hero safety/branding, information architecture, keyword, exact progress-truthfulness and footer checks.`);
 }

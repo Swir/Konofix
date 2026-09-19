@@ -8,6 +8,7 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) ("konofix-network-report-editor-sel
 $manifest = Join-Path $temp 'network-test-relay.json'
 $incomplete = Join-Path $temp 'network-test-incomplete.json'
 $evidenceMissing = Join-Path $temp 'network-test-evidence-missing.json'
+$writerGuard = Join-Path $temp 'network-test-writer-guard.json'
 $sourceCommit = '0123456789abcdef0123456789abcdef01234567'
 $fileHashA = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 $fileHashB = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
@@ -99,6 +100,23 @@ try {
     Assert-Rejected { & $editor -Manifest $evidenceMissing -Check file_b_to_a_sha256 -Result PASS -Evidence 'sha256=deadbeef' } 'file PASS with malformed SHA-256 digest'
     $afterEvidenceRejections = Get-Content -LiteralPath $evidenceMissing -Raw | ConvertFrom-Json
     if ($afterEvidenceRejections.checks.world_a_to_b -ne 'PENDING' -or $afterEvidenceRejections.checks.file_a_to_b_sha256 -ne 'PENDING') { throw 'Rejected evidence update modified the source manifest.' }
+
+    # A writer that still owns write access to the source must make the exact-snapshot
+    # open fail closed. The editor must not observe one state and later overwrite another.
+    New-Manifest $writerGuard
+    $writerBefore = [IO.File]::ReadAllBytes($writerGuard)
+    $writerStream = [IO.File]::Open($writerGuard, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+    try {
+        Assert-Rejected {
+            & $editor -Manifest $writerGuard -Check world_a_to_b -Result PASS -Evidence 'must not commit while writer is active'
+        } 'active writer on authoritative manifest'
+    } finally {
+        $writerStream.Dispose()
+    }
+    $writerAfter = [IO.File]::ReadAllBytes($writerGuard)
+    if (-not [System.Linq.Enumerable]::SequenceEqual([byte[]]$writerBefore, [byte[]]$writerAfter)) {
+        throw 'Rejected active-writer edit modified the authoritative manifest bytes.'
+    }
 
     $scratch = @(Get-ChildItem -LiteralPath $temp -File | Where-Object { $_.Name -like '.network-*' })
     if ($scratch.Count -ne 0) { throw 'Editor left temporary files after self-tests.' }

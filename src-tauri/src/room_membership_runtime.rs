@@ -399,7 +399,10 @@ mod tests {
                 users: 0,
             })
         );
-        assert_eq!(closed.snapshot.expect("publish leave").rooms, Vec::<String>::new());
+        assert_eq!(
+            closed.snapshot.expect("publish leave").rooms,
+            Vec::<String>::new()
+        );
         assert!(!runtime.known_rooms().contains("alpha"));
         assert!(runtime.local_rooms().is_empty());
     }

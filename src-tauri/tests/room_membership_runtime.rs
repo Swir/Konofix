@@ -1,9 +1,9 @@
 #[path = "../src/room_membership.rs"]
 mod room_membership;
-#[path = "../src/room_membership_wire.rs"]
-mod room_membership_wire;
 #[path = "../src/room_membership_runtime.rs"]
 mod room_membership_runtime;
+#[path = "../src/room_membership_wire.rs"]
+mod room_membership_wire;
 
 use libp2p::{identity::Keypair, PeerId};
 use room_membership::RoomCountChange;
@@ -26,10 +26,13 @@ fn rooms2_runtime_controller_converges_two_peer_counts() {
     let first = runtime
         .set_local_rooms(["alpha"])
         .expect("local membership");
-    assert_eq!(first.counts, vec![RoomCountChange {
-        room_id: "alpha".into(),
-        users: 1,
-    }]);
+    assert_eq!(
+        first.counts,
+        vec![RoomCountChange {
+            room_id: "alpha".into(),
+            users: 1,
+        }]
+    );
 
     let snapshot = RoomMembershipSnapshot {
         peer_id: remote.to_string(),

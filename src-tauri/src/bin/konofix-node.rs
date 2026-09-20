@@ -11,7 +11,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use futures::StreamExt;
 use libp2p::{
-    autonat, gossipsub, identify, identity,
+    autonat, connection_limits, gossipsub, identify, identity,
     kad::{self, store::MemoryStore},
     noise, ping, relay,
     swarm::{NetworkBehaviour, SwarmEvent},
@@ -24,6 +24,11 @@ const KAD_PROTOCOL: &str = "/konofix/kad/1.0.0";
 const WORLD_PROVIDER_KEY: &str = "/konofix/world/providers/v1";
 const DEFAULT_PORT: u16 = 45555;
 const DEFAULT_STATUS_INTERVAL: u64 = 60;
+const DEFAULT_MAX_CONNECTIONS: u32 = 1024;
+const DEFAULT_MAX_INCOMING_CONNECTIONS: u32 = 768;
+const DEFAULT_MAX_CONNECTIONS_PER_PEER: u32 = 4;
+const DEFAULT_MAX_PENDING_INCOMING: u32 = 128;
+const DEFAULT_MAX_PENDING_OUTGOING: u32 = 128;
 const SOURCE_COMMIT: &str = env!("KONOFIX_SOURCE_COMMIT");
 
 #[derive(Debug)]
@@ -34,6 +39,11 @@ struct NodeArgs {
     status_interval: u64,
     health_file: Option<PathBuf>,
     identity_file: Option<PathBuf>,
+    max_connections: u32,
+    max_incoming_connections: u32,
+    max_connections_per_peer: u32,
+    max_pending_incoming: u32,
+    max_pending_outgoing: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,6 +66,7 @@ struct NodeBehaviour {
     ping: ping::Behaviour,
     autonat: autonat::Behaviour,
     relay: relay::Behaviour,
+    limits: connection_limits::Behaviour,
 }
 
 fn default_identity_path() -> PathBuf {
@@ -306,7 +317,7 @@ fn print_help() {
     println!("Konofix Node {}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("Usage:");
-    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--allow-private-address] [--status-interval 60] [--health-file PATH] [--identity-file PATH]");
+    println!("  konofix-node.exe [--port 45555] [--public-host HOST] [--allow-private-address] [--status-interval 60] [--health-file PATH] [--identity-file PATH] [--max-connections 1024] [--max-incoming-connections 768] [--max-connections-per-peer 4] [--max-pending-incoming 128] [--max-pending-outgoing 128]");
     println!();
     println!("Options:");
     println!("  --port PORT              TCP and UDP/QUIC port (default: 45555)");
@@ -316,6 +327,11 @@ fn print_help() {
     println!("  --status-interval SEC    Print an operational status line every N seconds (default: 60, minimum: 10)");
     println!("  --health-file PATH       Atomically update a metadata-only JSON health snapshot");
     println!("  --identity-file PATH     Explicit persistent Node identity file (recommended for public/community nodes)");
+    println!("  --max-connections N      Maximum established connections, all directions (default: 1024)");
+    println!("  --max-incoming-connections N  Maximum established incoming connections (default: 768)");
+    println!("  --max-connections-per-peer N  Maximum established connections per Peer ID (default: 4)");
+    println!("  --max-pending-incoming N      Maximum concurrently pending incoming handshakes (default: 128)");
+    println!("  --max-pending-outgoing N      Maximum concurrently pending outgoing handshakes (default: 128)");
     println!("  -h, --help               Show this help");
     println!();
     println!("Example:");
@@ -332,6 +348,11 @@ where
     let mut status_interval = DEFAULT_STATUS_INTERVAL;
     let mut health_file = None;
     let mut identity_file = None;
+    let mut max_connections = DEFAULT_MAX_CONNECTIONS;
+    let mut max_incoming_connections = DEFAULT_MAX_INCOMING_CONNECTIONS;
+    let mut max_connections_per_peer = DEFAULT_MAX_CONNECTIONS_PER_PEER;
+    let mut max_pending_incoming = DEFAULT_MAX_PENDING_INCOMING;
+    let mut max_pending_outgoing = DEFAULT_MAX_PENDING_OUTGOING;
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
@@ -379,6 +400,59 @@ where
                 }
                 identity_file = Some(PathBuf::from(raw.trim()));
             }
+            "--max-connections" => {
+                let raw = args.next().ok_or("Missing value after --max-connections")?;
+                max_connections = raw
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid --max-connections value: {raw}"))?;
+                if max_connections == 0 {
+                    return Err("--max-connections must be greater than 0.".into());
+                }
+            }
+            "--max-incoming-connections" => {
+                let raw = args
+                    .next()
+                    .ok_or("Missing value after --max-incoming-connections")?;
+                max_incoming_connections = raw
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid --max-incoming-connections value: {raw}"))?;
+                if max_incoming_connections == 0 {
+                    return Err("--max-incoming-connections must be greater than 0.".into());
+                }
+            }
+            "--max-connections-per-peer" => {
+                let raw = args
+                    .next()
+                    .ok_or("Missing value after --max-connections-per-peer")?;
+                max_connections_per_peer = raw
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid --max-connections-per-peer value: {raw}"))?;
+                if max_connections_per_peer == 0 {
+                    return Err("--max-connections-per-peer must be greater than 0.".into());
+                }
+            }
+            "--max-pending-incoming" => {
+                let raw = args
+                    .next()
+                    .ok_or("Missing value after --max-pending-incoming")?;
+                max_pending_incoming = raw
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid --max-pending-incoming value: {raw}"))?;
+                if max_pending_incoming == 0 {
+                    return Err("--max-pending-incoming must be greater than 0.".into());
+                }
+            }
+            "--max-pending-outgoing" => {
+                let raw = args
+                    .next()
+                    .ok_or("Missing value after --max-pending-outgoing")?;
+                max_pending_outgoing = raw
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid --max-pending-outgoing value: {raw}"))?;
+                if max_pending_outgoing == 0 {
+                    return Err("--max-pending-outgoing must be greater than 0.".into());
+                }
+            }
             "-h" | "--help" => {
                 print_help();
                 return Ok(None);
@@ -390,6 +464,12 @@ where
     if allow_private_address && public_host.is_none() {
         return Err("--allow-private-address requires --public-host.".into());
     }
+    if max_incoming_connections > max_connections {
+        return Err("--max-incoming-connections cannot exceed --max-connections.".into());
+    }
+    if max_connections_per_peer > max_connections {
+        return Err("--max-connections-per-peer cannot exceed --max-connections.".into());
+    }
 
     Ok(Some(NodeArgs {
         port,
@@ -398,6 +478,11 @@ where
         status_interval,
         health_file,
         identity_file,
+        max_connections,
+        max_incoming_connections,
+        max_connections_per_peer,
+        max_pending_incoming,
+        max_pending_outgoing,
     }))
 }
 
@@ -680,6 +765,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     validate_state_paths(&identity_path, args.health_file.as_deref())
         .map_err(std::io::Error::other)?;
 
+    let limits_config = connection_limits::ConnectionLimits::default()
+        .with_max_pending_incoming(Some(args.max_pending_incoming))
+        .with_max_pending_outgoing(Some(args.max_pending_outgoing))
+        .with_max_established_incoming(Some(args.max_incoming_connections))
+        .with_max_established(Some(args.max_connections))
+        .with_max_established_per_peer(Some(args.max_connections_per_peer));
+
     let mut swarm = SwarmBuilder::with_existing_identity(key)
         .with_tokio()
         .with_tcp(
@@ -723,6 +815,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ping: ping::Behaviour::default(),
                 autonat: autonat::Behaviour::new(peer, autonat::Config::default()),
                 relay: relay::Behaviour::new(peer, relay::Config::default()),
+                limits: connection_limits::Behaviour::new(limits_config.clone()),
             })
         })?
         .build();
@@ -743,6 +836,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Identity file: {}", identity_path.display());
     println!("Transport: TCP + QUIC on port {port}");
     println!("Services: bootstrap + Kademlia DHT + AutoNAT + Circuit Relay + GossipSub");
+    println!(
+        "Capacity limits: total={} incoming={} per_peer={} pending_in={} pending_out={}",
+        args.max_connections,
+        args.max_incoming_connections,
+        args.max_connections_per_peer,
+        args.max_pending_incoming,
+        args.max_pending_outgoing
+    );
     println!("Privacy: this node does not persist chat history or transferred files.");
 
     if let Some(host) = &args.public_host {
@@ -850,6 +951,58 @@ mod tests {
             args.identity_file,
             Some(PathBuf::from("C:\\Konofix\\node-identity.key"))
         );
+    }
+
+    #[test]
+    fn parses_global_beta_connection_limits() {
+        let args = parse_args_from(vec![
+            "--max-connections".to_string(),
+            "2048".to_string(),
+            "--max-incoming-connections".to_string(),
+            "1536".to_string(),
+            "--max-connections-per-peer".to_string(),
+            "6".to_string(),
+            "--max-pending-incoming".to_string(),
+            "256".to_string(),
+            "--max-pending-outgoing".to_string(),
+            "192".to_string(),
+        ])
+        .expect("connection limits should parse")
+        .expect("help was not requested");
+
+        assert_eq!(args.max_connections, 2048);
+        assert_eq!(args.max_incoming_connections, 1536);
+        assert_eq!(args.max_connections_per_peer, 6);
+        assert_eq!(args.max_pending_incoming, 256);
+        assert_eq!(args.max_pending_outgoing, 192);
+    }
+
+    #[test]
+    fn rejects_inconsistent_global_beta_connection_limits() {
+        let incoming = parse_args_from(vec![
+            "--max-connections".to_string(),
+            "10".to_string(),
+            "--max-incoming-connections".to_string(),
+            "11".to_string(),
+        ])
+        .expect_err("incoming limit above total must fail");
+        assert!(incoming.contains("cannot exceed --max-connections"));
+
+        let per_peer = parse_args_from(vec![
+            "--max-connections".to_string(),
+            "3".to_string(),
+            "--max-connections-per-peer".to_string(),
+            "4".to_string(),
+        ])
+        .expect_err("per-peer limit above total must fail");
+        assert!(per_peer.contains("cannot exceed --max-connections"));
+
+        let zero = parse_args_from(vec![
+            "--max-pending-incoming".to_string(),
+            "0".to_string(),
+        ])
+        .expect_err("zero pending limit must fail");
+        assert!(zero.contains("must be greater than 0"));
     }
 
     #[test]

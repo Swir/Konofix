@@ -6,6 +6,7 @@
   "candidate": {
     "version": "",
     "source_commit": "",
+    "artifact_path": "Konofix-Chat-0.4.2-COMMIT.zip",
     "artifact_sha256": ""
   },
   "window": {
@@ -16,7 +17,11 @@
   "participants": [],
   "contact_paths": [],
   "clients": [],
-  "load_runs": [],
+  "load_runs": [
+    { "clients": 50, "path": "global-beta-load-50.json", "sha256": "" },
+    { "clients": 100, "path": "global-beta-load-100.json", "sha256": "" },
+    { "clients": 250, "path": "global-beta-load-250.json", "sha256": "" }
+  ],
   "checks": [
     { "name": "world_chat", "status": "pending", "evidence": "" },
     { "name": "rooms", "status": "pending", "evidence": "" },

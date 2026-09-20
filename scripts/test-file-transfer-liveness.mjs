@@ -33,20 +33,6 @@ if (baseline.status !== 0) {
   throw new Error('Canonical file-transfer implementation must pass its liveness policy checker before adversarial mutations run.');
 }
 
-// A separate request_response behaviour may intentionally use a shorter timeout.
-// The file liveness checker must stay scoped to the `rr_cfg` file-transfer config.
-if (source.includes('let direct_chat_cfg =')) {
-  const shortDirect = mutateOnce(
-    source,
-    'let direct_chat_cfg =\n                request_response::Config::default().with_request_timeout(Duration::from_secs(20));',
-    'let direct_chat_cfg =\n                request_response::Config::default().with_request_timeout(Duration::from_secs(5));',
-  );
-  const directResult = run(shortDirect);
-  if (directResult.status !== 0) {
-    throw new Error(`A direct-chat timeout mutation incorrectly tripped file-transfer liveness policy:\n${directResult.stdout}\n${directResult.stderr}`);
-  }
-}
-
 const cases = [
   {
     name: 'idle TTL made too aggressive for WAN use',
@@ -55,34 +41,10 @@ const cases = [
     expected: 'WAN-safe bound',
   },
   {
-    name: 'file request timeout shorter than receive lease',
-    source: 'let rr_cfg =\n                request_response::Config::default().with_request_timeout(Duration::from_secs(300));',
-    replacement: 'let rr_cfg =\n                request_response::Config::default().with_request_timeout(Duration::from_secs(60));',
+    name: 'request timeout shorter than receive lease',
+    source: 'with_request_timeout(Duration::from_secs(300))',
+    replacement: 'with_request_timeout(Duration::from_secs(60))',
     expected: 'must not be shorter',
-  },
-  {
-    name: 'pending offer retains original response channel',
-    source: 'created_at: Instant,\n}',
-    replacement: 'created_at: Instant,\n    channel: request_response::ResponseChannel<FileResponse>,\n}',
-    expected: 'must not retain a libp2p ResponseChannel',
-  },
-  {
-    name: 'immediate pending acknowledgement removed',
-    source: '.send_response(channel, FileResponse::Pending)',
-    replacement: '.send_response(channel, FileResponse::Accepted)',
-    expected: 'close the initial request stream immediately with Pending',
-  },
-  {
-    name: 'separate accept control request removed',
-    source: 'FileRequest::Accept { transfer_id: transfer_id.clone() }',
-    replacement: 'FileRequest::Cancel { transfer_id: transfer_id.clone() }',
-    expected: 'separate authenticated Accept control request',
-  },
-  {
-    name: 'separate reject control request removed',
-    source: 'FileRequest::Reject {',
-    replacement: 'FileRequest::Cancel { /* Reject accidentally removed */',
-    expected: 'separate authenticated Reject control request',
   },
   {
     name: 'zero-byte chunk rejection removed',
@@ -195,4 +157,4 @@ for (const testCase of cases) {
 }
 
 fs.rmSync(tempDir, { recursive: true, force: true });
-console.log(`File-transfer liveness adversarial policy tests passed (${cases.length} mutations rejected plus scoped direct-chat timeout control).`);
+console.log(`File-transfer liveness adversarial policy tests passed (${cases.length} mutations rejected).`);

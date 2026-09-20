@@ -1,0 +1,40 @@
+{
+  "_template": true,
+  "schema": 1,
+  "tool": "konofix-global-beta-evidence",
+  "status": "pending",
+  "candidate": {
+    "version": "",
+    "source_commit": "",
+    "artifact_sha256": ""
+  },
+  "window": {
+    "started_utc": "",
+    "ended_utc": "",
+    "duration_seconds": 0
+  },
+  "participants": [],
+  "contact_paths": [],
+  "clients": [],
+  "load_runs": [],
+  "checks": [
+    { "name": "world_chat", "status": "pending", "evidence": "" },
+    { "name": "rooms", "status": "pending", "evidence": "" },
+    { "name": "reconnect", "status": "pending", "evidence": "" },
+    { "name": "file_a_to_b_sha256", "status": "pending", "evidence": "", "observed_sha256": "" },
+    { "name": "file_b_to_a_sha256", "status": "pending", "evidence": "", "observed_sha256": "" },
+    { "name": "tcp", "status": "pending", "evidence": "" },
+    { "name": "quic_v1", "status": "pending", "evidence": "" },
+    { "name": "relay", "status": "pending", "evidence": "" },
+    { "name": "dcutr", "status": "pending", "evidence": "" },
+    { "name": "cgnat", "status": "pending", "evidence": "" }
+  ],
+  "failover": {
+    "lost_peer_id": "",
+    "recovered_via_peer_ids": [],
+    "discovery_recovered": false,
+    "chat_recovered": false,
+    "rooms_recovered": false,
+    "evidence": ""
+  }
+}

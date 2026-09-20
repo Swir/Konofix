@@ -2,13 +2,13 @@
 
 ## Project progress
 
-<img width="100%" src="assets/readme/progress-mini.svg" alt="Konofix Chat Real Internet Test compact progress — 54 of 59 verified tasks, 91.5%, in progress" />
+<img width="100%" src="assets/readme/progress-mini.svg" alt="Konofix Chat Real Internet Test compact progress — 54 of 67 verified tasks, 80.6%, in progress" />
 
-**Verified checklist fraction: 54 of 59 tasks — 91.5%.** The generated mini card uses the exact checklist fraction; release readiness remains a separate evidence gate.
+**Verified checklist fraction: 54 of 67 tasks — 80.6%.** The generated mini card uses the exact checklist fraction; release readiness remains a separate evidence gate.
 
-**Real Internet Test milestone: 91.5% complete**
+**Real Internet Test milestone: 80.6% complete**
 
-The active milestone currently has 54 of 59 tasks complete. The remaining five tasks require real public-network evidence and fixes discovered during those tests; CI alone cannot credit them.
+The active milestone now has 54 of 67 tasks complete. The user-approved Global Beta expansion adds eight unverified many-computer release gates to the five original real-network gates; the lower percentage reflects broader scope, not lost completed work. CI alone cannot credit any of those open gates.
 
 - Fresh Windows test bundles now replace the historical `v0.4.2-test1` release note with a deterministic exact-build `TESTER_HANDOFF.md`: CI generates its version, full source SHA and workflow-run identity from the same build context recorded by `BUILD_INFO.json`, release verification cross-checks those fields, rejects legacy `RELEASE_NOTES.md`, and deterministic/adversarial self-tests keep local and Windows preflight parity. This tester-handoff/provenance hardening adds no Real Internet Test credit.
 - Windows promotion archives now carry deterministic exact-build identity in the filename: the package version plus the full lowercase 40-character source commit defines the ZIP/checksum basename, release verification binds that basename back to verified `BUILD_INFO.json`, and adversarial CI rejects renamed archives while preserving canonical names for content-tamper tests. This release-provenance hardening adds no Real Internet Test credit.
@@ -183,7 +183,7 @@ The existing `v0.4.2-test1` pre-release is a controlled preview for gathering re
 
 ## Global Beta readiness — many-computer public network
 
-This is a separate release-readiness scope. It does not change the active 0.4.2 Real Internet Test value of 54/59 until those five real-network gates are actually proven.
+This user-approved many-computer beta scope is now part of the authoritative active readiness denominator. It expands the measured scope from 59 to 67 tasks while preserving the same 54 verified completions; no new gate is credited until its acceptance evidence exists.
 
 - [ ] at least three stable public/community Konofix Nodes across at least two independent providers/regions, each with persistent Peer ID, TCP + QUIC, Relay and monitored health
 - [ ] clients ship a default multi-node bootstrap pool with at least two independent seed identities and automatic fallback; manual custom bootstraps remain supported

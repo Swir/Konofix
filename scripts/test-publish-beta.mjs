@@ -29,7 +29,8 @@ function service({ existing, tagCommit, failUpload, corruptDigest, seedAssets = 
   const state = { release: existing, assets: [...seedAssets], calls: [], tagCommit };
   const api = async (method, endpoint, body) => {
     state.calls.push({ method, endpoint, body });
-    if (method === 'GET' && endpoint.startsWith('/releases/tags/')) return state.release ?? null;
+    if (method === 'GET' && endpoint.startsWith('/releases/tags/')) return state.release && !state.release.draft ? state.release : null;
+    if (method === 'GET' && endpoint === '/releases?per_page=100') return state.release ? [{ tag_name: plan.tag, ...state.release }] : [];
     if (method === 'GET' && endpoint.startsWith('/git/ref/')) return state.tagCommit ? { object: { sha: state.tagCommit } } : null;
     if (method === 'POST') {
       state.release = { id: 10, ...body, html_url: 'https://github.com/Swir/Konofix/releases/tag/v0.4.2-beta.1' };
@@ -65,6 +66,7 @@ for (const options of [{ failUpload: true }, { corruptDigest: true }, { tagCommi
 const retry = service({ existing: { id: 10, draft: true, prerelease: true, target_commitish: commit }, seedAssets: good.state.assets });
 await publishBeta(plan, retry.api, read);
 assert(!retry.state.calls.some((call) => call.method === 'UPLOAD'), 'Identical draft assets should be resumed');
+assert(!retry.state.calls.some((call) => call.method === 'POST'), 'Draft lookup must not create a duplicate release');
 const immutable = service({ existing: { draft: false, prerelease: true, html_url: 'existing' } });
 assert.equal((await publishBeta(plan, immutable.api, read)).skipped, true);
 assert(!immutable.state.calls.some((call) => call.method !== 'GET'), 'Published releases must never be rewritten');

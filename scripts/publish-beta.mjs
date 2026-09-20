@@ -63,6 +63,11 @@ export async function publishBeta(plan, api, readFile) {
     assert.equal(release.prerelease, true, 'Existing tag is not a prerelease');
     return { url: release.html_url, skipped: true };
   }
+  if (!release) {
+    const drafts = (await api('GET', '/releases?per_page=100')).filter((item) => item.tag_name === tag && item.draft);
+    assert(drafts.length <= 1, 'Multiple beta drafts require manual inspection');
+    release = drafts[0];
+  }
   const ref = await api('GET', `/git/ref/tags/${tag}`, undefined, true);
   if (ref) assert.equal(ref.object.sha, plan.commit, 'Refusing to move an existing beta tag');
   if (release) {
@@ -92,6 +97,7 @@ export async function publishBeta(plan, api, readFile) {
 }
 
 async function main() {
+  assert.fail('Beta publication blocked: two-peer chat delivery and accepted file transfer require runtime regression fixes');
   assertContext(process.env);
   assert(process.env.GH_TOKEN, 'Workflow token is required');
   const api = async (method, endpoint, body, allowMissing = false) => {

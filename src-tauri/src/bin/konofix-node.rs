@@ -328,8 +328,12 @@ fn print_help() {
     println!("  --health-file PATH       Atomically update a metadata-only JSON health snapshot");
     println!("  --identity-file PATH     Explicit persistent Node identity file (recommended for public/community nodes)");
     println!("  --max-connections N      Maximum established connections, all directions (default: 1024)");
-    println!("  --max-incoming-connections N  Maximum established incoming connections (default: 768)");
-    println!("  --max-connections-per-peer N  Maximum established connections per Peer ID (default: 4)");
+    println!(
+        "  --max-incoming-connections N  Maximum established incoming connections (default: 768)"
+    );
+    println!(
+        "  --max-connections-per-peer N  Maximum established connections per Peer ID (default: 4)"
+    );
     println!("  --max-pending-incoming N      Maximum concurrently pending incoming handshakes (default: 128)");
     println!("  --max-pending-outgoing N      Maximum concurrently pending outgoing handshakes (default: 128)");
     println!("  -h, --help               Show this help");
@@ -997,11 +1001,8 @@ mod tests {
         .expect_err("per-peer limit above total must fail");
         assert!(per_peer.contains("cannot exceed --max-connections"));
 
-        let zero = parse_args_from(vec![
-            "--max-pending-incoming".to_string(),
-            "0".to_string(),
-        ])
-        .expect_err("zero pending limit must fail");
+        let zero = parse_args_from(vec!["--max-pending-incoming".to_string(), "0".to_string()])
+            .expect_err("zero pending limit must fail");
         assert!(zero.contains("must be greater than 0"));
     }
 

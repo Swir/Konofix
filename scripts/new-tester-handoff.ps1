@@ -46,7 +46,17 @@ This file was generated for one exact Windows test bundle. It is **test evidence
 
 BUILD_INFO.json is the authoritative sealed inventory for this bundle. Keep this bundle, its checksum, the generated network-test session and every evidence file together. Never mix binaries, scripts or evidence from a different source commit, workflow artifact or historical prerelease.
 
-## Promotion-quality test flow
+## Start a participant-operated network
+
+1. Install the same application build on each Windows computer and connect with different nicknames. Every connected app is already a P2P node; do not install a separate server just to chat.
+2. On one LAN, wait for automatic peer discovery and test WORLD, room creation/switching, counts, file acceptance/SHA-256 and reconnect.
+3. For first contact across the Internet, an online participant opens Network settings, copies a reachable address and shares it with another participant, who adds it in Network settings. Private LAN addresses work only on that LAN. NAT/CGNAT may require a reachable participant acting as relay or suitable port mapping.
+4. Keep at least three participants online, establish more than one contact path, then close one participant and verify that the others still exchange messages, rooms and files. Learned peer addresses help later reconnection; if every participant leaves, fresh invitations may be needed.
+5. Record actual outcomes and the exact build identity above. Local/CI success does not prove real multi-country reachability or the 20-client soak gate. See GLOBAL_BETA.md and TESTING.md in this bundle.
+
+## Optional headless-Node qualification flow
+
+The separately packaged Node is an optional always-on participant. These tools qualify that deployment profile; they do not replace participant-application testing or require a central chat server.
 
 1. Verify the outer ZIP SHA-256 before extraction and keep the checksum beside the exact archive.
 2. Confirm BUILD_INFO.json identifies the expected version and source commit; use only the packaged konofix-node.exe, konofix-netprobe.exe and bundled scripts from this artifact.

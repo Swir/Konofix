@@ -59,7 +59,8 @@ try {
       $spec = $pending.Dequeue()
       $stdout = Join-Path $tempRoot ("probe-{0:D4}.out.json" -f $spec.Index)
       $stderr = Join-Path $tempRoot ("probe-{0:D4}.err.txt" -f $spec.Index)
-      $process = Start-Process -FilePath $NetprobePath -ArgumentList @('--timeout', [string]$TimeoutSeconds, [string]$spec.Target) -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+      $probeArguments = @($NetprobePrefixArguments) + @('--timeout', [string]$TimeoutSeconds, [string]$spec.Target)
+      $process = Start-Process -FilePath $NetprobePath -ArgumentList $probeArguments -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 
       $active.Add([pscustomobject]@{
         Spec = $spec

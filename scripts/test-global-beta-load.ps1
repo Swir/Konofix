@@ -9,35 +9,29 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) ("konofix-global-beta-load-test-" +
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 
 try {
-  $passProbe = Join-Path $temp 'pass-probe.exe'
-  $failProbe = Join-Path $temp 'fail-probe.exe'
+  $passProbe = Join-Path $temp 'pass-probe.cmd'
+  $failProbe = Join-Path $temp 'fail-probe.cmd'
+  @'
+@echo off
+echo {"status":"pass","rtt_micros":1000,"elapsed_millis":5}
+exit /b 0
+'@ | Set-Content -LiteralPath $passProbe -Encoding ascii
+  @'
+@echo off
+echo simulated probe failure 1>&2
+exit /b 7
+'@ | Set-Content -LiteralPath $failProbe -Encoding ascii
 
-  $passSource = @'
-using System;
-public static class PassProbe {
-    public static int Main(string[] args) {
-        Console.WriteLine("{\"status\":\"pass\",\"rtt_micros\":1000,\"elapsed_millis\":5}");
-        return 0;
-    }
-}
-'@
-  $failSource = @'
-using System;
-public static class FailProbe {
-    public static int Main(string[] args) {
-        Console.Error.WriteLine("simulated probe failure");
-        return 7;
-    }
-}
-'@
-  Add-Type -TypeDefinition $passSource -OutputAssembly $passProbe -OutputType ConsoleApplication
-  Add-Type -TypeDefinition $failSource -OutputAssembly $failProbe -OutputType ConsoleApplication
+  $cmd = [Environment]::GetEnvironmentVariable('ComSpec')
+  if ([string]::IsNullOrWhiteSpace($cmd) -or -not (Test-Path -LiteralPath $cmd -PathType Leaf)) {
+    throw 'ComSpec/cmd.exe is required for the deterministic process fixture.'
+  }
 
   $tcp = '/ip4/127.0.0.1/tcp/45555/p2p/12D3KooWGlobalBetaTestPeer'
   $quic = '/ip4/127.0.0.1/udp/45555/quic-v1/p2p/12D3KooWGlobalBetaTestPeer'
   $output = Join-Path $temp 'summary.json'
 
-  $jsonText = & $scriptUnderTest -TcpBootstrap $tcp -QuicBootstrap $quic -Clients 8 -Parallelism 3 -TimeoutSeconds 5 -MinimumSuccessPercent 100 -NetprobePath $passProbe -OutputPath $output
+  $jsonText = & $scriptUnderTest -TcpBootstrap $tcp -QuicBootstrap $quic -Clients 8 -Parallelism 3 -TimeoutSeconds 5 -MinimumSuccessPercent 100 -NetprobePath $cmd -NetprobePrefixArguments @('/d', '/c', $passProbe) -OutputPath $output
   $summary = ($jsonText -join [Environment]::NewLine) | ConvertFrom-Json
   if ($summary.status -cne 'pass') { throw 'Expected successful load summary.' }
   if ([int]$summary.clients -ne 8 -or [int]$summary.passed -ne 8 -or [int]$summary.failed -ne 0) {
@@ -52,7 +46,7 @@ public static class FailProbe {
 
   $rejected = $false
   try {
-    & $scriptUnderTest -TcpBootstrap $tcp -Clients 4 -Parallelism 2 -TimeoutSeconds 5 -MinimumSuccessPercent 100 -NetprobePath $failProbe | Out-Null
+    & $scriptUnderTest -TcpBootstrap $tcp -Clients 4 -Parallelism 2 -TimeoutSeconds 5 -MinimumSuccessPercent 100 -NetprobePath $cmd -NetprobePrefixArguments @('/d', '/c', $failProbe) | Out-Null
   } catch {
     if ($_.Exception.Message -notmatch 'all TCP probes failed|success rate') {
       throw "Unexpected failure reason from failing probe fixture: $($_.Exception.Message)"

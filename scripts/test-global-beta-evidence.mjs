@@ -178,8 +178,8 @@ structuralFailure((doc) => { doc.failover.recovered_via_peer_ids = [doc.failover
 structuralFailure((doc) => { doc.failover.rooms_recovered = false; }, /discovery, chat and room recovery/i);
 structuralFailure((doc) => { doc.candidate.artifact_sha256 = 'B'.repeat(64); }, /artifact_sha256/i);
 structuralFailure((doc) => { doc._template = true; }, /template manifests can never qualify/i);
-structuralFailure((doc) => { doc.candidate.artifact_path = '../candidate.zip'; }, /relative to the evidence manifest directory|escapes/i);
 
+packageFailure((doc) => { doc.candidate.artifact_path = '../candidate.zip'; }, /escapes the evidence manifest directory/i);
 packageFailure((_doc, fixture) => { fs.appendFileSync(path.join(fixture.root, 'candidate.zip'), 'tamper'); }, /artifact SHA-256 mismatch/i);
 packageFailure((doc, fixture) => { fs.appendFileSync(path.join(fixture.root, doc.load_runs[0].path), 'tamper'); }, /50-client load evidence SHA-256 mismatch/i);
 packageFailure((doc, fixture) => {

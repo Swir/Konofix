@@ -208,7 +208,7 @@ function cli(argv) {
   const tempPath = `${outputPath}.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
   try {
     fs.writeFileSync(tempPath, serialized, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-    const tempDescriptor = fs.openSync(tempPath, 'r');
+    const tempDescriptor = fs.openSync(tempPath, 'r+');
     try {
       fs.fsyncSync(tempDescriptor);
     } finally {

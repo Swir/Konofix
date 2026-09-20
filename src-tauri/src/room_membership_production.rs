@@ -122,3 +122,83 @@ impl RoomMembershipProductionBridge {
         self.adapter.known_room(room_id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MANY_PEERS: usize = 128;
+
+    fn snapshot(peer: &PeerId, revision: u64, rooms: &[&str]) -> MembershipSnapshotPayload {
+        MembershipSnapshotPayload {
+            peer_id: peer.to_string(),
+            revision,
+            rooms: rooms.iter().map(|room| (*room).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn many_peer_counts_switch_and_cleanup_converge() {
+        let mut bridge = RoomMembershipProductionBridge::new(PeerId::random());
+        bridge.announce_room("alpha").expect("announce alpha");
+        bridge.announce_room("beta").expect("announce beta");
+
+        let peers: Vec<PeerId> = (0..MANY_PEERS).map(|_| PeerId::random()).collect();
+        for (index, peer) in peers.iter().enumerate() {
+            let effects = bridge
+                .authenticated_snapshot(snapshot(peer, 1, &["alpha"]), peer)
+                .expect("join alpha");
+            assert!(!effects.counts.is_empty());
+            assert_eq!(bridge.total_count("alpha"), (index + 1) as u32);
+        }
+        assert_eq!(bridge.total_count("alpha"), MANY_PEERS as u32);
+        assert_eq!(bridge.total_count("beta"), 0);
+
+        let duplicate = bridge
+            .authenticated_snapshot(snapshot(&peers[0], 1, &["alpha"]), &peers[0])
+            .expect("duplicate resync");
+        assert!(duplicate.counts.is_empty());
+        assert_eq!(bridge.total_count("alpha"), MANY_PEERS as u32);
+
+        for peer in peers.iter().take(MANY_PEERS / 2) {
+            bridge
+                .authenticated_snapshot(snapshot(peer, 2, &["beta"]), peer)
+                .expect("switch to beta");
+        }
+        assert_eq!(bridge.total_count("alpha"), (MANY_PEERS / 2) as u32);
+        assert_eq!(bridge.total_count("beta"), (MANY_PEERS / 2) as u32);
+
+        for peer in peers.iter().take(24) {
+            let effects = bridge.connection_closed(peer, 1);
+            assert!(effects.counts.is_empty());
+        }
+        assert_eq!(bridge.total_count("beta"), (MANY_PEERS / 2) as u32);
+
+        for peer in peers.iter().take(16) {
+            bridge.connection_closed(peer, 0);
+        }
+        assert_eq!(bridge.total_count("beta"), 48);
+
+        for peer in peers.iter().skip(16).take(16) {
+            bridge.authenticated_goodbye(peer);
+        }
+        assert_eq!(bridge.total_count("beta"), 32);
+
+        for peer in peers.iter().skip(32).take(32) {
+            bridge.presence_expired(peer);
+        }
+        assert_eq!(bridge.total_count("beta"), 0);
+        assert_eq!(bridge.total_count("alpha"), (MANY_PEERS / 2) as u32);
+
+        for peer in peers.iter().skip(MANY_PEERS / 2) {
+            bridge
+                .authenticated_snapshot(snapshot(peer, 2, &[]), peer)
+                .expect("leave temporary rooms");
+        }
+        assert_eq!(bridge.total_count("alpha"), 0);
+        assert_eq!(bridge.total_count("beta"), 0);
+
+        assert!(bridge.authenticated_goodbye(&peers[0]).counts.is_empty());
+        assert!(bridge.presence_expired(&peers[0]).counts.is_empty());
+    }
+}

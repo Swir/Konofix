@@ -222,3 +222,143 @@ fn active_room_close_preserves_leave_publish_and_zero_count_effects() {
     assert!(!bridge.known_room("alpha"));
     assert_eq!(bridge.heartbeat().publish, close.publish);
 }
+
+#[test]
+fn snapshot_before_room_announcement_recovers_without_poisoning_revision_state() {
+    let local = peer_id();
+    let remote = peer_id();
+    let mut bridge = RoomMembershipProductionBridge::new(local);
+    let payload = MembershipSnapshotPayload {
+        peer_id: remote.to_string(),
+        revision: 7,
+        rooms: vec!["late-room".into()],
+    };
+
+    assert!(bridge
+        .authenticated_snapshot(payload.clone(), &remote)
+        .is_err());
+    assert_eq!(bridge.total_count("late-room"), 0);
+
+    assert!(bridge
+        .announce_room("late-room")
+        .expect("late room announcement"));
+    let recovered = bridge
+        .authenticated_snapshot(payload.clone(), &remote)
+        .expect("the same revision must be accepted after the room is known");
+    assert_eq!(
+        recovered.counts,
+        vec![RoomUserCountUpdate {
+            room_id: "late-room".into(),
+            users: 1,
+        }]
+    );
+
+    let replay = bridge
+        .authenticated_snapshot(payload, &remote)
+        .expect("post-recovery replay");
+    assert!(replay.counts.is_empty());
+    assert_eq!(bridge.total_count("late-room"), 1);
+}
+
+#[test]
+fn three_peer_switch_disconnect_and_close_converge_without_phantom_members() {
+    let peer_a = peer_id();
+    let peer_b = peer_id();
+    let peer_c = peer_id();
+    let mut a = RoomMembershipProductionBridge::new(peer_a.clone());
+    let mut b = RoomMembershipProductionBridge::new(peer_b.clone());
+    let mut c = RoomMembershipProductionBridge::new(peer_c.clone());
+
+    for room in ["alpha", "beta"] {
+        a.announce_room(room).expect("announce A");
+        b.announce_room(room).expect("announce B");
+        c.announce_room(room).expect("announce C");
+    }
+
+    let a_alpha = a
+        .create_and_enter_local_room("alpha")
+        .expect("A creates alpha")
+        .publish
+        .expect("A alpha snapshot");
+    b.authenticated_snapshot(a_alpha.clone(), &peer_a)
+        .expect("B sees A");
+    c.authenticated_snapshot(a_alpha, &peer_a)
+        .expect("C sees A");
+
+    let b_alpha = b
+        .enter_room("alpha")
+        .expect("B joins alpha")
+        .publish
+        .expect("B alpha snapshot");
+    a.authenticated_snapshot(b_alpha.clone(), &peer_b)
+        .expect("A sees B");
+    c.authenticated_snapshot(b_alpha, &peer_b)
+        .expect("C sees B");
+
+    let c_beta = c
+        .enter_room("beta")
+        .expect("C joins beta")
+        .publish
+        .expect("C beta snapshot");
+    a.authenticated_snapshot(c_beta.clone(), &peer_c)
+        .expect("A sees C");
+    b.authenticated_snapshot(c_beta, &peer_c).expect("B sees C");
+
+    assert_eq!(a.total_count("alpha"), 2);
+    assert_eq!(b.total_count("alpha"), 2);
+    assert_eq!(c.total_count("alpha"), 2);
+    assert_eq!(a.total_count("beta"), 1);
+    assert_eq!(b.total_count("beta"), 1);
+    assert_eq!(c.total_count("beta"), 1);
+
+    let a_beta = a
+        .enter_room("beta")
+        .expect("A switches beta")
+        .publish
+        .expect("A beta snapshot");
+    b.authenticated_snapshot(a_beta.clone(), &peer_a)
+        .expect("B sees A switch");
+    c.authenticated_snapshot(a_beta, &peer_a)
+        .expect("C sees A switch");
+
+    assert_eq!(a.total_count("alpha"), 1);
+    assert_eq!(b.total_count("alpha"), 1);
+    assert_eq!(c.total_count("alpha"), 1);
+    assert_eq!(a.total_count("beta"), 2);
+    assert_eq!(b.total_count("beta"), 2);
+    assert_eq!(c.total_count("beta"), 2);
+
+    assert_eq!(
+        a.connection_closed(&peer_b, 0).counts,
+        vec![RoomUserCountUpdate {
+            room_id: "alpha".into(),
+            users: 0,
+        }]
+    );
+    assert_eq!(
+        c.connection_closed(&peer_b, 0).counts,
+        vec![RoomUserCountUpdate {
+            room_id: "alpha".into(),
+            users: 0,
+        }]
+    );
+    assert_eq!(a.total_count("alpha"), 0);
+    assert_eq!(c.total_count("alpha"), 0);
+
+    let close_on_a = a.room_closed("alpha").expect("A closes alpha view");
+    let close_on_c = c.room_closed("alpha").expect("C closes alpha view");
+    assert_eq!(
+        close_on_a.counts,
+        vec![RoomUserCountUpdate {
+            room_id: "alpha".into(),
+            users: 0,
+        }]
+    );
+    assert_eq!(close_on_a.counts, close_on_c.counts);
+    assert!(close_on_a.publish.is_none());
+    assert!(close_on_c.publish.is_none());
+    assert!(!a.known_room("alpha"));
+    assert!(!c.known_room("alpha"));
+    assert_eq!(a.total_count("beta"), 2);
+    assert_eq!(c.total_count("beta"), 2);
+}

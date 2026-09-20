@@ -1,6 +1,6 @@
 # Rooms 2.0 implementation roadmap
 
-This is the detailed implementation plan for the `0.5.0 — Rooms 2.0` scope already declared in the authoritative `ROADMAP.md`. The active `0.4.2 — Real Internet Test` milestone remains 54/59 (91.5%); Rooms 2.0 work must not inflate that percentage.
+This is the detailed implementation plan for the `0.5.0 — Rooms 2.0` scope already declared in the authoritative `ROADMAP.md`. The authoritative active Global Beta readiness scope is currently 55/67 (82.1%); Rooms 2.0 implementation work must not inflate that percentage until the real production membership/count gate has end-to-end evidence.
 
 ## Stage 1 — state model and desktop lifecycle foundation
 
@@ -15,7 +15,7 @@ This is the detailed implementation plan for the `0.5.0 — Rooms 2.0` scope alr
 
 ## Stage 2 — network transport and live runtime wiring
 
-The verified runtime now also has a tested `RoomMembershipProductionBridge` that maps every relevant network-loop lifecycle input to one `ApplicationMembershipEffects` contract. This materially narrows the remaining `lib.rs` integration, but the unchecked production-loop items below stay open until the live GossipSub/command task actually consumes that bridge.
+The verified runtime now also has a tested `RoomMembershipProductionBridge` that maps every relevant network-loop lifecycle input to one `ApplicationMembershipEffects` contract. Production-bridge regressions additionally prove that a membership snapshot received before its room announcement does not poison revision state: after the room becomes known, the same authenticated revision can be applied exactly once. Three-peer switch/disconnect/room-close convergence is also covered before the live loop is changed. These tests reduce integration risk but do **not** close any production-loop item below.
 
 - [x] bounded membership transport frame and deterministic codec,
 - [x] transport adapter over the verified membership runtime,
@@ -42,8 +42,8 @@ The verified runtime now also has a tested `RoomMembershipProductionBridge` that
 
 ## Stage 4 — verification and promotion
 
-- [ ] exact-head Windows CI PASS,
-- [ ] exact-head Linux Node CI PASS,
+- [ ] exact-head Windows CI PASS for the live production-wiring implementation,
+- [ ] exact-head Linux Node CI PASS for the live production-wiring implementation,
 - [ ] multi-peer same-LAN room switch/replay test,
 - [ ] public-network multi-peer room membership test,
 - [x] document protocol compatibility and upgrade behavior (`docs/ROOMS2-PROTOCOL.md`),

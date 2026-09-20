@@ -1,7 +1,11 @@
+use std::collections::BTreeSet;
+
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 
-use crate::room_membership::RoomCountChange;
+use crate::room_membership::{
+    valid_temporary_room_id, RoomCountChange, MAX_MEMBERSHIP_ROOMS_PER_PEER,
+};
 use crate::room_membership_live::RoomMembershipLiveCoordinator;
 use crate::room_membership_network::{
     MembershipTransportEffects, RemoteTransportEffects, RoomMembershipNetworkEvent,
@@ -16,6 +20,40 @@ pub struct MembershipSnapshotPayload {
     pub peer_id: String,
     pub revision: u64,
     pub rooms: Vec<String>,
+}
+
+impl MembershipSnapshotPayload {
+    /// Parses the claimed identity only when it is already in canonical PeerId
+    /// text form. This keeps source matching deterministic across the outer
+    /// signed GossipSub envelope and the membership runtime.
+    pub fn claimed_peer_id(&self) -> Option<PeerId> {
+        let peer = self.peer_id.parse::<PeerId>().ok()?;
+        (peer.to_string() == self.peer_id).then_some(peer)
+    }
+
+    /// Cheap fail-closed framing validation for the production `WireEvent`
+    /// boundary. The runtime still performs its own authoritative validation
+    /// before state mutation; this guard prevents obviously malformed or
+    /// unbounded snapshots from reaching that layer.
+    pub fn is_well_formed(&self) -> bool {
+        if self.claimed_peer_id().is_none()
+            || self.revision == 0
+            || self.rooms.len() > MAX_MEMBERSHIP_ROOMS_PER_PEER
+        {
+            return false;
+        }
+
+        let mut unique = BTreeSet::new();
+        self.rooms
+            .iter()
+            .all(|room_id| valid_temporary_room_id(room_id) && unique.insert(room_id.as_str()))
+    }
+
+    pub fn matches_authenticated_source(&self, source: &PeerId) -> bool {
+        self.claimed_peer_id()
+            .as_ref()
+            .is_some_and(|claimed| claimed == source)
+    }
 }
 
 impl From<RoomMembershipNetworkEvent> for MembershipSnapshotPayload {
@@ -254,5 +292,47 @@ mod tests {
         );
         assert!(result.is_err());
         assert_eq!(app.total_count("alpha"), 0);
+    }
+
+    #[test]
+    fn production_payload_guard_rejects_noncanonical_unbounded_and_duplicated_claims() {
+        let source = peer_id();
+        let valid = MembershipSnapshotPayload {
+            peer_id: source.to_string(),
+            revision: 1,
+            rooms: vec!["alpha".into(), "beta".into()],
+        };
+        assert!(valid.is_well_formed());
+        assert!(valid.matches_authenticated_source(&source));
+
+        let other = peer_id();
+        assert!(!valid.matches_authenticated_source(&other));
+
+        let mut zero_revision = valid.clone();
+        zero_revision.revision = 0;
+        assert!(!zero_revision.is_well_formed());
+
+        let mut duplicate = valid.clone();
+        duplicate.rooms = vec!["alpha".into(), "alpha".into()];
+        assert!(!duplicate.is_well_formed());
+
+        let mut world = valid.clone();
+        world.rooms = vec!["world".into()];
+        assert!(!world.is_well_formed());
+
+        let mut invalid_room = valid.clone();
+        invalid_room.rooms = vec!["bad room".into()];
+        assert!(!invalid_room.is_well_formed());
+
+        let mut too_many = valid.clone();
+        too_many.rooms = (0..=MAX_MEMBERSHIP_ROOMS_PER_PEER)
+            .map(|index| format!("room-{index}"))
+            .collect();
+        assert!(!too_many.is_well_formed());
+
+        let mut invalid_peer = valid;
+        invalid_peer.peer_id = "not-a-peer-id".into();
+        assert!(!invalid_peer.is_well_formed());
+        assert!(!invalid_peer.matches_authenticated_source(&source));
     }
 }

@@ -44,7 +44,9 @@ The current public package is **`v0.4.2-test1`**, a prerelease preview for contr
 
 Konofix Chat is a desktop P2P messenger built around `rust-libp2p`. A user starts the app, chooses a nickname, joins the global `#WORLD` room, can create temporary rooms, and can transfer files directly to other peers after recipient approval.
 
-Konofix does not use a traditional account, email address, or phone number. Public Konofix Nodes act as bootstrap / discovery / relay infrastructure; they are not central message-history or file-storage servers.
+Konofix does not use a traditional account, email address, or phone number. **Every connected desktop is a P2P node**: participants form the network and can help others discover peers and relay connections. A separate server is optional. The headless Konofix Node is an optional always-on participant, not a central message-history or file-storage server.
+
+To form a network, start the app on each computer and connect with a nickname. Participants on one LAN discover each other automatically. For a first Internet connection, an online participant copies a reachable address from **Network settings** and shares it with the other person, who adds it there. The app then discovers and remembers peers. A private LAN address is usable only in that LAN; Internet reachability requires a public/port-mapped address or a reachable participant providing relay. When all participants leave, there is no online network or server keeping it alive. See [the participant-network beta plan](docs/GLOBAL_BETA.md).
 
 ## Highlights
 

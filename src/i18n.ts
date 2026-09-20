@@ -51,7 +51,11 @@ const EN = {
   'network.connections': 'Connections',
   'network.dhtPeers': 'DHT peers',
   'network.bootstraps': 'Bootstraps',
-  'network.bootstrapAddress': 'Bootstrap peer address',
+  'network.bootstrapAddress': 'Address of another participant',
+  'network.participantNode': 'This app is a network node while connected. No separate server is needed. To join over the Internet for the first time, paste a reachable address shared by an online participant. LAN discovery is automatic; Internet reachability depends on NAT/firewall settings or another reachable participant acting as relay.',
+  'network.copyAddress': 'Copy address',
+  'network.addressCopied': 'Copied',
+  'network.copyAddressHelp': 'Select and copy the address manually. Private LAN addresses work only within that network; share an Internet-reachable or relay address for remote participants.',
   'network.noBootstraps': 'No custom bootstraps. LAN works through mDNS, and the app also tries remembered peers.',
   'network.listenAddresses': 'My listen addresses',
   'network.listenPending': 'They will appear after the network starts.',
@@ -98,6 +102,10 @@ export type MessageKey = keyof typeof EN;
 type Dictionary = Partial<Record<MessageKey, string>>;
 
 const PL: Dictionary = {
+  'network.participantNode': 'Ta aplikacja jest węzłem sieci, gdy jesteś połączony. Osobny serwer nie jest potrzebny. Przy pierwszym dołączeniu przez Internet wklej osiągalny adres od uczestnika, który jest online. Wykrywanie w LAN jest automatyczne; dostęp przez Internet zależy od NAT i zapory albo pośrednictwa innego osiągalnego uczestnika.',
+  'network.copyAddress': 'Kopiuj adres',
+  'network.addressCopied': 'Skopiowano',
+  'network.copyAddressHelp': 'Zaznacz i skopiuj adres ręcznie. Prywatny adres LAN działa tylko w tej sieci; zdalnym uczestnikom udostępnij osiągalny adres internetowy lub adres relay.',
   'app.tagline': 'Wchodzisz. Rozmawiasz. Wychodzisz — znikasz z sieci.',
   'app.noAccount': '◆ bez konta',
   'app.noServerHistory': '◆ bez historii na serwerze',
@@ -140,7 +148,7 @@ const PL: Dictionary = {
   'network.connections': 'Połączenia',
   'network.dhtPeers': 'Peerzy DHT',
   'network.bootstraps': 'Bootstrapy',
-  'network.bootstrapAddress': 'Adres bootstrap peera',
+  'network.bootstrapAddress': 'Adres innego uczestnika',
   'network.noBootstraps': 'Brak własnych bootstrapów. LAN działa przez mDNS, a aplikacja próbuje też użyć zapamiętanych peerów.',
   'network.listenAddresses': 'Moje adresy nasłuchu',
   'network.listenPending': 'Pojawią się po uruchomieniu sieci.',

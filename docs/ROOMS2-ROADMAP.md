@@ -42,5 +42,5 @@ This is the detailed implementation plan for the `0.5.0 — Rooms 2.0` scope alr
 - [ ] exact-head Linux Node CI PASS,
 - [ ] multi-peer same-LAN room switch/replay test,
 - [ ] public-network multi-peer room membership test,
-- [ ] document protocol compatibility and upgrade behavior,
+- [x] document protocol compatibility and upgrade behavior (`docs/ROOMS2-PROTOCOL.md`),
 - [ ] mark the two top-level `0.5.0` goals complete only after end-to-end application evidence exists.

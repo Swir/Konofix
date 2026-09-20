@@ -2,6 +2,13 @@
 
 This scoped changelog records unreleased Rooms 2.0 work separately from stable `0.4.2` release notes. It does not change the active Real Internet Test percentage or stable-release readiness.
 
+## Stage 2.2 — production WireEvent bridge preparation
+
+- added a decoded-snapshot bridge on `RoomMembershipLiveCoordinator` so the production GossipSub `WireEvent` path can hand off `peer_id` / revision / room fields without reimplementing membership validation,
+- preserved the verified 16 KiB transport bound, authenticated-source binding and replay/conflict semantics by routing decoded fields back through the existing transport boundary,
+- added focused coverage proving forged decoded identities fail before count mutation and duplicate live snapshots remain idempotent,
+- kept the actual production `WireEvent` insertion, backend room switching and frontend count emission explicitly pending rather than claiming user-visible Rooms 2.0 early.
+
 ## Stage 2.1 — live lifecycle coordinator
 
 - added `RoomMembershipLiveCoordinator` as a narrow production-wiring boundary over the authenticated membership transport,

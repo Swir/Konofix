@@ -60,6 +60,26 @@ impl RoomMembershipLiveCoordinator {
             .receive_authenticated(&frame, authenticated_source)
     }
 
+    /// Bridges decoded production `WireEvent` fields into the verified
+    /// membership transport without duplicating source-binding, replay or room
+    /// validation inside the large network event loop.
+    pub fn receive_authenticated_snapshot(
+        &mut self,
+        peer_id: String,
+        revision: u64,
+        rooms: Vec<String>,
+        authenticated_source: &PeerId,
+    ) -> Result<RemoteTransportEffects, RoomMembershipTransportError> {
+        self.receive_authenticated_event(
+            &RoomMembershipNetworkEvent::MembershipSnapshot {
+                peer_id,
+                revision,
+                rooms,
+            },
+            authenticated_source,
+        )
+    }
+
     /// A libp2p peer may have multiple simultaneous connections. Only the final
     /// connection close is allowed to clear the peer's room membership.
     pub fn connection_closed(
@@ -120,6 +140,45 @@ mod tests {
             revision,
             rooms: vec![room.to_string()],
         }
+    }
+
+    #[test]
+    fn decoded_snapshot_bridge_preserves_source_binding_and_replay_semantics() {
+        let local = peer_id();
+        let remote = peer_id();
+        let attacker = peer_id();
+        let mut live = RoomMembershipLiveCoordinator::new(local);
+        live.announce_room("alpha").expect("announce alpha");
+
+        assert!(live
+            .receive_authenticated_snapshot(remote.to_string(), 1, vec!["alpha".into()], &attacker,)
+            .is_err());
+        assert_eq!(live.total_count("alpha"), 0);
+
+        assert_eq!(
+            live.receive_authenticated_snapshot(
+                remote.to_string(),
+                1,
+                vec!["alpha".into()],
+                &remote,
+            )
+            .expect("authenticated snapshot"),
+            RemoteTransportEffects::Applied(vec![RoomCountChange {
+                room_id: "alpha".into(),
+                users: 1,
+            }])
+        );
+        assert_eq!(
+            live.receive_authenticated_snapshot(
+                remote.to_string(),
+                1,
+                vec!["alpha".into()],
+                &remote,
+            )
+            .expect("duplicate snapshot"),
+            RemoteTransportEffects::Duplicate
+        );
+        assert_eq!(live.total_count("alpha"), 1);
     }
 
     #[test]

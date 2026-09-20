@@ -53,6 +53,7 @@ const state = {
 
 let sessionRevision = 0;
 let connectPending = false;
+let roomChangePending = false;
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -342,6 +343,7 @@ async function sendMessage() {
 }
 
 async function createRoom() {
+  if (!state.connected || roomChangePending) return;
   const raw = prompt(t('rooms.newPrompt'));
   if (!raw) return;
   const title = raw.trim().replace(/^#/, '').trim();
@@ -349,21 +351,37 @@ async function createRoom() {
     alert(t('rooms.invalidName'));
     return;
   }
+  const revision = sessionRevision;
+  roomChangePending = true;
   try {
     const room = await invoke<RoomInfo>('create_room', { title });
-    state.rooms.set(room.id, room);
+    if (revision !== sessionRevision || !state.connected) return;
+    state.rooms.set(room.id, { ...room, ...state.rooms.get(room.id) });
     if (!state.messages.has(room.id)) state.messages.set(room.id, []);
     state.room = room.id;
     renderChat();
   } catch (e) {
-    alert(String(e));
+    if (revision === sessionRevision) alert(String(e));
+  } finally {
+    if (revision === sessionRevision) roomChangePending = false;
   }
 }
 
-function switchRoom(room: string) {
-  state.room = room;
-  if (!state.messages.has(room)) state.messages.set(room, []);
-  renderChat();
+async function switchRoom(room: string) {
+  if (!state.connected || roomChangePending || !state.rooms.has(room)) return;
+  const revision = sessionRevision;
+  roomChangePending = true;
+  try {
+    await invoke('enter_room', { roomId: room });
+    if (revision !== sessionRevision || !state.connected || !state.rooms.has(room)) return;
+    state.room = room;
+    if (!state.messages.has(room)) state.messages.set(room, []);
+    renderChat();
+  } catch (error) {
+    if (revision === sessionRevision) alert(String(error));
+  } finally {
+    if (revision === sessionRevision) roomChangePending = false;
+  }
 }
 
 function offerFile() {
@@ -464,6 +482,7 @@ function showFileOfferModal(offer: FileOffer) {
 function resetSessionView(errorMessage?: string) {
   sessionRevision += 1;
   connectPending = false;
+  roomChangePending = false;
   document.querySelectorAll('.modal-wrap').forEach(el => el.remove());
   state.connected = false;
   state.nick = '';
@@ -521,10 +540,11 @@ function showNetworkModal() {
         <div><span>Relay</span><strong>${state.status.listen_addresses.filter(a => a.includes('/p2p-circuit')).length ? esc(t('common.active')) : esc(t('common.auto'))}</strong></div>
         <div><span>NAT</span><strong>${esc(state.status.nat)}</strong></div>
       </div>
+      <p class="modal-note">${esc(t('network.participantNode'))}</p>
       <label>${esc(t('network.bootstrapAddress'))}</label>
       <div class="inline-form"><input id="bootstrapInput" placeholder="/ip4/.../tcp/.../p2p/12D3KooW..."/><button id="addBootstrap" class="primary compact">${esc(t('common.add'))}</button></div>
       <div class="bootstrap-list">${bootstraps.length ? bootstraps.map(b => `<div><code>${esc(b)}</code><button data-remove-bootstrap="${esc(b)}">×</button></div>`).join('') : `<p>${esc(t('network.noBootstraps'))}</p>`}</div>
-      <div class="listen-block"><span>${esc(t('network.listenAddresses'))}</span>${state.status.listen_addresses.length ? state.status.listen_addresses.map(a => `<code>${esc(a)}</code>`).join('') : `<small>${esc(t('network.listenPending'))}</small>`}</div>
+      <div class="listen-block"><span>${esc(t('network.listenAddresses'))}</span>${state.status.listen_addresses.length ? state.status.listen_addresses.map(a => `<div><code>${esc(a)}</code><button class="ghost" data-copy-address="${esc(a)}">${esc(t('network.copyAddress'))}</button></div>`).join('') : `<small>${esc(t('network.listenPending'))}</small>`}</div>
       <p class="modal-note">${esc(t('network.bootstrapNote'))}</p>
     </div>`;
   document.body.appendChild(modal);
@@ -532,6 +552,14 @@ function showNetworkModal() {
   const close = () => modal.remove();
   modal.addEventListener('click', e => { if (e.target === modal) close(); });
   modal.querySelector('#closeModal')?.addEventListener('click', close);
+  modal.querySelectorAll<HTMLButtonElement>('[data-copy-address]').forEach(btn => btn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(btn.dataset.copyAddress!);
+      btn.textContent = t('network.addressCopied');
+    } catch {
+      alert(t('network.copyAddressHelp'));
+    }
+  }));
   modal.querySelector('#addBootstrap')?.addEventListener('click', async () => {
     const input = modal.querySelector<HTMLInputElement>('#bootstrapInput')!;
     const address = input.value.trim();

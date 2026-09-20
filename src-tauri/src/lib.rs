@@ -1,6 +1,5 @@
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap, HashSet},
-    hash::{Hash, Hasher},
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -26,8 +25,18 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 mod incoming_file;
+mod room_membership;
+mod room_membership_application;
+mod room_membership_desktop;
+mod room_membership_live;
+mod room_membership_network;
+mod room_membership_production;
+mod room_membership_runtime;
+mod room_membership_wire;
 
 use incoming_file::{commit_reserved_file, reserve_incoming_file};
+use room_membership_application::{ApplicationMembershipEffects, MembershipSnapshotPayload};
+use room_membership_production::RoomMembershipProductionBridge;
 
 const WORLD_TOPIC: &str = "konofix/world/v3";
 const KAD_PROTOCOL: &str = "/konofix/kad/1.0.0";
@@ -52,6 +61,7 @@ const BOOTSTRAP_RETRY_TICK_SECS: u64 = 5;
 const BOOTSTRAP_RETRY_BASE_SECS: u64 = 3;
 const BOOTSTRAP_RETRY_MAX_SECS: u64 = 60;
 const BOOTSTRAP_PENDING_RETRY_SECS: u64 = 20;
+const MAX_PARTICIPANT_RELAYS: usize = 3;
 const BUILTIN_BOOTSTRAP_POOL_JSON: &str = include_str!("../bootstrap-pool.json");
 
 #[derive(Debug, Deserialize)]
@@ -260,6 +270,35 @@ fn remember_peer_address(cache: &mut PeerCacheFile, peer: PeerId, address: &Mult
     }
 }
 
+fn address_for_peer(mut address: Multiaddr, peer: PeerId) -> Option<Multiaddr> {
+    let terminal_peer = address.iter().last().and_then(|part| match part {
+        libp2p::multiaddr::Protocol::P2p(existing) => Some(existing),
+        _ => None,
+    });
+    match terminal_peer {
+        Some(existing) => (existing == peer).then_some(address),
+        _ => {
+            address.push(libp2p::multiaddr::Protocol::P2p(peer));
+            Some(address)
+        }
+    }
+}
+
+fn participant_relay_address(address: Multiaddr, peer: PeerId) -> Option<Multiaddr> {
+    use libp2p::multiaddr::Protocol;
+    if address.iter().any(|part| match part {
+        Protocol::P2pCircuit | Protocol::Memory(_) => true,
+        Protocol::Ip4(ip) => ip.is_unspecified() || ip.is_loopback() || ip.is_multicast(),
+        Protocol::Ip6(ip) => ip.is_unspecified() || ip.is_loopback() || ip.is_multicast(),
+        _ => false,
+    }) {
+        return None;
+    }
+    let mut address = address_for_peer(address, peer)?;
+    address.push(Protocol::P2pCircuit);
+    Some(address)
+}
+
 fn add_cached_peers_to_swarm(swarm: &mut libp2p::Swarm<Behaviour>, cache: &PeerCacheFile) -> usize {
     let mut added = 0usize;
     for (peer_raw, addresses) in &cache.peers {
@@ -275,10 +314,10 @@ fn add_cached_peers_to_swarm(swarm: &mut libp2p::Swarm<Behaviour>, cache: &PeerC
                 .behaviour_mut()
                 .file_transfer
                 .add_address(&peer, addr.clone());
-            let mut full = addr;
-            full.push(libp2p::multiaddr::Protocol::P2p(peer.clone()));
-            let _ = swarm.dial(full);
-            added += 1;
+            if let Some(full) = address_for_peer(addr, peer) {
+                let _ = swarm.dial(full);
+                added += 1;
+            }
         }
     }
     added
@@ -302,6 +341,7 @@ enum WireEvent {
     },
     Chat(ChatMessage),
     RoomCreate(RoomInfo),
+    MembershipSnapshot(MembershipSnapshotPayload),
     RoomClose {
         room_id: String,
         owner: String,
@@ -315,6 +355,7 @@ fn wire_event_claimed_peer_id(event: &WireEvent) -> Option<&str> {
         | WireEvent::NickClaim { peer_id, .. } => Some(peer_id.as_str()),
         WireEvent::Chat(message) => message.peer_id.as_deref(),
         WireEvent::RoomCreate(room) => room.owner.as_deref(),
+        WireEvent::MembershipSnapshot(snapshot) => Some(snapshot.peer_id.as_str()),
         WireEvent::RoomClose { owner, .. } => Some(owner.as_str()),
     }
 }
@@ -340,6 +381,7 @@ fn wire_event_is_well_formed(event: &WireEvent) -> bool {
             peer_id.parse::<PeerId>().is_ok() && validate_nick(nick).is_ok()
         }
         WireEvent::Goodbye { peer_id } => peer_id.parse::<PeerId>().is_ok(),
+        WireEvent::MembershipSnapshot(snapshot) => snapshot.is_well_formed(),
         WireEvent::NickClaim {
             peer_id,
             nick,
@@ -647,6 +689,11 @@ enum NetworkCommand {
     },
     CreateRoom {
         room: RoomInfo,
+        reply: oneshot::Sender<Result<RoomInfo, String>>,
+    },
+    EnterRoom {
+        room_id: String,
+        reply: oneshot::Sender<Result<(), String>>,
     },
     AddBootstrap {
         address: String,
@@ -1003,10 +1050,30 @@ async fn create_room(title: String, state: State<'_, AppState>) -> Result<RoomIn
         .map_err(|_| "Błąd blokady stanu")?
         .clone()
         .ok_or("Brak połączenia P2P")?;
-    tx.send(NetworkCommand::CreateRoom { room: room.clone() })
+    let (reply, response) = oneshot::channel();
+    tx.send(NetworkCommand::CreateRoom { room, reply })
         .await
         .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
-    Ok(room)
+    response
+        .await
+        .map_err(|_| "Room creation interrupted.".to_string())?
+}
+
+#[tauri::command]
+async fn enter_room(room_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "State lock failed.")?
+        .clone()
+        .ok_or("No P2P connection.")?;
+    let (reply, response) = oneshot::channel();
+    tx.send(NetworkCommand::EnterRoom { room_id, reply })
+        .await
+        .map_err(|_| "P2P network stopped.".to_string())?;
+    response
+        .await
+        .map_err(|_| "Room switch interrupted.".to_string())?
 }
 
 #[tauri::command]
@@ -1285,6 +1352,35 @@ fn publish(swarm: &mut libp2p::Swarm<Behaviour>, topic: &gossipsub::IdentTopic, 
     }
 }
 
+fn apply_membership_effects(
+    app: &AppHandle,
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    topic: &gossipsub::IdentTopic,
+    rooms: &mut HashMap<String, RoomInfo>,
+    effects: ApplicationMembershipEffects,
+) {
+    if let Some(snapshot) = effects.publish {
+        publish(swarm, topic, &WireEvent::MembershipSnapshot(snapshot));
+    }
+    for count in effects.counts {
+        if let Some(room) = rooms.get_mut(&count.room_id) {
+            room.users = Some(count.users);
+        }
+        let _ = app.emit("room-user-count", count);
+    }
+}
+
+fn membership_gossip_config() -> Result<gossipsub::Config, String> {
+    // The default source + sequence-number ID lets repeated signed heartbeats
+    // travel through the mesh. Content-only IDs suppress unchanged presence,
+    // room announcements and resync snapshots until the duplicate cache expires.
+    gossipsub::ConfigBuilder::default()
+        .heartbeat_interval(Duration::from_secs(2))
+        .validation_mode(gossipsub::ValidationMode::Strict)
+        .build()
+        .map_err(|error| error.to_string())
+}
+
 fn publish_presence(
     swarm: &mut libp2p::Swarm<Behaviour>,
     topic: &gossipsub::IdentTopic,
@@ -1403,7 +1499,18 @@ fn emit_status(
         dht_peers,
         bootstrap_count,
         nat: nat.to_string(),
-        listen_addresses: listen_addresses.to_vec(),
+        listen_addresses: {
+            let mut addresses = listen_addresses.to_vec();
+            for address in swarm.external_addresses() {
+                if let Some(address) = address_for_peer(address.clone(), *swarm.local_peer_id()) {
+                    let address = address.to_string();
+                    if !addresses.contains(&address) {
+                        addresses.push(address);
+                    }
+                }
+            }
+            addresses
+        },
         detail: detail.into(),
     };
     let _ = app.emit("network-status", status);
@@ -1499,17 +1606,7 @@ async fn network_task(
         .map_err(|e| e.to_string())?
         .with_behaviour(|key, relay_client| {
             let local_peer = key.public().to_peer_id();
-            let message_id_fn = |message: &gossipsub::Message| {
-                let mut h = DefaultHasher::new();
-                message.data.hash(&mut h);
-                gossipsub::MessageId::from(h.finish().to_string())
-            };
-            let gossipsub_config = gossipsub::ConfigBuilder::default()
-                .heartbeat_interval(Duration::from_secs(2))
-                .validation_mode(gossipsub::ValidationMode::Strict)
-                .message_id_fn(message_id_fn)
-                .build()
-                .map_err(std::io::Error::other)?;
+            let gossipsub_config = membership_gossip_config().map_err(std::io::Error::other)?;
             let gossipsub = gossipsub::Behaviour::new(
                 gossipsub::MessageAuthenticity::Signed(key.clone()),
                 gossipsub_config,
@@ -1645,6 +1742,9 @@ async fn network_task(
     let mut peers: HashMap<PeerId, PeerPresence> = HashMap::new();
     let mut rooms: HashMap<String, RoomInfo> = HashMap::new();
     let mut owned_rooms: HashMap<String, RoomInfo> = HashMap::new();
+    let mut membership = RoomMembershipProductionBridge::new(local_peer);
+    let mut membership_seen: HashMap<PeerId, Instant> = HashMap::new();
+    let mut participant_relays = HashMap::new();
     let mut listen_addresses: Vec<String> = Vec::new();
     let mut nat_status = "unknown".to_string();
 
@@ -1681,6 +1781,10 @@ async fn network_task(
             _ = heartbeat.tick() => {
                 publish_presence(&mut swarm, &world, &peer_id, &nick);
                 publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical);
+                for room in owned_rooms.values() {
+                    publish(&mut swarm, &world, &WireEvent::RoomCreate(room.clone()));
+                }
+                apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.heartbeat());
                 swarm.behaviour_mut().kad.get_record(nick_record_key(&canonical));
             }
             _ = discovery.tick() => {
@@ -1711,18 +1815,29 @@ async fn network_task(
                 }
             }
             _ = cleanup.tick() => {
+                let expired_memberships: Vec<PeerId> = membership_seen.iter()
+                    .filter(|(_, seen)| seen.elapsed() > Duration::from_secs(PRESENCE_TTL_SECS))
+                    .map(|(peer, _)| *peer).collect();
+                for expired in expired_memberships {
+                    membership_seen.remove(&expired);
+                    apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.presence_expired(&expired));
+                }
                 let stale: Vec<PeerId> = peers.iter()
                     .filter(|(_, p)| p.last_seen.elapsed() > Duration::from_secs(PRESENCE_TTL_SECS))
                     .map(|(id, _)| id.to_owned())
                     .collect();
                 for id in stale {
                     peers.remove(&id);
+                    apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.presence_expired(&id));
                     let _ = app.emit("peer-offline", serde_json::json!({"peer_id": id.to_string()}));
                     let closed: Vec<String> = rooms.values()
                         .filter(|room| room.owner.as_deref() == Some(&id.to_string()))
                         .map(|room| room.id.clone())
                         .collect();
                     for room_id in closed {
+                        if let Ok(effects) = membership.room_closed(&room_id) {
+                            apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
+                        }
                         rooms.remove(&room_id);
                         let _ = app.emit("room-closed", serde_json::json!({"room_id": room_id}));
                     }
@@ -1792,20 +1907,40 @@ async fn network_task(
                         let _ = app.emit("chat-message", msg.clone());
                         publish(&mut swarm, &world, &WireEvent::Chat(msg));
                     }
-                    NetworkCommand::CreateRoom { mut room } => {
+                    NetworkCommand::CreateRoom { mut room, reply } => {
                         room.owner = Some(peer_id.clone());
-                        match room_create_admission(&rooms, &room) {
-                            Ok(()) => {
+                        let result = room_create_admission(&rooms, &room)
+                            .map_err(str::to_string)
+                            .and_then(|()| membership.create_and_enter_local_room(&room.id)
+                                .map_err(|error| format!("Room creation rejected: {error:?}")));
+                        match result {
+                            Ok(effects) => {
+                                room.users = Some(membership.total_count(&room.id));
                                 rooms.insert(room.id.clone(), room.clone());
                                 owned_rooms.insert(room.id.clone(), room.clone());
                                 let _ = app.emit("room-created", room.clone());
-                                publish(&mut swarm, &world, &WireEvent::RoomCreate(room));
+                                publish(&mut swarm, &world, &WireEvent::RoomCreate(room.clone()));
+                                apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
+                                let _ = reply.send(Ok(room));
                             }
                             Err(reason) => {
-                                let _ = app.emit(
-                                    "network-warning",
-                                    format!("Room creation rejected: {reason}"),
-                                );
+                                let _ = reply.send(Err(reason));
+                            }
+                        }
+                    }
+                    NetworkCommand::EnterRoom { room_id, reply } => {
+                        let result = if room_id == "world" {
+                            membership.enter_world()
+                        } else {
+                            membership.enter_room(&room_id)
+                        };
+                        match result {
+                            Ok(effects) => {
+                                apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
+                                let _ = reply.send(Ok(()));
+                            }
+                            Err(error) => {
+                                let _ = reply.send(Err(format!("Room switch rejected: {error:?}")));
                             }
                         }
                     }
@@ -1959,14 +2094,18 @@ async fn network_task(
                             emit_transfer(&app, &file_view_incoming(&id, &transfer, "cancelled", None, Some("Rozłączono z siecią".into())));
                         }
                         save_peer_cache(&peer_cache);
-                        tokio::time::sleep(Duration::from_millis(120)).await;
+                        // Poll the swarm to flush goodbye/room-close frames before shutdown.
+                        let _ = tokio::time::timeout(Duration::from_millis(250), async {
+                            loop { swarm.select_next_some().await; }
+                        }).await;
                         break 'network;
                     }
                 }
             }
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { address, .. } => {
-                    let printable = format!("{address}/p2p/{peer_id}");
+                    let Some(address) = address_for_peer(address, local_peer) else { continue; };
+                    let printable = address.to_string();
                     if !listen_addresses.contains(&printable) {
                         listen_addresses.push(printable);
                     }
@@ -1984,7 +2123,12 @@ async fn network_task(
                     emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączono z peerem");
                 }
                 SwarmEvent::ConnectionClosed { peer_id: remote, num_established, .. } => {
+                    apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.connection_closed(&remote, num_established));
                     if num_established == 0 {
+                        membership_seen.remove(&remote);
+                        if let Some(listener) = participant_relays.remove(&remote) {
+                            swarm.remove_listener(listener);
+                        }
                         swarm.behaviour_mut().gossipsub.remove_explicit_peer(&remote);
                         if mark_bootstrap_disconnected(
                             &mut bootstrap_targets,
@@ -2082,6 +2226,11 @@ async fn network_task(
                         swarm.behaviour_mut().kad.add_address(&id, addr.clone());
                         swarm.behaviour_mut().file_transfer.add_address(&id, addr.clone());
                         remember_peer_address(&mut peer_cache, id, &addr);
+                        if !swarm.is_connected(&id) {
+                            if let Some(address) = address_for_peer(addr, id) {
+                                let _ = swarm.dial(address);
+                            }
+                        }
                     }
                     publish_presence(&mut swarm, &world, &peer_id, &nick);
                 }
@@ -2093,11 +2242,33 @@ async fn network_task(
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id: remote, info, .. })) => {
+                    let offers_relay = info.protocol_version == "/konofix/4.0"
+                        && info.protocols.iter().any(|protocol| protocol.as_ref() == "/libp2p/circuit/relay/0.2.0/hop");
                     for addr in info.listen_addrs {
                         swarm.behaviour_mut().kad.add_address(&remote, addr.clone());
                         swarm.behaviour_mut().file_transfer.add_address(&remote, addr.clone());
                         remember_peer_address(&mut peer_cache, remote.clone(), &addr);
+                        if offers_relay
+                            && participant_relays.len() < MAX_PARTICIPANT_RELAYS
+                            && !participant_relays.contains_key(&remote)
+                            && !relay_bootstrap_peers.contains(&remote)
+                        {
+                            if let Some(address) = participant_relay_address(addr, remote) {
+                                if let Ok(listener) = swarm.listen_on(address) {
+                                    participant_relays.insert(remote, listener);
+                                }
+                            }
+                        }
                     }
+                }
+                SwarmEvent::ListenerClosed { listener_id, .. } => {
+                    participant_relays.retain(|_, listener| *listener != listener_id);
+                }
+                SwarmEvent::ExpiredListenAddr { address, .. } => {
+                    if let Some(address) = address_for_peer(address, local_peer) {
+                        listen_addresses.retain(|current| current != &address.to_string());
+                    }
+                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "P2P address expired");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Autonat(event)) => {
                     if let autonat::Event::StatusChanged { old: _, new } = event {
@@ -2172,6 +2343,8 @@ async fn network_task(
                                 }
                             }
                             WireEvent::Goodbye { peer_id: remote_id } => {
+                                membership_seen.remove(authenticated_source);
+                                apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.authenticated_goodbye(authenticated_source));
                                 if let Ok(pid) = remote_id.parse::<PeerId>() {
                                     peers.remove(&pid);
                                 }
@@ -2180,6 +2353,9 @@ async fn network_task(
                                     .filter(|r| r.owner.as_deref() == Some(&remote_id))
                                     .map(|r| r.id.clone()).collect();
                                 for room_id in closed {
+                                    if let Ok(effects) = membership.room_closed(&room_id) {
+                                        apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
+                                    }
                                     rooms.remove(&room_id);
                                     let _ = app.emit("room-closed", serde_json::json!({"room_id": room_id}));
                                 }
@@ -2195,10 +2371,22 @@ async fn network_task(
                                     let _ = app.emit("chat-message", msg);
                                 }
                             }
-                            WireEvent::RoomCreate(room) => {
+                            WireEvent::MembershipSnapshot(snapshot) => {
+                                if let Ok(effects) = membership.authenticated_snapshot(snapshot, authenticated_source) {
+                                    membership_seen.insert(*authenticated_source, Instant::now());
+                                    apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
+                                }
+                            }
+                            WireEvent::RoomCreate(mut room) => {
                                 if room.owner.as_deref() != Some(&peer_id) {
                                     match room_create_admission(&rooms, &room) {
                                         Ok(()) => {
+                                            if membership.announce_room(&room.id).is_err() {
+                                                continue;
+                                            }
+                                            // Counts are derived from authenticated membership,
+                                            // never from the room owner's advertised number.
+                                            room.users = Some(membership.total_count(&room.id));
                                             rooms.insert(room.id.clone(), room.clone());
                                             let _ = app.emit("room-created", room);
                                         }
@@ -2215,6 +2403,9 @@ async fn network_task(
                             }
                             WireEvent::RoomClose { room_id, owner } => {
                                 if rooms.get(&room_id).and_then(|r| r.owner.as_deref()) == Some(owner.as_str()) {
+                                    if let Ok(effects) = membership.room_closed(&room_id) {
+                                        apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
+                                    }
                                     rooms.remove(&room_id);
                                     let _ = app.emit("room-closed", serde_json::json!({"room_id": room_id}));
                                 }
@@ -2625,6 +2816,127 @@ mod bootstrap_failover_tests {
         assert_eq!(target.failures, 1);
         assert!(!target.should_attempt(now + Duration::from_secs(2)));
         assert!(target.should_attempt(now + Duration::from_secs(3)));
+    }
+}
+
+#[cfg(test)]
+mod participant_network_tests {
+    use super::*;
+
+    #[test]
+    fn remembered_addresses_bind_one_terminal_peer_identity() {
+        let peer = PeerId::random();
+        let other = PeerId::random();
+        let base: Multiaddr = "/ip4/192.168.1.5/tcp/45555".parse().unwrap();
+        let full = address_for_peer(base.clone(), peer).unwrap();
+        assert_eq!(address_for_peer(full.clone(), peer), Some(full.clone()));
+        assert!(address_for_peer(full, other).is_none());
+        let relay = participant_relay_address(base, peer).unwrap();
+        assert!(participant_relay_address(relay, other).is_none());
+        for address in [
+            "/ip4/127.0.0.1/tcp/1",
+            "/ip4/0.0.0.0/tcp/1",
+            "/ip6/::1/tcp/1",
+        ] {
+            assert!(participant_relay_address(address.parse().unwrap(), peer).is_none());
+        }
+    }
+
+    #[test]
+    fn membership_wire_roundtrip_enforces_source_and_frame_shape() {
+        let peer = PeerId::random();
+        let event = WireEvent::MembershipSnapshot(MembershipSnapshotPayload {
+            peer_id: peer.to_string(),
+            revision: 1,
+            rooms: vec!["alpha".into()],
+        });
+        let encoded = serde_json::to_vec(&event).unwrap();
+        let decoded: WireEvent = serde_json::from_slice(&encoded).unwrap();
+        assert!(wire_event_matches_source(&decoded, &peer));
+        assert!(!wire_event_matches_source(&decoded, &PeerId::random()));
+        assert!(wire_event_is_well_formed(&decoded));
+        let malformed = WireEvent::MembershipSnapshot(MembershipSnapshotPayload {
+            peer_id: peer.to_string(),
+            revision: 0,
+            rooms: vec!["alpha".into()],
+        });
+        assert!(!wire_event_is_well_formed(&malformed));
+    }
+
+    fn gossip_peer() -> libp2p::Swarm<gossipsub::Behaviour> {
+        SwarmBuilder::with_new_identity()
+            .with_tokio()
+            .with_tcp(
+                tcp::Config::default(),
+                noise::Config::new,
+                yamux::Config::default,
+            )
+            .unwrap()
+            .with_behaviour(|key| {
+                gossipsub::Behaviour::new(
+                    gossipsub::MessageAuthenticity::Signed(key.clone()),
+                    membership_gossip_config().unwrap(),
+                )
+                .unwrap()
+            })
+            .unwrap()
+            .build()
+    }
+
+    #[tokio::test]
+    async fn identical_signed_resyncs_cross_a_real_peer_connection() {
+        let mut sender = gossip_peer();
+        let mut receiver = gossip_peer();
+        let source = *sender.local_peer_id();
+        let topic = gossipsub::IdentTopic::new(WORLD_TOPIC);
+        sender.behaviour_mut().subscribe(&topic).unwrap();
+        receiver.behaviour_mut().subscribe(&topic).unwrap();
+        sender
+            .behaviour_mut()
+            .add_explicit_peer(receiver.local_peer_id());
+        receiver.behaviour_mut().add_explicit_peer(&source);
+        sender
+            .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+            .unwrap();
+        let mut membership = RoomMembershipProductionBridge::new(*receiver.local_peer_id());
+        membership.announce_room("alpha").unwrap();
+        let payload =
+            serde_json::to_vec(&WireEvent::MembershipSnapshot(MembershipSnapshotPayload {
+                peer_id: source.to_string(),
+                revision: 7,
+                rooms: vec!["alpha".into()],
+            }))
+            .unwrap();
+        let mut received = 0;
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                tokio::select! {
+                    event = sender.select_next_some() => {
+                        if let SwarmEvent::NewListenAddr { address, .. } = event {
+                            receiver.dial(address_for_peer(address, source).unwrap()).unwrap();
+                        }
+                    }
+                    event = receiver.select_next_some() => {
+                        if let SwarmEvent::Behaviour(gossipsub::Event::Message { message, .. }) = event {
+                            assert_eq!(message.source, Some(source));
+                            let event: WireEvent = serde_json::from_slice(&message.data).unwrap();
+                            assert!(wire_event_matches_source(&event, &source));
+                            assert!(wire_event_is_well_formed(&event));
+                            let WireEvent::MembershipSnapshot(snapshot) = event else { panic!("wrong event") };
+                            let effects = membership.authenticated_snapshot(snapshot, &source).unwrap();
+                            assert_eq!(effects.counts.len(), usize::from(received == 0));
+                            assert_eq!(membership.total_count("alpha"), 1);
+                            received += 1;
+                            if received == 2 { break; }
+                        }
+                    }
+                    _ = tick.tick() => {
+                        let _ = sender.behaviour_mut().publish(topic.clone(), payload.clone());
+                    }
+                }
+            }
+        }).await.expect("fresh signed resyncs must not be content-deduplicated");
     }
 }
 
@@ -3053,6 +3365,7 @@ pub fn run() {
             start_network,
             send_message,
             create_room,
+            enter_room,
             add_bootstrap,
             refresh_discovery,
             offer_file,

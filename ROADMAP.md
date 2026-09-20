@@ -184,16 +184,18 @@ The existing `v0.4.2-test1` pre-release is a controlled preview for gathering re
 
 ## Global Beta readiness — many-computer public network
 
+Product decision, 2026-09-20: every connected desktop is a participant node; dedicated servers are optional. The existing topology/discovery/failover deliverables below now qualify participant-operated connectivity instead of requiring a centrally provisioned fleet. This changes the deployment model, not the 67-item denominator, verified count or real-network evidence requirement. See `docs/GLOBAL_BETA.md`.
+
 This user-approved many-computer beta scope is part of the authoritative active readiness denominator. It expanded the measured scope from 59 to 67 tasks. The reviewed public-Node admission-limit gate is now verified after exact-head Windows and Linux CI, bringing the active scope to 55 verified completions; the seven remaining Global Beta gates stay open until their own acceptance evidence exists.
 
-- [ ] at least three stable public/community Konofix Nodes across at least two independent providers/regions, each with persistent Peer ID, TCP + QUIC, Relay and monitored health
-- [ ] clients ship a default multi-node bootstrap pool with at least two independent seed identities and automatic fallback; manual custom bootstraps remain supported
+- [ ] at least three participant-operated Konofix nodes across at least two independent networks, with verified TCP + QUIC/relay reachability and continuity during the test; dedicated servers are optional
+- [ ] clients join through LAN discovery, remembered or invited participants and automatically recover through at least two independent reachable contact/relay identities; optional operator seeds and manual contacts remain supported
 - [x] public Nodes enforce reviewed connection ceilings and per-peer/pending admission limits, with exact-build regression tests
 - [ ] repeatable concurrent admission harness proves 50, 100 and 250 exact-build Netprobe clients without Node restart/crash and with an agreed success threshold
 - [ ] Rooms 2.0 production membership/count wiring is complete for many simultaneous peers, including disconnect/expiry/resync
 - [ ] multi-user soak with at least 20 real clients across at least five independent networks and at least three countries for at least 60 minutes
-- [ ] public-node failover drill proves clients recover discovery/chat/rooms after losing one seed/relay node
-- [ ] exact-build Global Beta prerelease is published with rollback/tester handoff, stable bootstrap pool and evidence package
+- [ ] participant-node failover drill proves clients recover discovery/chat/rooms after losing one contact/relay participant
+- [ ] exact-build Global Beta prerelease is published with rollback/tester handoff, participant-joining instructions and evidence package
 
 The Global Beta branch has exact-head Windows and Linux CI evidence for the reviewed Node admission ceilings and per-peer/pending limits, so that implementation gate is complete. The schema-v2 concurrent-load tooling can bind successful probes to one exact Netprobe build and prove stable pre/post Node health continuity, but the capacity gate remains unchecked until real 50/100/250 runs and their required public-infrastructure evidence pass.
 

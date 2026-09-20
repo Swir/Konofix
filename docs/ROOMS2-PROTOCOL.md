@@ -1,6 +1,6 @@
 # Rooms 2.0 protocol compatibility and upgrade behavior
 
-Status: **unreleased 0.5.0 design/implementation contract**. This document describes the verified Rooms 2.0 membership components already present in the repository and the compatibility rules the production `WireEvent` integration must preserve. It does **not** claim that Rooms 2.0 is user-visible end to end yet, and it does not change the active `0.4.2 — Real Internet Test` milestone.
+Status: **unreleased production integration under qualification**. The development branch now connects the verified membership components to the desktop `WireEvent`, backend commands and count events. Exact-head CI and live application qualification remain required; this does not close the active `0.4.2 — Real Internet Test` milestone.
 
 ## Scope
 
@@ -55,6 +55,8 @@ A transient close while another connection remains established must not decremen
 If the local peer is inside a room that closes, the membership runtime produces a monotonic leave snapshot for republishing so other capable peers can converge.
 
 ## Mixed-version behavior
+
+Use the same candidate build on all beta participants. The desktop now uses GossipSub's default signed source/sequence message IDs; older desktop builds used content-derived IDs, which can suppress identical fresh presence/resync frames. Mixed-build delivery and complete room counts are not qualified by this change.
 
 The 0.5.0 production wire change must be additive to the existing signed GossipSub event family. Existing 0.4.x presence, chat, nickname, room-create, and room-close messages remain valid and retain their current meaning.
 

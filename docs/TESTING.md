@@ -10,7 +10,13 @@ On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release ga
 
 Before Internet testing, validate two computers on the same LAN: different nicknames, mDNS discovery, `#WORLD` both ways, a temporary room, small and 100+ MB file transfers, cancellation, and room cleanup after its host leaves. Do not proceed if this baseline fails.
 
-## 3. Public Konofix Node
+## 3. Participant-operated Internet baseline
+
+Every connected desktop application is a node. A separate Konofix Node service is optional. First verify at least three same-build desktop participants across independent networks: one shares a reachable address from Network settings, the others add it, and the applications discover additional peers. Record which addresses work directly, through a port mapping, or through another participant's relay. Do not treat a private LAN address as an Internet contact.
+
+Create and switch between multiple rooms, return to WORLD, verify membership counts on all participants, add a late participant, and close the room host. Repeat after disconnect/reconnect and after losing one participant used for discovery or relay. All participants must use the same candidate build; older clients do not publish Rooms 2.0 membership and do not establish accurate all-participant counts. Qualify the actual TCP/QUIC/relay/NAT paths and file SHA-256 results, then complete the many-user scope in `GLOBAL_BETA.md`.
+
+### Optional public Konofix Node
 
 Prefer the fail-closed deployment preflight included in the extracted Windows test archive. First validate the intended public host and persistent state without launching:
 

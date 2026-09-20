@@ -15,6 +15,8 @@ This is the detailed implementation plan for the `0.5.0 — Rooms 2.0` scope alr
 
 ## Stage 2 — network transport and live runtime wiring
 
+The current development package implements the live-loop and command/UI wiring below, with a real TCP GossipSub resync test and frontend acknowledgement/concurrency regressions. Checkboxes remain open pending exact-head CI and the application evidence required for qualification; source wiring is not being counted as a completed Global Beta gate.
+
 The verified runtime now also has a tested `RoomMembershipProductionBridge` that maps every relevant network-loop lifecycle input to one `ApplicationMembershipEffects` contract. Production-bridge regressions additionally prove that a membership snapshot received before its room announcement does not poison revision state: after the room becomes known, the same authenticated revision can be applied exactly once. Three-peer switch/disconnect/room-close convergence is also covered before the live loop is changed. These tests reduce integration risk but do **not** close any production-loop item below.
 
 - [x] bounded membership transport frame and deterministic codec,

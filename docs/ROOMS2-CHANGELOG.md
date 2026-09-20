@@ -2,7 +2,15 @@
 
 This scoped changelog records unreleased Rooms 2.0 work separately from stable `0.4.2` release notes. It does not change the active Real Internet Test percentage or stable-release readiness.
 
-## Stage 2.6 — production ordering safety
+## Live desktop integration — pending exact-head qualification
+
+- connected the existing membership bridge to signed `WireEvent::MembershipSnapshot`, backend create/enter/WORLD commands, heartbeat publication, authenticated reception, final disconnect, goodbye, expiry and room-close cleanup;
+- emit membership-derived counts to the room list/header and ignore owner-advertised counts; acknowledge backend acceptance before the UI switches rooms or reports creation;
+- periodically reannounce owned rooms so late arrivals can recover, and use signed source/sequence GossipSub message IDs so fresh identical heartbeats are not content-deduplicated;
+- added real TCP GossipSub resync coverage and UI rejection/concurrency/session regression checks; end-to-end public-network qualification remains pending;
+- preserve the authoritative 55/67 (82.1%) until acceptance evidence closes the production gate.
+
+## Stage 2.6 — production ordering safety (historical)
 
 - centralized the production membership payload guard so canonical Peer ID text, authenticated-source matching, nonzero revisions, bounded room membership, temporary-room grammar and duplicate rejection are checked at one application boundary before live-loop integration,
 - added recovery coverage for membership snapshots that arrive before their room announcement, proving an unknown-room rejection does not consume the revision and the exact same authenticated revision can apply once the room is known,

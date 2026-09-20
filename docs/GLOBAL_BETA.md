@@ -4,11 +4,15 @@ Global Beta means a public, many-computer network. A two-PC test is only the sma
 
 ## Target topology
 
-A Global Beta candidate should use at least three stable public/community Konofix Nodes across at least two independent providers or regions. Each Node needs a persistent Peer ID, public TCP and UDP/QUIC reachability, Circuit Relay, health telemetry and restart supervision.
+The product decision of 2026-09-20 is **participant-operated P2P**: every connected desktop application is a network node. The desktop includes discovery, TCP/QUIC, signed GossipSub, a Circuit Relay service and relay client. A separately installed `konofix-node` or a company-operated server fleet is optional, not a prerequisite for using the chat.
 
-Clients should ship a default pool with at least two independent bootstrap identities and keep manual custom bootstrap support. One public Node is not enough because it creates a single point of failure.
+The first participant in an isolated network cannot discover arbitrary Internet computers without any contact information. In a LAN, mDNS discovers and dials other applications automatically. For a first Internet connection, an online participant shares a reachable address from Network settings. The recipient adds that address; Identify/Kademlia and the local peer cache then help discover and reconnect to other participants. Private LAN addresses are not Internet invitations. Symmetric NAT/CGNAT may require a reachable participant providing relay or appropriate port mapping; this is a network reachability constraint, not a central chat-server requirement.
 
-The desktop now has the runtime side of that design: a build-owned `src-tauri/bootstrap-pool.json` is merged ahead of environment and user-provided seeds, duplicates are removed without destroying priority, the total pool is bounded, multiple relay candidates are registered, and failed/lost bootstrap Peer IDs are re-dialed automatically with bounded exponential backoff. The committed pool intentionally contains no addresses until real long-lived public Nodes with stable Peer IDs are provisioned and verified; placeholder/fake infrastructure is never shipped.
+Qualification must exercise at least three participant nodes across at least two independent networks, with at least two reachable contact/relay paths, then demonstrate recovery when one leaves. Participants may keep the app open or optionally run the headless Node. Ephemeral desktop identities and addresses are valid for the running session; after all participants leave, fresh invitations may be necessary.
+
+The optional build-owned `src-tauri/bootstrap-pool.json` is merged ahead of environment and user-provided contacts. Duplicates are removed without destroying priority, the total pool is bounded, and failed/lost bootstrap Peer IDs are retried with bounded exponential backoff. The desktop also selects up to three relay candidates from connected Konofix participants advertising relay support through Identify, without requiring them to be configured bootstrap servers. Failed listeners and disconnected candidates are released for later rediscovery. The committed default pool remains empty; placeholder infrastructure is never shipped.
+
+Rooms 2.0 snapshots are now wired through signed desktop GossipSub and backend-acknowledged create/switch/WORLD commands. Local count changes, remote snapshots, final disconnect, goodbye, snapshot/presence expiry and room closure use the verified membership bridge. Owned rooms and membership snapshots are republished every heartbeat. Gossip message IDs use the signed source and sequence number, so identical fresh heartbeats/resyncs are delivered rather than suppressed by a content-only duplicate cache. These implementation changes require exact-head CI and live application evidence before earning readiness credit.
 
 ## Capacity and abuse boundary
 
@@ -50,16 +54,16 @@ A load-harness PASS proves transport/admission concurrency only. It does not pro
 
 Before the first real Global Beta prerelease:
 
-1. Run at least three public Nodes across at least two independent providers/regions.
-2. Verify the client default bootstrap pool and failover instead of requiring every tester to paste one address manually.
+1. Run at least three participant nodes across at least two independent networks; a dedicated server is not required.
+2. Verify LAN discovery, first Internet contact, remembered-peer discovery and recovery through at least two independent reachable participants. Optional operator seeds must not be a single point of failure.
 3. Pass 50, 100 and 250 concurrent exact-build Netprobe admission runs with stable pre/post Node health evidence proving no Node crash/restart.
 4. Complete Rooms 2.0 production membership and count wiring.
 5. Run at least 20 real clients across at least five independent networks and at least three countries for at least 60 minutes.
 6. Exercise WORLD, multiple rooms, reconnect, bidirectional file transfer and SHA-256 validation.
-7. Kill or isolate one public seed/relay Node and prove clients recover through the remaining pool.
+7. Close or isolate one contact/relay participant and prove clients recover through the remaining participants.
 8. Re-run the existing TCP, QUIC, Relay, DCUtR and CGNAT evidence gates on the exact beta candidate.
-9. Publish only the exact verified build with tester handoff, rollback notes and the stable bootstrap pool.
+9. Publish only the exact verified build with tester handoff, rollback notes, participant-joining instructions and the evidence package.
 
 ## Infrastructure blocker
 
-Code can prepare the fleet, limits, load tools and failover logic, but a truly global beta also requires real public hosts. GitHub Actions runners are not a substitute for long-lived inbound public bootstrap/relay infrastructure. Until at least the required public Nodes exist and real multi-user evidence passes, Global Beta remains not release-ready.
+The external blocker is actual participant reachability and multi-network evidence, not purchasing servers. Local tests and GitHub Actions cannot establish that twenty real users across five networks and three countries can exchange messages, switch rooms, transfer files and recover after a participant leaves. The existing headless-Node health/load tools remain available for optional operators; their PASS results alone do not qualify the desktop participant network. Global Beta readiness remains open until the real participant tests pass.

@@ -31,10 +31,11 @@ This is the detailed implementation plan for the `0.5.0 — Rooms 2.0` scope alr
 
 ## Stage 3 — accurate room-count UX
 
+- [x] prepare the frontend `room-user-count` consumer, temporary-room badges and active-room header rendering while keeping WORLD on global presence,
 - [ ] emit verified `room-user-count` deltas from backend runtime effects,
-- [ ] update room-list counts without falling back to global online presence,
-- [ ] show the active room's synchronized count in the chat header,
-- [ ] keep `#WORLD` presence semantics separate from temporary-room membership,
+- [ ] update room-list counts end-to-end without falling back to global online presence,
+- [ ] show the active room's synchronized count end-to-end in the chat header,
+- [ ] keep `#WORLD` presence semantics separate from temporary-room membership end-to-end,
 - [ ] reset membership-derived UI state on disconnect/reconnect.
 
 ## Stage 4 — verification and promotion

@@ -112,7 +112,26 @@ try {
   assert.notEqual(result.status, 0, 'source manifest overwrite must fail');
   assert.match(result.stderr, /must not overwrite/);
 
-  console.log('PASS - Global Beta evidence sealer hashes package files without inventing readiness and fails closed on tamper/path attacks.');
+  const existingOutput = write(temp, 'existing-sealed.json', 'sentinel\n');
+  result = run([sourcePath, '--output', existingOutput], temp);
+  assert.notEqual(result.status, 0, 'pre-existing output must not be overwritten');
+  assert.match(result.stderr, /must not already exist/);
+  assert.equal(fs.readFileSync(existingOutput, 'utf8'), 'sentinel\n', 'pre-existing output bytes must remain unchanged');
+
+  const outsideOutputRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-sealer-outside-'));
+  try {
+    const linkedParent = path.join(temp, 'linked-output');
+    fs.symlinkSync(outsideOutputRoot, linkedParent, process.platform === 'win32' ? 'junction' : 'dir');
+    const escapedOutput = path.join(linkedParent, 'sealed.json');
+    result = run([sourcePath, '--output', escapedOutput], temp);
+    assert.notEqual(result.status, 0, 'symlinked output parent escaping the package must fail');
+    assert.match(result.stderr, /resolves outside the evidence package directory/);
+    assert.equal(fs.existsSync(path.join(outsideOutputRoot, 'sealed.json')), false, 'outside output must not be created');
+  } finally {
+    fs.rmSync(outsideOutputRoot, { recursive: true, force: true });
+  }
+
+  console.log('PASS - Global Beta evidence sealer hashes package files without inventing readiness and fails closed on tamper/path/output attacks.');
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

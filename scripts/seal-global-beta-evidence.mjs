@@ -39,6 +39,28 @@ function resolveEvidencePath(root, raw, label) {
   return realTarget;
 }
 
+function resolveOutputPath(root, rawOutput) {
+  const lexical = path.resolve(rawOutput);
+  if (!isInside(root, lexical)) fail('--output must stay inside the evidence package directory.');
+
+  const realRoot = fs.realpathSync(root);
+  const parent = path.dirname(lexical);
+  if (!fs.existsSync(parent)) fail('--output parent directory must already exist.');
+  const realParent = fs.realpathSync(parent);
+  if (!isInside(realRoot, realParent)) fail('--output resolves outside the evidence package directory.');
+
+  const target = path.join(realParent, path.basename(lexical));
+  let exists = false;
+  try {
+    fs.lstatSync(target);
+    exists = true;
+  } catch (error) {
+    if (!(error instanceof Error) || error.code !== 'ENOENT') throw error;
+  }
+  if (exists) fail('--output must not already exist; choose a new sealed-manifest path.');
+  return target;
+}
+
 function readExactFile(filePath, maxBytes, label) {
   const descriptor = fs.openSync(filePath, 'r');
   try {
@@ -146,6 +168,7 @@ function usage() {
     '',
     'The sealer only computes/verifies package file SHA-256 values. It never changes PASS/PENDING status,',
     'participants, clients, timestamps, observed transfer digests, or release-readiness claims.',
+    'Output is fail-closed and no-clobber: choose a new path inside the evidence package.',
   ].join('\n');
 }
 
@@ -177,17 +200,28 @@ function cli(argv) {
     return;
   }
 
-  const outputPath = path.resolve(argv[outputIndex + 1]);
-  if (!isInside(root, outputPath)) fail('--output must stay inside the evidence package directory.');
-  if (outputPath === manifestPath) fail('--output must not overwrite the source manifest; write a separate sealed manifest.');
-  if (fs.existsSync(outputPath) && fs.lstatSync(outputPath).isSymbolicLink()) fail('--output must not replace a symbolic link.');
+  const requestedOutputPath = path.resolve(argv[outputIndex + 1]);
+  if (requestedOutputPath === manifestPath) fail('--output must not overwrite the source manifest; write a separate sealed manifest.');
+  const outputPath = resolveOutputPath(root, requestedOutputPath);
 
   const serialized = `${JSON.stringify(result.document, null, 2)}\n`;
   const tempPath = `${outputPath}.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
   try {
     fs.writeFileSync(tempPath, serialized, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-    if (fs.existsSync(outputPath)) fs.rmSync(outputPath, { force: true });
-    fs.renameSync(tempPath, outputPath);
+    const tempDescriptor = fs.openSync(tempPath, 'r');
+    try {
+      fs.fsyncSync(tempDescriptor);
+    } finally {
+      fs.closeSync(tempDescriptor);
+    }
+    try {
+      fs.linkSync(tempPath, outputPath);
+    } catch (error) {
+      if (error instanceof Error && error.code === 'EEXIST') {
+        fail('--output appeared during sealing; refusing to overwrite it.');
+      }
+      throw error;
+    }
   } finally {
     if (fs.existsSync(tempPath)) fs.rmSync(tempPath, { force: true });
   }

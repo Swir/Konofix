@@ -119,6 +119,50 @@ fn room_switch_republishes_one_monotonic_snapshot_and_updates_both_counts() {
 }
 
 #[test]
+fn local_room_create_and_close_republish_leave_state() {
+    let local = peer_id();
+    let mut network = RoomMembershipNetwork::new(local.clone());
+    let created = network
+        .create_and_enter_local_room("alpha")
+        .expect("create alpha");
+    assert!(network.known_room("alpha"));
+    assert_eq!(network.total_count("alpha"), 1);
+
+    let created_revision = match created.publish.expect("create publish") {
+        RoomMembershipNetworkEvent::MembershipSnapshot {
+            peer_id,
+            revision,
+            rooms,
+        } => {
+            assert_eq!(peer_id, local.to_string());
+            assert_eq!(rooms, vec!["alpha"]);
+            revision
+        }
+    };
+
+    let closed = network.close_room("alpha").expect("close alpha");
+    assert!(!network.known_room("alpha"));
+    assert_eq!(
+        closed.counts,
+        vec![RoomCountChange {
+            room_id: "alpha".into(),
+            users: 0,
+        }]
+    );
+    match closed.publish.expect("leave publish") {
+        RoomMembershipNetworkEvent::MembershipSnapshot {
+            peer_id,
+            revision,
+            rooms,
+        } => {
+            assert_eq!(peer_id, local.to_string());
+            assert_eq!(revision, created_revision + 1);
+            assert!(rooms.is_empty());
+        }
+    }
+}
+
+#[test]
 fn forged_unknown_and_oversized_frames_fail_without_count_changes() {
     let local = peer_id();
     let remote = peer_id();

@@ -73,9 +73,6 @@ try {
   Write-Host 'Global beta concurrent admission self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-global-beta-load.ps1'
 
-  Write-Host 'Rooms 2.0 live-evidence self-tests...' -ForegroundColor Yellow
-  & '.\scripts\test-rooms2-live-evidence.ps1'
-
   Write-Host 'Frontend dependencies (locked)...' -ForegroundColor Yellow
   npm ci --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }

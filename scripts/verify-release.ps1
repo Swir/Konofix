@@ -144,6 +144,7 @@ try {
   # The complete file inventory below independently rejects every missing or unknown archive file.
   $toolRelativePaths = @(
     'scripts/internet-test.ps1',
+    'scripts/global-beta-load.ps1',
     'scripts/capture-client-netprobe.ps1',
     'scripts/validate-client-netprobe.ps1',
     'scripts/public-node.ps1',
@@ -169,6 +170,7 @@ try {
     'TESTING.md',
     'NODE.md',
     'NODE_SOAK.md',
+    'GLOBAL_BETA.md',
     'TESTER_HANDOFF.md',
     'BUILD_INFO.json',
     'package-lock.json',

@@ -101,6 +101,10 @@ jobs:
         shell: pwsh
         run: .\scripts\test-node-soak-collector.ps1
 
+      - name: Global beta concurrent admission self-tests
+        shell: pwsh
+        run: .\scripts\test-global-beta-load.ps1
+
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
 
@@ -158,11 +162,13 @@ jobs:
           Copy-Item 'docs\TESTING.md' 'artifact\TESTING.md'
           Copy-Item 'docs\NODE.md' 'artifact\NODE.md'
           Copy-Item 'docs\NODE_SOAK.md' 'artifact\NODE_SOAK.md'
+          Copy-Item 'docs\GLOBAL_BETA.md' 'artifact\GLOBAL_BETA.md'
           $package = Get-Content 'package.json' -Raw | ConvertFrom-Json
           & .\scripts\new-tester-handoff.ps1 -OutputPath 'artifact\TESTER_HANDOFF.md' -Version ([string]$package.version) -Commit ([string]$env:GITHUB_SHA) -WorkflowRun ([string]$env:GITHUB_RUN_ID)
 
           $testTools = @(
             'internet-test.ps1',
+            'global-beta-load.ps1',
             'capture-client-netprobe.ps1',
             'validate-client-netprobe.ps1',
             'public-node.ps1',

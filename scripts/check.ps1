@@ -70,6 +70,9 @@ try {
   Write-Host 'Node soak collector self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-node-soak-collector.ps1'
 
+  Write-Host 'Global beta concurrent admission self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-global-beta-load.ps1'
+
   Write-Host 'Frontend dependencies (locked)...' -ForegroundColor Yellow
   npm ci --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }

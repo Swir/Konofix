@@ -38,7 +38,7 @@
 
 The active `0.4.2 — Real Internet Test` / Global Beta readiness scope has **55 of 67 tasks complete**. The Global Beta expansion added eight many-computer release gates to the five original real-network gates. The reviewed public-Node connection-ceiling/per-peer/pending-admission gate is now verified after the exact implementation head passed both Windows and Linux CI; the other seven Global Beta gates and the five original real-world gates remain open. CI, documentation work or progress-graphic maintenance cannot credit the remaining fleet, real-load, cross-country, Rooms 2.0, failover or release-evidence gates by themselves.
 
-Published packages and their actual availability are listed on [GitHub Releases](https://github.com/Swir/Konofix/releases). [Beta 1 notes](docs/RELEASE_0.4.2_BETA1.md) describe the Windows installer correction, participant networking and current testing scope. Beta previews collect real-world results; they do not declare the Global Beta network gates complete. The historical `v0.4.2-test1` package predates current fixes and must not be mixed with newer binaries or evidence tools.
+Published packages and their actual availability are listed on [GitHub Releases](https://github.com/Swir/Konofix/releases). [Beta 1 notes](docs/RELEASE_0.4.2_BETA1.md) describe the chat/file-transfer and Windows installer corrections, participant networking and current testing scope. Update both participants to the same package. Beta previews collect real-world results; they do not declare the Global Beta network gates complete. Historical `test1`/`test2` packages predate current runtime fixes and must not be mixed with newer binaries or evidence tools.
 
 ## What is Konofix?
 

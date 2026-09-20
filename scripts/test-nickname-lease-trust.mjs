@@ -15,6 +15,7 @@ function mutateDht(input, mutate) {
 }
 
 const mutations = [
+  ["emit DHT conflict through runtime boundary", s => mutateDht(s, b => b.replace('if let Ok(lease)', 'let _ = app.emit_event("nick-conflict", "forged");\n                            if let Ok(lease)'))],
   ["remove DHT hint validation", s => mutateDht(s, b => b.replace("nick_lease_hint_is_well_formed", "accept_untrusted_nick_hint"))],
   ["restore DHT conflict authority", s => mutateDht(s, b => b.replace("if let Ok(lease)", "check_nick_conflict(&lease.peer_id, &lease.canonical, lease.expires_at, local_peer, &canonical);\n                            if let Ok(lease)"))],
   ["drop DHT key binding", s => s.replace("record_key != &expected_key", "false")],

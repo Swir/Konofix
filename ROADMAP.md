@@ -111,7 +111,7 @@ The active milestone now has 55 of 67 tasks complete. The Global Beta expansion 
 - [x] Windows CI cancels superseded runs per branch/ref
 - [x] Windows build/test job uses a read-only GitHub token
 - [x] project audit prevents `npm ci`/npm-cache activation unless a real committed `package-lock.json` exists
-- [x] automatic GitHub Release publication removed from ordinary pushes; release publication remains gated by real public-network readiness
+- [x] automatic stable-release publication removed from ordinary pushes; stable/qualified Global Beta promotion remains gated by real public-network readiness, while explicitly requested beta previews use the separately verified preview pipeline
 - [x] dependency audit derives lockfile state from Git tracking, and no-lockfile CI suppresses transient `package-lock.json` generation
 - [x] GitHub Actions are pinned to immutable commit SHAs, checkout credentials are not persisted, and CI audit rejects floating action refs
 - [x] migrate remaining runtime strings from compatibility translation into typed message keys; remove the DOM/source-text translator and enforce the migration in project audit
@@ -191,6 +191,8 @@ The existing `v0.4.2-test1` pre-release is a controlled preview for gathering re
 Product decision, 2026-09-20: every connected desktop is a participant node; dedicated servers are optional. The existing topology/discovery/failover deliverables below now qualify participant-operated connectivity instead of requiring a centrally provisioned fleet. This changes the deployment model, not the 67-item denominator, verified count or real-network evidence requirement. See `docs/GLOBAL_BETA.md`.
 
 This user-approved many-computer beta scope is part of the authoritative active readiness denominator. It expanded the measured scope from 59 to 67 tasks. The reviewed public-Node admission-limit gate is now verified after exact-head Windows and Linux CI, bringing the active scope to 55 verified completions; the seven remaining Global Beta gates stay open until their own acceptance evidence exists.
+
+The 2026-09-20 two-user test exposed missing remote chat and an EOF after accepting binary files. The repair uses decodable u64 wire timestamps and a CBOR limit that includes worst-case chunk encoding. Regression tests run two actual application network loops with WORLD/room messages, accepted binary files in both directions, persisted-byte/hash checks, empty files and rejection. This local regression coverage adds no multi-network or load qualification credit.
 
 - [ ] at least three participant-operated Konofix nodes across at least two independent networks, with verified TCP + QUIC/relay reachability and continuity during the test; dedicated servers are optional
 - [ ] clients join through LAN discovery, remembered or invited participants and automatically recover through at least two independent reachable contact/relay identities; optional operator seeds and manual contacts remain supported

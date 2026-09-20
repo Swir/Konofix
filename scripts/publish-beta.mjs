@@ -97,7 +97,6 @@ export async function publishBeta(plan, api, readFile) {
 }
 
 async function main() {
-  assert.fail('Beta publication blocked: two-peer chat delivery and accepted file transfer require runtime regression fixes');
   assertContext(process.env);
   assert(process.env.GH_TOKEN, 'Workflow token is required');
   const api = async (method, endpoint, body, allowMissing = false) => {

@@ -2,6 +2,7 @@
 
 ## 0.4.2
 
+- fixed timestamped Chat/NickClaim deserialization and binary file-transfer EOF errors reported in a two-user test: tagged wire timestamps now use u64 milliseconds, and the bounded CBOR request limit includes worst-case byte-array encoding; tests exercise the actual two-application network loops, accepted files in both directions and persisted bytes/hashes without claiming wider network qualification,
 - prepared the `v0.4.2-beta.1` P2P preview channel with a dedicated Windows Chat installer, exact-commit ZIP/checksums and main-only GitHub Actions publication after Windows/Linux/RustSec success; draft assets are hash-verified before publication and existing releases are preserved, while real Global Beta qualification remains open at 55/67,
 - fixed Windows packaging that installed Netprobe under the Chat Start menu shortcut, selected the actual desktop binary, enabled the release GUI subsystem and added the main-window event subscription permissions; CI now installs the application and verifies the rendered login form and live Tauri event bridge,
 - added package-bound Global Beta qualification evidence validation and shipped it together with the Rooms 2.0 live-evidence tools; candidate/load bytes, hashes, source identity, network/country diversity and participant failover are checked without granting synthetic test credit,

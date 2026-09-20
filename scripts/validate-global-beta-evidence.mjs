@@ -22,6 +22,7 @@ const REQUIRED_CHECKS = [
 ];
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
 const MAX_LOAD_EVIDENCE_BYTES = 32 * 1024 * 1024;
+const MAX_FIELD_EVIDENCE_BYTES = 64 * 1024 * 1024;
 const MAX_CANDIDATE_ARTIFACT_BYTES = 4 * 1024 * 1024 * 1024;
 const MIN_LOAD_SUCCESS_PERCENT = 95;
 
@@ -45,11 +46,26 @@ function validDate(value, label) {
   return timestamp;
 }
 
+function isPortableAbsolute(value) {
+  return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value);
+}
+
+function evidenceReference(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    fail(`${label} must be an object with path and sha256.`);
+  }
+  const evidencePath = nonEmpty(value.path, `${label}.path`);
+  if (isPortableAbsolute(evidencePath)) fail(`${label}.path must be relative to the evidence manifest directory.`);
+  const digest = String(value.sha256 ?? '');
+  if (!SHA256_RE.test(digest)) fail(`${label}.sha256 must be a lowercase 64-character SHA-256 digest.`);
+  return { path: evidencePath, sha256: digest };
+}
+
 function requirePassCheck(checksByName, name) {
   const check = checksByName.get(name);
   if (!check) fail(`required check '${name}' is missing.`);
   if (check.status !== 'pass') fail(`required check '${name}' must have status=pass.`);
-  nonEmpty(check.evidence, `checks.${name}.evidence`);
+  evidenceReference(check.evidence, `checks.${name}.evidence`);
   if (name.includes('sha256')) {
     if (!SHA256_RE.test(String(check.observed_sha256 ?? ''))) {
       fail(`checks.${name}.observed_sha256 must be a lowercase 64-character SHA-256 digest.`);
@@ -69,7 +85,7 @@ function isInside(root, candidate) {
 
 function resolveEvidencePath(root, raw, label) {
   const value = nonEmpty(raw, label);
-  if (path.isAbsolute(value)) fail(`${label} must be relative to the evidence manifest directory.`);
+  if (isPortableAbsolute(value)) fail(`${label} must be relative to the evidence manifest directory.`);
   const lexical = path.resolve(root, value);
   if (!isInside(root, lexical)) fail(`${label} escapes the evidence manifest directory.`);
   if (!fs.existsSync(lexical)) fail(`${label} does not exist: ${value}`);
@@ -170,7 +186,7 @@ function validateLoadArtifact(load, expectedClients, version, sourceCommit, labe
 export function validateGlobalBetaEvidence(document, options = {}) {
   if (!document || typeof document !== 'object' || Array.isArray(document)) fail('root must be an object.');
   if (document._template === true) fail('template manifests can never qualify as PASS evidence.');
-  if (document.schema !== 1) fail('schema must equal 1.');
+  if (document.schema !== 2) fail('schema must equal 2; schema-1 free-text field evidence is not promotion-eligible.');
   if (document.tool !== 'konofix-global-beta-evidence') fail("tool must equal 'konofix-global-beta-evidence'.");
   if (document.status !== 'pass') fail('status must equal pass.');
 
@@ -183,7 +199,7 @@ export function validateGlobalBetaEvidence(document, options = {}) {
   if (!SHA256_RE.test(String(candidate.artifact_sha256 ?? ''))) {
     fail('candidate.artifact_sha256 must be a lowercase 64-character SHA-256 digest.');
   }
-  if (path.isAbsolute(artifactPath)) fail('candidate.artifact_path must be relative to the evidence manifest directory.');
+  if (isPortableAbsolute(artifactPath)) fail('candidate.artifact_path must be relative to the evidence manifest directory.');
   if (options.expectedVersion && version !== options.expectedVersion) {
     fail(`candidate.version mismatch (expected=${options.expectedVersion}, actual=${version}).`);
   }
@@ -260,7 +276,7 @@ export function validateGlobalBetaEvidence(document, options = {}) {
     if (loadByCount.has(count)) fail(`duplicate ${count}-client load evidence is not allowed.`);
     if (!SHA256_RE.test(String(run.sha256 ?? ''))) fail(`${count}-client load evidence sha256 is invalid.`);
     const runPath = nonEmpty(run.path, `load_runs[${index}].path`);
-    if (path.isAbsolute(runPath)) fail(`load_runs[${index}].path must be relative to the evidence manifest directory.`);
+    if (isPortableAbsolute(runPath)) fail(`load_runs[${index}].path must be relative to the evidence manifest directory.`);
     loadByCount.set(count, run);
   }
   for (const count of REQUIRED_LOAD_CLIENTS) {
@@ -290,10 +306,10 @@ export function validateGlobalBetaEvidence(document, options = {}) {
   if (failover.discovery_recovered !== true || failover.chat_recovered !== true || failover.rooms_recovered !== true) {
     fail('failover must prove discovery, chat and room recovery.');
   }
-  nonEmpty(failover.evidence, 'failover.evidence');
+  evidenceReference(failover.evidence, 'failover.evidence');
 
   return {
-    schema: 1,
+    schema: 2,
     status: 'pass',
     version,
     source_commit: sourceCommit,
@@ -307,6 +323,7 @@ export function validateGlobalBetaEvidence(document, options = {}) {
     duration_seconds: durationSeconds,
     load_clients: REQUIRED_LOAD_CLIENTS,
     required_checks: REQUIRED_CHECKS.length,
+    field_evidence_references: REQUIRED_CHECKS.length + 1,
   };
 }
 
@@ -337,10 +354,42 @@ export function validateGlobalBetaEvidencePackage(document, manifestDirectory, o
     verifiedLoads.push({ clients, path: run.path, sha256: observedSha });
   }
 
+  const evidenceCache = new Map();
+  const verifiedFieldReferences = [];
+  const verifyFieldEvidence = (reference, label) => {
+    const ref = evidenceReference(reference, label);
+    const resolved = resolveEvidencePath(root, ref.path, `${label}.path`);
+    const cacheKey = resolved;
+    const cached = evidenceCache.get(cacheKey);
+    if (cached) {
+      if (cached.sha256 !== ref.sha256) {
+        fail(`${label} reuses an evidence file with a conflicting SHA-256 digest.`);
+      }
+      verifiedFieldReferences.push({ label, path: ref.path, sha256: cached.sha256, bytes: cached.bytes });
+      return;
+    }
+    const bytes = readExactFile(resolved, MAX_FIELD_EVIDENCE_BYTES, label);
+    const observedSha = sha256(bytes);
+    if (observedSha !== ref.sha256) {
+      fail(`${label} SHA-256 mismatch (expected=${ref.sha256}, actual=${observedSha}).`);
+    }
+    const record = { path: ref.path, sha256: observedSha, bytes: bytes.length };
+    evidenceCache.set(cacheKey, record);
+    verifiedFieldReferences.push({ label, ...record });
+  };
+
+  const checksByName = new Map(document.checks.map((check) => [check.name, check]));
+  for (const name of REQUIRED_CHECKS) {
+    verifyFieldEvidence(checksByName.get(name).evidence, `checks.${name}.evidence`);
+  }
+  verifyFieldEvidence(document.failover.evidence, 'failover.evidence');
+
   return {
     ...summary,
     artifact_sha256: artifactSha256,
     load_artifacts: verifiedLoads,
+    field_evidence_artifacts: evidenceCache.size,
+    field_evidence: verifiedFieldReferences,
   };
 }
 

@@ -6,6 +6,7 @@ import './style.css';
 type ChatMessage = { id: string; kind: string; peer_id?: string; nick: string; room: string; text: string; timestamp: number };
 type PeerInfo = { peer_id: string; nick: string };
 type RoomInfo = { id: string; title: string; owner?: string; users?: number };
+type RoomUserCountUpdate = { room_id: string; users: number };
 type NetworkStatus = {
   phase: string;
   connected_peers: number;
@@ -183,6 +184,7 @@ function renderChat() {
   const currentRoom = state.rooms.get(state.room) ?? { id: state.room, title: `# ${state.room.toUpperCase()}` };
   const messages = state.messages.get(state.room) ?? [];
   const onlineCount = Math.max(1, state.peers.size + 1);
+  const activeRoomCount = state.room === 'world' ? onlineCount : Math.max(0, Number(currentRoom.users) || 0);
   const networkClass = state.status.phase === 'online' ? 'good' : state.status.phase === 'searching' ? 'searching' : 'off';
   const transfers = [...state.transfers.values()].slice(-5).reverse();
 
@@ -219,7 +221,7 @@ function renderChat() {
             <span>${esc(state.room === 'world' ? t('rooms.globalChannel') : t('rooms.hostOnly'))}</span>
           </div>
           <div class="header-actions">
-            <span class="live"><i></i>${onlineCount} ${esc(t('common.online').toLowerCase())}</span>
+            <span class="live"><i></i>${activeRoomCount} ${esc(t('common.online').toLowerCase())}</span>
             <button id="sendFile" class="ghost" ${state.peers.size ? '' : 'disabled'}>${esc(t('transfer.sendFile'))}</button>
           </div>
         </header>
@@ -280,7 +282,8 @@ function networkSubtitle(): string {
 
 function roomButton(room: RoomInfo): string {
   const mine = room.owner === state.peerId;
-  return `<button class="room ${state.room === room.id ? 'active' : ''}" data-room="${esc(room.id)}"><span>#</span> ${esc(room.title.replace(/^#\s*/, ''))}${mine ? `<em>${esc(t('common.host'))}</em>` : ''}</button>`;
+  const users = Math.max(0, Number(room.users) || 0);
+  return `<button class="room ${state.room === room.id ? 'active' : ''}" data-room="${esc(room.id)}"><span>#</span> ${esc(room.title.replace(/^#\s*/, ''))}${mine ? `<em>${esc(t('common.host'))}</em>` : ''}<b>${users}</b></button>`;
 }
 
 function peerHtml(peer: PeerInfo): string {
@@ -571,6 +574,14 @@ async function wireEvents() {
       state.room = 'world';
       addSystem('world', t('rooms.closed'));
     } else if (state.connected) renderChat();
+  });
+  await listen<RoomUserCountUpdate>('room-user-count', event => {
+    if (event.payload.room_id === 'world') return;
+    const room = state.rooms.get(event.payload.room_id);
+    if (!room) return;
+    const users = Math.max(0, Number(event.payload.users) || 0);
+    state.rooms.set(event.payload.room_id, { ...room, users });
+    if (state.connected) renderChat();
   });
   await listen<NetworkStatus>('network-status', event => {
     state.status = event.payload;

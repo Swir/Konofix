@@ -181,7 +181,7 @@ async function connect() {
 }
 
 function renderChat() {
-  const currentRoom = state.rooms.get(state.room) ?? { id: state.room, title: `# ${state.room.toUpperCase()}` };
+  const currentRoom = state.rooms.get(state.room) ?? { id: state.room, title: `# ${state.room.toUpperCase()}`, users: 0 };
   const messages = state.messages.get(state.room) ?? [];
   const onlineCount = Math.max(1, state.peers.size + 1);
   const activeRoomCount = state.room === 'world' ? onlineCount : Math.max(0, Number(currentRoom.users) || 0);

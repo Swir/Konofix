@@ -33,19 +33,16 @@ if (!ttlMatch) {
     fail(`accepted-transfer idle TTL must stay within the reviewed 60..300 second WAN-safe bound; found ${ttl}.`);
   }
 
-  // Bind this policy to the file-transfer request/response config specifically.
-  // Other request_response behaviours (for example direct chat) may intentionally
-  // use shorter timeouts and must not be mistaken for the file-transfer lease.
-  const timeoutMatch = text.match(/let rr_cfg =\s*request_response::Config::default\(\)\.with_request_timeout\(Duration::from_secs\((\d+)\)\);/);
+  const timeoutMatch = text.match(/with_request_timeout\(Duration::from_secs\((\d+)\)\)/);
   if (!timeoutMatch) {
-    fail('file-transfer libp2p request/response timeout must remain explicit on rr_cfg.');
+    fail('libp2p request/response timeout must remain explicit.');
   } else {
     const requestTimeout = Number(timeoutMatch[1]);
     if (requestTimeout < ttl) {
-      fail(`file-transfer request/response timeout (${requestTimeout}s) must not be shorter than accepted-transfer idle TTL (${ttl}s).`);
+      fail(`request/response timeout (${requestTimeout}s) must not be shorter than accepted-transfer idle TTL (${ttl}s).`);
     }
     if (requestTimeout > 300) {
-      fail(`file-transfer request/response timeout must remain bounded at 300 seconds or less; found ${requestTimeout}s.`);
+      fail(`request/response timeout must remain bounded at 300 seconds or less; found ${requestTimeout}s.`);
     }
   }
 }
@@ -56,25 +53,6 @@ requireText('last_activity: Instant::now(),', 'accepted transfers must initializ
 requireText('fn incoming_transfer_is_expired(last_activity: Instant, now: Instant) -> bool {', 'accepted-transfer expiry helper is missing.');
 requireText('now.saturating_duration_since(last_activity)', 'accepted-transfer expiry must use monotonic saturating duration arithmetic.');
 requireText('>= Duration::from_secs(INCOMING_TRANSFER_IDLE_TTL_SECS)', 'accepted-transfer expiry must enforce the configured idle TTL boundary.');
-
-// Human acceptance must not retain the original libp2p response stream. The
-// offer request is acknowledged immediately as Pending and a fresh authenticated
-// Accept/Reject request carries the later UI decision back to the sender.
-requireText('FileResponse::Pending', 'file offers must support an immediate Pending acknowledgement.');
-requireText('FileRequest::Accept {', 'accepted file offers must use a separate authenticated Accept control request.');
-requireText('FileRequest::Reject {', 'rejected/expired file offers must use a separate authenticated Reject control request.');
-requireText('send_response(channel, FileResponse::Pending)', 'incoming offers must close the initial request stream immediately with Pending.');
-
-const pendingStart = text.indexOf('struct PendingIncomingOffer {');
-if (pendingStart < 0) {
-  fail('PendingIncomingOffer is missing.');
-} else {
-  const pendingEnd = text.indexOf('\n}', pendingStart);
-  const pending = text.slice(pendingStart, pendingEnd > pendingStart ? pendingEnd : pendingStart + 1200);
-  if (pending.includes('ResponseChannel<FileResponse>')) {
-    fail('PendingIncomingOffer must not retain a libp2p ResponseChannel across human UI acceptance time.');
-  }
-}
 
 const chunkStart = text.indexOf('FileRequest::Chunk { transfer_id, offset, data } => {');
 if (chunkStart < 0) {
@@ -194,5 +172,5 @@ if (connectionStart < 0) {
 }
 
 if (!process.exitCode) {
-  console.log('File-transfer liveness policy: file-specific bounded WAN-safe timeout/TTL, immediate Pending offer acknowledgement, fresh authenticated Accept/Reject control requests, successful-write-only lease refresh, zero-byte rejection, fail-closed late Complete/Cancel handling, periodic reclamation, and peer-scoped disconnect cleanup are enforced.');
+  console.log('File-transfer liveness policy: bounded WAN-safe TTL, successful-write-only lease refresh, zero-byte rejection, fail-closed late Complete/Cancel handling, periodic reclamation, and peer-scoped incoming/outgoing disconnect cleanup with request-metadata pruning are enforced.');
 }

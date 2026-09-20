@@ -138,6 +138,10 @@ jobs:
       - name: Build production Windows app
         run: npm run tauri build
 
+      - name: Installed Chat startup smoke
+        shell: pwsh
+        run: .\scripts\test-chat-installer.ps1
+
       - name: Build production Konofix Node
         run: cargo build --locked --manifest-path src-tauri/Cargo.toml --release --bin konofix-node
 

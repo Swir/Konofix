@@ -4,6 +4,8 @@ This document defines the minimum test set required before closing the first rel
 
 ## 1. Local validation
 
+Windows CI also installs the generated NSIS package into its disposable runner account, checks that the Start menu shortcut targets the exact `konofix-chat.exe`, and verifies that the bundled login page and Tauri bridge load in WebView2. It compares the MSI payload against the same production executable and checks the Windows GUI subsystem. This catches accidental packaging of the Node or Netprobe helper as the desktop app. `scripts/test-chat-installer.ps1` is restricted to disposable CI runners because it installs and uninstalls the app. Its loopback WebView debug port is enabled only for that test process, never by the shipped application.
+
 On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release gate, network-evidence self-tests, exact-build promotion-evidence self-tests, network-report-editor and network-test-session self-tests, strict bootstrap-precheck self-tests, public-Node deployment/startup-task/readiness self-tests, Node-health self-tests, Node-soak validator/collector self-tests, project/localization audit, deterministic `npm ci`, TypeScript/Vite build, a locked Rust metadata check, Rust all-target tests and Rust checks for both the application and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`, and pull requests reproduce the production Windows packaging/verification path before merge.
 
 ## 2. LAN baseline

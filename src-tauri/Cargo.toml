@@ -1,5 +1,6 @@
 [package]
 name = "konofix-chat"
+default-run = "konofix-chat"
 version = "0.4.2"
 description = "Ephemeral global peer-to-peer chat for Windows"
 authors = ["Swir"]

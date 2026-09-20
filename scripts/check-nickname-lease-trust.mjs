@@ -29,7 +29,7 @@ export function checkNicknameLeaseTrust(source) {
     const dhtBlock = source.slice(range.start, range.end);
     if (!dhtBlock.includes("nick_lease_hint_is_well_formed(")) errors.push("DHT nickname records must pass the bounded hint validator");
     if (dhtBlock.includes("check_nick_conflict(")) errors.push("unsigned DHT nickname records must never invoke conflict authority");
-    if (dhtBlock.includes('app.emit("nick-conflict"')) errors.push("unsigned DHT nickname records must never emit nick-conflict");
+    if (/app\.emit(?:_event)?\("nick-conflict"/.test(dhtBlock)) errors.push("unsigned DHT nickname records must never emit nick-conflict");
     if (dhtBlock.includes("break 'network")) errors.push("unsigned DHT nickname records must never terminate the network session");
   }
   for (const required of [

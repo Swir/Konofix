@@ -25,6 +25,8 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 mod incoming_file;
+#[cfg(test)]
+mod messaging_runtime_tests;
 mod room_membership;
 mod room_membership_application;
 mod room_membership_desktop;
@@ -47,7 +49,9 @@ const NICK_LEASE_SECS: u64 = 42;
 const NICK_LEASE_CLOCK_SKEW_SECS: u64 = 5;
 const FILE_CHUNK_SIZE: usize = 256 * 1024;
 const MAX_FILE_OFFER_NAME_BYTES: usize = 4 * 1024;
-const MAX_FILE_REQUEST_WIRE_BYTES: u64 = 320 * 1024;
+// CBOR encodes Vec<u8> as an integer array: each byte can require two wire
+// bytes. Include bounded metadata overhead without changing the v1 protocol.
+const MAX_FILE_REQUEST_WIRE_BYTES: u64 = 2 * FILE_CHUNK_SIZE as u64 + 4096;
 const MAX_FILE_RESPONSE_WIRE_BYTES: u64 = 16 * 1024;
 const MAX_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_TRANSFERS_PER_DIRECTION: usize = 4;
@@ -175,7 +179,8 @@ struct ChatMessage {
     nick: String,
     room: String,
     text: String,
-    timestamp: u128,
+    // Internally tagged Serde enums buffer integers as u64, not u128.
+    timestamp: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,7 +213,7 @@ struct NickLease {
     peer_id: String,
     nick: String,
     canonical: String,
-    expires_at: u128,
+    expires_at: u64,
 }
 
 #[derive(Debug)]
@@ -337,7 +342,7 @@ enum WireEvent {
         peer_id: String,
         nick: String,
         canonical: String,
-        expires_at: u128,
+        expires_at: u64,
     },
     Chat(ChatMessage),
     RoomCreate(RoomInfo),
@@ -737,11 +742,13 @@ struct Behaviour {
     file_transfer: request_response::cbor::Behaviour<FileRequest, FileResponse>,
 }
 
-fn now_ms() -> u128 {
+fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 fn canonical_nick(raw: &str) -> String {
@@ -950,8 +957,38 @@ fn file_view_incoming(
     }
 }
 
-fn emit_transfer(app: &AppHandle, transfer: &FileTransferView) {
-    let _ = app.emit("file-transfer", transfer.clone());
+// The same network loop serves the desktop and integration tests. Only event
+// delivery and local storage locations differ; wire handling is never mocked.
+trait NetworkRuntime: Send + Sync + 'static {
+    fn emit_event<S: Serialize + Clone>(&self, event: &str, payload: S) -> Result<(), String>;
+
+    fn downloads(&self) -> Result<PathBuf, String> {
+        download_directory()
+    }
+
+    fn load_peers(&self) -> PeerCacheFile {
+        load_peer_cache()
+    }
+
+    fn save_peers(&self, cache: &PeerCacheFile) {
+        save_peer_cache(cache);
+    }
+}
+
+fn file_codec() -> request_response::cbor::codec::Codec<FileRequest, FileResponse> {
+    request_response::cbor::codec::Codec::default()
+        .set_request_size_maximum(MAX_FILE_REQUEST_WIRE_BYTES)
+        .set_response_size_maximum(MAX_FILE_RESPONSE_WIRE_BYTES)
+}
+
+impl NetworkRuntime for AppHandle {
+    fn emit_event<S: Serialize + Clone>(&self, event: &str, payload: S) -> Result<(), String> {
+        self.emit(event, payload).map_err(|error| error.to_string())
+    }
+}
+
+fn emit_transfer(app: &impl NetworkRuntime, transfer: &FileTransferView) {
+    let _ = app.emit_event("file-transfer", transfer.clone());
 }
 
 #[tauri::command]
@@ -1353,7 +1390,7 @@ fn publish(swarm: &mut libp2p::Swarm<Behaviour>, topic: &gossipsub::IdentTopic, 
 }
 
 fn apply_membership_effects(
-    app: &AppHandle,
+    app: &impl NetworkRuntime,
     swarm: &mut libp2p::Swarm<Behaviour>,
     topic: &gossipsub::IdentTopic,
     rooms: &mut HashMap<String, RoomInfo>,
@@ -1366,7 +1403,7 @@ fn apply_membership_effects(
         if let Some(room) = rooms.get_mut(&count.room_id) {
             room.users = Some(count.users);
         }
-        let _ = app.emit("room-user-count", count);
+        let _ = app.emit_event("room-user-count", count);
     }
 }
 
@@ -1404,7 +1441,7 @@ fn publish_nick_lease(
     nick: &str,
     canonical: &str,
 ) {
-    let expires_at = now_ms() + (NICK_LEASE_SECS as u128 * 1000);
+    let expires_at = now_ms() + (NICK_LEASE_SECS as u64 * 1000);
     let lease = NickLease {
         peer_id: local_peer.to_string(),
         nick: nick.to_string(),
@@ -1431,7 +1468,7 @@ fn publish_nick_lease(
     }
 }
 
-fn nick_lease_hint_is_well_formed(lease: &NickLease, record_key: &RecordKey, now: u128) -> bool {
+fn nick_lease_hint_is_well_formed(lease: &NickLease, record_key: &RecordKey, now: u64) -> bool {
     let Ok(peer) = lease.peer_id.parse::<PeerId>() else {
         return false;
     };
@@ -1450,7 +1487,7 @@ fn nick_lease_hint_is_well_formed(lease: &NickLease, record_key: &RecordKey, now
         return false;
     }
     let max_expires = now.saturating_add(
-        (NICK_LEASE_SECS.saturating_add(NICK_LEASE_CLOCK_SKEW_SECS) as u128).saturating_mul(1000),
+        (NICK_LEASE_SECS.saturating_add(NICK_LEASE_CLOCK_SKEW_SECS) as u64).saturating_mul(1000),
     );
     lease.expires_at > now && lease.expires_at <= max_expires
 }
@@ -1458,7 +1495,7 @@ fn nick_lease_hint_is_well_formed(lease: &NickLease, record_key: &RecordKey, now
 fn check_nick_conflict(
     remote_peer: &str,
     remote_canonical: &str,
-    remote_expires: u128,
+    remote_expires: u64,
     local_peer: PeerId,
     local_canonical: &str,
 ) -> bool {
@@ -1475,7 +1512,7 @@ fn check_nick_conflict(
 }
 
 fn emit_status(
-    app: &AppHandle,
+    app: &impl NetworkRuntime,
     swarm: &mut libp2p::Swarm<Behaviour>,
     bootstrap_count: usize,
     nat: &str,
@@ -1513,7 +1550,7 @@ fn emit_status(
         },
         detail: detail.into(),
     };
-    let _ = app.emit("network-status", status);
+    let _ = app.emit_event("network-status", status);
 }
 
 async fn send_next_chunk(
@@ -1521,7 +1558,7 @@ async fn send_next_chunk(
     transfer_id: &str,
     outgoing: &mut HashMap<String, OutgoingTransfer>,
     outbound_requests: &mut HashMap<request_response::OutboundRequestId, OutboundMeta>,
-    app: &AppHandle,
+    app: &impl NetworkRuntime,
 ) -> Result<(), String> {
     let (peer, offset, data, complete_hash) = {
         let transfer = outgoing
@@ -1587,7 +1624,7 @@ async fn send_next_chunk(
 async fn network_task(
     nick: String,
     bootstraps: Vec<String>,
-    app: AppHandle,
+    app: impl NetworkRuntime,
     mut rx: mpsc::Receiver<NetworkCommand>,
     ready: oneshot::Sender<Result<String, String>>,
 ) -> Result<(), String> {
@@ -1633,13 +1670,9 @@ async fn network_task(
 
             let rr_cfg =
                 request_response::Config::default().with_request_timeout(Duration::from_secs(300));
-            let file_codec =
-                request_response::cbor::codec::Codec::<FileRequest, FileResponse>::default()
-                    .set_request_size_maximum(MAX_FILE_REQUEST_WIRE_BYTES)
-                    .set_response_size_maximum(MAX_FILE_RESPONSE_WIRE_BYTES);
             let file_transfer =
                 request_response::cbor::Behaviour::<FileRequest, FileResponse>::with_codec(
-                    file_codec,
+                    file_codec(),
                     [(
                         StreamProtocol::new(FILE_PROTOCOL),
                         request_response::ProtocolSupport::Full,
@@ -1689,10 +1722,10 @@ async fn network_task(
         )
         .map_err(|e| e.to_string())?;
 
-    let mut peer_cache = load_peer_cache();
+    let mut peer_cache = app.load_peers();
     let cached_dials = add_cached_peers_to_swarm(&mut swarm, &peer_cache);
     if cached_dials > 0 {
-        let _ = app.emit(
+        let _ = app.emit_event(
             "network-log",
             format!("Załadowano {cached_dials} zapamiętanych adresów P2P."),
         );
@@ -1706,16 +1739,16 @@ async fn network_task(
             Ok(mut target) => {
                 if relay_bootstrap_peers.insert(target.peer_id.clone()) {
                     if let Err(err) = try_listen_via_relay(&mut swarm, address) {
-                        let _ = app.emit("network-log", format!("Relay rezerwacja: {err}"));
+                        let _ = app.emit_event("network-log", format!("Relay rezerwacja: {err}"));
                     }
                 }
                 if let Err(err) = attempt_bootstrap_target(&mut swarm, &mut target, now) {
-                    let _ = app.emit("network-log", err);
+                    let _ = app.emit_event("network-log", err);
                 }
                 bootstrap_targets.push(target);
             }
             Err(err) => {
-                let _ = app.emit("network-warning", format!("Bootstrap pominięty: {err}"));
+                let _ = app.emit_event("network-warning", format!("Bootstrap pominięty: {err}"));
             }
         }
     }
@@ -1790,7 +1823,7 @@ async fn network_task(
             _ = discovery.tick() => {
                 let _ = swarm.behaviour_mut().kad.bootstrap();
                 swarm.behaviour_mut().kad.get_providers(world_provider_key());
-                save_peer_cache(&peer_cache);
+                app.save_peers(&peer_cache);
                 emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Odświeżono discovery");
             }
             _ = bootstrap_retry.tick() => {
@@ -1802,13 +1835,13 @@ async fn network_task(
                     }
                     attempted += 1;
                     if let Err(err) = attempt_bootstrap_target(&mut swarm, target, now) {
-                        let _ = app.emit("network-log", err);
+                        let _ = app.emit_event("network-log", err);
                     }
                 }
                 if attempted > 0 {
                     let _ = swarm.behaviour_mut().kad.bootstrap();
                     swarm.behaviour_mut().kad.get_providers(world_provider_key());
-                    let _ = app.emit(
+                    let _ = app.emit_event(
                         "network-log",
                         format!("Bootstrap failover: ponowiono {attempted} połączeń."),
                     );
@@ -1829,7 +1862,7 @@ async fn network_task(
                 for id in stale {
                     peers.remove(&id);
                     apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.presence_expired(&id));
-                    let _ = app.emit("peer-offline", serde_json::json!({"peer_id": id.to_string()}));
+                    let _ = app.emit_event("peer-offline", serde_json::json!({"peer_id": id.to_string()}));
                     let closed: Vec<String> = rooms.values()
                         .filter(|room| room.owner.as_deref() == Some(&id.to_string()))
                         .map(|room| room.id.clone())
@@ -1839,7 +1872,7 @@ async fn network_task(
                             apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
                         }
                         rooms.remove(&room_id);
-                        let _ = app.emit("room-closed", serde_json::json!({"room_id": room_id}));
+                        let _ = app.emit_event("room-closed", serde_json::json!({"room_id": room_id}));
                     }
                 }
 
@@ -1858,7 +1891,7 @@ async fn network_task(
                                 reason: "File offer expired before it was accepted.".into(),
                             },
                         );
-                        let _ = app.emit(
+                        let _ = app.emit_event(
                             "file-offer-expired",
                             serde_json::json!({
                                 "transfer_id": transfer_id,
@@ -1904,7 +1937,7 @@ async fn network_task(
                             text,
                             timestamp: now_ms(),
                         };
-                        let _ = app.emit("chat-message", msg.clone());
+                        let _ = app.emit_event("chat-message", msg.clone());
                         publish(&mut swarm, &world, &WireEvent::Chat(msg));
                     }
                     NetworkCommand::CreateRoom { mut room, reply } => {
@@ -1918,7 +1951,7 @@ async fn network_task(
                                 room.users = Some(membership.total_count(&room.id));
                                 rooms.insert(room.id.clone(), room.clone());
                                 owned_rooms.insert(room.id.clone(), room.clone());
-                                let _ = app.emit("room-created", room.clone());
+                                let _ = app.emit_event("room-created", room.clone());
                                 publish(&mut swarm, &world, &WireEvent::RoomCreate(room.clone()));
                                 apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
                                 let _ = reply.send(Ok(room));
@@ -1958,7 +1991,7 @@ async fn network_task(
                                     if let Err(err) =
                                         attempt_bootstrap_target(&mut swarm, &mut target, now)
                                     {
-                                        let _ = app.emit("network-log", err);
+                                        let _ = app.emit_event("network-log", err);
                                     }
                                     bootstrap_targets.push(target);
                                     bootstrap_count = bootstrap_targets.len();
@@ -2020,7 +2053,7 @@ async fn network_task(
                                 return Err("Masz już maksymalną liczbę aktywnych transferów przychodzących.".to_string());
                             }
                             let pending = pending_incoming.remove(&transfer_id).ok_or("Oferta pliku wygasła albo nie istnieje.")?;
-                            let dir = download_directory()?;
+                            let dir = app.downloads()?;
                             tokio::fs::create_dir_all(&dir).await.map_err(|e| format!("Nie można utworzyć folderu Pobrane/Konofix Chat: {e}"))?;
                             let reservation = reserve_incoming_file(&dir, &pending.file_name).await?;
                             let transfer = IncomingTransfer {
@@ -2093,7 +2126,7 @@ async fn network_task(
                             let _ = tokio::fs::remove_file(&transfer.temp_path).await;
                             emit_transfer(&app, &file_view_incoming(&id, &transfer, "cancelled", None, Some("Rozłączono z siecią".into())));
                         }
-                        save_peer_cache(&peer_cache);
+                        app.save_peers(&peer_cache);
                         // Poll the swarm to flush goodbye/room-close frames before shutdown.
                         let _ = tokio::time::timeout(Duration::from_millis(250), async {
                             loop { swarm.select_next_some().await; }
@@ -2114,7 +2147,7 @@ async fn network_task(
                 SwarmEvent::ConnectionEstablished { peer_id: remote, .. } => {
                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
                     if mark_bootstrap_connected(&mut bootstrap_targets, &remote) {
-                        let _ = app.emit(
+                        let _ = app.emit_event(
                             "network-log",
                             format!("Bootstrap aktywny: {remote}"),
                         );
@@ -2135,7 +2168,7 @@ async fn network_task(
                             &remote,
                             Instant::now(),
                         ) {
-                            let _ = app.emit(
+                            let _ = app.emit_event(
                                 "network-log",
                                 format!("Bootstrap utracony: {remote}; failover zaplanowany."),
                             );
@@ -2148,7 +2181,7 @@ async fn network_task(
                             .collect();
                         for transfer_id in pending_from_peer {
                             if pending_incoming.remove(&transfer_id).is_some() {
-                                let _ = app.emit(
+                                let _ = app.emit_event(
                                     "file-offer-expired",
                                     serde_json::json!({
                                         "transfer_id": transfer_id,
@@ -2214,7 +2247,7 @@ async fn network_task(
                         &remote,
                         Instant::now(),
                     ) {
-                        let _ = app.emit(
+                        let _ = app.emit_event(
                             "network-log",
                             format!("Bootstrap niedostępny {remote}: {error}; retry z backoff."),
                         );
@@ -2277,10 +2310,10 @@ async fn network_task(
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Upnp(event)) => {
-                    let _ = app.emit("network-log", format!("UPnP: {event:?}"));
+                    let _ = app.emit_event("network-log", format!("UPnP: {event:?}"));
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Dcutr(event)) => {
-                    let _ = app.emit("network-log", format!("DCUtR: {event:?}"));
+                    let _ = app.emit_event("network-log", format!("DCUtR: {event:?}"));
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Kad(kad::Event::OutboundQueryProgressed { result, .. })) => {
                     match result {
@@ -2298,7 +2331,7 @@ async fn network_task(
                                 // Kademlia metadata and payload Peer IDs are not cryptographic proof of
                                 // application-level nickname ownership. Unsigned DHT leases are hints only.
                                 if !nick_lease_hint_is_well_formed(&lease, &peer_record.record.key, now_ms()) {
-                                    let _ = app.emit(
+                                    let _ = app.emit_event(
                                         "network-warning",
                                         "Dropped malformed or unbounded DHT nickname hint.",
                                     );
@@ -2310,19 +2343,19 @@ async fn network_task(
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message { message, .. })) => {
                     let Some(authenticated_source) = message.source.as_ref() else {
-                        let _ = app.emit("network-warning", "Dropped P2P event without an authenticated source Peer ID.");
+                        let _ = app.emit_event("network-warning", "Dropped P2P event without an authenticated source Peer ID.");
                         continue;
                     };
                     if let Ok(event) = serde_json::from_slice::<WireEvent>(&message.data) {
                         if !wire_event_matches_source(&event, authenticated_source) {
-                            let _ = app.emit(
+                            let _ = app.emit_event(
                                 "network-warning",
                                 format!("Dropped P2P event with forged payload identity from {authenticated_source}."),
                             );
                             continue;
                         }
                         if !wire_event_is_well_formed(&event) {
-                            let _ = app.emit(
+                            let _ = app.emit_event(
                                 "network-warning",
                                 format!("Dropped malformed authenticated P2P event from {authenticated_source}."),
                             );
@@ -2333,13 +2366,13 @@ async fn network_task(
                                 if remote_id != peer_id {
                                     let remote_canonical = canonical_nick(&remote_nick);
                                     if check_nick_conflict(&remote_id, &remote_canonical, now_ms() + 30_000, local_peer, &canonical) {
-                                        let _ = app.emit("nick-conflict", serde_json::json!({"nick": nick, "peer_id": remote_id}));
+                                        let _ = app.emit_event("nick-conflict", serde_json::json!({"nick": nick, "peer_id": remote_id}));
                                         break 'network;
                                     }
                                     if let Ok(pid) = remote_id.parse::<PeerId>() {
                                         peers.insert(pid, PeerPresence { nick: remote_nick.clone(), last_seen: Instant::now() });
                                     }
-                                    let _ = app.emit("peer-online", PeerInfo { peer_id: remote_id, nick: remote_nick });
+                                    let _ = app.emit_event("peer-online", PeerInfo { peer_id: remote_id, nick: remote_nick });
                                 }
                             }
                             WireEvent::Goodbye { peer_id: remote_id } => {
@@ -2348,7 +2381,7 @@ async fn network_task(
                                 if let Ok(pid) = remote_id.parse::<PeerId>() {
                                     peers.remove(&pid);
                                 }
-                                let _ = app.emit("peer-offline", serde_json::json!({"peer_id": remote_id}));
+                                let _ = app.emit_event("peer-offline", serde_json::json!({"peer_id": remote_id}));
                                 let closed: Vec<String> = rooms.values()
                                     .filter(|r| r.owner.as_deref() == Some(&remote_id))
                                     .map(|r| r.id.clone()).collect();
@@ -2357,18 +2390,18 @@ async fn network_task(
                                         apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
                                     }
                                     rooms.remove(&room_id);
-                                    let _ = app.emit("room-closed", serde_json::json!({"room_id": room_id}));
+                                    let _ = app.emit_event("room-closed", serde_json::json!({"room_id": room_id}));
                                 }
                             }
                             WireEvent::NickClaim { peer_id: remote_id, canonical: remote_canonical, expires_at, .. } => {
                                 if check_nick_conflict(&remote_id, &remote_canonical, expires_at, local_peer, &canonical) {
-                                    let _ = app.emit("nick-conflict", serde_json::json!({"nick": nick, "peer_id": remote_id}));
+                                    let _ = app.emit_event("nick-conflict", serde_json::json!({"nick": nick, "peer_id": remote_id}));
                                     break 'network;
                                 }
                             }
                             WireEvent::Chat(msg) => {
                                 if msg.peer_id.as_deref() != Some(&peer_id) {
-                                    let _ = app.emit("chat-message", msg);
+                                    let _ = app.emit_event("chat-message", msg);
                                 }
                             }
                             WireEvent::MembershipSnapshot(snapshot) => {
@@ -2388,10 +2421,10 @@ async fn network_task(
                                             // never from the room owner's advertised number.
                                             room.users = Some(membership.total_count(&room.id));
                                             rooms.insert(room.id.clone(), room.clone());
-                                            let _ = app.emit("room-created", room);
+                                            let _ = app.emit_event("room-created", room);
                                         }
                                         Err(reason) => {
-                                            let _ = app.emit(
+                                            let _ = app.emit_event(
                                                 "network-warning",
                                                 format!(
                                                     "Dropped room announcement from {authenticated_source}: {reason}"
@@ -2407,7 +2440,7 @@ async fn network_task(
                                         apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
                                     }
                                     rooms.remove(&room_id);
-                                    let _ = app.emit("room-closed", serde_json::json!({"room_id": room_id}));
+                                    let _ = app.emit_event("room-closed", serde_json::json!({"room_id": room_id}));
                                 }
                             }
                         }
@@ -2467,7 +2500,7 @@ async fn network_task(
                                                 created_at: Instant::now(),
                                                 channel,
                                             });
-                                            let _ = app.emit("file-offer", FileOfferView {
+                                            let _ = app.emit_event("file-offer", FileOfferView {
                                                 transfer_id,
                                                 peer_id: peer.to_string(),
                                                 nick: remote_nick,
@@ -2572,7 +2605,7 @@ async fn network_task(
                                             let matched = pending_matches || incoming_matches || outgoing_matches;
                                             if pending_matches {
                                                 pending_incoming.remove(&transfer_id);
-                                                let _ = app.emit(
+                                                let _ = app.emit_event(
                                                     "file-offer-cancelled",
                                                     serde_json::json!({
                                                         "transfer_id": transfer_id.clone(),
@@ -2726,7 +2759,7 @@ async fn network_task(
                             }
                         }
                         request_response::Event::InboundFailure { peer, error, .. } => {
-                            let _ = app.emit("network-warning", format!("Błąd odbioru pliku od {peer}: {error}"));
+                            let _ = app.emit_event("network-warning", format!("Błąd odbioru pliku od {peer}: {error}"));
                         }
                         request_response::Event::ResponseSent { .. } => {}
                     }
@@ -3121,10 +3154,29 @@ mod file_offer_admission_tests {
         assert!(file_offer_name_error(&(four_byte_at_limit + "🧪")).is_some());
     }
 
-    #[test]
-    fn request_codec_limit_preserves_a_large_chunk_overhead_budget() {
-        assert_eq!(MAX_FILE_REQUEST_WIRE_BYTES, 320 * 1024);
-        assert!(MAX_FILE_REQUEST_WIRE_BYTES >= (FILE_CHUNK_SIZE as u64).saturating_add(64 * 1024));
+    #[tokio::test]
+    async fn request_codec_limit_rejects_oversized_encoded_frames() {
+        use futures::io::Cursor;
+        use request_response::Codec;
+
+        let protocol = StreamProtocol::new(FILE_PROTOCOL);
+        let mut codec = file_codec();
+        let mut encoded = Cursor::new(Vec::new());
+        codec
+            .write_request(
+                &protocol,
+                &mut encoded,
+                FileRequest::Offer {
+                    transfer_id: Uuid::new_v4().to_string(),
+                    file_name: "a".repeat(MAX_FILE_REQUEST_WIRE_BYTES as usize + 1),
+                    size: 0,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(encoded.get_ref().len() as u64 > MAX_FILE_REQUEST_WIRE_BYTES);
+        encoded.set_position(0);
+        assert!(codec.read_request(&protocol, &mut encoded).await.is_err());
     }
 
     #[test]
@@ -3185,7 +3237,7 @@ mod nickname_lease_hint_tests {
             .to_peer_id()
     }
 
-    fn lease(peer: PeerId, nick: &str, expires_at: u128) -> NickLease {
+    fn lease(peer: PeerId, nick: &str, expires_at: u64) -> NickLease {
         NickLease {
             peer_id: peer.to_string(),
             nick: nick.to_string(),
@@ -3196,8 +3248,8 @@ mod nickname_lease_hint_tests {
 
     #[test]
     fn live_hint_requires_matching_key_identity_and_canonical_nick() {
-        let now = 1_000_000u128;
-        let lease = lease(test_peer(), "Alice", now + (NICK_LEASE_SECS as u128 * 1000));
+        let now = 1_000_000u64;
+        let lease = lease(test_peer(), "Alice", now + (NICK_LEASE_SECS as u64 * 1000));
         let key = nick_record_key(&lease.canonical);
         assert!(nick_lease_hint_is_well_formed(&lease, &key, now));
 
@@ -3215,7 +3267,7 @@ mod nickname_lease_hint_tests {
 
     #[test]
     fn hint_expiration_is_fail_closed_and_bounded() {
-        let now = 2_000_000u128;
+        let now = 2_000_000u64;
         let expired = lease(test_peer(), "Alice", now);
         let key = nick_record_key(&expired.canonical);
         assert!(!nick_lease_hint_is_well_formed(&expired, &key, now));
@@ -3223,7 +3275,7 @@ mod nickname_lease_hint_tests {
         let too_far = lease(
             test_peer(),
             "Alice",
-            now + ((NICK_LEASE_SECS + NICK_LEASE_CLOCK_SKEW_SECS + 1) as u128 * 1000),
+            now + ((NICK_LEASE_SECS + NICK_LEASE_CLOCK_SKEW_SECS + 1) as u64 * 1000),
         );
         assert!(!nick_lease_hint_is_well_formed(&too_far, &key, now));
     }

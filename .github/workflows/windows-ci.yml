@@ -179,10 +179,15 @@ jobs:
           Copy-Item 'docs\NODE.md' 'artifact\NODE.md'
           Copy-Item 'docs\NODE_SOAK.md' 'artifact\NODE_SOAK.md'
           Copy-Item 'docs\GLOBAL_BETA.md' 'artifact\GLOBAL_BETA.md'
+          New-Item -ItemType Directory -Path 'artifact\docs' | Out-Null
+          Copy-Item 'docs\global-beta-evidence.template.json', 'docs\RELEASE_0.4.2_BETA1.md' 'artifact\docs'
           $package = Get-Content 'package.json' -Raw | ConvertFrom-Json
           & .\scripts\new-tester-handoff.ps1 -OutputPath 'artifact\TESTER_HANDOFF.md' -Version ([string]$package.version) -Commit ([string]$env:GITHUB_SHA) -WorkflowRun ([string]$env:GITHUB_RUN_ID)
 
           $testTools = @(
+            'new-rooms2-live-evidence.ps1',
+            'validate-rooms2-live-evidence.ps1',
+            'validate-global-beta-evidence.mjs',
             'internet-test.ps1',
             'global-beta-load.ps1',
             'capture-client-netprobe.ps1',
@@ -430,3 +435,36 @@ jobs:
             Konofix-Chat-*-Windows-${{ github.sha }}.zip.sha256
           if-no-files-found: error
           retention-days: 14
+
+  publish-beta:
+    needs: check-windows
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Swir/Konofix'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+      checks: read
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Download this build's verified Windows bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: Konofix-Chat-0.4.2-Windows-${{ github.sha }}
+          path: downloaded
+      - name: Prepare exact-build beta files
+        shell: pwsh
+        run: .\scripts\prepare-beta.ps1
+      - name: Publish beta after Windows, Linux and RustSec pass
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/publish-beta.mjs

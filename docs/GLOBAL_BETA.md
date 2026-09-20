@@ -76,6 +76,19 @@ The validator also opens the candidate artifact and each referenced 50/100/250 l
 
 Start from the explicitly non-passing schema-2 template `docs/global-beta-evidence.template.json`; `_template=true`, `status=pending` and blank attachment digests are intentionally rejected by the validator until real evidence is filled in. Keep the candidate archive, the three referenced load JSON files and every referenced field/failover evidence attachment beside the completed manifest (or below that directory) so the package remains self-contained.
 
+### Seal package hashes without inventing readiness
+
+After recording the real observations and placing every referenced file inside the package directory, the source checkout can calculate the byte bindings with `scripts/seal-global-beta-evidence.mjs`. The sealer copies the working manifest to a separate output file and fills only `candidate.artifact_sha256`, the three `load_runs[].sha256` values, each `checks[].evidence.sha256` and `failover.evidence.sha256`. It deliberately leaves `_template`, PASS/PENDING status, participants, clients, timestamps, transport results and observed transfer digests unchanged.
+
+```powershell
+node .\scripts\seal-global-beta-evidence.mjs .\global-beta-evidence.working.json `
+  --output .\global-beta-evidence.json
+
+node .\scripts\seal-global-beta-evidence.mjs .\global-beta-evidence.json --check
+```
+
+Both modes fail closed on portable absolute paths, lexical escapes, symlink escapes, missing/non-regular/empty/oversized files, files that change while being captured and digest mismatches. `--output` must stay inside the evidence package and may not overwrite the source manifest. Sealing hashes makes manual `Get-FileHash` bookkeeping reproducible; it does **not** create field evidence or make a candidate Global-Beta-ready.
+
 Run the validator from a source checkout with Node.js 22+:
 
 ```powershell
@@ -84,7 +97,7 @@ node .\scripts\validate-global-beta-evidence.mjs .\global-beta-evidence.json `
   --expected-commit FULL_40_CHARACTER_COMMIT_SHA
 ```
 
-The project audit runs deterministic adversarial self-tests for schema downgrade, structure, candidate/load byte tampering, field/failover evidence byte tampering, source-commit mismatch, weak load thresholds, missing stable health, path confinement and failover invariants. Passing schema/package validation is necessary for promotion review but is never a substitute for the real networks, countries, independent participants, traffic, failover and exact-build observations named above.
+The project audit runs deterministic adversarial self-tests for schema downgrade, structure, candidate/load byte tampering, field/failover evidence byte tampering, source-commit mismatch, weak load thresholds, missing stable health, path confinement and failover invariants. It also tests the sealer's no-promotion contract, tamper detection and cross-platform path confinement. Passing schema/package validation is necessary for promotion review but is never a substitute for the real networks, countries, independent participants, traffic, failover and exact-build observations named above.
 
 ## Infrastructure blocker
 

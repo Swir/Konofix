@@ -28,15 +28,15 @@
 
 ## Project status
 
-<img width="100%" src="assets/readme/progress-card.svg" alt="Konofix Chat Real Internet Test progress — 54 of 67 verified tasks, 80.6%, in progress; release readiness is a separate gate" />
+<img width="100%" src="assets/readme/progress-card.svg" alt="Konofix Chat Real Internet Test progress — 55 of 67 verified tasks, 82.1%, in progress; release readiness is a separate gate" />
 
 **Development / controlled Internet testing**
 
-**Verified checklist fraction: 54 of 67 tasks — 80.6%.** The generated SVG uses the exact checklist fraction. The text summary below is CI-checked against that same verified fraction.
+**Verified checklist fraction: 55 of 67 tasks — 82.1%.** The generated SVG uses the exact checklist fraction. The text summary below is CI-checked against that same verified fraction.
 
-**Real Internet Test milestone: 80.6% complete**
+**Real Internet Test milestone: 82.1% complete**
 
-The active `0.4.2 — Real Internet Test` / Global Beta readiness scope has **54 of 67 tasks complete**. The user-approved Global Beta expansion adds eight unverified many-computer release gates on top of the five original real-network gates, so the denominator increased without granting any new completion credit. CI, local transport smoke tests, documentation work, or progress-graphic maintenance do not increase this percentage by themselves.
+The active `0.4.2 — Real Internet Test` / Global Beta readiness scope has **55 of 67 tasks complete**. The Global Beta expansion added eight many-computer release gates to the five original real-network gates. The reviewed public-Node connection-ceiling/per-peer/pending-admission gate is now verified after the exact implementation head passed both Windows and Linux CI; the other seven Global Beta gates and the five original real-world gates remain open. CI, documentation work or progress-graphic maintenance cannot credit the remaining fleet, real-load, cross-country, Rooms 2.0, failover or release-evidence gates by themselves.
 
 The current public package is **`v0.4.2-test1`**, a prerelease preview for controlled cross-country P2P testing. It predates some of the current exact-build Netprobe, soak-artifact and promotion-evidence hardening, so it must not be mixed with newer source/tooling when collecting promotion-quality evidence. It is not a declaration that the public-network milestone has passed.
 
@@ -241,7 +241,7 @@ Frontend resolution is pinned by `package-lock.json`; Rust resolution is pinned 
 
 The authoritative plan is [`ROADMAP.md`](ROADMAP.md).
 
-Current gate: **0.4.2 — Real Internet Test**. The five open milestone items are deliberately real-world only:
+Current gate: **0.4.2 — Real Internet Test / Global Beta readiness**. The original five real-world milestone items remain deliberately evidence-only:
 
 - stable public/community Konofix Node,
 - two PCs on independent networks in different countries,
@@ -249,7 +249,7 @@ Current gate: **0.4.2 — Real Internet Test**. The five open milestone items ar
 - TCP, QUIC, Relay and DCUtR verification,
 - fixes discovered during real-world network tests.
 
-After this milestone closes, the roadmap moves to **0.5.0 — Rooms 2.0**.
+The broader Global Beta scope adds fleet, multi-seed fallback, capacity, Rooms 2.0, multi-user soak, failover and prerelease gates. The reviewed public-Node admission-limit gate is verified; all gates that require real public infrastructure or multi-user evidence remain open.
 
 ## Releases
 

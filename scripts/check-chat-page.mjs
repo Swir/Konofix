@@ -25,11 +25,25 @@ async function inspectPage(url) {
       id: 1,
       method: 'Runtime.evaluate',
       params: {
-        expression: `({ url: location.href, ready: document.readyState,
-          nick: !!document.querySelector('#nick'),
-          connect: !!document.querySelector('#connectBtn'),
-          network: !!document.querySelector('#loginNetwork'),
-          invoke: typeof window.__TAURI_INTERNALS__?.invoke === 'function' })`,
+        expression: `(async () => {
+          const state = { url: location.href, ready: document.readyState,
+            nick: !!document.querySelector('#nick'),
+            connect: !!document.querySelector('#connectBtn'),
+            network: !!document.querySelector('#loginNetwork'),
+            invoke: typeof window.__TAURI_INTERNALS__?.invoke === 'function', events: false };
+          if (!state.nick || !state.connect || !state.network || !state.invoke) return state;
+          const api = window.__TAURI_INTERNALS__;
+          const handler = api.transformCallback(() => {});
+          try {
+            const event = 'konofix-ci-startup';
+            const eventId = await api.invoke('plugin:event|listen', { event, target: { kind: 'Any' }, handler });
+            window.__TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener(event, eventId);
+            await api.invoke('plugin:event|unlisten', { event, eventId });
+            state.events = true;
+          } finally { api.unregisterCallback(handler); }
+          return state;
+        })()`,
+        awaitPromise: true,
         returnByValue: true,
       },
     })), { once: true });
@@ -49,9 +63,9 @@ while (Date.now() < deadline) {
     const pages = await response.json();
     for (const page of pages.filter((item) => item.type === 'page' && item.webSocketDebuggerUrl)) {
       const state = await inspectPage(page.webSocketDebuggerUrl);
-      if (state?.ready === 'complete' && state.nick && state.connect && state.network && state.invoke) {
+      if (state?.ready === 'complete' && state.nick && state.connect && state.network && state.invoke && state.events) {
         assert.match(state.url, /^https?:\/\/tauri\.localhost(?:\/|$)/, 'Must load bundled production assets');
-        console.log('Installed Chat frontend: bundled login form and Tauri bridge ready.');
+        console.log('Installed Chat frontend: bundled login form, Tauri bridge and event subscriptions ready.');
         process.exit(0);
       }
       lastError = new Error(`Chat page is not ready: ${JSON.stringify(state)}`);

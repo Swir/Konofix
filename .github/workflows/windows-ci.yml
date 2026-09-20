@@ -409,7 +409,6 @@ jobs:
           Expect-VerifyFailure -Label 'high-ratio decompression bomb' -EntryName 'compression-bomb.txt' -ExpectedPattern 'compression ratio|expanded size' -Content ('A' * 8MB)
 
       - name: Upload Windows test bundle
-        if: github.event_name == 'push'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Konofix-Chat-0.4.2-Windows-${{ github.sha }}

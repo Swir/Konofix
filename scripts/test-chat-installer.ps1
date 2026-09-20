@@ -11,7 +11,6 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 $releaseRoot = Join-Path $repoRoot 'src-tauri\target\release'
 $chat = Join-Path $releaseRoot 'konofix-chat.exe'
 if (-not (Test-Path -LiteralPath $chat -PathType Leaf)) { throw 'Production Chat EXE is missing.' }
-$expectedHash = (Get-FileHash -LiteralPath $chat -Algorithm SHA256).Hash
 
 # Check the actual PE subsystem, not just a source-code attribute.
 $binary = [IO.File]::ReadAllBytes($chat)
@@ -19,6 +18,21 @@ $peOffset = [BitConverter]::ToInt32($binary, 0x3c)
 if ([BitConverter]::ToUInt16($binary, $peOffset + 24 + 68) -ne 2) {
     throw 'Production Chat must use the Windows GUI subsystem, without a console window.'
 }
+
+# Tauri 2.11.4 patches this fixed-width marker before packaging, then restores
+# the original EXE after EACH format. Derive the exact expected bytes for each
+# installer in memory; do not ignore any other byte or modify the real binary.
+# https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-bundler/src/bundle.rs
+$markerOffset = [Text.Encoding]::ASCII.GetString($binary).IndexOf('__TAURI_BUNDLE_TYPE_VAR_UNK', [StringComparison]::Ordinal)
+if ($markerOffset -lt 0) { throw 'Production Chat is missing the Tauri bundle marker.' }
+function Get-ExpectedBundleHash([ValidateSet('MSI', 'NSS')][string]$Format) {
+    $expected = [byte[]]$binary.Clone()
+    $marker = [Text.Encoding]::ASCII.GetBytes("__TAURI_BUNDLE_TYPE_VAR_$Format")
+    [Array]::Copy($marker, 0, $expected, $markerOffset, $marker.Length)
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($expected))
+}
+$expectedMsiHash = Get-ExpectedBundleHash 'MSI'
+$expectedNsisHash = Get-ExpectedBundleHash 'NSS'
 
 $installers = @(Get-ChildItem -LiteralPath (Join-Path $releaseRoot 'bundle\nsis') -Filter '*-setup.exe' -File)
 $msis = @(Get-ChildItem -LiteralPath (Join-Path $releaseRoot 'bundle\msi') -Filter '*.msi' -File)
@@ -51,7 +65,8 @@ try {
     & 7z x $msis[0].FullName "-o$msiRoot" -y | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Could not extract the MSI payload.' }
     $msiChat = @(Get-ChildItem -LiteralPath $msiRoot -Recurse -File | Where-Object { $_.Name -eq 'konofix-chat.exe' })
-    if ($msiChat.Count -ne 1 -or (Get-FileHash -LiteralPath $msiChat[0].FullName -Algorithm SHA256).Hash -ne $expectedHash) {
+    if ($msiChat.Count -ne 1 -or (Get-FileHash -LiteralPath $msiChat[0].FullName -Algorithm SHA256).Hash -ne $expectedMsiHash) {
+        Get-ChildItem -LiteralPath $msiRoot -Recurse -File | Select-Object FullName, Length | Format-Table -AutoSize
         throw 'MSI does not contain the exact production Chat executable.'
     }
     Write-Host 'MSI Chat payload matches the production executable.'
@@ -60,7 +75,7 @@ try {
     Wait-SmokeProcess $installer 120 'NSIS installation'
     $installedChat = Join-Path $installRoot 'konofix-chat.exe'
     if (-not (Test-Path -LiteralPath $installedChat -PathType Leaf)) { throw 'NSIS installed no Chat executable.' }
-    if ((Get-FileHash -LiteralPath $installedChat -Algorithm SHA256).Hash -ne $expectedHash) {
+    if ((Get-FileHash -LiteralPath $installedChat -Algorithm SHA256).Hash -ne $expectedNsisHash) {
         throw 'Installed Chat differs from the production executable.'
     }
     if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) { throw 'Start menu shortcut is missing.' }

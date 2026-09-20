@@ -22,13 +22,27 @@ These are safety ceilings, not a promise that every VPS can sustain those number
 
 ## Concurrent transport admission test
 
-The Windows beta bundle includes scripts\global-beta-load.ps1. It launches many independent exact-build konofix-netprobe.exe processes with bounded parallelism. Each successful probe still requires Noise-authenticated Peer ID, Konofix Identify metadata and a libp2p ping.
+The Windows beta bundle includes `scripts\global-beta-load.ps1`. It launches many independent `konofix-netprobe.exe` processes with bounded parallelism. Every successful probe must provide structured Konofix Netprobe evidence for the requested transport and target, including one canonical exact source commit and version. The load summary also seals the Netprobe executable SHA-256 and byte size, so results cannot silently mix a different probe binary into the same run.
 
-Example 50-client gate:
+For promotion-quality load evidence, use Node health continuity as well. `-RequireStableNodeHealth` requires a fresh schema-v2 health file plus exact version/source-commit pins before the run, then waits for a newer validated health snapshot after the run. The harness rejects a changed Peer ID/version/source commit, backwards uptime or a changed derived boot epoch. This turns "no crash/restart" into recorded evidence instead of an operator assumption.
 
-    .\scripts\global-beta-load.ps1 -TcpBootstrap "/dns/node.example.com/tcp/45555/p2p/PEER_ID" -QuicBootstrap "/dns/node.example.com/udp/45555/quic-v1/p2p/PEER_ID" -Clients 50 -Parallelism 10 -MinimumSuccessPercent 95 -OutputPath ".\global-beta-load-50.json"
+Example 50-client gate from one exact Windows bundle:
 
-Repeat with 100 and 250 clients before calling the infrastructure Global-Beta-ready. A load-harness PASS proves transport/admission concurrency only. It does not prove chat fan-out, room convergence, file transfer, relay, DCUtR, CGNAT behavior or long-running stability.
+```powershell
+.\scripts\global-beta-load.ps1 `
+  -TcpBootstrap "/dns/node.example.com/tcp/45555/p2p/PEER_ID" `
+  -QuicBootstrap "/dns/node.example.com/udp/45555/quic-v1/p2p/PEER_ID" `
+  -Clients 50 -Parallelism 10 -MinimumSuccessPercent 95 `
+  -ExpectedVersion "0.4.2" `
+  -ExpectedSourceCommit "FULL_40_CHARACTER_COMMIT_SHA" `
+  -HealthPath "C:\Konofix\health.json" `
+  -RequireStableNodeHealth `
+  -OutputPath ".\global-beta-load-50.json"
+```
+
+Repeat with **50, 100 and 250 clients** before calling the infrastructure Global-Beta-ready. Keep the three schema-v2 JSON outputs with the exact candidate artifact/evidence package. A promotion-quality run must have `node_health.verified=true`, one exact `exact_build.source_commit`, one exact `exact_build.version`, and the expected success threshold.
+
+A load-harness PASS proves transport/admission concurrency only. It does not prove chat fan-out, room convergence, file transfer, relay, DCUtR, CGNAT behavior or long-running stability.
 
 ## Real multi-user beta gate
 
@@ -36,7 +50,7 @@ Before the first real Global Beta prerelease:
 
 1. Run at least three public Nodes across at least two independent providers/regions.
 2. Verify the client default bootstrap pool and failover instead of requiring every tester to paste one address manually.
-3. Pass 50, 100 and 250 concurrent exact-build Netprobe admission runs without Node crash/restart.
+3. Pass 50, 100 and 250 concurrent exact-build Netprobe admission runs with stable pre/post Node health evidence proving no Node crash/restart.
 4. Complete Rooms 2.0 production membership and count wiring.
 5. Run at least 20 real clients across at least five independent networks and at least three countries for at least 60 minutes.
 6. Exercise WORLD, multiple rooms, reconnect, bidirectional file transfer and SHA-256 validation.

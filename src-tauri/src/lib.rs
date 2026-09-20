@@ -1225,7 +1225,10 @@ fn attempt_bootstrap_target(
 
 fn mark_bootstrap_connected(targets: &mut [BootstrapTarget], peer_id: &PeerId) -> bool {
     let mut matched = false;
-    for target in targets.iter_mut().filter(|target| &target.peer_id == peer_id) {
+    for target in targets
+        .iter_mut()
+        .filter(|target| &target.peer_id == peer_id)
+    {
         target.mark_connected();
         matched = true;
     }
@@ -1245,11 +1248,7 @@ fn mark_bootstrap_disconnected(
     matched
 }
 
-fn mark_bootstrap_failed(
-    targets: &mut [BootstrapTarget],
-    peer_id: &PeerId,
-    now: Instant,
-) -> bool {
+fn mark_bootstrap_failed(targets: &mut [BootstrapTarget], peer_id: &PeerId, now: Instant) -> bool {
     let mut matched = false;
     for target in targets.iter_mut().filter(|target| &target.peer_id == peer_id) {
         target.mark_failure(now);
@@ -1654,8 +1653,7 @@ async fn network_task(
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
     let mut discovery = tokio::time::interval(Duration::from_secs(25));
-    let mut bootstrap_retry =
-        tokio::time::interval(Duration::from_secs(BOOTSTRAP_RETRY_TICK_SECS));
+    let mut bootstrap_retry = tokio::time::interval(Duration::from_secs(BOOTSTRAP_RETRY_TICK_SECS));
     let mut cleanup = tokio::time::interval(Duration::from_secs(8));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     discovery.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -2599,10 +2597,9 @@ mod bootstrap_failover_tests {
     fn bootstrap_target_schedules_disconnect_and_backoff() {
         let key = libp2p::identity::Keypair::generate_ed25519();
         let peer = key.public().to_peer_id();
-        let address: Multiaddr =
-            format!("/ip4/127.0.0.1/tcp/45555/p2p/{peer}")
-                .parse()
-                .expect("test multiaddr should parse");
+        let address: Multiaddr = format!("/ip4/127.0.0.1/tcp/45555/p2p/{peer}")
+            .parse()
+            .expect("test multiaddr should parse");
         let now = Instant::now();
         let mut target = BootstrapTarget::new(address.to_string(), peer, address, now);
 

@@ -20,11 +20,12 @@ This is the detailed implementation plan for the `0.5.0 — Rooms 2.0` scope alr
 - [x] authenticated source binding before remote mutation,
 - [x] heartbeat/resync snapshot reuse without revision inflation,
 - [x] two-client transport convergence and adversarial replay/source tests,
+- [x] verified live-coordinator semantics for final-connection close, authenticated goodbye, presence expiry and room-close republish,
 - [ ] add membership to the production GossipSub `WireEvent` contract,
 - [ ] route backend room create/join/switch/world transitions through membership state,
 - [ ] publish membership snapshots on transitions and heartbeat/resync,
 - [ ] apply remote snapshots from the live network task,
-- [ ] clear remote membership on final disconnect, authenticated goodbye and presence expiry,
+- [ ] wire verified peer cleanup into final disconnect, authenticated goodbye and presence expiry handlers,
 - [ ] close-room cleanup and republish when the local active room disappears.
 
 ## Stage 3 — accurate room-count UX

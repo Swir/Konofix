@@ -46,12 +46,16 @@ function validDate(value, label) {
   return timestamp;
 }
 
+function isPortableAbsolute(value) {
+  return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value);
+}
+
 function evidenceReference(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     fail(`${label} must be an object with path and sha256.`);
   }
   const evidencePath = nonEmpty(value.path, `${label}.path`);
-  if (path.isAbsolute(evidencePath)) fail(`${label}.path must be relative to the evidence manifest directory.`);
+  if (isPortableAbsolute(evidencePath)) fail(`${label}.path must be relative to the evidence manifest directory.`);
   const digest = String(value.sha256 ?? '');
   if (!SHA256_RE.test(digest)) fail(`${label}.sha256 must be a lowercase 64-character SHA-256 digest.`);
   return { path: evidencePath, sha256: digest };
@@ -81,7 +85,7 @@ function isInside(root, candidate) {
 
 function resolveEvidencePath(root, raw, label) {
   const value = nonEmpty(raw, label);
-  if (path.isAbsolute(value)) fail(`${label} must be relative to the evidence manifest directory.`);
+  if (isPortableAbsolute(value)) fail(`${label} must be relative to the evidence manifest directory.`);
   const lexical = path.resolve(root, value);
   if (!isInside(root, lexical)) fail(`${label} escapes the evidence manifest directory.`);
   if (!fs.existsSync(lexical)) fail(`${label} does not exist: ${value}`);
@@ -195,7 +199,7 @@ export function validateGlobalBetaEvidence(document, options = {}) {
   if (!SHA256_RE.test(String(candidate.artifact_sha256 ?? ''))) {
     fail('candidate.artifact_sha256 must be a lowercase 64-character SHA-256 digest.');
   }
-  if (path.isAbsolute(artifactPath)) fail('candidate.artifact_path must be relative to the evidence manifest directory.');
+  if (isPortableAbsolute(artifactPath)) fail('candidate.artifact_path must be relative to the evidence manifest directory.');
   if (options.expectedVersion && version !== options.expectedVersion) {
     fail(`candidate.version mismatch (expected=${options.expectedVersion}, actual=${version}).`);
   }
@@ -272,7 +276,7 @@ export function validateGlobalBetaEvidence(document, options = {}) {
     if (loadByCount.has(count)) fail(`duplicate ${count}-client load evidence is not allowed.`);
     if (!SHA256_RE.test(String(run.sha256 ?? ''))) fail(`${count}-client load evidence sha256 is invalid.`);
     const runPath = nonEmpty(run.path, `load_runs[${index}].path`);
-    if (path.isAbsolute(runPath)) fail(`load_runs[${index}].path must be relative to the evidence manifest directory.`);
+    if (isPortableAbsolute(runPath)) fail(`load_runs[${index}].path must be relative to the evidence manifest directory.`);
     loadByCount.set(count, run);
   }
   for (const count of REQUIRED_LOAD_CLIENTS) {

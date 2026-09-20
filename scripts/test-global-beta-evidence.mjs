@@ -14,6 +14,10 @@ const peers = [
   '12D3KooWQ2222222222222222222222222222222222222222222',
   '12D3KooWQ3333333333333333333333333333333333333333333',
 ];
+const requiredChecks = [
+  'world_chat', 'rooms', 'reconnect', 'file_a_to_b_sha256', 'file_b_to_a_sha256',
+  'tcp', 'quic_v1', 'relay', 'dcutr', 'cgnat',
+];
 
 function hash(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
@@ -62,14 +66,25 @@ function createFixture() {
     fs.writeFileSync(path.join(root, fileName), bytes);
     return { clients, path: fileName, sha256: hash(bytes) };
   });
-  return { root, artifactSha256: hash(artifactBytes), loadRuns };
+
+  const evidenceDir = path.join(root, 'evidence');
+  fs.mkdirSync(evidenceDir);
+  const evidence = {};
+  for (const name of [...requiredChecks, 'failover']) {
+    const relativePath = `evidence/${name}.txt`;
+    const bytes = Buffer.from(`verified field evidence for ${name}\n`);
+    fs.writeFileSync(path.join(root, relativePath), bytes);
+    evidence[name] = { path: relativePath, sha256: hash(bytes) };
+  }
+
+  return { root, artifactSha256: hash(artifactBytes), loadRuns, evidence };
 }
 
 function validDocument(fixture) {
   const networks = ['net-a', 'net-b', 'net-c', 'net-d', 'net-e'];
   const countries = ['NO', 'PL', 'DE'];
   return {
-    schema: 1,
+    schema: 2,
     tool: 'konofix-global-beta-evidence',
     status: 'pass',
     candidate: {
@@ -98,13 +113,10 @@ function validDocument(fixture) {
       country: countries[index % countries.length],
     })),
     load_runs: fixture.loadRuns.map((run) => ({ ...run })),
-    checks: [
-      'world_chat', 'rooms', 'reconnect', 'file_a_to_b_sha256', 'file_b_to_a_sha256',
-      'tcp', 'quic_v1', 'relay', 'dcutr', 'cgnat',
-    ].map((name) => ({
+    checks: requiredChecks.map((name) => ({
       name,
       status: 'pass',
-      evidence: `${name} observed by independent testers`,
+      evidence: { ...fixture.evidence[name] },
       ...(name.includes('sha256') ? { observed_sha256: 'c'.repeat(64) } : {}),
     })),
     failover: {
@@ -113,7 +125,7 @@ function validDocument(fixture) {
       discovery_recovered: true,
       chat_recovered: true,
       rooms_recovered: true,
-      evidence: 'peer-a was removed; clients converged through peer-b and continued WORLD/room traffic',
+      evidence: { ...fixture.evidence.failover },
     },
   };
 }
@@ -151,6 +163,7 @@ function packageFailure(mutator, pattern) {
   try {
     const document = validDocument(fixture);
     const summary = validateGlobalBetaEvidencePackage(document, fixture.root, { expectedVersion: '0.4.2', expectedCommit: commit });
+    assert.equal(summary.schema, 2);
     assert.equal(summary.participant_nodes, 3);
     assert.equal(summary.participant_networks, 2);
     assert.equal(summary.reachable_contact_identities, 2);
@@ -161,11 +174,15 @@ function packageFailure(mutator, pattern) {
     assert.deepEqual(summary.load_clients, [50, 100, 250]);
     assert.equal(summary.load_artifacts.length, 3);
     assert.equal(summary.artifact_sha256, fixture.artifactSha256);
+    assert.equal(summary.field_evidence_references, 11);
+    assert.equal(summary.field_evidence_artifacts, 11);
+    assert.equal(summary.field_evidence.length, 11);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 }
 
+structuralFailure((doc) => { doc.schema = 1; }, /schema must equal 2/i);
 structuralFailure((doc) => { doc.clients.pop(); }, /at least twenty real clients/i);
 structuralFailure((doc) => { for (const client of doc.clients) client.network_id = 'only-one'; }, /five independent network IDs/i);
 structuralFailure((doc) => { for (const client of doc.clients) client.country = 'NO'; }, /at least three countries/i);
@@ -174,8 +191,11 @@ structuralFailure((doc) => { doc.load_runs = doc.load_runs.filter((run) => run.c
 structuralFailure((doc) => { doc.window.ended_utc = '2026-09-20T10:59:59Z'; doc.window.duration_seconds = 3599; }, /at least 3600/i);
 structuralFailure((doc) => { doc.checks = doc.checks.filter((check) => check.name !== 'rooms'); }, /required check 'rooms' is missing/i);
 structuralFailure((doc) => { doc.checks.find((check) => check.name === 'file_a_to_b_sha256').observed_sha256 = 'bad'; }, /observed_sha256/i);
+structuralFailure((doc) => { doc.checks.find((check) => check.name === 'rooms').evidence = 'free text'; }, /object with path and sha256/i);
+structuralFailure((doc) => { doc.checks.find((check) => check.name === 'rooms').evidence.sha256 = 'bad'; }, /evidence.sha256/i);
 structuralFailure((doc) => { doc.failover.recovered_via_peer_ids = [doc.failover.lost_peer_id]; }, /cannot use the participant/i);
 structuralFailure((doc) => { doc.failover.rooms_recovered = false; }, /discovery, chat and room recovery/i);
+structuralFailure((doc) => { doc.failover.evidence = 'free text'; }, /object with path and sha256/i);
 structuralFailure((doc) => { doc.candidate.artifact_sha256 = 'B'.repeat(64); }, /artifact_sha256/i);
 structuralFailure((doc) => { doc._template = true; }, /template manifests can never qualify/i);
 
@@ -206,5 +226,15 @@ packageFailure((doc, fixture) => {
   fs.writeFileSync(path.join(fixture.root, entry.path), bytes);
   entry.sha256 = hash(bytes);
 }, /node_health.verified must be true/i);
+packageFailure((doc) => {
+  doc.checks.find((check) => check.name === 'rooms').evidence.path = '../outside.txt';
+}, /escapes the evidence manifest directory/i);
+packageFailure((doc, fixture) => {
+  const ref = doc.checks.find((check) => check.name === 'world_chat').evidence;
+  fs.appendFileSync(path.join(fixture.root, ref.path), 'tamper');
+}, /checks.world_chat.evidence SHA-256 mismatch/i);
+packageFailure((doc, fixture) => {
+  fs.appendFileSync(path.join(fixture.root, doc.failover.evidence.path), 'tamper');
+}, /failover.evidence SHA-256 mismatch/i);
 
-console.log('Global Beta evidence validator self-tests passed: structure, exact artifact bytes, load provenance, stable health and failover gates are fail-closed.');
+console.log('Global Beta evidence validator self-tests passed: schema-v2 structure, exact candidate/load bytes, field-evidence bytes, stable health and failover gates are fail-closed.');

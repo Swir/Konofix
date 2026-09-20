@@ -24,10 +24,7 @@ impl RoomMembershipLiveCoordinator {
         }
     }
 
-    pub fn announce_room(
-        &mut self,
-        room_id: &str,
-    ) -> Result<bool, RoomMembershipTransportError> {
+    pub fn announce_room(&mut self, room_id: &str) -> Result<bool, RoomMembershipTransportError> {
         self.network.register_announced_room(room_id)
     }
 

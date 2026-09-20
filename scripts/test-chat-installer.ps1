@@ -64,7 +64,20 @@ try {
     # Inspect the real MSI payload too; a renamed helper binary cannot pass.
     & 7z x $msis[0].FullName "-o$msiRoot" -y | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Could not extract the MSI payload.' }
-    $msiChat = @(Get-ChildItem -LiteralPath $msiRoot -Recurse -File | Where-Object { $_.Name -eq 'konofix-chat.exe' })
+    # A CAB member uses MSI's File identifier (WiX uses "Path"), not the
+    # installed filename. Resolve that identifier through the actual File table.
+    $msiDatabase = (New-Object -ComObject WindowsInstaller.Installer).OpenDatabase($msis[0].FullName, 0)
+    $fileView = $msiDatabase.OpenView('SELECT `File`, `FileName` FROM `File`')
+    $fileView.Execute()
+    $chatFileIds = @()
+    while ($record = $fileView.Fetch()) {
+        if (($record.StringData(2) -split '\|')[-1] -ceq 'konofix-chat.exe') {
+            $chatFileIds += $record.StringData(1)
+        }
+    }
+    $fileView.Close()
+    if ($chatFileIds.Count -ne 1) { throw 'MSI File table must install exactly one konofix-chat.exe.' }
+    $msiChat = @(Get-ChildItem -LiteralPath $msiRoot -Recurse -File | Where-Object { $_.Name -ceq $chatFileIds[0] })
     if ($msiChat.Count -ne 1 -or (Get-FileHash -LiteralPath $msiChat[0].FullName -Algorithm SHA256).Hash -ne $expectedMsiHash) {
         Get-ChildItem -LiteralPath $msiRoot -Recurse -File | Select-Object FullName, Length | Format-Table -AutoSize
         throw 'MSI does not contain the exact production Chat executable.'
@@ -106,7 +119,7 @@ try {
     }
     $uninstaller = Join-Path $installRoot 'uninstall.exe'
     if (Test-Path -LiteralPath $uninstaller) {
-        $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -WindowStyle Hidden -PassThru
+        $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/S _?=$installRoot" -WindowStyle Hidden -PassThru
         Wait-SmokeProcess $uninstall 60 'NSIS cleanup'
     }
     $resolved = [IO.Path]::GetFullPath($smokeRoot)
@@ -115,3 +128,4 @@ try {
     }
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }
+

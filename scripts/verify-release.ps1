@@ -143,6 +143,9 @@ try {
   # Keep this canonical list synchronized with the operator/test tooling staged by Windows CI.
   # The complete file inventory below independently rejects every missing or unknown archive file.
   $toolRelativePaths = @(
+    'scripts/new-rooms2-live-evidence.ps1',
+    'scripts/validate-rooms2-live-evidence.ps1',
+    'scripts/validate-global-beta-evidence.mjs',
     'scripts/internet-test.ps1',
     'scripts/global-beta-load.ps1',
     'scripts/capture-client-netprobe.ps1',

@@ -8,7 +8,7 @@
 
 **Ephemeral peer-to-peer messaging and direct file transfer for Windows**
 
-**No traditional accounts • Rust/libp2p networking • Tauri desktop UI • Public-Node test tooling**
+**No traditional accounts • Participant-created P2P network • Tauri desktop UI • Optional headless Node**
 
 ![Rust](https://img.shields.io/badge/Rust-P2P_Core-02050A?style=for-the-badge&logo=rust&logoColor=62E5FF)
 ![Tauri](https://img.shields.io/badge/Tauri-2-02050A?style=for-the-badge&logo=tauri&logoColor=62E5FF)
@@ -18,7 +18,7 @@
 [![Windows CI](https://github.com/Swir/Konofix/actions/workflows/windows-ci.yml/badge.svg)](https://github.com/Swir/Konofix/actions/workflows/windows-ci.yml)
 [![Linux Node CI](https://github.com/Swir/Konofix/actions/workflows/linux-node-ci.yml/badge.svg)](https://github.com/Swir/Konofix/actions/workflows/linux-node-ci.yml)
 [![Stars](https://img.shields.io/github/stars/Swir/Konofix?style=flat-square&color=0088FF)](https://github.com/Swir/Konofix/stargazers)
-[![Test Release](https://img.shields.io/badge/test_release-v0.4.2--test1-0088FF?style=flat-square)](https://github.com/Swir/Konofix/releases/tag/v0.4.2-test1)
+[![Latest prerelease](https://img.shields.io/github/v/release/Swir/Konofix?include_prereleases&label=prerelease&style=flat-square&color=0088FF)](https://github.com/Swir/Konofix/releases)
 
 [**Highlights**](#highlights) · [**Quick Start**](#quick-start) · [**Architecture**](#architecture) · [**Roadmap**](#roadmap) · [**Releases**](#releases)
 
@@ -30,7 +30,7 @@
 
 <img width="100%" src="assets/readme/progress-card.svg" alt="Konofix Chat Real Internet Test progress — 55 of 67 verified tasks, 82.1%, in progress; release readiness is a separate gate" />
 
-**Development / controlled Internet testing**
+**Beta preview / Global Beta qualification in progress**
 
 **Verified checklist fraction: 55 of 67 tasks — 82.1%.** The generated SVG uses the exact checklist fraction. The text summary below is CI-checked against that same verified fraction.
 
@@ -38,7 +38,7 @@
 
 The active `0.4.2 — Real Internet Test` / Global Beta readiness scope has **55 of 67 tasks complete**. The Global Beta expansion added eight many-computer release gates to the five original real-network gates. The reviewed public-Node connection-ceiling/per-peer/pending-admission gate is now verified after the exact implementation head passed both Windows and Linux CI; the other seven Global Beta gates and the five original real-world gates remain open. CI, documentation work or progress-graphic maintenance cannot credit the remaining fleet, real-load, cross-country, Rooms 2.0, failover or release-evidence gates by themselves.
 
-The current public package is **`v0.4.2-test1`**, a prerelease preview for controlled cross-country P2P testing. It predates some of the current exact-build Netprobe, soak-artifact and promotion-evidence hardening, so it must not be mixed with newer source/tooling when collecting promotion-quality evidence. It is not a declaration that the public-network milestone has passed.
+Published packages and their actual availability are listed on [GitHub Releases](https://github.com/Swir/Konofix/releases). [Beta 1 notes](docs/RELEASE_0.4.2_BETA1.md) describe the Windows installer correction, participant networking and current testing scope. Beta previews collect real-world results; they do not declare the Global Beta network gates complete. The historical `v0.4.2-test1` package predates current fixes and must not be mixed with newer binaries or evidence tools.
 
 ## What is Konofix?
 
@@ -66,12 +66,12 @@ To form a network, start the app on each computer and connect with a nickname. P
 
 ### Public preview
 
-1. Open the [`v0.4.2-test1` release](https://github.com/Swir/Konofix/releases/tag/v0.4.2-test1).
-2. Download `Konofix-Chat-0.4.2-test1-Windows.zip` and its `.sha256` file.
-3. Verify the checksum before exploratory testing.
-4. Extract the archive and follow its bundled instructions.
+1. Open [GitHub Releases](https://github.com/Swir/Konofix/releases) and choose the newest published beta preview.
+2. For Beta 1, download `Konofix-Chat-0.4.2-beta.1-setup.exe` and its `.sha256` file; the release entry is the authority for availability.
+3. Verify the checksum, install it, then open **Konofix Chat** from the Start menu. Do not start Netprobe to open the chat.
+4. Choose a nickname and connect. Every connected desktop participates in the network. LAN discovery is automatic; for first contact over the Internet, exchange a reachable participant address in network settings.
 
-> `v0.4.2-test1` is an older prerelease preview and may trigger Windows SmartScreen because it is not commercially code-signed. Do **not** combine this archive with newer scripts, binaries, `BUILD_INFO.json`, Netprobe records or soak evidence for stable-promotion testing.
+The full exact-commit ZIP includes the MSI alternative, optional Node/Netprobe tools and test instructions. Keep one build's archive, `BUILD_INFO.json`, checksums and tools together. Node and Netprobe are command-line tools; the chat installer supplies the desktop window. The older `v0.4.2-test1` remains historical. Builds are not commercially code-signed.
 
 ### Promotion-quality controlled testing
 
@@ -255,7 +255,9 @@ The broader Global Beta scope adds fleet, multi-seed fallback, capacity, Rooms 2
 
 ## Releases
 
-The current public artifact is the [`v0.4.2-test1` prerelease](https://github.com/Swir/Konofix/releases/tag/v0.4.2-test1). It remains useful as a historical/exploratory preview, but promotion-quality evidence must use one exact fresh verified bundle and its matching provenance/tooling. A later GitHub Release should be published only after the repository release gates and required real public-network evidence pass.
+See [published releases](https://github.com/Swir/Konofix/releases) for available downloads and [Beta 1 notes](docs/RELEASE_0.4.2_BETA1.md) for the current preview scope. Beta previews use verified exact-commit installers to gather the still-missing live evidence. Fully qualified Global Beta/stable promotion continues to require the real network, load and failover gates; publishing a preview does not complete those gates or increase 55/67.
+
+Windows CI can publish `v0.4.2-beta.1` only from a trusted `main` push, after installed-GUI verification, sealed archive verification and exact-commit Windows/Linux/RustSec success. Assets are uploaded to a draft and their server-reported SHA-256 digests are checked before publication. Existing published releases are never overwritten. The ordinary application version is `0.4.2`; `beta.1` identifies the preview release channel.
 
 Release history: [GitHub Releases](https://github.com/Swir/Konofix/releases)  
 Change history: [`CHANGELOG.md`](CHANGELOG.md)

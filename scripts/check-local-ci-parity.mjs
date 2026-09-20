@@ -17,6 +17,8 @@ const localCheck = read(localCheckPath);
 // driver. Every single-line repository PowerShell gate in Windows CI must be
 // mirrored locally unless it is explicitly classified here as runtime-only.
 const runtimeOnlyPowerShellGates = new Set([
+  'prepare-beta.ps1',
+  'test-chat-installer.ps1',
   'test-node-runtime.ps1',
   'verify-release.ps1',
 ]);

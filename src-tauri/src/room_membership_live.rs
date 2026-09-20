@@ -151,12 +151,7 @@ mod tests {
         live.announce_room("alpha").expect("announce alpha");
 
         assert!(live
-            .receive_authenticated_snapshot(
-                remote.to_string(),
-                1,
-                vec!["alpha".into()],
-                &attacker,
-            )
+            .receive_authenticated_snapshot(remote.to_string(), 1, vec!["alpha".into()], &attacker,)
             .is_err());
         assert_eq!(live.total_count("alpha"), 0);
 

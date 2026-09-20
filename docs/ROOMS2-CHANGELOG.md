@@ -2,6 +2,15 @@
 
 This scoped changelog records unreleased Rooms 2.0 work separately from stable `0.4.2` release notes. It does not change the active Real Internet Test percentage or stable-release readiness.
 
+## Stage 2.5 — production effects bridge
+
+- added `RoomMembershipProductionBridge` as a narrow production-loop contract over the verified application adapter,
+- unified local create/enter/WORLD, heartbeat/resync, authenticated remote snapshots, final-connection cleanup, authenticated goodbye, presence expiry and room-close handling behind the same `ApplicationMembershipEffects` shape,
+- kept network-loop side effects explicit: publish only the returned membership snapshot and emit only the returned `room-user-count` updates,
+- preserved revision-stable heartbeat behavior, replay silence, authenticated-source validation and exactly-once peer cleanup without duplicating those rules in the future Tauri/libp2p event loop,
+- added cross-peer integration coverage for convergence, replay suppression, room switching, WORLD leave, multi-connection cleanup, forged snapshots and active-room close republish,
+- kept the actual `lib.rs` `WireEvent`/GossipSub and backend command-loop insertion pending until the large production event loop consumes this tested bridge.
+
 ## Stage 3 preview — synchronized count UI consumer
 
 - added the frontend `room-user-count` consumer so verified backend deltas have a deterministic UI destination,
@@ -46,7 +55,7 @@ This scoped changelog records unreleased Rooms 2.0 work separately from stable `
 
 ### Still pending before Rooms 2.0 is user-visible
 
-- insert the membership event into the production GossipSub `WireEvent` path,
+- insert the membership event into the production GossipSub `WireEvent` path and make the live network task consume `RoomMembershipProductionBridge`,
 - wire create/join/switch/world transitions through the backend command loop,
 - publish heartbeat/resync membership snapshots from the live network task,
 - wire the verified final-disconnect/goodbye/presence-expiry cleanup paths into the live network task,

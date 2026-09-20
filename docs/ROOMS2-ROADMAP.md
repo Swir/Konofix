@@ -15,6 +15,8 @@ This is the detailed implementation plan for the `0.5.0 — Rooms 2.0` scope alr
 
 ## Stage 2 — network transport and live runtime wiring
 
+The verified runtime now also has a tested `RoomMembershipProductionBridge` that maps every relevant network-loop lifecycle input to one `ApplicationMembershipEffects` contract. This materially narrows the remaining `lib.rs` integration, but the unchecked production-loop items below stay open until the live GossipSub/command task actually consumes that bridge.
+
 - [x] bounded membership transport frame and deterministic codec,
 - [x] transport adapter over the verified membership runtime,
 - [x] authenticated source binding before remote mutation,

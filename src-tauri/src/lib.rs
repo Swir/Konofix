@@ -3154,10 +3154,29 @@ mod file_offer_admission_tests {
         assert!(file_offer_name_error(&(four_byte_at_limit + "🧪")).is_some());
     }
 
-    #[test]
-    fn request_codec_limit_preserves_a_large_chunk_overhead_budget() {
-        assert_eq!(MAX_FILE_REQUEST_WIRE_BYTES, 320 * 1024);
-        assert!(MAX_FILE_REQUEST_WIRE_BYTES >= (FILE_CHUNK_SIZE as u64).saturating_add(64 * 1024));
+    #[tokio::test]
+    async fn request_codec_limit_rejects_oversized_encoded_frames() {
+        use futures::io::Cursor;
+        use request_response::Codec;
+
+        let protocol = StreamProtocol::new(FILE_PROTOCOL);
+        let mut codec = file_codec();
+        let mut encoded = Cursor::new(Vec::new());
+        codec
+            .write_request(
+                &protocol,
+                &mut encoded,
+                FileRequest::Offer {
+                    transfer_id: Uuid::new_v4().to_string(),
+                    file_name: "a".repeat(MAX_FILE_REQUEST_WIRE_BYTES as usize + 1),
+                    size: 0,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(encoded.get_ref().len() as u64 > MAX_FILE_REQUEST_WIRE_BYTES);
+        encoded.set_position(0);
+        assert!(codec.read_request(&protocol, &mut encoded).await.is_err());
     }
 
     #[test]

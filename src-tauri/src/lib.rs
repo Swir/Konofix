@@ -1241,7 +1241,10 @@ fn mark_bootstrap_disconnected(
     now: Instant,
 ) -> bool {
     let mut matched = false;
-    for target in targets.iter_mut().filter(|target| &target.peer_id == peer_id) {
+    for target in targets
+        .iter_mut()
+        .filter(|target| &target.peer_id == peer_id)
+    {
         target.mark_disconnected(now);
         matched = true;
     }
@@ -1250,7 +1253,10 @@ fn mark_bootstrap_disconnected(
 
 fn mark_bootstrap_failed(targets: &mut [BootstrapTarget], peer_id: &PeerId, now: Instant) -> bool {
     let mut matched = false;
-    for target in targets.iter_mut().filter(|target| &target.peer_id == peer_id) {
+    for target in targets
+        .iter_mut()
+        .filter(|target| &target.peer_id == peer_id)
+    {
         target.mark_failure(now);
         matched = true;
     }

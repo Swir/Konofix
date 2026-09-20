@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $generator = Join-Path $PSScriptRoot 'new-tester-handoff.ps1'
+$roomsEvidenceTest = Join-Path $PSScriptRoot 'test-rooms2-live-evidence.ps1'
 $sha = '0123456789abcdef0123456789abcdef01234567'
 $runId = '9876543210'
 
@@ -55,3 +56,8 @@ try {
 } finally {
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+if (-not (Test-Path -LiteralPath $roomsEvidenceTest -PathType Leaf)) {
+  throw 'Rooms 2.0 live-evidence self-test is missing from the exact-build tester surface.'
+}
+& $roomsEvidenceTest

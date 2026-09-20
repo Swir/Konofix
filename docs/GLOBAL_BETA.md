@@ -68,7 +68,11 @@ Before the first real Global Beta prerelease:
 
 Source-side promotion review now includes `scripts/validate-global-beta-evidence.mjs`. The validator does **not** create evidence and does not turn synthetic/local results into readiness credit; it rejects incomplete or internally inconsistent operator evidence before anyone can treat it as a Global Beta PASS.
 
-A schema-1 manifest must bind one exact candidate version, canonical 40-character source commit and artifact SHA-256 to a test window of at least 60 minutes. It requires at least three unique participant Peer IDs on at least two participant networks, at least two distinct reachable participant contact/relay identities, at least 20 unique clients across five network IDs and three country codes, PASS records for the 50/100/250 stable-health load runs, concrete WORLD/rooms/reconnect/TCP/QUIC/relay/DCUtR/CGNAT checks, bidirectional file-transfer SHA-256 observations, and a failover record proving discovery/chat/rooms recovered through a surviving recorded contact identity after another participant was removed.
+A schema-1 manifest must bind one exact candidate version, canonical 40-character source commit, relative candidate artifact path and artifact SHA-256 to a test window of at least 60 minutes. It requires at least three unique participant Peer IDs on at least two participant networks, at least two distinct reachable participant contact/relay identities, at least 20 unique clients across five network IDs and three country codes, concrete WORLD/rooms/reconnect/TCP/QUIC/relay/DCUtR/CGNAT checks, bidirectional file-transfer SHA-256 observations, and a failover record proving discovery/chat/rooms recovered through a surviving recorded contact identity after another participant was removed.
+
+The validator opens the candidate artifact and each referenced 50/100/250 load JSON from inside the manifest directory, captures bounded file bytes, verifies their recorded SHA-256 values and rejects path escapes. Each load JSON must be the real schema-v2 `konofix-global-beta-load` output for the same candidate version/source commit, require at least a 95% success threshold, include both TCP and QUIC-v1 successes and carry verified stable pre/post Node health with advancing timestamp/uptime. A manifest cannot replace those referenced files with duplicated claims.
+
+Start from the explicitly non-passing template `docs/global-beta-evidence.template.json`; `_template=true` and `status=pending` are intentionally rejected by the validator until real evidence is filled in. Keep the candidate archive and the three referenced load JSON files beside the completed manifest (or below that directory) so the package remains self-contained.
 
 Run the validator from a source checkout with Node.js 22+:
 
@@ -78,7 +82,7 @@ node .\scripts\validate-global-beta-evidence.mjs .\global-beta-evidence.json `
   --expected-commit FULL_40_CHARACTER_COMMIT_SHA
 ```
 
-The project audit runs deterministic adversarial self-tests for this validator. The manifest fields remain operator-supplied evidence: passing schema validation is necessary for promotion review but is never a substitute for the real networks, countries, independent participants, traffic, failover and exact-build observations named above.
+The project audit runs deterministic adversarial self-tests for structure, candidate/load byte tampering, source-commit mismatch, weak load thresholds, missing stable health, path confinement and failover invariants. Passing schema/package validation is necessary for promotion review but is never a substitute for the real networks, countries, independent participants, traffic, failover and exact-build observations named above.
 
 ## Infrastructure blocker
 

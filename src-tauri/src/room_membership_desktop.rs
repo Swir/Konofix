@@ -126,16 +126,37 @@ mod tests {
 
         let alpha = desktop.enter_room(Some("alpha")).expect("enter alpha");
         assert_eq!(alpha.snapshot.as_ref().expect("alpha snapshot").revision, 1);
-        assert_eq!(alpha.snapshot.as_ref().expect("alpha snapshot").rooms, vec!["alpha"]);
-        assert_eq!(alpha.counts, vec![RoomCountChange { room_id: "alpha".into(), users: 1 }]);
+        assert_eq!(
+            alpha.snapshot.as_ref().expect("alpha snapshot").rooms,
+            vec!["alpha"]
+        );
+        assert_eq!(
+            alpha.counts,
+            vec![RoomCountChange {
+                room_id: "alpha".into(),
+                users: 1
+            }]
+        );
 
         let beta = desktop.enter_room(Some("beta")).expect("enter beta");
         assert_eq!(beta.snapshot.as_ref().expect("beta snapshot").revision, 2);
-        assert_eq!(beta.snapshot.as_ref().expect("beta snapshot").rooms, vec!["beta"]);
-        assert_eq!(beta.counts, vec![
-            RoomCountChange { room_id: "alpha".into(), users: 0 },
-            RoomCountChange { room_id: "beta".into(), users: 1 },
-        ]);
+        assert_eq!(
+            beta.snapshot.as_ref().expect("beta snapshot").rooms,
+            vec!["beta"]
+        );
+        assert_eq!(
+            beta.counts,
+            vec![
+                RoomCountChange {
+                    room_id: "alpha".into(),
+                    users: 0
+                },
+                RoomCountChange {
+                    room_id: "beta".into(),
+                    users: 1
+                },
+            ]
+        );
 
         let heartbeat = desktop.current_snapshot().expect("heartbeat snapshot");
         assert_eq!(heartbeat.revision, 2);
@@ -143,9 +164,27 @@ mod tests {
         assert_eq!(heartbeat.rooms, vec!["beta"]);
 
         let world = desktop.enter_room(Some("world")).expect("return world");
-        assert_eq!(world.snapshot.as_ref().expect("world leave snapshot").revision, 3);
-        assert!(world.snapshot.as_ref().expect("world leave snapshot").rooms.is_empty());
-        assert_eq!(world.counts, vec![RoomCountChange { room_id: "beta".into(), users: 0 }]);
+        assert_eq!(
+            world
+                .snapshot
+                .as_ref()
+                .expect("world leave snapshot")
+                .revision,
+            3
+        );
+        assert!(world
+            .snapshot
+            .as_ref()
+            .expect("world leave snapshot")
+            .rooms
+            .is_empty());
+        assert_eq!(
+            world.counts,
+            vec![RoomCountChange {
+                room_id: "beta".into(),
+                users: 0
+            }]
+        );
     }
 
     #[test]

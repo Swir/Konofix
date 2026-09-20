@@ -63,7 +63,14 @@ fn desktop_contract_converges_create_switch_remote_replay_and_disconnect() {
         .register_announced_room("beta")
         .expect("remote room announcement");
     let move_to_beta = desktop.enter_room(Some("beta")).expect("switch beta");
-    assert_eq!(move_to_beta.snapshot.as_ref().expect("move snapshot").revision, 2);
+    assert_eq!(
+        move_to_beta
+            .snapshot
+            .as_ref()
+            .expect("move snapshot")
+            .revision,
+        2
+    );
     assert_eq!(
         move_to_beta.counts,
         vec![
@@ -94,7 +101,12 @@ fn desktop_contract_converges_create_switch_remote_replay_and_disconnect() {
 
     let world = desktop.enter_room(Some("world")).expect("return world");
     assert_eq!(world.snapshot.as_ref().expect("leave snapshot").revision, 3);
-    assert!(world.snapshot.as_ref().expect("leave snapshot").rooms.is_empty());
+    assert!(world
+        .snapshot
+        .as_ref()
+        .expect("leave snapshot")
+        .rooms
+        .is_empty());
     assert_eq!(
         world.counts,
         vec![RoomCountChange {

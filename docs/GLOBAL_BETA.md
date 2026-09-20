@@ -64,6 +64,22 @@ Before the first real Global Beta prerelease:
 8. Re-run the existing TCP, QUIC, Relay, DCUtR and CGNAT evidence gates on the exact beta candidate.
 9. Publish only the exact verified build with tester handoff, rollback notes, participant-joining instructions and the evidence package.
 
+## Fail-closed qualification manifest
+
+Source-side promotion review now includes `scripts/validate-global-beta-evidence.mjs`. The validator does **not** create evidence and does not turn synthetic/local results into readiness credit; it rejects incomplete or internally inconsistent operator evidence before anyone can treat it as a Global Beta PASS.
+
+A schema-1 manifest must bind one exact candidate version, canonical 40-character source commit and artifact SHA-256 to a test window of at least 60 minutes. It requires at least three unique participant Peer IDs on at least two participant networks, at least two distinct reachable participant contact/relay identities, at least 20 unique clients across five network IDs and three country codes, PASS records for the 50/100/250 stable-health load runs, concrete WORLD/rooms/reconnect/TCP/QUIC/relay/DCUtR/CGNAT checks, bidirectional file-transfer SHA-256 observations, and a failover record proving discovery/chat/rooms recovered through a surviving recorded contact identity after another participant was removed.
+
+Run the validator from a source checkout with Node.js 22+:
+
+```powershell
+node .\scripts\validate-global-beta-evidence.mjs .\global-beta-evidence.json `
+  --expected-version 0.4.2 `
+  --expected-commit FULL_40_CHARACTER_COMMIT_SHA
+```
+
+The project audit runs deterministic adversarial self-tests for this validator. The manifest fields remain operator-supplied evidence: passing schema validation is necessary for promotion review but is never a substitute for the real networks, countries, independent participants, traffic, failover and exact-build observations named above.
+
 ## Infrastructure blocker
 
 The external blocker is actual participant reachability and multi-network evidence, not purchasing servers. Local tests and GitHub Actions cannot establish that twenty real users across five networks and three countries can exchange messages, switch rooms, transfer files and recover after a participant leaves. The existing headless-Node health/load tools remain available for optional operators; their PASS results alone do not qualify the desktop participant network. Global Beta readiness remains open until the real participant tests pass.

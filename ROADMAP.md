@@ -10,6 +10,7 @@
 
 The active milestone now has 54 of 67 tasks complete. The user-approved Global Beta expansion adds eight unverified many-computer release gates to the five original real-network gates; the lower percentage reflects broader scope, not lost completed work. CI alone cannot credit any of those open gates.
 
+- Global Beta admission evidence now binds every successful concurrent probe to structured `konofix-netprobe` version/source/transport/target metadata, seals the exact Netprobe executable SHA-256/byte size into schema-v2 load output, and can require fresh pre/post schema-v2 Node health from the exact version/source commit. Stable-health mode waits for a newer health snapshot and rejects Peer-ID/build changes, backwards uptime or a changed derived boot epoch, so the 50/100/250 gate can prove "no Node restart/crash" instead of relying on operator observation. This tooling hardening adds no Global Beta credit until real 50/100/250 runs pass.
 - Fresh Windows test bundles now replace the historical `v0.4.2-test1` release note with a deterministic exact-build `TESTER_HANDOFF.md`: CI generates its version, full source SHA and workflow-run identity from the same build context recorded by `BUILD_INFO.json`, release verification cross-checks those fields, rejects legacy `RELEASE_NOTES.md`, and deterministic/adversarial self-tests keep local and Windows preflight parity. This tester-handoff/provenance hardening adds no Real Internet Test credit.
 - Windows promotion archives now carry deterministic exact-build identity in the filename: the package version plus the full lowercase 40-character source commit defines the ZIP/checksum basename, release verification binds that basename back to verified `BUILD_INFO.json`, and adversarial CI rejects renamed archives while preserving canonical names for content-tamper tests. This release-provenance hardening adds no Real Internet Test credit.
 - Schema-v3 network report editing now binds the source manifest, sibling `SESSION_INFO.json`, rollback bytes, replacement manifest serialization and resealed session inventory provenance to exact bounded snapshots/byte sequences; writer-contention runtime coverage plus fail-closed source/mutation tests guard path rereads, replacement reserialization and rollback/session substitution. This evidence-integrity hardening adds no Real Internet Test credit.
@@ -194,7 +195,7 @@ This user-approved many-computer beta scope is now part of the authoritative act
 - [ ] public-node failover drill proves clients recover discovery/chat/rooms after losing one seed/relay node
 - [ ] exact-build Global Beta prerelease is published with rollback/tester handoff, stable bootstrap pool and evidence package
 
-The current Global Beta branch adds connection-admission ceilings and a concurrent Netprobe load harness as groundwork. These items stay unchecked until exact-head CI and the relevant real load evidence pass.
+The current Global Beta branch has exact-head CI-validated connection-admission limits and now produces schema-v2 concurrent-load evidence that can bind every successful probe to one exact Netprobe build and prove stable pre/post Node health continuity. The capacity gates remain unchecked until the real 50/100/250 runs and their required public infrastructure evidence pass.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

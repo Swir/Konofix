@@ -155,7 +155,8 @@ impl RoomMembershipNetwork {
     pub fn encode_event(
         event: &RoomMembershipNetworkEvent,
     ) -> Result<Vec<u8>, RoomMembershipTransportError> {
-        let bytes = serde_json::to_vec(event).map_err(|_| RoomMembershipTransportError::InvalidJson)?;
+        let bytes =
+            serde_json::to_vec(event).map_err(|_| RoomMembershipTransportError::InvalidJson)?;
         if bytes.len() > MAX_ROOM_MEMBERSHIP_WIRE_BYTES {
             return Err(RoomMembershipTransportError::FrameTooLarge);
         }
@@ -227,7 +228,11 @@ mod tests {
         let first = joined.publish.expect("publish");
         let heartbeat = network.heartbeat_event().expect("heartbeat");
         assert_eq!(heartbeat, first);
-        assert!(network.enter_room(Some("alpha")).expect("same room").publish.is_none());
+        assert!(network
+            .enter_room(Some("alpha"))
+            .expect("same room")
+            .publish
+            .is_none());
         assert_eq!(network.heartbeat_event(), Some(first));
     }
 
@@ -248,7 +253,9 @@ mod tests {
         assert!(network.receive_authenticated(&bytes, &attacker).is_err());
         assert_eq!(network.total_count("alpha"), 0);
         assert_eq!(
-            network.receive_authenticated(&bytes, &remote).expect("valid source"),
+            network
+                .receive_authenticated(&bytes, &remote)
+                .expect("valid source"),
             RemoteTransportEffects::Applied(vec![RoomCountChange {
                 room_id: "alpha".into(),
                 users: 1,
@@ -271,11 +278,15 @@ mod tests {
         };
         let first_bytes = RoomMembershipNetwork::encode_event(&first).expect("encode first");
         assert!(matches!(
-            network.receive_authenticated(&first_bytes, &remote).expect("apply first"),
+            network
+                .receive_authenticated(&first_bytes, &remote)
+                .expect("apply first"),
             RemoteTransportEffects::Applied(_)
         ));
         assert_eq!(
-            network.receive_authenticated(&first_bytes, &remote).expect("duplicate"),
+            network
+                .receive_authenticated(&first_bytes, &remote)
+                .expect("duplicate"),
             RemoteTransportEffects::Duplicate
         );
 

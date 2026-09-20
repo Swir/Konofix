@@ -6,7 +6,9 @@ Global Beta means a public, many-computer network. A two-PC test is only the sma
 
 A Global Beta candidate should use at least three stable public/community Konofix Nodes across at least two independent providers or regions. Each Node needs a persistent Peer ID, public TCP and UDP/QUIC reachability, Circuit Relay, health telemetry and restart supervision.
 
-Clients should eventually ship a default pool with at least two independent bootstrap identities and keep manual custom bootstrap support. One public Node is not enough because it creates a single point of failure.
+Clients should ship a default pool with at least two independent bootstrap identities and keep manual custom bootstrap support. One public Node is not enough because it creates a single point of failure.
+
+The desktop now has the runtime side of that design: a build-owned `src-tauri/bootstrap-pool.json` is merged ahead of environment and user-provided seeds, duplicates are removed without destroying priority, the total pool is bounded, multiple relay candidates are registered, and failed/lost bootstrap Peer IDs are re-dialed automatically with bounded exponential backoff. The committed pool intentionally contains no addresses until real long-lived public Nodes with stable Peer IDs are provisioned and verified; placeholder/fake infrastructure is never shipped.
 
 ## Capacity and abuse boundary
 

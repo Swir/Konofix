@@ -195,7 +195,7 @@ This user-approved many-computer beta scope is now part of the authoritative act
 - [ ] public-node failover drill proves clients recover discovery/chat/rooms after losing one seed/relay node
 - [ ] exact-build Global Beta prerelease is published with rollback/tester handoff, stable bootstrap pool and evidence package
 
-The current Global Beta branch has exact-head CI-validated connection-admission limits and now produces schema-v2 concurrent-load evidence that can bind every successful probe to one exact Netprobe build and prove stable pre/post Node health continuity. The capacity gates remain unchecked until the real 50/100/250 runs and their required public infrastructure evidence pass.
+The current Global Beta work has exact-head CI-validated connection-admission limits and schema-v2 concurrent-load evidence. The next package adds a build-owned bootstrap-pool manifest plus automatic multi-seed retry/failover with bounded exponential backoff. The pool remains intentionally empty until real long-lived public Nodes and stable Peer IDs exist; no fake seed addresses are shipped and the related readiness gate remains unchecked.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

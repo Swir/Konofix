@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
+    collections::{hash_map::DefaultHasher, HashMap, HashSet},
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::Mutex,
@@ -47,10 +47,73 @@ const PENDING_FILE_OFFER_TTL_SECS: u64 = 45;
 const INCOMING_TRANSFER_IDLE_TTL_SECS: u64 = 120;
 const MAX_ROOMS_TOTAL: usize = 256;
 const MAX_ROOMS_PER_OWNER: usize = 16;
+const MAX_BOOTSTRAP_SOURCES: usize = 32;
+const BOOTSTRAP_RETRY_TICK_SECS: u64 = 5;
+const BOOTSTRAP_RETRY_BASE_SECS: u64 = 3;
+const BOOTSTRAP_RETRY_MAX_SECS: u64 = 60;
+const BOOTSTRAP_PENDING_RETRY_SECS: u64 = 20;
+const BUILTIN_BOOTSTRAP_POOL_JSON: &str = include_str!("../bootstrap-pool.json");
 
-// Production releases can ship community bootstrap peers here.
-// They are only discovery entry points; chat/file payloads are not stored there.
-const DEFAULT_BOOTSTRAPS: &[&str] = &[];
+#[derive(Debug, Deserialize)]
+struct BootstrapPoolManifest {
+    schema: u8,
+    seeds: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct BootstrapTarget {
+    raw: String,
+    peer_id: PeerId,
+    full_addr: Multiaddr,
+    connected: bool,
+    failures: u32,
+    next_attempt: Instant,
+}
+
+impl BootstrapTarget {
+    fn new(raw: String, peer_id: PeerId, full_addr: Multiaddr, now: Instant) -> Self {
+        Self {
+            raw,
+            peer_id,
+            full_addr,
+            connected: false,
+            failures: 0,
+            next_attempt: now,
+        }
+    }
+
+    fn should_attempt(&self, now: Instant) -> bool {
+        !self.connected && now >= self.next_attempt
+    }
+
+    fn mark_dial_started(&mut self, now: Instant) {
+        self.next_attempt = now + Duration::from_secs(BOOTSTRAP_PENDING_RETRY_SECS);
+    }
+
+    fn mark_connected(&mut self) {
+        self.connected = true;
+        self.failures = 0;
+    }
+
+    fn mark_disconnected(&mut self, now: Instant) {
+        self.connected = false;
+        self.next_attempt = now + Duration::from_secs(BOOTSTRAP_RETRY_BASE_SECS);
+    }
+
+    fn mark_failure(&mut self, now: Instant) {
+        self.connected = false;
+        self.failures = self.failures.saturating_add(1);
+        self.next_attempt = now + bootstrap_retry_delay(self.failures);
+    }
+}
+
+fn bootstrap_retry_delay(failures: u32) -> Duration {
+    let shift = failures.saturating_sub(1).min(5);
+    let seconds = BOOTSTRAP_RETRY_BASE_SECS
+        .saturating_mul(1u64 << shift)
+        .min(BOOTSTRAP_RETRY_MAX_SECS);
+    Duration::from_secs(seconds)
+}
 
 #[derive(Default)]
 struct AppState {
@@ -670,28 +733,51 @@ fn world_provider_key() -> RecordKey {
     RecordKey::new(&bytes)
 }
 
-fn bootstrap_sources(extra: Vec<String>) -> Vec<String> {
-    let mut out: Vec<String> = DEFAULT_BOOTSTRAPS
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect();
+fn parse_builtin_bootstrap_pool() -> Result<Vec<String>, String> {
+    let manifest: BootstrapPoolManifest = serde_json::from_str(BUILTIN_BOOTSTRAP_POOL_JSON)
+        .map_err(|error| format!("Built-in bootstrap pool is invalid JSON: {error}"))?;
+    if manifest.schema != 1 {
+        return Err(format!(
+            "Built-in bootstrap pool schema {} is unsupported.",
+            manifest.schema
+        ));
+    }
+    dedupe_bootstrap_sources(manifest.seeds)
+}
+
+fn dedupe_bootstrap_sources<I>(sources: I) -> Result<Vec<String>, String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for raw in sources {
+        let value = raw.trim().to_string();
+        if value.is_empty() || !seen.insert(value.clone()) {
+            continue;
+        }
+        out.push(value);
+        if out.len() > MAX_BOOTSTRAP_SOURCES {
+            return Err(format!(
+                "Too many bootstrap sources: maximum is {MAX_BOOTSTRAP_SOURCES}."
+            ));
+        }
+    }
+    Ok(out)
+}
+
+fn bootstrap_sources(extra: Vec<String>) -> Result<Vec<String>, String> {
+    let mut combined = parse_builtin_bootstrap_pool()?;
     if let Ok(env) = std::env::var("KONOFIX_BOOTSTRAPS") {
-        out.extend(
+        combined.extend(
             env.split(';')
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
         );
     }
-    out.extend(
-        extra
-            .into_iter()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty()),
-    );
-    out.sort();
-    out.dedup();
-    out
+    combined.extend(extra);
+    dedupe_bootstrap_sources(combined)
 }
 
 fn file_offer_name_error(file_name: &str) -> Option<&'static str> {
@@ -829,6 +915,7 @@ async fn start_network(
     state: State<'_, AppState>,
 ) -> Result<StartResult, String> {
     let nick = validate_nick(&nick)?;
+    let bootstrap_list = bootstrap_sources(bootstraps.unwrap_or_default())?;
     let (tx, rx) = mpsc::channel(128);
     install_network_sender(state.inner(), tx.clone())?;
 
@@ -836,7 +923,6 @@ async fn start_network(
     let startup_tx = tx;
     let (ready_tx, ready_rx) = oneshot::channel();
     let nick_for_task = nick.clone();
-    let bootstrap_list = bootstrap_sources(bootstraps.unwrap_or_default());
     tauri::async_runtime::spawn(async move {
         let task_result =
             network_task(nick_for_task, bootstrap_list, app.clone(), rx, ready_tx).await;
@@ -1083,7 +1169,11 @@ async fn disconnect_network(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
-fn add_bootstrap_to_swarm(swarm: &mut libp2p::Swarm<Behaviour>, raw: &str) -> Result<(), String> {
+fn register_bootstrap_target(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    raw: &str,
+    now: Instant,
+) -> Result<BootstrapTarget, String> {
     let mut addr: Multiaddr = raw
         .trim()
         .parse()
@@ -1107,8 +1197,65 @@ fn add_bootstrap_to_swarm(swarm: &mut libp2p::Swarm<Behaviour>, raw: &str) -> Re
         .behaviour_mut()
         .file_transfer
         .add_address(&peer_id, addr);
-    let _ = swarm.dial(full_addr);
-    Ok(())
+
+    Ok(BootstrapTarget::new(
+        raw.trim().to_string(),
+        peer_id,
+        full_addr,
+        now,
+    ))
+}
+
+fn attempt_bootstrap_target(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    target: &mut BootstrapTarget,
+    now: Instant,
+) -> Result<(), String> {
+    match swarm.dial(target.full_addr.clone()) {
+        Ok(_) => {
+            target.mark_dial_started(now);
+            Ok(())
+        }
+        Err(error) => {
+            target.mark_failure(now);
+            Err(format!("Bootstrap dial {} failed: {error}", target.raw))
+        }
+    }
+}
+
+fn mark_bootstrap_connected(targets: &mut [BootstrapTarget], peer_id: &PeerId) -> bool {
+    let mut matched = false;
+    for target in targets.iter_mut().filter(|target| &target.peer_id == peer_id) {
+        target.mark_connected();
+        matched = true;
+    }
+    matched
+}
+
+fn mark_bootstrap_disconnected(
+    targets: &mut [BootstrapTarget],
+    peer_id: &PeerId,
+    now: Instant,
+) -> bool {
+    let mut matched = false;
+    for target in targets.iter_mut().filter(|target| &target.peer_id == peer_id) {
+        target.mark_disconnected(now);
+        matched = true;
+    }
+    matched
+}
+
+fn mark_bootstrap_failed(
+    targets: &mut [BootstrapTarget],
+    peer_id: &PeerId,
+    now: Instant,
+) -> bool {
+    let mut matched = false;
+    for target in targets.iter_mut().filter(|target| &target.peer_id == peer_id) {
+        target.mark_failure(now);
+        matched = true;
+    }
+    matched
 }
 
 fn try_listen_via_relay(swarm: &mut libp2p::Swarm<Behaviour>, raw: &str) -> Result<(), String> {
@@ -1449,20 +1596,28 @@ async fn network_task(
         );
     }
 
-    let mut bootstrap_count = 0usize;
+    let mut bootstrap_targets = Vec::<BootstrapTarget>::new();
+    let mut relay_bootstrap_peers = HashSet::<PeerId>::new();
     for address in &bootstraps {
-        match add_bootstrap_to_swarm(&mut swarm, address) {
-            Ok(()) => {
-                bootstrap_count += 1;
-                if let Err(err) = try_listen_via_relay(&mut swarm, address) {
-                    let _ = app.emit("network-log", format!("Relay rezerwacja: {err}"));
+        let now = Instant::now();
+        match register_bootstrap_target(&mut swarm, address, now) {
+            Ok(mut target) => {
+                if relay_bootstrap_peers.insert(target.peer_id.clone()) {
+                    if let Err(err) = try_listen_via_relay(&mut swarm, address) {
+                        let _ = app.emit("network-log", format!("Relay rezerwacja: {err}"));
+                    }
                 }
+                if let Err(err) = attempt_bootstrap_target(&mut swarm, &mut target, now) {
+                    let _ = app.emit("network-log", err);
+                }
+                bootstrap_targets.push(target);
             }
             Err(err) => {
                 let _ = app.emit("network-warning", format!("Bootstrap pominięty: {err}"));
             }
         }
     }
+    let mut bootstrap_count = bootstrap_targets.len();
     if bootstrap_count > 0 {
         let _ = swarm.behaviour_mut().kad.bootstrap();
     }
@@ -1499,10 +1654,14 @@ async fn network_task(
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
     let mut discovery = tokio::time::interval(Duration::from_secs(25));
+    let mut bootstrap_retry =
+        tokio::time::interval(Duration::from_secs(BOOTSTRAP_RETRY_TICK_SECS));
     let mut cleanup = tokio::time::interval(Duration::from_secs(8));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     discovery.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    bootstrap_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    bootstrap_retry.tick().await;
 
     emit_status(
         &app,
@@ -1525,6 +1684,27 @@ async fn network_task(
                 swarm.behaviour_mut().kad.get_providers(world_provider_key());
                 save_peer_cache(&peer_cache);
                 emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Odświeżono discovery");
+            }
+            _ = bootstrap_retry.tick() => {
+                let now = Instant::now();
+                let mut attempted = 0usize;
+                for target in &mut bootstrap_targets {
+                    if !target.should_attempt(now) {
+                        continue;
+                    }
+                    attempted += 1;
+                    if let Err(err) = attempt_bootstrap_target(&mut swarm, target, now) {
+                        let _ = app.emit("network-log", err);
+                    }
+                }
+                if attempted > 0 {
+                    let _ = swarm.behaviour_mut().kad.bootstrap();
+                    swarm.behaviour_mut().kad.get_providers(world_provider_key());
+                    let _ = app.emit(
+                        "network-log",
+                        format!("Bootstrap failover: ponowiono {attempted} połączeń."),
+                    );
+                }
             }
             _ = cleanup.tick() => {
                 let stale: Vec<PeerId> = peers.iter()
@@ -1626,13 +1806,30 @@ async fn network_task(
                         }
                     }
                     NetworkCommand::AddBootstrap { address, reply } => {
-                        let result = add_bootstrap_to_swarm(&mut swarm, &address);
-                        if result.is_ok() {
-                            bootstrap_count += 1;
-                            let _ = try_listen_via_relay(&mut swarm, &address);
-                            let _ = swarm.behaviour_mut().kad.bootstrap();
-                            swarm.behaviour_mut().kad.get_providers(world_provider_key());
-                        }
+                        let normalized = address.trim().to_string();
+                        let result = if bootstrap_targets.iter().any(|target| target.raw == normalized) {
+                            Ok(())
+                        } else {
+                            let now = Instant::now();
+                            match register_bootstrap_target(&mut swarm, &normalized, now) {
+                                Ok(mut target) => {
+                                    if relay_bootstrap_peers.insert(target.peer_id.clone()) {
+                                        let _ = try_listen_via_relay(&mut swarm, &normalized);
+                                    }
+                                    if let Err(err) =
+                                        attempt_bootstrap_target(&mut swarm, &mut target, now)
+                                    {
+                                        let _ = app.emit("network-log", err);
+                                    }
+                                    bootstrap_targets.push(target);
+                                    bootstrap_count = bootstrap_targets.len();
+                                    let _ = swarm.behaviour_mut().kad.bootstrap();
+                                    swarm.behaviour_mut().kad.get_providers(world_provider_key());
+                                    Ok(())
+                                }
+                                Err(error) => Err(error),
+                            }
+                        };
                         let _ = reply.send(result);
                         emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Zaktualizowano bootstrapy");
                     }
@@ -1773,12 +1970,28 @@ async fn network_task(
                 }
                 SwarmEvent::ConnectionEstablished { peer_id: remote, .. } => {
                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
+                    if mark_bootstrap_connected(&mut bootstrap_targets, &remote) {
+                        let _ = app.emit(
+                            "network-log",
+                            format!("Bootstrap aktywny: {remote}"),
+                        );
+                    }
                     publish_presence(&mut swarm, &world, &peer_id, &nick);
                     emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączono z peerem");
                 }
                 SwarmEvent::ConnectionClosed { peer_id: remote, num_established, .. } => {
                     if num_established == 0 {
                         swarm.behaviour_mut().gossipsub.remove_explicit_peer(&remote);
+                        if mark_bootstrap_disconnected(
+                            &mut bootstrap_targets,
+                            &remote,
+                            Instant::now(),
+                        ) {
+                            let _ = app.emit(
+                                "network-log",
+                                format!("Bootstrap utracony: {remote}; failover zaplanowany."),
+                            );
+                        }
 
                         let pending_from_peer: Vec<String> = pending_incoming
                             .iter()
@@ -1842,6 +2055,22 @@ async fn network_task(
 
                     }
                     emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączenie z peerem zamknięte");
+                }
+                SwarmEvent::OutgoingConnectionError {
+                    peer_id: Some(remote),
+                    error,
+                    ..
+                } => {
+                    if mark_bootstrap_failed(
+                        &mut bootstrap_targets,
+                        &remote,
+                        Instant::now(),
+                    ) {
+                        let _ = app.emit(
+                            "network-log",
+                            format!("Bootstrap niedostępny {remote}: {error}; retry z backoff."),
+                        );
+                    }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
                     for (id, addr) in list {
@@ -2329,6 +2558,70 @@ fn open_github() -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     {
         Err(format!("Otwórz w przeglądarce: {URL}"))
+    }
+}
+
+#[cfg(test)]
+mod bootstrap_failover_tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_pool_manifest_and_retry_are_bounded() {
+        let manifest =
+            parse_builtin_bootstrap_pool().expect("built-in bootstrap pool should parse");
+        assert!(manifest.len() <= MAX_BOOTSTRAP_SOURCES);
+
+        assert_eq!(bootstrap_retry_delay(1), Duration::from_secs(3));
+        assert_eq!(bootstrap_retry_delay(2), Duration::from_secs(6));
+        assert_eq!(bootstrap_retry_delay(3), Duration::from_secs(12));
+        assert_eq!(bootstrap_retry_delay(10), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn bootstrap_source_dedupe_preserves_priority_order() {
+        let values = dedupe_bootstrap_sources(vec![
+            " /dns/a.example/tcp/45555/p2p/peer-a ".to_string(),
+            "/dns/b.example/tcp/45555/p2p/peer-b".to_string(),
+            "/dns/a.example/tcp/45555/p2p/peer-a".to_string(),
+            "   ".to_string(),
+        ])
+        .expect("source list should be accepted");
+        assert_eq!(
+            values,
+            vec![
+                "/dns/a.example/tcp/45555/p2p/peer-a".to_string(),
+                "/dns/b.example/tcp/45555/p2p/peer-b".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn bootstrap_target_schedules_disconnect_and_backoff() {
+        let key = libp2p::identity::Keypair::generate_ed25519();
+        let peer = key.public().to_peer_id();
+        let address: Multiaddr =
+            format!("/ip4/127.0.0.1/tcp/45555/p2p/{peer}")
+                .parse()
+                .expect("test multiaddr should parse");
+        let now = Instant::now();
+        let mut target = BootstrapTarget::new(address.to_string(), peer, address, now);
+
+        assert!(target.should_attempt(now));
+        target.mark_dial_started(now);
+        assert!(!target.should_attempt(now + Duration::from_secs(19)));
+        assert!(target.should_attempt(now + Duration::from_secs(20)));
+
+        target.mark_connected();
+        assert!(!target.should_attempt(now + Duration::from_secs(120)));
+
+        target.mark_disconnected(now);
+        assert!(!target.should_attempt(now + Duration::from_secs(2)));
+        assert!(target.should_attempt(now + Duration::from_secs(3)));
+
+        target.mark_failure(now);
+        assert_eq!(target.failures, 1);
+        assert!(!target.should_attempt(now + Duration::from_secs(2)));
+        assert!(target.should_attempt(now + Duration::from_secs(3)));
     }
 }
 

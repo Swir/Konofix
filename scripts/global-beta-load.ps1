@@ -12,6 +12,7 @@ param(
   [ValidateRange(1, 100)]
   [double]$MinimumSuccessPercent = 95,
   [string]$NetprobePath = '',
+  [string[]]$NetprobePrefixArguments = @(),
   [string]$OutputPath = ''
 )
 

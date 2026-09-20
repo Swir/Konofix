@@ -2,6 +2,14 @@
 
 This scoped changelog records unreleased Rooms 2.0 work separately from stable `0.4.2` release notes. It does not change the active Real Internet Test percentage or stable-release readiness.
 
+## Stage 2.6 — production ordering safety
+
+- centralized the production membership payload guard so canonical Peer ID text, authenticated-source matching, nonzero revisions, bounded room membership, temporary-room grammar and duplicate rejection are checked at one application boundary before live-loop integration,
+- added recovery coverage for membership snapshots that arrive before their room announcement, proving an unknown-room rejection does not consume the revision and the exact same authenticated revision can apply once the room is known,
+- added a three-peer create/join/switch/final-disconnect/room-close convergence regression to catch phantom-member and stale-count failures before the large production loop is changed,
+- rebased this preflight package onto the verified Global Beta multi-node bootstrap/failover `main` snapshot so the next live wiring step starts from current production code,
+- kept every production-loop checklist item open: this safety package does not claim Global Beta or Rooms 2.0 completion until `lib.rs` actually publishes/consumes bridge effects end-to-end and exact-head CI passes.
+
 ## Stage 2.5 — production effects bridge
 
 - added `RoomMembershipProductionBridge` as a narrow production-loop contract over the verified application adapter,

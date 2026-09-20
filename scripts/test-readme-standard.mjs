@@ -9,6 +9,14 @@ const canonical = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
 const canonicalHero = fs.readFileSync(path.join(root, 'assets', 'readme', 'hero.svg'), 'utf8');
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-readme-policy-'));
 
+const canonicalProgressMatch = canonical.match(/Real Internet Test milestone: (\d+(?:\.\d+)?)% complete/);
+if (!canonicalProgressMatch) {
+  throw new Error('Canonical README milestone progress could not be located for fixture mutation.');
+}
+const canonicalProgressSummary = canonicalProgressMatch[0];
+const canonicalProgressPercent = Number(canonicalProgressMatch[1]);
+const roundedProgressSummary = `Real Internet Test milestone: ${Math.round(canonicalProgressPercent)}% complete`;
+
 const runChecker = (name, content, expectedSuccess, heroContent = canonicalHero) => {
   const fixtureRoot = path.join(tempRoot, name);
   const fixture = path.join(fixtureRoot, 'README.md');
@@ -108,12 +116,12 @@ try {
   );
   runChecker(
     'rounded-progress',
-    canonical.replace('Real Internet Test milestone: 91.5% complete', 'Real Internet Test milestone: 92% complete'),
+    canonical.replace(canonicalProgressSummary, roundedProgressSummary),
     false,
   );
   runChecker(
     'false-completion',
-    canonical.replace('Real Internet Test milestone: 91.5% complete', 'Real Internet Test milestone: 100% complete'),
+    canonical.replace(canonicalProgressSummary, 'Real Internet Test milestone: 100% complete'),
     false,
   );
   runChecker('missing-prerelease-truth', canonical.replaceAll('v0.4.2-test1', 'v0.4.2'), false);

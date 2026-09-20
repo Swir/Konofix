@@ -22,6 +22,7 @@
 - IPv4, IPv6, and generic DNS bootstrap address generation
 - fail-closed Windows deployment preflight with deterministic JSON output for automation
 - preview-first Windows startup-task installer with protected SYSTEM-only runtime/state, restart policy and optional scoped firewall rules
+- explicit connection admission limits for Global Beta capacity: total, incoming, per-peer and pending handshakes
 
 ## Windows
 
@@ -88,6 +89,20 @@ To remove the task:
 ```
 
 Uninstall removes the configured startup task and the dedicated `Konofix Public Node` firewall group. It deliberately does **not** delete the state directory, health history or identity key. Keeping the identity prevents an accidental public bootstrap Peer-ID rotation. Delete persistent state only as a separate, deliberate administrator action after it is no longer needed.
+
+### Global Beta capacity controls
+
+Public nodes now apply bounded connection admission by default: 1024 established connections total, 768 established incoming connections, 4 established connections per Peer ID, 128 pending incoming handshakes and 128 pending outgoing handshakes. These are safety ceilings, not a claim that one small VPS can sustain 1024 active chat users.
+
+Operators can tune the ceilings for a measured deployment:
+
+    konofix-node.exe --port 45555 --public-host node.yourdomain.com --max-connections 2048 --max-incoming-connections 1536 --max-connections-per-peer 4 --max-pending-incoming 256 --max-pending-outgoing 192
+
+The Node rejects zero-valued limits, rejects incoming/per-peer limits above the total connection ceiling, and enforces the limits inside the libp2p behaviour tree before connections are admitted. Increase limits only after observing CPU, memory, file-descriptor/socket and network headroom.
+
+The verified Windows beta bundle also includes scripts\global-beta-load.ps1. It launches many independent exact-build Netprobe processes with bounded parallelism and records an aggregate JSON result. This is a transport/admission load check, not a substitute for a real multi-user chat soak:
+
+    .\scripts\global-beta-load.ps1 -TcpBootstrap "/dns/node.example.com/tcp/45555/p2p/PEER_ID" -QuicBootstrap "/dns/node.example.com/udp/45555/quic-v1/p2p/PEER_ID" -Clients 100 -Parallelism 20 -MinimumSuccessPercent 95 -OutputPath ".\global-beta-load.json"
 
 The raw binary remains available for manual operation. It now enforces the same public-evidence boundary for literal addresses before it creates/loads the Node identity or starts listeners:
 

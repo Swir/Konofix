@@ -193,6 +193,7 @@ structuralFailure((doc) => { doc.checks = doc.checks.filter((check) => check.nam
 structuralFailure((doc) => { doc.checks.find((check) => check.name === 'file_a_to_b_sha256').observed_sha256 = 'bad'; }, /observed_sha256/i);
 structuralFailure((doc) => { doc.checks.find((check) => check.name === 'rooms').evidence = 'free text'; }, /object with path and sha256/i);
 structuralFailure((doc) => { doc.checks.find((check) => check.name === 'rooms').evidence.sha256 = 'bad'; }, /evidence.sha256/i);
+structuralFailure((doc) => { doc.checks.find((check) => check.name === 'rooms').evidence.path = 'C:\\outside\\rooms.json'; }, /must be relative/i);
 structuralFailure((doc) => { doc.failover.recovered_via_peer_ids = [doc.failover.lost_peer_id]; }, /cannot use the participant/i);
 structuralFailure((doc) => { doc.failover.rooms_recovered = false; }, /discovery, chat and room recovery/i);
 structuralFailure((doc) => { doc.failover.evidence = 'free text'; }, /object with path and sha256/i);

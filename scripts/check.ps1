@@ -73,6 +73,9 @@ try {
   Write-Host 'Global beta concurrent admission self-tests...' -ForegroundColor Yellow
   & '.\scripts\test-global-beta-load.ps1'
 
+  Write-Host 'Rooms 2.0 live-evidence self-tests...' -ForegroundColor Yellow
+  & '.\scripts\test-rooms2-live-evidence.ps1'
+
   Write-Host 'Frontend dependencies (locked)...' -ForegroundColor Yellow
   npm ci --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }
@@ -109,7 +112,7 @@ try {
   cargo check --locked --manifest-path src-tauri/Cargo.toml --bin konofix-netprobe
   if ($LASTEXITCODE -ne 0) { throw "cargo check --locked --bin konofix-netprobe failed with exit code $LASTEXITCODE." }
 
-  Write-Host 'OK - local preflight matches CI source gates, exact-build release archive naming and tester handoff, promotion evidence, dual-client Netprobe evidence, atomic exact-build network-session creation, network report editing, public-Node/bootstrap/startup-task/readiness/health/soak collection validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/high-signal Clippy/tests and application/Node/Netprobe checks.' -ForegroundColor Green
+  Write-Host 'OK - local preflight matches CI source gates, exact-build release archive naming and tester handoff, promotion evidence, dual-client Netprobe evidence, Rooms 2.0 live-evidence validation, atomic exact-build network-session creation, network report editing, public-Node/bootstrap/startup-task/readiness/health/soak collection validation, deterministic frontend and Rust dependency inputs, frontend build, Rust formatting/high-signal Clippy/tests and application/Node/Netprobe checks.' -ForegroundColor Green
 } finally {
   Pop-Location
 }

@@ -2,22 +2,30 @@
 
 This scoped changelog records unreleased Rooms 2.0 work separately from stable `0.4.2` release notes. It does not change the active Real Internet Test percentage or stable-release readiness.
 
+## Live desktop qualification — evidence path added
+
+- PR #133 merged after exact-head Windows and Linux CI passed, adding deterministic 128-peer production-bridge convergence coverage for accumulation, duplicate resync, room switching, connection churn, final disconnect, authenticated goodbye, presence expiry and leave-to-WORLD cleanup;
+- added `new-rooms2-live-evidence.ps1` and `validate-rooms2-live-evidence.ps1` so real desktop sessions can be tied to one exact build/source commit and fail closed on missing participants, duplicate Peer IDs, count mismatches, missing observers/evidence or insufficient INTERNET network/country diversity;
+- added adversarial self-tests and wired them into the local/Windows source preflight; synthetic PASS proves the evidence validator only and does not grant Global Beta credit;
+- refreshed the scoped roadmap to distinguish completed production wiring/CI from the still-open same-LAN and public-network live application evidence;
+- preserve the authoritative 55/67 (82.1%) until real many-client application evidence closes the production gate.
+
 ## Live desktop integration — merged; many-peer qualification in progress
 
 - merged PR #132 after exact-head Windows, Linux and RustSec CI passed, connecting the existing membership bridge to signed `WireEvent::MembershipSnapshot`, backend create/enter/WORLD commands, heartbeat publication, authenticated reception, final disconnect, goodbye, expiry and room-close cleanup;
 - emit membership-derived counts to the room list/header and ignore owner-advertised counts; acknowledge backend acceptance before the UI switches rooms or reports creation;
 - periodically reannounce owned rooms so late arrivals can recover, and use signed source/sequence GossipSub message IDs so fresh identical heartbeats are not content-deduplicated;
 - added real TCP GossipSub resync coverage and UI rejection/concurrency/session regression checks; end-to-end public-network qualification remains pending;
-- added a deterministic 128-peer production-bridge regression covering concurrent membership accumulation, duplicate resync suppression, room switching, non-final connection churn, final disconnect, authenticated goodbye, presence expiry and leave-to-WORLD convergence; this new qualification test still requires exact-head CI;
+- added a deterministic 128-peer production-bridge regression covering concurrent membership accumulation, duplicate resync suppression, room switching, non-final connection churn, final disconnect, authenticated goodbye, presence expiry and leave-to-WORLD convergence;
 - preserve the authoritative 55/67 (82.1%) until live many-client application evidence closes the production gate.
 
 ## Stage 2.6 — production ordering safety (historical)
 
 - centralized the production membership payload guard so canonical Peer ID text, authenticated-source matching, nonzero revisions, bounded room membership, temporary-room grammar and duplicate rejection are checked at one application boundary before live-loop integration,
-- added recovery coverage for membership snapshots that arrive before their room announcement, proving an unknown-room rejection does not consume the revision and the exact same authenticated revision can apply once the room is known,
+- added recovery coverage for membership snapshots that arrive before its room announcement, proving an unknown-room rejection does not consume the revision and the exact same authenticated revision can be applied once the room is known,
 - added a three-peer create/join/switch/final-disconnect/room-close convergence regression to catch phantom-member and stale-count failures before the large production loop is changed,
 - rebased this preflight package onto the verified Global Beta multi-node bootstrap/failover `main` snapshot so the next live wiring step starts from current production code,
-- kept every production-loop checklist item open: this safety package does not claim Global Beta or Rooms 2.0 completion until `lib.rs` actually publishes/consumes bridge effects end-to-end and exact-head CI passes.
+- kept every production-loop checklist item open at that historical stage; the later PR #132 supplied the actual live-loop integration.
 
 ## Stage 2.5 — production effects bridge
 
@@ -33,8 +41,7 @@ This scoped changelog records unreleased Rooms 2.0 work separately from stable `
 - added the frontend `room-user-count` consumer so verified backend deltas have a deterministic UI destination,
 - temporary-room buttons now display their own membership-derived `users` value instead of borrowing global presence,
 - the active chat header now uses the selected temporary room's count while `#WORLD` deliberately continues to use global online presence,
-- disconnect/reconnect still rebuilds room state from the WORLD baseline, preventing stale temporary-room counts from surviving a session reset,
-- kept the end-to-end Stage 3 items open until the production network task actually emits verified count deltas.
+- disconnect/reconnect rebuilds room state from the WORLD baseline, preventing stale temporary-room counts from surviving a session reset.
 
 ## Stage 2.3 — application effects adapter
 
@@ -42,15 +49,13 @@ This scoped changelog records unreleased Rooms 2.0 work separately from stable `
 - converted monotonic membership snapshots into a signed-envelope-ready payload without duplicating membership validation or revision rules,
 - converted verified `RoomCountChange` values into deterministic `room-user-count`-ready payloads while keeping replay/stale/conflict events silent,
 - preserved WORLD as a separate global-presence state by mapping `None` / `world` transitions to empty temporary-room membership,
-- added integration coverage for local switching, heartbeat revision stability, remote convergence, duplicate replay suppression, forged-source rejection, multi-connection cleanup and active-room close republish,
-- kept actual `WireEvent` insertion, backend command-loop wiring and frontend event emission explicitly pending until the production network task consumes this adapter.
+- added integration coverage for local switching, heartbeat revision stability, remote convergence, duplicate replay suppression, forged-source rejection, multi-connection cleanup and active-room close republish.
 
 ## Stage 2.2 — production WireEvent bridge preparation
 
 - added a decoded-snapshot bridge on `RoomMembershipLiveCoordinator` so the production GossipSub `WireEvent` path can hand off `peer_id` / revision / room fields without reimplementing membership validation,
 - preserved the verified 16 KiB transport bound, authenticated-source binding and replay/conflict semantics by routing decoded fields back through the existing transport boundary,
-- added focused coverage proving forged decoded identities fail before count mutation and duplicate live snapshots remain idempotent,
-- kept the actual production `WireEvent` insertion, backend room switching and frontend count emission explicitly pending rather than claiming user-visible Rooms 2.0 early.
+- added focused coverage proving forged decoded identities fail before count mutation and duplicate live snapshots remain idempotent.
 
 ## Stage 2.1 — live lifecycle coordinator
 
@@ -72,6 +77,6 @@ This scoped changelog records unreleased Rooms 2.0 work separately from stable `
 
 ### Remaining qualification before Global Beta credit
 
-- exercise the exact-build desktop application with many simultaneous real peers; the deterministic bridge and TCP resync tests are necessary but do not replace live multi-client evidence,
+- run the exact-build desktop application with real simultaneous peers and produce a validated Rooms 2.0 live-evidence record,
 - observe create/join/switch/WORLD counts through the real frontend while peers disconnect, expire, resync and reconnect,
-- complete exact-head Windows/Linux CI for the current many-peer regression and then run the external multi-network soak/failover evidence gates before changing the 55/67 readiness count.
+- then run the separate external multi-network soak/failover evidence gates before changing the 55/67 readiness count.

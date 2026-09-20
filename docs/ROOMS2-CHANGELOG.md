@@ -2,6 +2,14 @@
 
 This scoped changelog records unreleased Rooms 2.0 work separately from stable `0.4.2` release notes. It does not change the active Real Internet Test percentage or stable-release readiness.
 
+## Stage 3 preview — synchronized count UI consumer
+
+- added the frontend `room-user-count` consumer so verified backend deltas have a deterministic UI destination,
+- temporary-room buttons now display their own membership-derived `users` value instead of borrowing global presence,
+- the active chat header now uses the selected temporary room's count while `#WORLD` deliberately continues to use global online presence,
+- disconnect/reconnect still rebuilds room state from the WORLD baseline, preventing stale temporary-room counts from surviving a session reset,
+- kept the end-to-end Stage 3 items open until the production network task actually emits verified count deltas.
+
 ## Stage 2.3 — application effects adapter
 
 - added `RoomMembershipApplicationAdapter` as a narrow application-facing layer over the verified live coordinator,
@@ -42,5 +50,5 @@ This scoped changelog records unreleased Rooms 2.0 work separately from stable `
 - wire create/join/switch/world transitions through the backend command loop,
 - publish heartbeat/resync membership snapshots from the live network task,
 - wire the verified final-disconnect/goodbye/presence-expiry cleanup paths into the live network task,
-- propagate verified `room-user-count` deltas into the desktop UI,
+- emit verified `room-user-count` deltas from the backend into the prepared desktop consumer,
 - complete exact-head Windows/Linux CI and real multi-peer application testing.

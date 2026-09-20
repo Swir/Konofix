@@ -2,6 +2,15 @@
 
 This scoped changelog records unreleased Rooms 2.0 work separately from stable `0.4.2` release notes. It does not change the active Real Internet Test percentage or stable-release readiness.
 
+## Stage 2.3 — application effects adapter
+
+- added `RoomMembershipApplicationAdapter` as a narrow application-facing layer over the verified live coordinator,
+- converted monotonic membership snapshots into a signed-envelope-ready payload without duplicating membership validation or revision rules,
+- converted verified `RoomCountChange` values into deterministic `room-user-count`-ready payloads while keeping replay/stale/conflict events silent,
+- preserved WORLD as a separate global-presence state by mapping `None` / `world` transitions to empty temporary-room membership,
+- added integration coverage for local switching, heartbeat revision stability, remote convergence, duplicate replay suppression, forged-source rejection, multi-connection cleanup and active-room close republish,
+- kept actual `WireEvent` insertion, backend command-loop wiring and frontend event emission explicitly pending until the production network task consumes this adapter.
+
 ## Stage 2.2 — production WireEvent bridge preparation
 
 - added a decoded-snapshot bridge on `RoomMembershipLiveCoordinator` so the production GossipSub `WireEvent` path can hand off `peer_id` / revision / room fields without reimplementing membership validation,

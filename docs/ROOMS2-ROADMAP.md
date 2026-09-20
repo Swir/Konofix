@@ -21,6 +21,7 @@ This is the detailed implementation plan for the `0.5.0 — Rooms 2.0` scope alr
 - [x] heartbeat/resync snapshot reuse without revision inflation,
 - [x] two-client transport convergence and adversarial replay/source tests,
 - [x] verified live-coordinator semantics for final-connection close, authenticated goodbye, presence expiry and room-close republish,
+- [x] application-facing adapter for signed snapshot payloads and deterministic room-count emit payloads,
 - [ ] add membership to the production GossipSub `WireEvent` contract,
 - [ ] route backend room create/join/switch/world transitions through membership state,
 - [ ] publish membership snapshots on transitions and heartbeat/resync,

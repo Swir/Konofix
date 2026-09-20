@@ -51,6 +51,9 @@ New-Item -ItemType Directory -Path $smokeRoot | Out-Null
 $process = $null
 $oldBrowserArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $oldUserData = $env:WEBVIEW2_USER_DATA_FOLDER
+$addedPolicies = @()
+$chatOutput = Join-Path $smokeRoot 'chat-stdout.log'
+$chatError = Join-Path $smokeRoot 'chat-stderr.log'
 
 function Wait-SmokeProcess($Process, [int]$Seconds, [string]$Label) {
     if (-not $Process.WaitForExit($Seconds * 1000)) {
@@ -104,10 +107,42 @@ try {
     $listener.Stop()
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port"
     $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $smokeRoot 'webview'
-    $process = Start-Process -FilePath $shortcut.TargetPath -WorkingDirectory $installRoot -WindowStyle Hidden -PassThru
+    # WebView2 150+ ignores environment overrides in elevated host processes
+    # (including GitHub runners). Use temporary, app-specific machine policies;
+    # never use a wildcard and never change the shipped app's browser arguments.
+    # https://github.com/MicrosoftEdge/WebView2Feedback/issues/5645
+    $policyRoot = 'HKLM:\Software\Policies\Microsoft\Edge\WebView2'
+    $policyValues = @{
+        AdditionalBrowserArguments = "--remote-debugging-address=127.0.0.1 --remote-debugging-port=$port"
+        UserDataFolder = $env:WEBVIEW2_USER_DATA_FOLDER
+    }
+    $appIds = @('konofix-chat.exe', 'info.swir.konofixchat')
+    foreach ($setting in $policyValues.Keys) {
+        $key = Join-Path $policyRoot $setting
+        if (Test-Path -LiteralPath $key) {
+            $existingNames = (Get-Item -LiteralPath $key).GetValueNames()
+            foreach ($appId in $appIds) {
+                if ($existingNames -contains $appId) { throw "Refusing to replace existing WebView policy for $appId." }
+            }
+        }
+    }
+    foreach ($setting in $policyValues.Keys) {
+        $key = Join-Path $policyRoot $setting
+        if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
+        foreach ($appId in $appIds) {
+            New-ItemProperty -LiteralPath $key -Name $appId -Value $policyValues[$setting] -PropertyType String | Out-Null
+            $addedPolicies += [pscustomobject]@{ Key = $key; Name = $appId }
+        }
+    }
+    $process = Start-Process -FilePath $shortcut.TargetPath -WorkingDirectory $installRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $chatOutput -RedirectStandardError $chatError
     & node (Join-Path $PSScriptRoot 'check-chat-page.mjs') $port
-    if ($LASTEXITCODE -ne 0) { throw 'Installed Chat frontend smoke failed.' }
     $process.Refresh()
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Chat process: exited=$($process.HasExited), window=$($process.MainWindowTitle), handle=$($process.MainWindowHandle)"
+        if ($process.HasExited) { Write-Host "Chat exit code: $($process.ExitCode)" }
+        Get-Content -LiteralPath $chatOutput, $chatError -Tail 60 -ErrorAction SilentlyContinue
+        throw 'Installed Chat frontend smoke failed.'
+    }
     if ($process.HasExited) { throw "Installed Chat exited unexpectedly: $($process.ExitCode)" }
     Write-Host 'Installed Chat startup smoke PASS (MSI payload, NSIS installation, Start menu, rendered frontend).'
 } finally {
@@ -116,6 +151,9 @@ try {
     if ($null -ne $process -and -not $process.HasExited) {
         $process.Kill($true)
         $process.WaitForExit()
+    }
+    foreach ($policy in $addedPolicies) {
+        Remove-ItemProperty -LiteralPath $policy.Key -Name $policy.Name
     }
     $uninstaller = Join-Path $installRoot 'uninstall.exe'
     if (Test-Path -LiteralPath $uninstaller) {
@@ -128,4 +166,3 @@ try {
     }
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }
-

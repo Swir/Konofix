@@ -66,24 +66,35 @@ try {
         Process = $process
         Stdout = $stdout
         Stderr = $stderr
+        Deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds + 10)
       })
     }
 
-    $finished = @($active | Where-Object { $_.Process.HasExited })
-    if ($finished.Count -eq 0) {
-      Start-Sleep -Milliseconds 50
-      continue
-    }
+    $madeProgress = $false
+    for ($activeIndex = $active.Count - 1; $activeIndex -ge 0; $activeIndex--) {
+      $job = $active[$activeIndex]
+      $exited = $job.Process.WaitForExit(0)
+      $externalTimeout = (-not $exited) -and ([DateTimeOffset]::UtcNow -ge $job.Deadline)
+      if (-not $exited -and -not $externalTimeout) {
+        continue
+      }
 
-    foreach ($job in $finished) {
-      $job.Process.WaitForExit()
+      if ($externalTimeout) {
+        try {
+          $job.Process.Kill($true)
+          $job.Process.WaitForExit()
+        } catch {}
+      } else {
+        $job.Process.WaitForExit()
+      }
+
       $stdoutText = if (Test-Path -LiteralPath $job.Stdout) { Get-Content -LiteralPath $job.Stdout -Raw } else { '' }
       $stderrText = if (Test-Path -LiteralPath $job.Stderr) { Get-Content -LiteralPath $job.Stderr -Raw } else { '' }
 
       $success = $false
       $evidence = $null
-      $parseError = $null
-      if ($job.Process.ExitCode -eq 0) {
+      $parseError = if ($externalTimeout) { "Netprobe exceeded external deadline of $($TimeoutSeconds + 10) seconds." } else { $null }
+      if (-not $externalTimeout -and $job.Process.ExitCode -eq 0) {
         try {
           $evidence = $stdoutText | ConvertFrom-Json -ErrorAction Stop
           $success = ([string]$evidence.status -ceq 'pass')
@@ -95,12 +106,13 @@ try {
         }
       }
 
+      $exitCode = if ($externalTimeout) { -1 } else { [int]$job.Process.ExitCode }
       $results.Add([pscustomobject]@{
         index = [int]$job.Spec.Index
         transport = [string]$job.Spec.Transport
         target = [string]$job.Spec.Target
         success = [bool]$success
-        exit_code = [int]$job.Process.ExitCode
+        exit_code = $exitCode
         rtt_micros = if ($null -ne $evidence -and $null -ne $evidence.rtt_micros) { [int64]$evidence.rtt_micros } else { $null }
         elapsed_millis = if ($null -ne $evidence -and $null -ne $evidence.elapsed_millis) { [int64]$evidence.elapsed_millis } else { $null }
         error = if ($success) { $null } elseif (-not [string]::IsNullOrWhiteSpace($parseError)) { $parseError } elseif (-not [string]::IsNullOrWhiteSpace($stderrText)) { $stderrText.Trim() } else { 'Netprobe failed without stderr output.' }
@@ -108,15 +120,13 @@ try {
 
       $job.Process.Dispose()
       Remove-Item -LiteralPath $job.Stdout,$job.Stderr -Force -ErrorAction SilentlyContinue
+      $active.RemoveAt($activeIndex)
+      $madeProgress = $true
     }
 
-    $remaining = [System.Collections.Generic.List[object]]::new()
-    foreach ($job in $active) {
-      if (-not $job.Process.HasExited) {
-        $remaining.Add($job)
-      }
+    if (-not $madeProgress) {
+      Start-Sleep -Milliseconds 50
     }
-    $active = $remaining
   }
 
   $ordered = @($results | Sort-Object index)

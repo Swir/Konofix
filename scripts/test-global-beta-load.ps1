@@ -9,18 +9,29 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) ("konofix-global-beta-load-test-" +
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 
 try {
-  $passProbe = Join-Path $temp 'pass-probe.cmd'
-  $failProbe = Join-Path $temp 'fail-probe.cmd'
-  @'
-@echo off
-echo {"status":"pass","rtt_micros":1000,"elapsed_millis":5}
-exit /b 0
-'@ | Set-Content -LiteralPath $passProbe -Encoding ascii
-  @'
-@echo off
-echo simulated probe failure 1>&2
-exit /b 7
-'@ | Set-Content -LiteralPath $failProbe -Encoding ascii
+  $passProbe = Join-Path $temp 'pass-probe.exe'
+  $failProbe = Join-Path $temp 'fail-probe.exe'
+
+  $passSource = @'
+using System;
+public static class PassProbe {
+    public static int Main(string[] args) {
+        Console.WriteLine("{\"status\":\"pass\",\"rtt_micros\":1000,\"elapsed_millis\":5}");
+        return 0;
+    }
+}
+'@
+  $failSource = @'
+using System;
+public static class FailProbe {
+    public static int Main(string[] args) {
+        Console.Error.WriteLine("simulated probe failure");
+        return 7;
+    }
+}
+'@
+  Add-Type -TypeDefinition $passSource -OutputAssembly $passProbe -OutputType ConsoleApplication
+  Add-Type -TypeDefinition $failSource -OutputAssembly $failProbe -OutputType ConsoleApplication
 
   $tcp = '/ip4/127.0.0.1/tcp/45555/p2p/12D3KooWGlobalBetaTestPeer'
   $quic = '/ip4/127.0.0.1/udp/45555/quic-v1/p2p/12D3KooWGlobalBetaTestPeer'

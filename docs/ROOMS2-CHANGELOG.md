@@ -2,13 +2,14 @@
 
 This scoped changelog records unreleased Rooms 2.0 work separately from stable `0.4.2` release notes. It does not change the active Real Internet Test percentage or stable-release readiness.
 
-## Live desktop integration — pending exact-head qualification
+## Live desktop integration — merged; many-peer qualification in progress
 
-- connected the existing membership bridge to signed `WireEvent::MembershipSnapshot`, backend create/enter/WORLD commands, heartbeat publication, authenticated reception, final disconnect, goodbye, expiry and room-close cleanup;
+- merged PR #132 after exact-head Windows, Linux and RustSec CI passed, connecting the existing membership bridge to signed `WireEvent::MembershipSnapshot`, backend create/enter/WORLD commands, heartbeat publication, authenticated reception, final disconnect, goodbye, expiry and room-close cleanup;
 - emit membership-derived counts to the room list/header and ignore owner-advertised counts; acknowledge backend acceptance before the UI switches rooms or reports creation;
 - periodically reannounce owned rooms so late arrivals can recover, and use signed source/sequence GossipSub message IDs so fresh identical heartbeats are not content-deduplicated;
 - added real TCP GossipSub resync coverage and UI rejection/concurrency/session regression checks; end-to-end public-network qualification remains pending;
-- preserve the authoritative 55/67 (82.1%) until acceptance evidence closes the production gate.
+- added a deterministic 128-peer production-bridge regression covering concurrent membership accumulation, duplicate resync suppression, room switching, non-final connection churn, final disconnect, authenticated goodbye, presence expiry and leave-to-WORLD convergence; this new qualification test still requires exact-head CI;
+- preserve the authoritative 55/67 (82.1%) until live many-client application evidence closes the production gate.
 
 ## Stage 2.6 — production ordering safety (historical)
 
@@ -69,11 +70,8 @@ This scoped changelog records unreleased Rooms 2.0 work separately from stable `
 - converged peer-departure and room-close cleanup through the same membership runtime,
 - added integration coverage for two-client convergence, duplicate/replay handling, stale/conflicting revisions, forged source identities, unknown rooms, room switching and oversized frames.
 
-### Still pending before Rooms 2.0 is user-visible
+### Remaining qualification before Global Beta credit
 
-- insert the membership event into the production GossipSub `WireEvent` path and make the live network task consume `RoomMembershipProductionBridge`,
-- wire create/join/switch/world transitions through the backend command loop,
-- publish heartbeat/resync membership snapshots from the live network task,
-- wire the verified final-disconnect/goodbye/presence-expiry cleanup paths into the live network task,
-- emit verified `room-user-count` deltas from the backend into the prepared desktop consumer,
-- complete exact-head Windows/Linux CI and real multi-peer application testing.
+- exercise the exact-build desktop application with many simultaneous real peers; the deterministic bridge and TCP resync tests are necessary but do not replace live multi-client evidence,
+- observe create/join/switch/WORLD counts through the real frontend while peers disconnect, expire, resync and reconnect,
+- complete exact-head Windows/Linux CI for the current many-peer regression and then run the external multi-network soak/failover evidence gates before changing the 55/67 readiness count.

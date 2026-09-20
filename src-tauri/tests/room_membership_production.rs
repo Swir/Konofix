@@ -145,9 +145,7 @@ fn lifecycle_departure_effects_are_final_connection_only_and_idempotent() {
     let remote = peer_id();
     let mut bridge = RoomMembershipProductionBridge::new(local);
     bridge.announce_room("alpha").expect("announce alpha");
-    bridge
-        .enter_room("alpha")
-        .expect("local user enters alpha");
+    bridge.enter_room("alpha").expect("local user enters alpha");
     bridge
         .authenticated_snapshot(
             MembershipSnapshotPayload {

@@ -13,9 +13,23 @@ requireText(helper, 'FileResponse::Ack { .. }', 'Chunk must accept Ack.');
 requireText(helper, 'OutboundKind::Complete => matches!(', 'Complete response policy is missing.');
 requireText(helper, 'FileResponse::Complete { .. } | FileResponse::Error { .. }', 'Complete must accept Complete/Error only.');
 requireText(helper, 'OutboundKind::Cancel => true', 'Cancel must remain terminal/idempotent.');
-const start = rust.indexOf('request_response::Message::Response { request_id, response } => {');
-const end = start < 0 ? -1 : rust.indexOf('request_response::Event::OutboundFailure', start);
-const handler = start < 0 || end < 0 ? '' : rust.slice(start, end);
+
+// Scope the phase-policy inspection to the file-transfer behaviour. Konofix has
+// multiple request/response protocols; a secure-control response handler may
+// legitimately appear earlier in the same swarm match and must not confuse this
+// file-transfer safety gate.
+const fileBehaviourStart = rust.indexOf('SwarmEvent::Behaviour(BehaviourEvent::FileTransfer(event)) => {');
+const fileBehaviourEnd = fileBehaviourStart < 0
+  ? -1
+  : rust.indexOf('\n                _ => {}', fileBehaviourStart);
+const fileBehaviour = fileBehaviourStart < 0 || fileBehaviourEnd < 0
+  ? ''
+  : rust.slice(fileBehaviourStart, fileBehaviourEnd);
+if (!fileBehaviour) errors.push('File-transfer behaviour handler is missing.');
+
+const start = fileBehaviour.indexOf('request_response::Message::Response { request_id, response } => {');
+const end = start < 0 ? -1 : fileBehaviour.indexOf('request_response::Event::OutboundFailure', start);
+const handler = start < 0 || end < 0 ? '' : fileBehaviour.slice(start, end);
 const guard = 'if !file_response_matches_outbound_kind(meta.kind, &response) {';
 const gi = handler.indexOf(guard);
 const di = handler.indexOf('match meta.kind {');

@@ -229,6 +229,11 @@ impl TestPeer {
     }
 }
 
+fn messaging_runtime_test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 struct TestDirectory(PathBuf);
 impl TestDirectory {
     fn new() -> Self {
@@ -407,6 +412,7 @@ async fn transfer(sender: &mut TestPeer, receiver: &mut TestPeer, path: &Path, b
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_application_loops_deliver_chat_and_accepted_binary_files_both_directions() {
+    let _runtime_test_guard = messaging_runtime_test_lock().lock().await;
     let files = TestDirectory::new();
     let mut alice = TestPeer::start_with_color(
         "test-alice",
@@ -578,6 +584,7 @@ async fn two_application_loops_deliver_chat_and_accepted_binary_files_both_direc
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn protected_room_and_private_chat_use_direct_secure_control_between_apps() {
+    let _runtime_test_guard = messaging_runtime_test_lock().lock().await;
     let files = TestDirectory::new();
     let mut alice = TestPeer::start_with_color(
         "secure-alice",
@@ -814,6 +821,7 @@ async fn protected_room_and_private_chat_use_direct_secure_control_between_apps(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rooms2_counts_converge_across_many_application_loops_and_disconnects() {
+    let _runtime_test_guard = messaging_runtime_test_lock().lock().await;
     const GUESTS: usize = 4;
     let files = TestDirectory::new();
     let mut owner = TestPeer::start("rooms-owner", vec![], files.0.join("owner-downloads")).await;

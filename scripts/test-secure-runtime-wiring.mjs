@@ -37,7 +37,7 @@ expectRejected(
   mutateOnce(
     canonical,
     'secure_control: request_response::cbor::Behaviour<ControlRequest, ControlResponse>,',
-    'disabled_secure_control: request_response::cbor::Behaviour<ControlRequest, ControlResponse>,',
+    'removed_control: request_response::cbor::Behaviour<ControlRequest, ControlResponse>,',
   ),
   'request/response behaviour is not wired',
 );

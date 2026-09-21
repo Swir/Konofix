@@ -211,3 +211,23 @@ button:disabled { opacity:.45; cursor:not-allowed; }
   cursor:pointer;
 }
 .app-credit button:hover { color:#aab5ff; text-decoration:underline; }
+
+
+/* Beta 1 expression / nickname personalization */
+.nick-color-picker { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin:4px 0 8px; }
+.nick-color-swatch { position:relative; width:100%; aspect-ratio:1.8; min-height:26px; border-radius:9px; border:1px solid rgba(255,255,255,.08); background:color-mix(in srgb,var(--nick-color) 74%,#11182a); box-shadow:inset 0 0 0 2px rgba(0,0,0,.18); }
+.nick-color-swatch::after { content:''; position:absolute; inset:7px; border-radius:999px; background:var(--nick-color); box-shadow:0 0 13px color-mix(in srgb,var(--nick-color) 68%,transparent); }
+.nick-color-swatch.selected { outline:2px solid var(--nick-color); outline-offset:2px; }
+.nick-color-preview { min-height:22px; color:#7a849f; font-size:11px; display:flex; gap:7px; align-items:center; margin-bottom:4px; }
+.nick-color-preview span { font-size:14px; }
+.nick-color-preview strong { font-size:11px; }
+.avatar[style*="--nick-color"] { color:#fff; background:linear-gradient(145deg,color-mix(in srgb,var(--nick-color) 58%,#252d48),color-mix(in srgb,var(--nick-color) 25%,#101522)); border:1px solid color-mix(in srgb,var(--nick-color) 28%,transparent); }
+.message.mine .avatar[style*="--nick-color"] { background:linear-gradient(145deg,color-mix(in srgb,var(--nick-color) 72%,#30375b),color-mix(in srgb,var(--nick-color) 38%,#101522)); }
+.emoji-wrap { position:relative; display:flex; align-items:center; }
+.emoji-toggle { width:42px; height:42px; border:1px solid #252d45; border-radius:12px; background:#0c101d; color:#9ca8c9; font-size:20px; }
+.emoji-toggle:hover { color:#fff; border-color:#53618b; }
+.emoji-panel { position:absolute; z-index:1500; left:0; bottom:50px; width:310px; max-height:250px; overflow:auto; grid-template-columns:repeat(6,1fr); gap:5px; padding:9px; border:1px solid rgba(124,145,220,.22); border-radius:15px; background:rgba(7,11,21,.97); box-shadow:0 20px 55px rgba(0,0,0,.45); }
+.emoji-panel:not([hidden]) { display:grid; }
+.emoji-panel button { height:40px; border:1px solid transparent; border-radius:9px; background:transparent; font-size:21px; }
+.emoji-panel button:hover { background:#141b2d; border-color:#2d3859; }
+.kfx-emoji { display:inline-block; min-width:1.2em; margin:0 .02em; font-size:1.22em; line-height:1; vertical-align:-.08em; filter:drop-shadow(0 0 5px rgba(98,229,255,.12)); }

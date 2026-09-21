@@ -209,6 +209,17 @@ PR #140 extends that production-runtime verification to one owner plus four gues
 
 The Global Beta branch has exact-head Windows and Linux CI evidence for the reviewed Node admission ceilings and the Rooms 2.0 production membership/count runtime, so those implementation gates are complete. The schema-v2 concurrent-load tooling can bind successful probes to one exact Netprobe build and prove stable pre/post Node health continuity, but the capacity gate remains unchecked until real 50/100/250 runs and their required public-infrastructure evidence pass.
 
+## Beta 1 improvement freeze — user-approved, not part of the 56/67 qualification fraction
+
+This short feature-freeze package is completed before the next user-led publication test cycle. It is intentionally tracked outside the active Global Beta qualification denominator so product polish does not distort real-network readiness evidence.
+
+- [ ] Konofix emoji picker + common typed emoticons render safely
+- [ ] user-selectable nickname color propagates across authenticated presence/chat
+- [ ] public #WORLD file offers are on-demand downloads, never automatic
+- [ ] public image offers provide safe in-chat preview/download behavior
+
+Automatic feature development stops after these four items are implemented on `main` with green exact-head CI; publication remains a separate manual decision.
+
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization
 - accurate per-room user count

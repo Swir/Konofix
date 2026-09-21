@@ -60,6 +60,11 @@ const PENDING_FILE_OFFER_TTL_SECS: u64 = 45;
 const INCOMING_TRANSFER_IDLE_TTL_SECS: u64 = 120;
 const MAX_ROOMS_TOTAL: usize = 256;
 const MAX_ROOMS_PER_OWNER: usize = 16;
+const DEFAULT_NICK_COLOR: &str = "#8FA0FF";
+const ALLOWED_NICK_COLORS: &[&str] = &[
+    "#8FA0FF", "#62E5FF", "#44E6A8", "#FFD166", "#FF8FAB", "#C77DFF",
+    "#FF9F68", "#7AE582", "#5CC8FF", "#B8C0FF", "#F4A261", "#E879F9",
+];
 const MAX_BOOTSTRAP_SOURCES: usize = 32;
 const BOOTSTRAP_RETRY_TICK_SECS: u64 = 5;
 const BOOTSTRAP_RETRY_BASE_SECS: u64 = 3;
@@ -168,6 +173,7 @@ fn take_network_sender(state: &AppState) -> Result<Option<mpsc::Sender<NetworkCo
 struct StartResult {
     peer_id: String,
     nick: String,
+    nick_color: String,
     version: String,
 }
 
@@ -177,6 +183,8 @@ struct ChatMessage {
     kind: String,
     peer_id: Option<String>,
     nick: String,
+    #[serde(default)]
+    nick_color: Option<String>,
     room: String,
     text: String,
     // Internally tagged Serde enums buffer integers as u64, not u128.
@@ -187,6 +195,8 @@ struct ChatMessage {
 struct PeerInfo {
     peer_id: String,
     nick: String,
+    #[serde(default)]
+    nick_color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +229,7 @@ struct NickLease {
 #[derive(Debug)]
 struct PeerPresence {
     nick: String,
+    nick_color: String,
     last_seen: Instant,
 }
 
@@ -334,6 +345,8 @@ enum WireEvent {
     Presence {
         peer_id: String,
         nick: String,
+        #[serde(default)]
+        nick_color: Option<String>,
     },
     Goodbye {
         peer_id: String,
@@ -382,8 +395,14 @@ fn valid_wire_room_id(room_id: &str) -> bool {
 
 fn wire_event_is_well_formed(event: &WireEvent) -> bool {
     match event {
-        WireEvent::Presence { peer_id, nick } => {
-            peer_id.parse::<PeerId>().is_ok() && validate_nick(nick).is_ok()
+        WireEvent::Presence {
+            peer_id,
+            nick,
+            nick_color,
+        } => {
+            peer_id.parse::<PeerId>().is_ok()
+                && validate_nick(nick).is_ok()
+                && optional_nick_color_is_valid(nick_color.as_deref())
         }
         WireEvent::Goodbye { peer_id } => peer_id.parse::<PeerId>().is_ok(),
         WireEvent::MembershipSnapshot(snapshot) => snapshot.is_well_formed(),
@@ -406,6 +425,7 @@ fn wire_event_is_well_formed(event: &WireEvent) -> bool {
                 && Uuid::parse_str(&message.id).is_ok()
                 && message.kind == "chat"
                 && validate_nick(&message.nick).is_ok()
+                && optional_nick_color_is_valid(message.nick_color.as_deref())
                 && valid_wire_room_id(&message.room)
                 && !message.text.trim().is_empty()
                 && message.text.chars().count() <= 4000
@@ -755,6 +775,22 @@ fn canonical_nick(raw: &str) -> String {
     raw.nfkc().flat_map(char::to_lowercase).collect::<String>()
 }
 
+fn normalize_nick_color(raw: Option<&str>) -> String {
+    let candidate = raw.unwrap_or(DEFAULT_NICK_COLOR).trim().to_ascii_uppercase();
+    if ALLOWED_NICK_COLORS.contains(&candidate.as_str()) {
+        candidate
+    } else {
+        DEFAULT_NICK_COLOR.to_string()
+    }
+}
+
+fn optional_nick_color_is_valid(raw: Option<&str>) -> bool {
+    raw.is_none_or(|value| {
+        let candidate = value.trim().to_ascii_uppercase();
+        ALLOWED_NICK_COLORS.contains(&candidate.as_str())
+    })
+}
+
 fn validate_nick(raw: &str) -> Result<String, String> {
     let nick = raw.nfkc().collect::<String>();
     let nick = nick.trim();
@@ -994,11 +1030,13 @@ fn emit_transfer(app: &impl NetworkRuntime, transfer: &FileTransferView) {
 #[tauri::command]
 async fn start_network(
     nick: String,
+    nick_color: Option<String>,
     bootstraps: Option<Vec<String>>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<StartResult, String> {
     let nick = validate_nick(&nick)?;
+    let nick_color = normalize_nick_color(nick_color.as_deref());
     let bootstrap_list = bootstrap_sources(bootstraps.unwrap_or_default())?;
     let (tx, rx) = mpsc::channel(128);
     install_network_sender(state.inner(), tx.clone())?;
@@ -1009,7 +1047,7 @@ async fn start_network(
     let nick_for_task = nick.clone();
     tauri::async_runtime::spawn(async move {
         let task_result =
-            network_task(nick_for_task, bootstrap_list, app.clone(), rx, ready_tx).await;
+            network_task(nick_for_task, nick_color.clone(), bootstrap_list, app.clone(), rx, ready_tx).await;
         let app_state = app.state::<AppState>();
         let owned_session =
             clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);
@@ -1032,6 +1070,7 @@ async fn start_network(
         Ok(peer_id) => Ok(StartResult {
             peer_id,
             nick,
+            nick_color,
             version: env!("CARGO_PKG_VERSION").to_string(),
         }),
         Err(err) => {
@@ -1423,6 +1462,7 @@ fn publish_presence(
     topic: &gossipsub::IdentTopic,
     peer_id: &str,
     nick: &str,
+    nick_color: &str,
 ) {
     publish(
         swarm,
@@ -1430,6 +1470,7 @@ fn publish_presence(
         &WireEvent::Presence {
             peer_id: peer_id.to_string(),
             nick: nick.to_string(),
+            nick_color: Some(nick_color.to_string()),
         },
     );
 }
@@ -1623,6 +1664,7 @@ async fn send_next_chunk(
 
 async fn network_task(
     nick: String,
+    nick_color: String,
     bootstraps: Vec<String>,
     app: impl NetworkRuntime,
     mut rx: mpsc::Receiver<NetworkCommand>,
@@ -1787,7 +1829,7 @@ async fn network_task(
     let mut outbound_requests: HashMap<request_response::OutboundRequestId, OutboundMeta> =
         HashMap::new();
 
-    publish_presence(&mut swarm, &world, &peer_id, &nick);
+    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color);
     publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical);
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
@@ -1812,7 +1854,7 @@ async fn network_task(
     'network: loop {
         tokio::select! {
             _ = heartbeat.tick() => {
-                publish_presence(&mut swarm, &world, &peer_id, &nick);
+                publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color);
                 publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical);
                 for room in owned_rooms.values() {
                     publish(&mut swarm, &world, &WireEvent::RoomCreate(room.clone()));
@@ -1933,6 +1975,7 @@ async fn network_task(
                             kind: "chat".into(),
                             peer_id: Some(peer_id.clone()),
                             nick: nick.clone(),
+                            nick_color: Some(nick_color.clone()),
                             room,
                             text,
                             timestamp: now_ms(),
@@ -2008,7 +2051,7 @@ async fn network_task(
                     NetworkCommand::RefreshDiscovery => {
                         let _ = swarm.behaviour_mut().kad.bootstrap();
                         swarm.behaviour_mut().kad.get_providers(world_provider_key());
-                        publish_presence(&mut swarm, &world, &peer_id, &nick);
+                        publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color);
                     }
                     NetworkCommand::OfferFile { peer_id: target, path, file_name, size, reply } => {
                         let result = (|| -> Result<FileTransferView, String> {
@@ -2152,7 +2195,7 @@ async fn network_task(
                             format!("Bootstrap aktywny: {remote}"),
                         );
                     }
-                    publish_presence(&mut swarm, &world, &peer_id, &nick);
+                    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color);
                     emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączono z peerem");
                 }
                 SwarmEvent::ConnectionClosed { peer_id: remote, num_established, .. } => {
@@ -2265,7 +2308,7 @@ async fn network_task(
                             }
                         }
                     }
-                    publish_presence(&mut swarm, &world, &peer_id, &nick);
+                    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color);
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
                     for (id, addr) in list {
@@ -2362,17 +2405,29 @@ async fn network_task(
                             continue;
                         }
                         match event {
-                            WireEvent::Presence { peer_id: remote_id, nick: remote_nick } => {
+                            WireEvent::Presence { peer_id: remote_id, nick: remote_nick, nick_color: remote_color } => {
                                 if remote_id != peer_id {
                                     let remote_canonical = canonical_nick(&remote_nick);
                                     if check_nick_conflict(&remote_id, &remote_canonical, now_ms() + 30_000, local_peer, &canonical) {
                                         let _ = app.emit_event("nick-conflict", serde_json::json!({"nick": nick, "peer_id": remote_id}));
                                         break 'network;
                                     }
+                                    let remote_color = normalize_nick_color(remote_color.as_deref());
                                     if let Ok(pid) = remote_id.parse::<PeerId>() {
-                                        peers.insert(pid, PeerPresence { nick: remote_nick.clone(), last_seen: Instant::now() });
+                                        peers.insert(pid, PeerPresence {
+                                            nick: remote_nick.clone(),
+                                            nick_color: remote_color.clone(),
+                                            last_seen: Instant::now(),
+                                        });
                                     }
-                                    let _ = app.emit_event("peer-online", PeerInfo { peer_id: remote_id, nick: remote_nick });
+                                    let _ = app.emit_event(
+                                        "peer-online",
+                                        PeerInfo {
+                                            peer_id: remote_id,
+                                            nick: remote_nick,
+                                            nick_color: Some(remote_color),
+                                        },
+                                    );
                                 }
                             }
                             WireEvent::Goodbye { peer_id: remote_id } => {
@@ -3228,6 +3283,23 @@ mod file_offer_admission_tests {
 }
 
 #[cfg(test)]
+mod nickname_color_tests {
+    use super::*;
+
+    #[test]
+    fn palette_accepts_only_reviewed_colors_and_normalizes_case() {
+        for color in ALLOWED_NICK_COLORS {
+            assert_eq!(normalize_nick_color(Some(color)), *color);
+            assert!(optional_nick_color_is_valid(Some(color)));
+        }
+        assert_eq!(normalize_nick_color(Some("#8fa0ff")), "#8FA0FF");
+        assert_eq!(normalize_nick_color(Some("#ffffff")), DEFAULT_NICK_COLOR);
+        assert!(!optional_nick_color_is_valid(Some("#ffffff")));
+        assert!(optional_nick_color_is_valid(None));
+    }
+}
+
+#[cfg(test)]
 mod nickname_lease_hint_tests {
     use super::*;
 
@@ -3300,6 +3372,7 @@ mod authenticated_event_tests {
             kind: "chat".into(),
             peer_id: Some(source_text.clone()),
             nick: "alice".into(),
+            nick_color: Some(DEFAULT_NICK_COLOR.into()),
             room: "world".into(),
             text: "hello".into(),
             timestamp: 1,
@@ -3310,6 +3383,7 @@ mod authenticated_event_tests {
             kind: "chat".into(),
             peer_id: Some(source_text.clone()),
             nick: "alice".into(),
+            nick_color: Some(DEFAULT_NICK_COLOR.into()),
             room: "world".into(),
             text: "x".repeat(4001),
             timestamp: 1,
@@ -3317,7 +3391,13 @@ mod authenticated_event_tests {
         assert!(!wire_event_is_well_formed(&oversized_chat));
         assert!(!wire_event_is_well_formed(&WireEvent::Presence {
             peer_id: source_text.clone(),
-            nick: "<script>".into()
+            nick: "<script>".into(),
+            nick_color: Some(DEFAULT_NICK_COLOR.into()),
+        }));
+        assert!(!wire_event_is_well_formed(&WireEvent::Presence {
+            peer_id: source_text.clone(),
+            nick: "alice".into(),
+            nick_color: Some("#FFFFFF".into()),
         }));
         assert!(!wire_event_is_well_formed(&WireEvent::NickClaim {
             peer_id: source_text.clone(),
@@ -3356,6 +3436,7 @@ mod authenticated_event_tests {
             WireEvent::Presence {
                 peer_id: source_text.clone(),
                 nick: "alice".into(),
+                nick_color: Some(DEFAULT_NICK_COLOR.into()),
             },
             WireEvent::Goodbye {
                 peer_id: source_text.clone(),
@@ -3395,6 +3476,7 @@ mod authenticated_event_tests {
             kind: "chat".into(),
             peer_id: None,
             nick: "alice".into(),
+            nick_color: Some(DEFAULT_NICK_COLOR.into()),
             room: "world".into(),
             text: "hello".into(),
             timestamp: 1,

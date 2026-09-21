@@ -14,6 +14,8 @@ const EN = {
   'login.nickHelp': 'Choose a nickname. It is reserved only while you are online.',
   'login.nickLabel': 'Your nickname',
   'login.nickPlaceholder': 'e.g. SWIR',
+  'login.nickColor': 'Nickname color',
+  'login.nickColorPreview': 'Your nickname preview',
   'login.connect': 'Connect to network',
   'login.advancedNetwork': 'Advanced network settings',
   'login.privacy': '🔒 Connections are encrypted by libp2p. A nickname is not an account.',
@@ -38,6 +40,7 @@ const EN = {
   'rooms.invalidName': 'Invalid room name.',
   'rooms.closed': 'The room was closed because its host left the network.',
   'chat.messageTo': 'Write a message to {room}…',
+  'chat.emoji': 'Konofix emoji',
   'chat.sendError': 'Send error: {error}',
   'user.selfReserved': 'You · nickname reserved',
   'network.refresh': 'Refresh discovery',
@@ -102,6 +105,9 @@ export type MessageKey = keyof typeof EN;
 type Dictionary = Partial<Record<MessageKey, string>>;
 
 const PL: Dictionary = {
+  'login.nickColor': 'Kolor nicka', 'login.nickColorPreview': 'Podgląd Twojego nicka',
+  'chat.emoji': 'Emotki Konofix',
+
   'network.participantNode': 'Ta aplikacja jest węzłem sieci, gdy jesteś połączony. Osobny serwer nie jest potrzebny. Przy pierwszym dołączeniu przez Internet wklej osiągalny adres od uczestnika, który jest online. Wykrywanie w LAN jest automatyczne; dostęp przez Internet zależy od NAT i zapory albo pośrednictwa innego osiągalnego uczestnika.',
   'network.copyAddress': 'Kopiuj adres',
   'network.addressCopied': 'Skopiowano',
@@ -192,6 +198,9 @@ const PL: Dictionary = {
 };
 
 const NO: Dictionary = {
+  'login.nickColor': 'Farge på kallenavn', 'login.nickColorPreview': 'Forhåndsvisning av kallenavn',
+  'chat.emoji': 'Konofix-emojier',
+
   'app.tagline': 'Bli med. Chat. Gå ut — og forsvinn fra nettverket.',
   'app.noAccount': '◆ ingen konto',
   'app.noServerHistory': '◆ ingen historikk på serveren',
@@ -220,6 +229,9 @@ const NO: Dictionary = {
 };
 
 const DE: Dictionary = {
+  'login.nickColor': 'Nickname-Farbe', 'login.nickColorPreview': 'Nickname-Vorschau',
+  'chat.emoji': 'Konofix-Emojis',
+
   'login.joinWorld': '#WORLD beitreten', 'login.nickLabel': 'Dein Nickname', 'login.nickPlaceholder': 'z. B. SWIR',
   'login.connect': 'Mit Netzwerk verbinden', 'login.advancedNetwork': 'Erweiterte Netzwerkeinstellungen',
   'rooms.temporary': 'TEMPORÄRE RÄUME', 'rooms.create': '＋ Raum erstellen', 'rooms.firstMessage': 'Schreibe die erste Nachricht.',
@@ -232,6 +244,9 @@ const DE: Dictionary = {
 };
 
 const FR: Dictionary = {
+  'login.nickColor': 'Couleur du pseudo', 'login.nickColorPreview': 'Aperçu du pseudo',
+  'chat.emoji': 'Émojis Konofix',
+
   'login.joinWorld': 'Rejoindre #WORLD', 'login.nickLabel': 'Votre pseudo', 'login.nickPlaceholder': 'ex. SWIR',
   'login.connect': 'Se connecter au réseau', 'login.advancedNetwork': 'Paramètres réseau avancés',
   'rooms.temporary': 'SALONS TEMPORAIRES', 'rooms.create': '＋ Créer un salon', 'rooms.firstMessage': 'Écrivez le premier message.',
@@ -244,6 +259,9 @@ const FR: Dictionary = {
 };
 
 const ES: Dictionary = {
+  'login.nickColor': 'Color del apodo', 'login.nickColorPreview': 'Vista previa del apodo',
+  'chat.emoji': 'Emojis Konofix',
+
   'login.joinWorld': 'Entrar en #WORLD', 'login.nickLabel': 'Tu apodo', 'login.nickPlaceholder': 'p. ej. SWIR',
   'login.connect': 'Conectar a la red', 'login.advancedNetwork': 'Ajustes de red avanzados',
   'rooms.temporary': 'SALAS TEMPORALES', 'rooms.create': '＋ Crear sala', 'rooms.firstMessage': 'Escribe el primer mensaje.',
@@ -256,6 +274,9 @@ const ES: Dictionary = {
 };
 
 const UK: Dictionary = {
+  'login.nickColor': 'Колір ніка', 'login.nickColorPreview': 'Попередній вигляд ніка',
+  'chat.emoji': 'Емодзі Konofix',
+
   'login.joinWorld': 'Увійти до #WORLD', 'login.nickLabel': 'Ваш нік', 'login.nickPlaceholder': 'напр. SWIR',
   'login.connect': 'Підключитися до мережі', 'login.advancedNetwork': 'Розширені налаштування мережі',
   'rooms.temporary': 'ТИМЧАСОВІ КІМНАТИ', 'rooms.create': '＋ Створити кімнату', 'rooms.firstMessage': 'Напишіть перше повідомлення.',

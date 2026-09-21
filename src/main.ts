@@ -1,10 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { t } from './i18n';
+import { DEFAULT_NICK_COLOR, KONOFIX_EMOJI, NICK_COLORS, normalizeNickColor, renderChatText } from './chat-expression';
 import './style.css';
 
-type ChatMessage = { id: string; kind: string; peer_id?: string; nick: string; room: string; text: string; timestamp: number };
-type PeerInfo = { peer_id: string; nick: string };
+type ChatMessage = { id: string; kind: string; peer_id?: string; nick: string; nick_color?: string; room: string; text: string; timestamp: number };
+type PeerInfo = { peer_id: string; nick: string; nick_color?: string };
 type RoomInfo = { id: string; title: string; owner?: string; users?: number };
 type RoomUserCountUpdate = { room_id: string; users: number };
 type NetworkStatus = {
@@ -40,6 +41,7 @@ const EMPTY_STATUS: NetworkStatus = {
 
 const state = {
   nick: '',
+  nickColor: normalizeNickColor(localStorage.getItem('konofix.nickColor')),
   peerId: '',
   version: '0.4.2',
   room: 'world',
@@ -121,6 +123,11 @@ function renderLogin() {
         <p class="muted">${esc(t('login.nickHelp'))}</p>
         <label for="nick">${esc(t('login.nickLabel'))}</label>
         <input id="nick" maxlength="24" autocomplete="off" spellcheck="false" placeholder="${esc(t('login.nickPlaceholder'))}" />
+        <label>${esc(t('login.nickColor'))}</label>
+        <div class="nick-color-picker" role="radiogroup" aria-label="${esc(t('login.nickColor'))}">
+          ${NICK_COLORS.map(item => `<button type="button" class="nick-color-swatch ${item.value === state.nickColor ? 'selected' : ''}" data-nick-color="${item.value}" role="radio" aria-checked="${item.value === state.nickColor}" title="${esc(item.label)}" style="--nick-color:${item.value}"></button>`).join('')}
+        </div>
+        <div class="nick-color-preview"><span style="color:${state.nickColor}">●</span> <strong style="color:${state.nickColor}">${esc(t('login.nickColorPreview'))}</strong></div>
         <div id="loginError" class="error"></div>
         <button id="connectBtn" class="primary">${esc(t('login.connect'))}</button>
         <button id="loginNetwork" class="link-btn">${esc(t('login.advancedNetwork'))}</button>
@@ -133,6 +140,13 @@ function renderLogin() {
   const input = document.querySelector<HTMLInputElement>('#nick')!;
   input.focus();
   input.addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
+  document.querySelectorAll<HTMLButtonElement>('[data-nick-color]').forEach(button => button.addEventListener('click', () => {
+    state.nickColor = normalizeNickColor(button.dataset.nickColor);
+    localStorage.setItem('konofix.nickColor', state.nickColor);
+    renderLogin();
+    document.querySelector<HTMLInputElement>('#nick')!.value = input.value;
+    document.querySelector<HTMLInputElement>('#nick')!.focus();
+  }));
   document.querySelector('#connectBtn')?.addEventListener('click', connect);
   document.querySelector('#loginNetwork')?.addEventListener('click', showNetworkModal);
 }
@@ -160,13 +174,16 @@ async function connect() {
   btn.textContent = t('login.starting');
 
   try {
-    const result = await invoke<{ peer_id: string; nick: string; version: string }>('start_network', {
+    const result = await invoke<{ peer_id: string; nick: string; nick_color: string; version: string }>('start_network', {
       nick,
+      nickColor: state.nickColor,
       bootstraps: loadBootstraps(),
     });
     if (revision !== sessionRevision) return;
     connectPending = false;
     state.nick = result.nick;
+    state.nickColor = normalizeNickColor(result.nick_color);
+    localStorage.setItem('konofix.nickColor', state.nickColor);
     state.peerId = result.peer_id;
     state.version = result.version;
     state.connected = true;
@@ -209,7 +226,7 @@ function renderChat() {
 
         <div class="sidebar-bottom">
           <div class="me-dot"></div>
-          <div class="me-info"><strong>${esc(state.nick)}</strong><span>${shortPeer(state.peerId)}</span></div>
+          <div class="me-info"><strong style="color:${state.nickColor}">${esc(state.nick)}</strong><span>${shortPeer(state.peerId)}</span></div>
           <button id="networkSettings" class="icon-btn" title="${esc(t('network.settings'))}">⚙</button>
           <button id="disconnect" class="icon-btn danger" title="${esc(t('network.disconnect'))}">⏻</button>
         </div>
@@ -232,6 +249,12 @@ function renderChat() {
         </div>
 
         <footer class="composer">
+          <div class="emoji-wrap">
+            <button id="emojiToggle" class="emoji-toggle" type="button" title="${esc(t('chat.emoji'))}" aria-label="${esc(t('chat.emoji'))}">☺</button>
+            <div id="emojiPanel" class="emoji-panel" hidden>
+              ${KONOFIX_EMOJI.map(item => `<button type="button" data-emoji-code="${esc(item.code)}" title="${esc(item.code)} · ${esc(item.label)}">${item.glyph}</button>`).join('')}
+            </div>
+          </div>
           <input id="msg" maxlength="4000" autocomplete="off" placeholder="${esc(t('chat.messageTo', { room: currentRoom.title }))}" />
           <button id="send" class="send" title="${esc(t('common.send'))}">➤</button>
         </footer>
@@ -239,7 +262,7 @@ function renderChat() {
 
       <aside class="users glass">
         <div class="users-head"><strong>${esc(t('common.online'))}</strong><span>${onlineCount}</span></div>
-        <div class="user self"><div class="avatar">${esc(state.nick[0]?.toUpperCase() ?? 'S')}</div><div><strong>${esc(state.nick)}</strong><span>${esc(t('user.selfReserved'))}</span></div></div>
+        <div class="user self"><div class="avatar" style="--nick-color:${state.nickColor}">${esc(state.nick[0]?.toUpperCase() ?? 'S')}</div><div><strong style="color:${state.nickColor}">${esc(state.nick)}</strong><span>${esc(t('user.selfReserved'))}</span></div></div>
         <div id="peerList">${[...state.peers.values()].sort((a,b) => a.nick.localeCompare(b.nick)).map(peerHtml).join('')}</div>
         <div class="transfer-section">
           <div class="users-head"><strong>${esc(t('transfer.section'))}</strong><span>${transfers.filter(t => activeTransfer(t.status)).length}</span></div>
@@ -265,6 +288,26 @@ function renderChat() {
   });
   const msg = document.querySelector<HTMLInputElement>('#msg')!;
   msg.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) sendMessage(); });
+  document.querySelector('#emojiToggle')?.addEventListener('click', () => {
+    const panel = document.querySelector<HTMLDivElement>('#emojiPanel');
+    if (panel) panel.hidden = !panel.hidden;
+  });
+  document.querySelectorAll<HTMLButtonElement>('[data-emoji-code]').forEach(button => button.addEventListener('click', () => {
+    const code = button.dataset.emojiCode ?? '';
+    const start = msg.selectionStart ?? msg.value.length;
+    const end = msg.selectionEnd ?? start;
+    const before = msg.value.slice(0, start);
+    const after = msg.value.slice(end);
+    const prefix = before && !/\s$/.test(before) ? ' ' : '';
+    const suffix = after && !/^\s/.test(after) ? ' ' : '';
+    const inserted = `${prefix}${code}${suffix}`;
+    msg.value = `${before}${inserted}${after}`.slice(0, 4000);
+    const caret = Math.min(before.length + inserted.length, msg.value.length);
+    msg.focus();
+    msg.setSelectionRange(caret, caret);
+    const panel = document.querySelector<HTMLDivElement>('#emojiPanel');
+    if (panel) panel.hidden = true;
+  }));
   msg.focus();
   scrollBottom();
 }
@@ -289,7 +332,8 @@ function roomButton(room: RoomInfo): string {
 
 function peerHtml(peer: PeerInfo): string {
   const initial = peer.nick[0]?.toUpperCase() ?? '?';
-  return `<div class="user"><div class="avatar">${esc(initial)}</div><div><strong>${esc(peer.nick)}</strong><span>${shortPeer(peer.peer_id)}</span></div><button class="mini-file" data-send-peer="${esc(peer.peer_id)}" title="${esc(t('transfer.sendFileTo', { nick: peer.nick }))}">📎</button></div>`;
+  const color = normalizeNickColor(peer.nick_color);
+  return `<div class="user"><div class="avatar" style="--nick-color:${color}">${esc(initial)}</div><div><strong style="color:${color}">${esc(peer.nick)}</strong><span>${shortPeer(peer.peer_id)}</span></div><button class="mini-file" data-send-peer="${esc(peer.peer_id)}" title="${esc(t('transfer.sendFileTo', { nick: peer.nick }))}">📎</button></div>`;
 }
 
 function shortPeer(v: string): string { return v ? `${v.slice(0, 6)}…${v.slice(-4)}` : 'local'; }
@@ -298,9 +342,10 @@ function messageHtml(m: ChatMessage): string {
   if (m.kind === 'system') return `<div class="system-msg">${esc(m.text)}</div>`;
   const mine = m.peer_id === state.peerId || m.nick === state.nick;
   const time = new Date(Number(m.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const color = mine ? state.nickColor : normalizeNickColor(m.nick_color);
   return `<article class="message ${mine ? 'mine' : ''}">
-    <div class="avatar">${esc(m.nick[0]?.toUpperCase() ?? '?')}</div>
-    <div class="bubble"><div class="meta"><strong>${esc(m.nick)}</strong><time>${time}</time></div><p>${esc(m.text)}</p></div>
+    <div class="avatar" style="--nick-color:${color}">${esc(m.nick[0]?.toUpperCase() ?? '?')}</div>
+    <div class="bubble"><div class="meta"><strong style="color:${color}">${esc(m.nick)}</strong><time>${time}</time></div><p>${renderChatText(m.text)}</p></div>
   </article>`;
 }
 
@@ -486,6 +531,7 @@ function resetSessionView(errorMessage?: string) {
   document.querySelectorAll('.modal-wrap').forEach(el => el.remove());
   state.connected = false;
   state.nick = '';
+  state.nickColor = normalizeNickColor(localStorage.getItem('konofix.nickColor'));
   state.peerId = '';
   state.peers.clear();
   state.rooms = new Map([['world', { id: 'world', title: '# WORLD' }]]);

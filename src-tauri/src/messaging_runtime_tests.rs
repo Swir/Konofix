@@ -20,6 +20,7 @@ fn timestamped_chat_and_nick_claim_decode_from_the_actual_wire_envelope() {
             nick: "test-alice".into(),
             canonical: "test-alice".into(),
             expires_at: now_ms() + 42_000,
+            session_age_ms: Some(1_000),
         },
     ] {
         let encoded = serde_json::to_vec(&event).unwrap();

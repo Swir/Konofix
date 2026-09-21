@@ -60,6 +60,7 @@ const WORLD_PROVIDER_KEY: &str = "/konofix/world/providers/v1";
 const PRESENCE_TTL_SECS: u64 = 38;
 const NICK_LEASE_SECS: u64 = 42;
 const NICK_LEASE_CLOCK_SKEW_SECS: u64 = 5;
+const NICK_SESSION_AGE_TIE_WINDOW_MS: u64 = 250;
 const FILE_CHUNK_SIZE: usize = 256 * 1024;
 const MAX_FILE_OFFER_NAME_BYTES: usize = 4 * 1024;
 // CBOR encodes Vec<u8> as an integer array: each byte can require two wire
@@ -389,6 +390,8 @@ enum WireEvent {
         nick: String,
         #[serde(default)]
         nick_color: Option<String>,
+        #[serde(default)]
+        session_age_ms: Option<u64>,
     },
     Goodbye {
         peer_id: String,
@@ -398,6 +401,8 @@ enum WireEvent {
         nick: String,
         canonical: String,
         expires_at: u64,
+        #[serde(default)]
+        session_age_ms: Option<u64>,
     },
     Chat(ChatMessage),
     PublicFileOffer(PublicShareOffer),
@@ -443,6 +448,7 @@ fn wire_event_is_well_formed(event: &WireEvent) -> bool {
             peer_id,
             nick,
             nick_color,
+            ..
         } => {
             peer_id.parse::<PeerId>().is_ok()
                 && validate_nick(nick).is_ok()
@@ -455,6 +461,7 @@ fn wire_event_is_well_formed(event: &WireEvent) -> bool {
             nick,
             canonical,
             expires_at,
+            ..
         } => {
             peer_id.parse::<PeerId>().is_ok()
                 && validate_nick(nick).is_ok()
@@ -1992,12 +1999,17 @@ fn membership_gossip_config() -> Result<gossipsub::Config, String> {
         .map_err(|error| error.to_string())
 }
 
+fn session_age_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 fn publish_presence(
     swarm: &mut libp2p::Swarm<Behaviour>,
     topic: &gossipsub::IdentTopic,
     peer_id: &str,
     nick: &str,
     nick_color: &str,
+    session_age_ms: u64,
 ) {
     publish(
         swarm,
@@ -2006,6 +2018,7 @@ fn publish_presence(
             peer_id: peer_id.to_string(),
             nick: nick.to_string(),
             nick_color: Some(nick_color.to_string()),
+            session_age_ms: Some(session_age_ms),
         },
     );
 }
@@ -2016,6 +2029,7 @@ fn publish_nick_lease(
     local_peer: PeerId,
     nick: &str,
     canonical: &str,
+    session_age_ms: u64,
 ) {
     let expires_at = now_ms() + (NICK_LEASE_SECS as u64 * 1000);
     let lease = NickLease {
@@ -2033,6 +2047,7 @@ fn publish_nick_lease(
             nick: lease.nick.clone(),
             canonical: lease.canonical.clone(),
             expires_at,
+            session_age_ms: Some(session_age_ms),
         },
     );
 
@@ -2072,8 +2087,10 @@ fn check_nick_conflict(
     remote_peer: &str,
     remote_canonical: &str,
     remote_expires: u64,
+    remote_session_age_ms: Option<u64>,
     local_peer: PeerId,
     local_canonical: &str,
+    local_session_age_ms: u64,
 ) -> bool {
     if remote_expires <= now_ms()
         || remote_canonical != local_canonical
@@ -2081,10 +2098,23 @@ fn check_nick_conflict(
     {
         return false;
     }
-    match remote_peer.parse::<PeerId>() {
-        Ok(remote) => remote < local_peer,
-        Err(_) => false,
+    let Ok(remote) = remote_peer.parse::<PeerId>() else {
+        return false;
+    };
+
+    let Some(remote_age) = remote_session_age_ms else {
+        // Compatibility with pre-incumbent builds: keep the former deterministic
+        // tie-break rather than trusting unsigned DHT nickname hints.
+        return remote < local_peer;
+    };
+
+    if remote_age.abs_diff(local_session_age_ms) <= NICK_SESSION_AGE_TIE_WINDOW_MS {
+        return remote < local_peer;
     }
+
+    // The older active session has accumulated more monotonic session age and
+    // keeps the nickname. A later session yields without evicting the incumbent.
+    remote_age > local_session_age_ms
 }
 
 fn emit_status(
@@ -2279,6 +2309,7 @@ async fn network_task(
     let local_peer = swarm.local_peer_id().to_owned();
     let peer_id = local_peer.to_string();
     let canonical = canonical_nick(&nick);
+    let session_started = Instant::now();
     let world = gossipsub::IdentTopic::new(WORLD_TOPIC);
     swarm
         .behaviour_mut()
@@ -2377,8 +2408,22 @@ async fn network_task(
     let mut outbound_requests: HashMap<request_response::OutboundRequestId, OutboundMeta> =
         HashMap::new();
 
-    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color);
-    publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical);
+    publish_presence(
+        &mut swarm,
+        &world,
+        &peer_id,
+        &nick,
+        &nick_color,
+        session_age_ms(session_started),
+    );
+    publish_nick_lease(
+        &mut swarm,
+        &world,
+        local_peer,
+        &nick,
+        &canonical,
+        session_age_ms(session_started),
+    );
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
     let mut discovery = tokio::time::interval(Duration::from_secs(25));
@@ -2402,8 +2447,8 @@ async fn network_task(
     'network: loop {
         tokio::select! {
             _ = heartbeat.tick() => {
-                publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color);
-                publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical);
+                publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
+                publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, session_age_ms(session_started));
                 for room in owned_rooms.values() {
                     publish(&mut swarm, &world, &WireEvent::RoomCreate(room.clone()));
                 }
@@ -2763,7 +2808,7 @@ async fn network_task(
                     NetworkCommand::RefreshDiscovery => {
                         let _ = swarm.behaviour_mut().kad.bootstrap();
                         swarm.behaviour_mut().kad.get_providers(world_provider_key());
-                        publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color);
+                        publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
                     }
                     NetworkCommand::OfferFile { peer_id: target, path, file_name, size, reply } => {
                         let result = (|| -> Result<FileTransferView, String> {
@@ -2998,7 +3043,8 @@ async fn network_task(
                             format!("Bootstrap aktywny: {remote}"),
                         );
                     }
-                    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color);
+                    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
+                    publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, session_age_ms(session_started));
                     emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączono z peerem");
                 }
                 SwarmEvent::ConnectionClosed { peer_id: remote, num_established, .. } => {
@@ -3112,7 +3158,7 @@ async fn network_task(
                             }
                         }
                     }
-                    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color);
+                    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
                     for (id, addr) in list {
@@ -3211,10 +3257,23 @@ async fn network_task(
                             continue;
                         }
                         match event {
-                            WireEvent::Presence { peer_id: remote_id, nick: remote_nick, nick_color: remote_color } => {
+                            WireEvent::Presence {
+                                peer_id: remote_id,
+                                nick: remote_nick,
+                                nick_color: remote_color,
+                                session_age_ms: remote_session_age_ms,
+                            } => {
                                 if remote_id != peer_id {
                                     let remote_canonical = canonical_nick(&remote_nick);
-                                    if check_nick_conflict(&remote_id, &remote_canonical, now_ms() + 30_000, local_peer, &canonical) {
+                                    if check_nick_conflict(
+                                        &remote_id,
+                                        &remote_canonical,
+                                        now_ms() + 30_000,
+                                        remote_session_age_ms,
+                                        local_peer,
+                                        &canonical,
+                                        session_age_ms(session_started),
+                                    ) {
                                         let _ = app.emit_event("nick-conflict", serde_json::json!({"nick": nick, "peer_id": remote_id}));
                                         break 'network;
                                     }
@@ -3255,8 +3314,22 @@ async fn network_task(
                                     let _ = app.emit_event("room-closed", serde_json::json!({"room_id": room_id}));
                                 }
                             }
-                            WireEvent::NickClaim { peer_id: remote_id, canonical: remote_canonical, expires_at, .. } => {
-                                if check_nick_conflict(&remote_id, &remote_canonical, expires_at, local_peer, &canonical) {
+                            WireEvent::NickClaim {
+                                peer_id: remote_id,
+                                canonical: remote_canonical,
+                                expires_at,
+                                session_age_ms: remote_session_age_ms,
+                                ..
+                            } => {
+                                if check_nick_conflict(
+                                    &remote_id,
+                                    &remote_canonical,
+                                    expires_at,
+                                    remote_session_age_ms,
+                                    local_peer,
+                                    &canonical,
+                                    session_age_ms(session_started),
+                                ) {
                                     let _ = app.emit_event("nick-conflict", serde_json::json!({"nick": nick, "peer_id": remote_id}));
                                     break 'network;
                                 }
@@ -4608,6 +4681,96 @@ mod nickname_color_tests {
 }
 
 #[cfg(test)]
+mod nickname_conflict_tests {
+    use super::*;
+
+    fn test_peer() -> PeerId {
+        libp2p::identity::Keypair::generate_ed25519()
+            .public()
+            .to_peer_id()
+    }
+
+    fn ordered_peers() -> (PeerId, PeerId) {
+        let first = test_peer();
+        let second = test_peer();
+        if first < second {
+            (first, second)
+        } else {
+            (second, first)
+        }
+    }
+
+    #[test]
+    fn established_session_keeps_nick_even_when_new_peer_id_would_have_won_old_tie_break() {
+        let (lower, higher) = ordered_peers();
+        let expires = now_ms() + 10_000;
+        assert!(!check_nick_conflict(
+            &lower.to_string(),
+            "swir",
+            expires,
+            Some(250),
+            higher,
+            "swir",
+            30_000,
+        ));
+    }
+
+    #[test]
+    fn later_session_yields_to_established_incumbent_regardless_of_peer_id() {
+        let (lower, higher) = ordered_peers();
+        let expires = now_ms() + 10_000;
+        assert!(check_nick_conflict(
+            &higher.to_string(),
+            "swir",
+            expires,
+            Some(30_000),
+            lower,
+            "swir",
+            250,
+        ));
+    }
+
+    #[test]
+    fn near_simultaneous_claims_keep_deterministic_peer_id_tie_break() {
+        let (lower, higher) = ordered_peers();
+        let expires = now_ms() + 10_000;
+        assert!(check_nick_conflict(
+            &lower.to_string(),
+            "swir",
+            expires,
+            Some(1_000),
+            higher,
+            "swir",
+            1_100,
+        ));
+        assert!(!check_nick_conflict(
+            &higher.to_string(),
+            "swir",
+            expires,
+            Some(1_000),
+            lower,
+            "swir",
+            1_100,
+        ));
+    }
+
+    #[test]
+    fn legacy_claim_without_session_age_preserves_compatible_deterministic_fallback() {
+        let (lower, higher) = ordered_peers();
+        let expires = now_ms() + 10_000;
+        assert!(check_nick_conflict(
+            &lower.to_string(),
+            "swir",
+            expires,
+            None,
+            higher,
+            "swir",
+            10_000,
+        ));
+    }
+}
+
+#[cfg(test)]
 mod nickname_lease_hint_tests {
     use super::*;
 
@@ -4701,17 +4864,20 @@ mod authenticated_event_tests {
             peer_id: source_text.clone(),
             nick: "<script>".into(),
             nick_color: Some(DEFAULT_NICK_COLOR.into()),
+            session_age_ms: Some(1_000),
         }));
         assert!(!wire_event_is_well_formed(&WireEvent::Presence {
             peer_id: source_text.clone(),
             nick: "alice".into(),
             nick_color: Some("#FFFFFF".into()),
+            session_age_ms: Some(1_000),
         }));
         assert!(!wire_event_is_well_formed(&WireEvent::NickClaim {
             peer_id: source_text.clone(),
             nick: "Alice".into(),
             canonical: "mallory".into(),
-            expires_at: 1
+            expires_at: 1,
+            session_age_ms: Some(1_000),
         }));
         assert!(!wire_event_is_well_formed(&WireEvent::RoomCreate(
             RoomInfo {
@@ -4749,6 +4915,7 @@ mod authenticated_event_tests {
                 peer_id: source_text.clone(),
                 nick: "alice".into(),
                 nick_color: Some(DEFAULT_NICK_COLOR.into()),
+                session_age_ms: Some(1_000),
             },
             WireEvent::Goodbye {
                 peer_id: source_text.clone(),
@@ -4758,6 +4925,7 @@ mod authenticated_event_tests {
                 nick: "alice".into(),
                 canonical: "alice".into(),
                 expires_at: 1,
+                session_age_ms: Some(1_000),
             },
             WireEvent::Chat(ChatMessage {
                 id: "message".into(),

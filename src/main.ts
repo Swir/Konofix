@@ -808,9 +808,10 @@ async function wireEvents() {
     try { await invoke('disconnect_network'); } catch {}
     resetSessionView(message);
   });
-  await listen<{ nick: string }>('nick-conflict', event => {
-    alert(t('nick.conflict', { nick: event.payload.nick }));
-    disconnect();
+  await listen<{ nick: string }>('nick-conflict', async event => {
+    const message = t('nick.conflict', { nick: event.payload.nick });
+    try { await invoke('disconnect_network'); } catch {}
+    resetSessionView(message);
   });
   await listen<PublicShareOffer>('public-file-offer', event => {
     const offer = event.payload;

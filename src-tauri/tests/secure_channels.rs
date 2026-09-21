@@ -53,13 +53,7 @@ fn access_grants_bind_room_owner_grantee_revision_and_expiry() {
     assert!(!grant.is_valid_for("other", &owner, &grantee, 7, now));
     assert!(!grant.is_valid_for("friends", &owner, &stranger, 7, now));
     assert!(!grant.is_valid_for("friends", &owner, &grantee, 8, now));
-    assert!(!grant.is_valid_for(
-        "friends",
-        &owner,
-        &grantee,
-        7,
-        grant.expires_at
-    ));
+    assert!(!grant.is_valid_for("friends", &owner, &grantee, 7, grant.expires_at));
 
     let far_future = RoomAccessGrant {
         expires_at: now + (ROOM_ACCESS_GRANT_TTL_SECS + 1) * 1_000,
@@ -140,15 +134,10 @@ fn private_message_requires_authenticated_sender_current_target_and_presence() {
 
     let mut stale = message.clone();
     stale.timestamp = now - PRIVATE_MESSAGE_MAX_AGE_MS - 1;
-    assert!(validate_private_message(
-        &stale,
-        &sender,
-        &local,
-        Some("alice"),
-        Some("#62E5FF"),
-        now
-    )
-    .is_err());
+    assert!(
+        validate_private_message(&stale, &sender, &local, Some("alice"), Some("#62E5FF"), now)
+            .is_err()
+    );
 
     let mut oversized = message;
     oversized.text = "x".repeat(4_001);

@@ -164,11 +164,8 @@ impl RoomPasswordVerifier {
         let Ok(Some(password)) = validate_room_password(Some(password)) else {
             return false;
         };
-        let candidate = pbkdf2_hmac_sha256(
-            password.as_bytes(),
-            &self.salt,
-            ROOM_PASSWORD_KDF_ROUNDS,
-        );
+        let candidate =
+            pbkdf2_hmac_sha256(password.as_bytes(), &self.salt, ROOM_PASSWORD_KDF_ROUNDS);
         constant_time_eq(&self.digest, &candidate)
     }
 
@@ -362,7 +359,13 @@ pub struct WindowRateLimiter {
 }
 
 impl WindowRateLimiter {
-    pub fn allow(&mut self, key: impl Into<String>, now: Instant, limit: u32, window: Duration) -> bool {
+    pub fn allow(
+        &mut self,
+        key: impl Into<String>,
+        now: Instant,
+        limit: u32,
+        window: Duration,
+    ) -> bool {
         let key = key.into();
         let entry = self.windows.entry(key).or_insert(RateWindow {
             started: now,
@@ -443,12 +446,8 @@ mod unit_tests {
     #[test]
     fn verifier_accepts_exact_password_and_redacts_debug() {
         let salt = [7u8; 16];
-        let verifier = RoomPasswordVerifier::from_validated_password_and_salt(
-            "correct horse",
-            salt,
-            9,
-            2,
-        );
+        let verifier =
+            RoomPasswordVerifier::from_validated_password_and_salt("correct horse", salt, 9, 2);
         assert_eq!(verifier.revision(), 9);
         assert_eq!(
             verifier.digest,

@@ -4,7 +4,31 @@ import { t } from './i18n';
 import { DEFAULT_NICK_COLOR, KONOFIX_EMOJI, NICK_COLORS, normalizeNickColor, renderChatText } from './chat-expression';
 import './style.css';
 
-type ChatMessage = { id: string; kind: string; peer_id?: string; nick: string; nick_color?: string; room: string; text: string; timestamp: number };
+type PublicShareOffer = {
+  offer_id: string;
+  peer_id: string;
+  nick: string;
+  nick_color?: string;
+  file_name: string;
+  size: number;
+  kind: 'file' | 'image';
+  mime?: string;
+  timestamp: number;
+  expires_at: number;
+  preview_data?: string;
+  expired?: boolean;
+};
+type ChatMessage = {
+  id: string;
+  kind: string;
+  peer_id?: string;
+  nick: string;
+  nick_color?: string;
+  room: string;
+  text: string;
+  timestamp: number;
+  public_offer?: PublicShareOffer;
+};
 type PeerInfo = { peer_id: string; nick: string; nick_color?: string };
 type RoomInfo = { id: string; title: string; owner?: string; users?: number };
 type RoomUserCountUpdate = { room_id: string; users: number };
@@ -25,6 +49,7 @@ type FileTransfer = {
   direction: 'incoming' | 'outgoing';
   peer_id: string;
   nick: string;
+  public_offer_id?: string;
   file_name: string;
   size: number;
   transferred: number;
@@ -50,6 +75,8 @@ const state = {
   rooms: new Map<string, RoomInfo>([['world', { id: 'world', title: '# WORLD' }]]),
   messages: new Map<string, ChatMessage[]>([['world', []]]),
   transfers: new Map<string, FileTransfer>(),
+  publicOffers: new Map<string, PublicShareOffer>(),
+  publicIntents: new Map<string, 'download' | 'preview'>(),
   status: { ...EMPTY_STATUS } as NetworkStatus,
 };
 
@@ -240,7 +267,10 @@ function renderChat() {
           </div>
           <div class="header-actions">
             <span class="live"><i></i>${activeRoomCount} ${esc(t('common.online').toLowerCase())}</span>
-            <button id="sendFile" class="ghost" ${state.peers.size ? '' : 'disabled'}>${esc(t('transfer.sendFile'))}</button>
+            ${state.room === 'world' ? `
+              <button id="shareWorldFile" class="ghost">${esc(t('publicShare.file'))}</button>
+              <button id="shareWorldImage" class="ghost image-share">${esc(t('publicShare.image'))}</button>
+            ` : `<button id="sendFile" class="ghost" ${state.peers.size ? '' : 'disabled'}>${esc(t('transfer.sendFile'))}</button>`}
           </div>
         </header>
 
@@ -279,6 +309,20 @@ function renderChat() {
   document.querySelector('#newRoom')?.addEventListener('click', createRoom);
   document.querySelector('#send')?.addEventListener('click', sendMessage);
   document.querySelector('#sendFile')?.addEventListener('click', offerFile);
+  document.querySelector('#shareWorldFile')?.addEventListener('click', () => sharePublic('file'));
+  document.querySelector('#shareWorldImage')?.addEventListener('click', () => sharePublic('image'));
+  document.querySelectorAll<HTMLButtonElement>('[data-public-download]').forEach(button => button.addEventListener('click', () => {
+    claimPublicOffer(button.dataset.publicDownload!, 'download');
+  }));
+  document.querySelectorAll<HTMLButtonElement>('[data-public-preview]').forEach(button => button.addEventListener('click', () => {
+    const offer = state.publicOffers.get(button.dataset.publicPreview!);
+    if (offer?.preview_data) showImagePreview(offer);
+    else claimPublicOffer(button.dataset.publicPreview!, 'preview');
+  }));
+  document.querySelectorAll<HTMLImageElement>('[data-public-image]').forEach(image => image.addEventListener('click', () => {
+    const offer = state.publicOffers.get(image.dataset.publicImage!);
+    if (offer?.preview_data) showImagePreview(offer);
+  }));
   document.querySelector('#disconnect')?.addEventListener('click', disconnect);
   document.querySelector('#networkSettings')?.addEventListener('click', showNetworkModal);
   document.querySelector('#networkCard')?.addEventListener('click', showNetworkModal);
@@ -340,6 +384,7 @@ function shortPeer(v: string): string { return v ? `${v.slice(0, 6)}…${v.slice
 
 function messageHtml(m: ChatMessage): string {
   if (m.kind === 'system') return `<div class="system-msg">${esc(m.text)}</div>`;
+  if (m.kind === 'public_offer' && m.public_offer) return publicOfferHtml(m.public_offer);
   const mine = m.peer_id === state.peerId || m.nick === state.nick;
   const time = new Date(Number(m.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const color = mine ? state.nickColor : normalizeNickColor(m.nick_color);
@@ -347,6 +392,95 @@ function messageHtml(m: ChatMessage): string {
     <div class="avatar" style="--nick-color:${color}">${esc(m.nick[0]?.toUpperCase() ?? '?')}</div>
     <div class="bubble"><div class="meta"><strong style="color:${color}">${esc(m.nick)}</strong><time>${time}</time></div><p>${renderChatText(m.text)}</p></div>
   </article>`;
+}
+
+function publicOfferHtml(offer: PublicShareOffer): string {
+  const mine = offer.peer_id === state.peerId;
+  const color = mine ? state.nickColor : normalizeNickColor(offer.nick_color);
+  const active = !offer.expired && Date.now() < Number(offer.expires_at);
+  const dangerous = dangerousFile(offer.file_name);
+  const image = offer.kind === 'image';
+  const preview = image && offer.preview_data
+    ? `<img class="public-image" data-public-image="${esc(offer.offer_id)}" src="${esc(offer.preview_data)}" alt="${esc(offer.file_name)}" />`
+    : image
+      ? `<div class="public-image-placeholder">🖼️<span>${esc(t('publicShare.previewHint'))}</span></div>`
+      : '';
+  const buttons = mine
+    ? `<span class="public-own">${esc(t('publicShare.shared'))}</span>`
+    : active
+      ? `<div class="public-actions">
+          ${image ? `<button class="ghost" data-public-preview="${esc(offer.offer_id)}">${esc(t('publicShare.preview'))}</button>` : ''}
+          <button class="primary compact" data-public-download="${esc(offer.offer_id)}">${esc(t('publicShare.download'))}</button>
+        </div>`
+      : `<span class="public-expired">${esc(t('publicShare.expired'))}</span>`;
+
+  return `<article class="message public-message ${mine ? 'mine' : ''}">
+    <div class="avatar" style="--nick-color:${color}">${esc(offer.nick[0]?.toUpperCase() ?? '?')}</div>
+    <div class="bubble public-bubble">
+      <div class="meta"><strong style="color:${color}">${esc(offer.nick)}</strong><time>${new Date(Number(offer.timestamp)).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</time></div>
+      ${preview}
+      <div class="public-file-row">
+        <span class="public-file-icon">${image ? '🖼️' : '📎'}</span>
+        <div><strong>${esc(offer.file_name)}</strong><small>${formatBytes(offer.size)}${offer.mime ? ` · ${esc(offer.mime)}` : ''}</small></div>
+      </div>
+      ${dangerous ? `<div class="public-warning">${esc(t('publicShare.dangerous'))}</div>` : ''}
+      ${buttons}
+    </div>
+  </article>`;
+}
+
+async function sharePublic(kind: 'file' | 'image') {
+  if (!state.connected || state.room !== 'world') return;
+  try {
+    const offer = await invoke<PublicShareOffer | null>('publish_public_file', { kind });
+    if (!offer) return;
+    offer.nick_color = normalizeNickColor(offer.nick_color);
+    state.publicOffers.set(offer.offer_id, offer);
+    pushMessage({
+      id: `public:${offer.offer_id}`,
+      kind: 'public_offer',
+      peer_id: offer.peer_id,
+      nick: offer.nick,
+      nick_color: offer.nick_color,
+      room: 'world',
+      text: '',
+      timestamp: Number(offer.timestamp),
+      public_offer: offer,
+    });
+  } catch (error) {
+    alert(t('publicShare.error', { error: String(error) }));
+  }
+}
+
+async function claimPublicOffer(offerId: string, intent: 'download' | 'preview') {
+  const offer = state.publicOffers.get(offerId);
+  if (!offer || offer.expired || offer.peer_id === state.peerId) return;
+  state.publicIntents.set(offerId, intent);
+  try {
+    await invoke('claim_public_file', { offerId });
+  } catch (error) {
+    state.publicIntents.delete(offerId);
+    alert(t('publicShare.error', { error: String(error) }));
+  }
+}
+
+function showImagePreview(offer: PublicShareOffer) {
+  if (!offer.preview_data) return;
+  document.querySelector('#imagePreviewModal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'imagePreviewModal';
+  modal.className = 'modal-wrap image-preview-wrap';
+  modal.innerHTML = `<div class="modal glass image-preview-modal">
+    <div class="modal-head"><div><span class="eyebrow">#WORLD IMAGE</span><h3>${esc(offer.file_name)}</h3></div><button data-close>×</button></div>
+    <img alt="${esc(offer.file_name)}" />
+    <div class="image-preview-meta">${formatBytes(offer.size)} · ${esc(offer.nick)}</div>
+  </div>`;
+  const image = modal.querySelector<HTMLImageElement>('img')!;
+  image.src = offer.preview_data;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.addEventListener('click', event => { if (event.target === modal) close(); });
+  modal.querySelector('[data-close]')?.addEventListener('click', close);
 }
 
 function activeTransfer(status: string): boolean {
@@ -537,6 +671,8 @@ function resetSessionView(errorMessage?: string) {
   state.rooms = new Map([['world', { id: 'world', title: '# WORLD' }]]);
   state.messages = new Map([['world', []]]);
   state.transfers.clear();
+  state.publicOffers.clear();
+  state.publicIntents.clear();
   state.status = { ...EMPTY_STATUS };
   state.room = 'world';
   renderLogin();
@@ -674,6 +810,38 @@ async function wireEvents() {
     alert(t('nick.conflict', { nick: event.payload.nick }));
     disconnect();
   });
+  await listen<PublicShareOffer>('public-file-offer', event => {
+    const offer = event.payload;
+    if (state.publicOffers.has(offer.offer_id)) {
+      const existing = state.publicOffers.get(offer.offer_id)!;
+      existing.expires_at = offer.expires_at;
+      return;
+    }
+    offer.nick_color = normalizeNickColor(offer.nick_color);
+    state.publicOffers.set(offer.offer_id, offer);
+    pushMessage({
+      id: `public:${offer.offer_id}`,
+      kind: 'public_offer',
+      peer_id: offer.peer_id,
+      nick: offer.nick,
+      nick_color: offer.nick_color,
+      room: 'world',
+      text: '',
+      timestamp: Number(offer.timestamp),
+      public_offer: offer,
+    });
+  });
+  await listen<{ offer_id: string }>('public-offer-expired', event => {
+    const offer = state.publicOffers.get(event.payload.offer_id);
+    if (!offer) return;
+    offer.expired = true;
+    state.publicIntents.delete(event.payload.offer_id);
+    if (state.connected && state.room === 'world') renderChat();
+  });
+  await listen<{ offer_id: string; error: string }>('public-offer-error', event => {
+    state.publicIntents.delete(event.payload.offer_id);
+    if (state.connected) addSystem('world', t('publicShare.error', { error: event.payload.error }));
+  });
   await listen<FileOffer>('file-offer', event => showFileOfferModal(event.payload));
   await listen<FileOfferExpired>('file-offer-expired', event => {
     const modal = document.querySelector(`#file-offer-${CSS.escape(event.payload.transfer_id)}`);
@@ -687,11 +855,26 @@ async function wireEvents() {
     modal.remove();
     if (state.connected) addSystem(state.room, t('transfer.offerCancelled'));
   });
-  await listen<FileTransfer>('file-transfer', event => {
+  await listen<FileTransfer>('file-transfer', async event => {
     state.transfers.set(event.payload.transfer_id, event.payload);
     if (event.payload.status === 'completed') {
       const saved = event.payload.direction === 'incoming' ? t('transfer.saved', { path: event.payload.path || 'Downloads\\Konofix Chat' }) : '';
       addSystem(state.room, t('transfer.finished', { file: event.payload.file_name, saved }));
+      const offerId = event.payload.public_offer_id;
+      if (offerId && event.payload.direction === 'incoming') {
+        const offer = state.publicOffers.get(offerId);
+        const intent = state.publicIntents.get(offerId);
+        state.publicIntents.delete(offerId);
+        if (offer?.kind === 'image' && event.payload.path) {
+          try {
+            offer.preview_data = await invoke<string>('load_image_preview', { path: event.payload.path });
+            if (state.connected && state.room === 'world') renderChat();
+            if (intent === 'preview') showImagePreview(offer);
+          } catch (error) {
+            addSystem('world', t('publicShare.previewError', { error: String(error) }));
+          }
+        }
+      }
     } else if (['failed', 'rejected'].includes(event.payload.status)) {
       addSystem(state.room, t('transfer.problem', { file: event.payload.file_name, error: event.payload.error || transferStatus(event.payload.status) }));
     } else if (state.connected) {

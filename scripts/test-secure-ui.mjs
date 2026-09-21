@@ -21,7 +21,8 @@ requireText('renderChatText(message.text)', 'private messages must reuse safe ch
 requireText("authorizedRoomRevision.get(roomId) === revision", 'room authorization must be tied to the advertised auth revision');
 requireText("authorizedRoomRevision.delete(room.id)", 'password revision changes must invalidate cached local admission');
 requireText("conversations.unreadCount(peerId)", 'private UI must expose unread state per peer');
-requireText("badge.textContent = String(Math.min(99, unread));", 'existing private-chat buttons must refresh their unread badge');
+requireText("const unreadText = String(Math.min(99, unread));", 'existing private-chat buttons must derive the current unread badge value');
+requireText("if (badge.textContent !== unreadText) badge.textContent = unreadText;", 'existing private-chat buttons must refresh unread badges idempotently');
 requireText("badge?.remove();", 'opening a private conversation must be able to clear a stale unread badge');
 requireText("offlinePeers.has(activePrivatePeerId)", 'private UI must reflect peer disconnect state');
 requireText("let augmentQueued = false;", 'secure UI must coalesce DOM augmentation work');

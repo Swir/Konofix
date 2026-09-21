@@ -1,7 +1,7 @@
-#[path = "../src/secure_channels.rs"]
-mod secure_channels;
 #[path = "../src/room_password_state.rs"]
 mod room_password_state;
+#[path = "../src/secure_channels.rs"]
+mod secure_channels;
 
 use std::time::{Duration, Instant};
 
@@ -18,8 +18,7 @@ fn protected_room_requires_correct_password_before_membership() {
     let owner = peer();
     let guest = peer();
     let now = Instant::now();
-    let mut room =
-        ProtectedRoomState::new("friends".into(), owner, Some("secret room")).unwrap();
+    let mut room = ProtectedRoomState::new("friends".into(), owner, Some("secret room")).unwrap();
 
     assert!(room.metadata().password_protected);
     assert!(!room.is_authorized(&guest, 1_000));
@@ -45,8 +44,7 @@ fn only_owner_can_change_password_and_change_revokes_stale_grants() {
     let guest = peer();
     let attacker = peer();
     let now = Instant::now();
-    let mut room =
-        ProtectedRoomState::new("friends".into(), owner, Some("secret room")).unwrap();
+    let mut room = ProtectedRoomState::new("friends".into(), owner, Some("secret room")).unwrap();
     let old_revision = room.metadata().auth_revision;
     let old_grant = room
         .authorize_join(&guest, Some("secret room"), 10_000, now)
@@ -60,10 +58,7 @@ fn only_owner_can_change_password_and_change_revokes_stale_grants() {
     assert_eq!(room.metadata().auth_revision, old_revision);
     assert!(room.is_authorized(&guest, 10_000));
 
-    assert_eq!(
-        room.update_password(&owner, Some("other secret")),
-        Ok(true)
-    );
+    assert_eq!(room.update_password(&owner, Some("other secret")), Ok(true));
     assert_eq!(room.metadata().auth_revision, old_revision + 1);
     assert!(!room.is_authorized(&guest, 10_000));
     assert!(!room.accept_grant(old_grant, 10_000));
@@ -82,8 +77,7 @@ fn removing_password_opens_room_and_invalidates_prior_revision() {
     let owner = peer();
     let guest = peer();
     let now = Instant::now();
-    let mut room =
-        ProtectedRoomState::new("friends".into(), owner, Some("secret room")).unwrap();
+    let mut room = ProtectedRoomState::new("friends".into(), owner, Some("secret room")).unwrap();
     let prior_revision = room.metadata().auth_revision;
     room.authorize_join(&guest, Some("secret room"), 50_000, now)
         .unwrap();
@@ -101,8 +95,7 @@ fn wrong_password_attempts_are_bounded_per_peer_and_room() {
     let owner = peer();
     let guest = peer();
     let now = Instant::now();
-    let mut room =
-        ProtectedRoomState::new("friends".into(), owner, Some("secret room")).unwrap();
+    let mut room = ProtectedRoomState::new("friends".into(), owner, Some("secret room")).unwrap();
 
     for _ in 0..ROOM_AUTH_MAX_ATTEMPTS {
         assert_eq!(
@@ -131,8 +124,7 @@ fn grants_expire_and_revoke_without_touching_other_peers() {
     let alice = peer();
     let bob = peer();
     let now = Instant::now();
-    let mut room =
-        ProtectedRoomState::new("friends".into(), owner, Some("secret room")).unwrap();
+    let mut room = ProtectedRoomState::new("friends".into(), owner, Some("secret room")).unwrap();
     room.authorize_join(&alice, Some("secret room"), 1_000, now)
         .unwrap();
     room.authorize_join(&bob, Some("secret room"), 1_000, now)

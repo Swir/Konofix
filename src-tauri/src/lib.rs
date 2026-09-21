@@ -2000,10 +2000,7 @@ fn membership_gossip_config() -> Result<gossipsub::Config, String> {
 }
 
 fn session_age_ms(started: Instant) -> u64 {
-    started
-        .elapsed()
-        .as_millis()
-        .min(u128::from(u64::MAX)) as u64
+    started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 fn publish_presence(
@@ -2411,8 +2408,22 @@ async fn network_task(
     let mut outbound_requests: HashMap<request_response::OutboundRequestId, OutboundMeta> =
         HashMap::new();
 
-    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
-    publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, session_age_ms(session_started));
+    publish_presence(
+        &mut swarm,
+        &world,
+        &peer_id,
+        &nick,
+        &nick_color,
+        session_age_ms(session_started),
+    );
+    publish_nick_lease(
+        &mut swarm,
+        &world,
+        local_peer,
+        &nick,
+        &canonical,
+        session_age_ms(session_started),
+    );
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
     let mut discovery = tokio::time::interval(Duration::from_secs(25));
@@ -4668,7 +4679,6 @@ mod nickname_color_tests {
         assert!(optional_nick_color_is_valid(None));
     }
 }
-
 
 #[cfg(test)]
 mod nickname_conflict_tests {

@@ -283,7 +283,7 @@ function renderChat() {
           <div class="emoji-wrap">
             <button id="emojiToggle" class="emoji-toggle" type="button" title="${esc(t('chat.emoji'))}" aria-label="${esc(t('chat.emoji'))}">☺</button>
             <div id="emojiPanel" class="emoji-panel" hidden>
-              ${KONOFIX_EMOJI.map(item => `<button type="button" data-emoji-code="${esc(item.code)}" title="${esc(item.code)} · ${esc(item.label)}">${item.glyph}</button>`).join('')}
+              ${KONOFIX_EMOJI.filter((item, index, items) => items.findIndex(other => other.glyph === item.glyph) === index).map(item => `<button type="button" data-emoji-code="${esc(item.code)}" title="${esc(item.code)} · ${esc(item.label)}">${item.glyph}</button>`).join('')}
             </div>
           </div>
           <input id="msg" maxlength="4000" autocomplete="off" placeholder="${esc(t('chat.messageTo', { room: currentRoom.title }))}" />

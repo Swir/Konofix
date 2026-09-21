@@ -55,7 +55,8 @@ try {
   if (mod.normalizeNickColor('#ffffff') !== mod.DEFAULT_NICK_COLOR) {
     throw new Error('Unapproved nickname colors must fail closed to the default.');
   }
-  if (mod.NICK_COLORS.length < 10 || mod.KONOFIX_EMOJI.length < 30) {
+  const uniqueGlyphs = new Set(mod.KONOFIX_EMOJI.map(item => item.glyph));
+  if (mod.NICK_COLORS.length < 10 || mod.KONOFIX_EMOJI.length < 30 || uniqueGlyphs.size < 28) {
     throw new Error('Expression palette is unexpectedly small.');
   }
 

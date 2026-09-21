@@ -91,12 +91,28 @@ impl SecureControlClient {
         })
     }
 
-    pub fn track_room_join(&mut self, request: &ControlRequest, owner: PeerId, auth_revision: u64) -> Result<String, &'static str> {
-        let ControlRequest::RoomJoin { request_id, room_id, .. } = request else {
+    pub fn track_room_join(
+        &mut self,
+        request: &ControlRequest,
+        owner: PeerId,
+        auth_revision: u64,
+    ) -> Result<String, &'static str> {
+        let ControlRequest::RoomJoin {
+            request_id,
+            room_id,
+            ..
+        } = request
+        else {
             return Err("Room join request required.");
         };
-        let observed = self.observed_rooms.get(room_id).ok_or("Room security metadata is unknown.")?;
-        if !observed.password_protected || observed.owner != owner || observed.auth_revision != auth_revision {
+        let observed = self
+            .observed_rooms
+            .get(room_id)
+            .ok_or("Room security metadata is unknown.")?;
+        if !observed.password_protected
+            || observed.owner != owner
+            || observed.auth_revision != auth_revision
+        {
             return Err("Room security metadata changed before authorization.");
         }
         if self.pending.contains_key(request_id) {
@@ -114,7 +130,11 @@ impl SecureControlClient {
         Ok(request_id.clone())
     }
 
-    pub fn track_private_message(&mut self, request: &ControlRequest, target: PeerId) -> Result<String, &'static str> {
+    pub fn track_private_message(
+        &mut self,
+        request: &ControlRequest,
+        target: PeerId,
+    ) -> Result<String, &'static str> {
         let ControlRequest::PrivateMessage(message) = request else {
             return Err("Private message request required.");
         };
@@ -138,15 +158,24 @@ impl SecureControlClient {
         self.pending.remove(correlation_id)
     }
 
-    pub fn handle_response(&mut self, authenticated_peer: &PeerId, response: ControlResponse) -> SecureResponseOutcome {
+    pub fn handle_response(
+        &mut self,
+        authenticated_peer: &PeerId,
+        response: ControlResponse,
+    ) -> SecureResponseOutcome {
         match response {
-            ControlResponse::RoomJoin { request_id, granted, reason } => {
+            ControlResponse::RoomJoin {
+                request_id,
+                granted,
+                reason,
+            } => {
                 let Some(PendingSecureRequest::RoomJoin {
                     room_id,
                     owner,
                     auth_revision,
                     ..
-                }) = self.pending.remove(&request_id) else {
+                }) = self.pending.get(&request_id).cloned()
+                else {
                     return SecureResponseOutcome::Ignored;
                 };
                 if owner != *authenticated_peer {
@@ -158,11 +187,17 @@ impl SecureControlClient {
                         && room.auth_revision == auth_revision
                 });
                 if !still_current {
+                    self.pending.remove(&request_id);
                     return SecureResponseOutcome::Ignored;
                 }
+                self.pending.remove(&request_id);
                 if granted {
-                    self.authorized_room_revisions.insert(room_id.clone(), auth_revision);
-                    SecureResponseOutcome::RoomJoinGranted { room_id, auth_revision }
+                    self.authorized_room_revisions
+                        .insert(room_id.clone(), auth_revision);
+                    SecureResponseOutcome::RoomJoinGranted {
+                        room_id,
+                        auth_revision,
+                    }
                 } else {
                     SecureResponseOutcome::RoomJoinRejected {
                         room_id,
@@ -170,13 +205,20 @@ impl SecureControlClient {
                     }
                 }
             }
-            ControlResponse::PrivateAck { message_id, accepted, reason } => {
-                let Some(PendingSecureRequest::PrivateMessage { message, target }) = self.pending.remove(&message_id) else {
+            ControlResponse::PrivateAck {
+                message_id,
+                accepted,
+                reason,
+            } => {
+                let Some(PendingSecureRequest::PrivateMessage { message, target }) =
+                    self.pending.get(&message_id).cloned()
+                else {
                     return SecureResponseOutcome::Ignored;
                 };
                 if target != *authenticated_peer || message.id != message_id {
                     return SecureResponseOutcome::Ignored;
                 }
+                self.pending.remove(&message_id);
                 if accepted {
                     SecureResponseOutcome::PrivateDelivered { message }
                 } else {

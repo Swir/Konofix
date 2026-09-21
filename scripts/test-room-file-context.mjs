@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 
-const main = fs.readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
-const core = fs.readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
+const readText = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const main = readText('src/main.ts');
+const core = readText('src-tauri/src/lib.rs');
 
 function requireText(source, text, message) {
   if (!source.includes(text)) throw new Error(message);

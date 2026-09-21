@@ -116,10 +116,7 @@ impl ProtectedRoomState {
         }
 
         let password = password.ok_or(RoomAuthError::PasswordRequired)?;
-        let verifier = self
-            .verifier
-            .as_ref()
-            .expect("protected room has verifier");
+        let verifier = self.verifier.as_ref().expect("protected room has verifier");
         if !verifier.verify(password) {
             return Err(RoomAuthError::InvalidPassword);
         }

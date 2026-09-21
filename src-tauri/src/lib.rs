@@ -35,10 +35,23 @@ mod room_membership_network;
 mod room_membership_production;
 mod room_membership_runtime;
 mod room_membership_wire;
+mod room_password_state;
+mod secure_channels;
+mod secure_control_client;
+mod secure_control_runtime;
+mod secure_control_transport;
 
 use incoming_file::{commit_reserved_file, reserve_incoming_file};
 use room_membership_application::{ApplicationMembershipEffects, MembershipSnapshotPayload};
 use room_membership_production::RoomMembershipProductionBridge;
+use secure_channels::{
+    validate_room_password, ControlRequest, ControlResponse, PrivateDirectMessage, SecretString,
+};
+use secure_control_client::{ObservedRoomSecurity, SecureControlClient, SecureResponseOutcome};
+use secure_control_runtime::{PresenceIdentity, SecureControlRuntime};
+use secure_control_transport::{
+    control_behaviour, handle_inbound_control_request, private_message_request, room_join_request,
+};
 
 const WORLD_TOPIC: &str = "konofix/world/v3";
 const KAD_PROTOCOL: &str = "/konofix/kad/1.0.0";
@@ -210,6 +223,10 @@ struct RoomInfo {
     title: String,
     owner: Option<String>,
     users: Option<u32>,
+    #[serde(default)]
+    password_protected: bool,
+    #[serde(default)]
+    auth_revision: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,6 +368,10 @@ fn add_cached_peers_to_swarm(swarm: &mut libp2p::Swarm<Behaviour>, cache: &PeerC
                 .behaviour_mut()
                 .file_transfer
                 .add_address(&peer, addr.clone());
+            swarm
+                .behaviour_mut()
+                .secure_control
+                .add_address(&peer, addr.clone());
             if let Some(full) = address_for_peer(addr, peer) {
                 let _ = swarm.dial(full);
                 added += 1;
@@ -467,6 +488,7 @@ fn wire_event_is_well_formed(event: &WireEvent) -> bool {
                 && (3..=32).contains(&title.chars().count())
                 && room.id == slug::slugify(title)
                 && room.users.is_none_or(|users| users <= 100_000)
+                && (!room.password_protected || room.auth_revision > 0)
         }
         WireEvent::RoomClose { room_id, owner } => {
             owner.parse::<PeerId>().is_ok() && room_id != "world" && valid_wire_room_id(room_id)
@@ -781,10 +803,27 @@ enum NetworkCommand {
     SendMessage {
         room: String,
         text: String,
+        reply: oneshot::Sender<Result<(), String>>,
     },
     CreateRoom {
         room: RoomInfo,
+        password: Option<SecretString>,
         reply: oneshot::Sender<Result<RoomInfo, String>>,
+    },
+    UpdateRoomPassword {
+        room_id: String,
+        password: Option<SecretString>,
+        reply: oneshot::Sender<Result<RoomInfo, String>>,
+    },
+    AuthorizeRoomEntry {
+        room_id: String,
+        password: SecretString,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    SendPrivateMessage {
+        peer_id: String,
+        text: String,
+        reply: oneshot::Sender<Result<PrivateDirectMessage, String>>,
     },
     EnterRoom {
         room_id: String,
@@ -843,6 +882,7 @@ struct Behaviour {
     dcutr: dcutr::Behaviour,
     upnp: upnp::tokio::Behaviour,
     file_transfer: request_response::cbor::Behaviour<FileRequest, FileResponse>,
+    secure_control: request_response::cbor::Behaviour<ControlRequest, ControlResponse>,
 }
 
 fn now_ms() -> u64 {
@@ -1326,9 +1366,13 @@ async fn send_message(
         .map_err(|_| "Błąd blokady stanu")?
         .clone()
         .ok_or("Brak połączenia P2P")?;
-    tx.send(NetworkCommand::SendMessage { room, text })
+    let (reply, response) = oneshot::channel();
+    tx.send(NetworkCommand::SendMessage { room, text, reply })
         .await
-        .map_err(|_| "Warstwa P2P została zatrzymana.".into())
+        .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
+    response
+        .await
+        .map_err(|_| "Wysyłanie wiadomości zostało przerwane.".to_string())?
 }
 
 #[tauri::command]
@@ -1346,6 +1390,8 @@ async fn create_room(title: String, state: State<'_, AppState>) -> Result<RoomIn
         title: format!("# {clean}"),
         owner: None,
         users: Some(1),
+        password_protected: false,
+        auth_revision: 0,
     };
     let tx = state
         .tx
@@ -1354,12 +1400,137 @@ async fn create_room(title: String, state: State<'_, AppState>) -> Result<RoomIn
         .clone()
         .ok_or("Brak połączenia P2P")?;
     let (reply, response) = oneshot::channel();
-    tx.send(NetworkCommand::CreateRoom { room, reply })
-        .await
-        .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
+    tx.send(NetworkCommand::CreateRoom {
+        room,
+        password: None,
+        reply,
+    })
+    .await
+    .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
     response
         .await
         .map_err(|_| "Room creation interrupted.".to_string())?
+}
+
+#[tauri::command]
+async fn create_secure_room(
+    title: String,
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<RoomInfo, String> {
+    let clean = title.trim();
+    if !(3..=32).contains(&clean.chars().count()) {
+        return Err("Nazwa pokoju musi mieć 3–32 znaki.".into());
+    }
+    let id = slug::slugify(clean);
+    if id.is_empty() || id == "world" {
+        return Err("Nieprawidłowa nazwa pokoju.".into());
+    }
+    let password =
+        validate_room_password(Some(&password))?.ok_or("Pokój chroniony wymaga hasła.")?;
+    let room = RoomInfo {
+        id,
+        title: format!("# {clean}"),
+        owner: None,
+        users: Some(1),
+        password_protected: true,
+        auth_revision: 0,
+    };
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "Błąd blokady stanu")?
+        .clone()
+        .ok_or("Brak połączenia P2P")?;
+    let (reply, response) = oneshot::channel();
+    tx.send(NetworkCommand::CreateRoom {
+        room,
+        password: Some(SecretString::new(password)),
+        reply,
+    })
+    .await
+    .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
+    response
+        .await
+        .map_err(|_| "Room creation interrupted.".to_string())?
+}
+
+#[tauri::command]
+async fn update_room_password(
+    room_id: String,
+    password: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<RoomInfo, String> {
+    let password = validate_room_password(password.as_deref())?.map(SecretString::new);
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "Błąd blokady stanu")?
+        .clone()
+        .ok_or("Brak połączenia P2P")?;
+    let (reply, response) = oneshot::channel();
+    tx.send(NetworkCommand::UpdateRoomPassword {
+        room_id,
+        password,
+        reply,
+    })
+    .await
+    .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
+    response
+        .await
+        .map_err(|_| "Room password update interrupted.".to_string())?
+}
+
+#[tauri::command]
+async fn authorize_room_entry(
+    room_id: String,
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let password =
+        validate_room_password(Some(&password))?.ok_or("Pokój chroniony wymaga hasła.")?;
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "Błąd blokady stanu")?
+        .clone()
+        .ok_or("Brak połączenia P2P")?;
+    let (reply, response) = oneshot::channel();
+    tx.send(NetworkCommand::AuthorizeRoomEntry {
+        room_id,
+        password: SecretString::new(password),
+        reply,
+    })
+    .await
+    .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
+    response
+        .await
+        .map_err(|_| "Room authorization interrupted.".to_string())?
+}
+
+#[tauri::command]
+async fn send_private_message(
+    peer_id: String,
+    text: String,
+    state: State<'_, AppState>,
+) -> Result<PrivateDirectMessage, String> {
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "Błąd blokady stanu")?
+        .clone()
+        .ok_or("Brak połączenia P2P")?;
+    let (reply, response) = oneshot::channel();
+    tx.send(NetworkCommand::SendPrivateMessage {
+        peer_id,
+        text,
+        reply,
+    })
+    .await
+    .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
+    response
+        .await
+        .map_err(|_| "Private message delivery interrupted.".to_string())?
 }
 
 #[tauri::command]
@@ -1699,6 +1870,10 @@ fn register_bootstrap_target(
     swarm
         .behaviour_mut()
         .file_transfer
+        .add_address(&peer_id, addr.clone());
+    swarm
+        .behaviour_mut()
+        .secure_control
         .add_address(&peer_id, addr);
 
     Ok(BootstrapTarget::new(
@@ -2081,6 +2256,7 @@ async fn network_task(
                     )],
                     rr_cfg,
                 );
+            let secure_control = control_behaviour();
 
             Ok(Behaviour {
                 gossipsub,
@@ -2094,6 +2270,7 @@ async fn network_task(
                 dcutr: dcutr::Behaviour::new(local_peer),
                 upnp: upnp::tokio::Behaviour::default(),
                 file_transfer,
+                secure_control,
             })
         })
         .map_err(|e| e.to_string())?
@@ -2182,6 +2359,14 @@ async fn network_task(
     let mut participant_relays = HashMap::new();
     let mut listen_addresses: Vec<String> = Vec::new();
     let mut nat_status = "unknown".to_string();
+    let mut secure_runtime = SecureControlRuntime::default();
+    let mut secure_client = SecureControlClient::default();
+    let mut secure_outbound_requests =
+        HashMap::<request_response::OutboundRequestId, String>::new();
+    let mut pending_room_authorizations =
+        HashMap::<String, oneshot::Sender<Result<(), String>>>::new();
+    let mut pending_private_messages =
+        HashMap::<String, oneshot::Sender<Result<PrivateDirectMessage, String>>>::new();
 
     let mut outgoing: HashMap<String, OutgoingTransfer> = HashMap::new();
     let mut pending_incoming: HashMap<String, PendingIncomingOffer> = HashMap::new();
@@ -2260,6 +2445,7 @@ async fn network_task(
                 }
             }
             _ = cleanup.tick() => {
+                secure_runtime.prune(now_ms(), Instant::now());
                 let expired_memberships: Vec<PeerId> = membership_seen.iter()
                     .filter(|(_, seen)| seen.elapsed() > Duration::from_secs(PRESENCE_TTL_SECS))
                     .map(|(peer, _)| *peer).collect();
@@ -2363,7 +2549,11 @@ async fn network_task(
             }
             Some(cmd) = rx.recv() => {
                 match cmd {
-                    NetworkCommand::SendMessage { room, text } => {
+                    NetworkCommand::SendMessage { room, text, reply } => {
+                        if room != "world" && !secure_client.room_authorized(&room, &local_peer) {
+                            let _ = reply.send(Err("Protected room authorization is required.".into()));
+                            continue;
+                        }
                         let msg = ChatMessage {
                             id: Uuid::new_v4().to_string(),
                             kind: "chat".into(),
@@ -2376,29 +2566,157 @@ async fn network_task(
                         };
                         let _ = app.emit_event("chat-message", msg.clone());
                         publish(&mut swarm, &world, &WireEvent::Chat(msg));
+                        let _ = reply.send(Ok(()));
                     }
-                    NetworkCommand::CreateRoom { mut room, reply } => {
+                    NetworkCommand::CreateRoom { mut room, password, reply } => {
                         room.owner = Some(peer_id.clone());
-                        let result = room_create_admission(&rooms, &room)
-                            .map_err(str::to_string)
-                            .and_then(|()| membership.create_and_enter_local_room(&room.id)
-                                .map_err(|error| format!("Room creation rejected: {error:?}")));
+                        let result = (|| -> Result<(RoomInfo, ApplicationMembershipEffects), String> {
+                            room_create_admission(&rooms, &room).map_err(str::to_string)?;
+                            let security = secure_runtime
+                                .create_room(
+                                    room.id.clone(),
+                                    local_peer,
+                                    password.as_ref().map(SecretString::expose),
+                                )
+                                .map_err(|error| format!("Room security setup rejected: {error:?}"))?;
+                            room.password_protected = security.password_protected;
+                            room.auth_revision = security.auth_revision;
+                            let effects = match membership.create_and_enter_local_room(&room.id) {
+                                Ok(effects) => effects,
+                                Err(error) => {
+                                    secure_runtime.remove_room(&room.id);
+                                    return Err(format!("Room creation rejected: {error:?}"));
+                                }
+                            };
+                            Ok((room.clone(), effects))
+                        })();
                         match result {
-                            Ok(effects) => {
-                                room.users = Some(membership.total_count(&room.id));
-                                rooms.insert(room.id.clone(), room.clone());
-                                owned_rooms.insert(room.id.clone(), room.clone());
-                                let _ = app.emit_event("room-created", room.clone());
-                                publish(&mut swarm, &world, &WireEvent::RoomCreate(room.clone()));
+                            Ok((mut created, effects)) => {
+                                created.users = Some(membership.total_count(&created.id));
+                                rooms.insert(created.id.clone(), created.clone());
+                                owned_rooms.insert(created.id.clone(), created.clone());
+                                secure_client.observe_room(ObservedRoomSecurity {
+                                    room_id: created.id.clone(),
+                                    owner: local_peer,
+                                    password_protected: created.password_protected,
+                                    auth_revision: created.auth_revision,
+                                });
+                                let _ = app.emit_event("room-created", created.clone());
+                                publish(&mut swarm, &world, &WireEvent::RoomCreate(created.clone()));
                                 apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
-                                let _ = reply.send(Ok(room));
+                                let _ = reply.send(Ok(created));
                             }
                             Err(reason) => {
                                 let _ = reply.send(Err(reason));
                             }
                         }
                     }
+                    NetworkCommand::UpdateRoomPassword { room_id, password, reply } => {
+                        let result = (|| -> Result<RoomInfo, String> {
+                            let room = owned_rooms
+                                .get_mut(&room_id)
+                                .ok_or("Only the room owner can change its password.")?;
+                            let metadata = secure_runtime
+                                .update_room_password(
+                                    &room_id,
+                                    &local_peer,
+                                    password.as_ref().map(SecretString::expose),
+                                )
+                                .map_err(|error| format!("Room password update rejected: {error:?}"))?;
+                            room.password_protected = metadata.password_protected;
+                            room.auth_revision = metadata.auth_revision;
+                            rooms.insert(room_id.clone(), room.clone());
+                            secure_client.observe_room(ObservedRoomSecurity {
+                                room_id: room.id.clone(),
+                                owner: local_peer,
+                                password_protected: room.password_protected,
+                                auth_revision: room.auth_revision,
+                            });
+                            publish(&mut swarm, &world, &WireEvent::RoomCreate(room.clone()));
+                            let _ = app.emit_event("room-security-updated", room.clone());
+                            Ok(room.clone())
+                        })();
+                        let _ = reply.send(result);
+                    }
+                    NetworkCommand::AuthorizeRoomEntry { room_id, password, reply } => {
+                        let result = (|| -> Result<Option<(PeerId, ControlRequest, String)>, String> {
+                            let room = rooms.get(&room_id).ok_or("Unknown room.")?;
+                            if !room.password_protected {
+                                return Ok(None);
+                            }
+                            let owner_raw = room.owner.as_deref().ok_or("Protected room owner is missing.")?;
+                            let owner: PeerId = owner_raw
+                                .parse()
+                                .map_err(|_| "Protected room owner identity is invalid.")?;
+                            if owner == local_peer {
+                                return Ok(None);
+                            }
+                            if room.auth_revision == 0 {
+                                return Err("Protected room security metadata is incompatible.".into());
+                            }
+                            let request = room_join_request(&room_id, password.expose().to_string())?;
+                            let correlation = secure_client
+                                .track_room_join(&request, owner, room.auth_revision)
+                                .map_err(str::to_string)?;
+                            Ok(Some((owner, request, correlation)))
+                        })();
+                        match result {
+                            Ok(None) => {
+                                let _ = reply.send(Ok(()));
+                            }
+                            Ok(Some((owner, request, correlation))) => {
+                                let outbound = swarm
+                                    .behaviour_mut()
+                                    .secure_control
+                                    .send_request(&owner, request);
+                                secure_outbound_requests.insert(outbound, correlation.clone());
+                                pending_room_authorizations.insert(correlation, reply);
+                            }
+                            Err(error) => {
+                                let _ = reply.send(Err(error));
+                            }
+                        }
+                    }
+                    NetworkCommand::SendPrivateMessage { peer_id: target_raw, text, reply } => {
+                        let result = (|| -> Result<(PeerId, ControlRequest, String), String> {
+                            let target: PeerId = target_raw
+                                .parse()
+                                .map_err(|_| "Invalid private-chat Peer ID.")?;
+                            if !peers.contains_key(&target) {
+                                return Err("Private-chat peer is not currently authenticated online.".into());
+                            }
+                            let request = private_message_request(
+                                &local_peer,
+                                &target,
+                                &nick,
+                                Some(nick_color.clone()),
+                                &text,
+                                now_ms(),
+                            )?;
+                            let correlation = secure_client
+                                .track_private_message(&request, target)
+                                .map_err(str::to_string)?;
+                            Ok((target, request, correlation))
+                        })();
+                        match result {
+                            Ok((target, request, correlation)) => {
+                                let outbound = swarm
+                                    .behaviour_mut()
+                                    .secure_control
+                                    .send_request(&target, request);
+                                secure_outbound_requests.insert(outbound, correlation.clone());
+                                pending_private_messages.insert(correlation, reply);
+                            }
+                            Err(error) => {
+                                let _ = reply.send(Err(error));
+                            }
+                        }
+                    }
                     NetworkCommand::EnterRoom { room_id, reply } => {
+                        if room_id != "world" && !secure_client.room_authorized(&room_id, &local_peer) {
+                            let _ = reply.send(Err("Protected room authorization is required.".into()));
+                            continue;
+                        }
                         let result = if room_id == "world" {
                             membership.enter_world()
                         } else {
@@ -2786,6 +3104,7 @@ async fn network_task(
                         swarm.behaviour_mut().gossipsub.add_explicit_peer(&id);
                         swarm.behaviour_mut().kad.add_address(&id, addr.clone());
                         swarm.behaviour_mut().file_transfer.add_address(&id, addr.clone());
+                        swarm.behaviour_mut().secure_control.add_address(&id, addr.clone());
                         remember_peer_address(&mut peer_cache, id, &addr);
                         if !swarm.is_connected(&id) {
                             if let Some(address) = address_for_peer(addr, id) {
@@ -2800,6 +3119,7 @@ async fn network_task(
                         swarm.behaviour_mut().gossipsub.remove_explicit_peer(&id);
                         swarm.behaviour_mut().kad.remove_address(&id, &addr);
                         swarm.behaviour_mut().file_transfer.remove_address(&id, &addr);
+                        swarm.behaviour_mut().secure_control.remove_address(&id, &addr);
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id: remote, info, .. })) => {
@@ -2808,6 +3128,7 @@ async fn network_task(
                     for addr in info.listen_addrs {
                         swarm.behaviour_mut().kad.add_address(&remote, addr.clone());
                         swarm.behaviour_mut().file_transfer.add_address(&remote, addr.clone());
+                        swarm.behaviour_mut().secure_control.add_address(&remote, addr.clone());
                         remember_peer_address(&mut peer_cache, remote.clone(), &addr);
                         if offers_relay
                             && participant_relays.len() < MAX_PARTICIPANT_RELAYS
@@ -2930,6 +3251,7 @@ async fn network_task(
                                         apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
                                     }
                                     rooms.remove(&room_id);
+                                    secure_client.remove_room(&room_id);
                                     let _ = app.emit_event("room-closed", serde_json::json!({"room_id": room_id}));
                                 }
                             }
@@ -2940,6 +3262,24 @@ async fn network_task(
                                 }
                             }
                             WireEvent::Chat(msg) => {
+                                let unauthorized_protected_chat = msg.room != "world"
+                                    && owned_rooms
+                                        .get(&msg.room)
+                                        .is_some_and(|room| room.password_protected)
+                                    && !secure_runtime.room_authorized(
+                                        &msg.room,
+                                        authenticated_source,
+                                        now_ms(),
+                                    );
+                                if unauthorized_protected_chat {
+                                    let _ = app.emit_event(
+                                        "network-warning",
+                                        format!(
+                                            "Dropped protected-room chat from unauthorized peer {authenticated_source}."
+                                        ),
+                                    );
+                                    continue;
+                                }
                                 if msg.peer_id.as_deref() != Some(&peer_id) {
                                     let _ = app.emit_event("chat-message", msg);
                                 }
@@ -2969,6 +3309,25 @@ async fn network_task(
                                 }
                             }
                             WireEvent::MembershipSnapshot(snapshot) => {
+                                let unauthorized_protected_room = snapshot.rooms.iter().any(|room_id| {
+                                    owned_rooms
+                                        .get(room_id)
+                                        .is_some_and(|room| room.password_protected)
+                                        && !secure_runtime.room_authorized(
+                                            room_id,
+                                            authenticated_source,
+                                            now_ms(),
+                                        )
+                                });
+                                if unauthorized_protected_room {
+                                    let _ = app.emit_event(
+                                        "network-warning",
+                                        format!(
+                                            "Dropped protected-room membership from unauthorized peer {authenticated_source}."
+                                        ),
+                                    );
+                                    continue;
+                                }
                                 if let Ok(effects) = membership.authenticated_snapshot(snapshot, authenticated_source) {
                                     membership_seen.insert(*authenticated_source, Instant::now());
                                     apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
@@ -2984,6 +3343,16 @@ async fn network_task(
                                             // Counts are derived from authenticated membership,
                                             // never from the room owner's advertised number.
                                             room.users = Some(membership.total_count(&room.id));
+                                            if let Some(owner_raw) = room.owner.as_deref() {
+                                                if let Ok(owner) = owner_raw.parse::<PeerId>() {
+                                                    secure_client.observe_room(ObservedRoomSecurity {
+                                                        room_id: room.id.clone(),
+                                                        owner,
+                                                        password_protected: room.password_protected,
+                                                        auth_revision: room.auth_revision,
+                                                    });
+                                                }
+                                            }
                                             rooms.insert(room.id.clone(), room.clone());
                                             let _ = app.emit_event("room-created", room);
                                         }
@@ -3004,10 +3373,105 @@ async fn network_task(
                                         apply_membership_effects(&app, &mut swarm, &world, &mut rooms, effects);
                                     }
                                     rooms.remove(&room_id);
+                                    secure_client.remove_room(&room_id);
                                     let _ = app.emit_event("room-closed", serde_json::json!({"room_id": room_id}));
                                 }
                             }
                         }
+                    }
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::SecureControl(event)) => {
+                    match event {
+                        request_response::Event::Message { peer, message, .. } => {
+                            match message {
+                                request_response::Message::Request { request, channel, .. } => {
+                                    let expected_presence = peers.get(&peer).map(|presence| PresenceIdentity {
+                                        nick: presence.nick.clone(),
+                                        nick_color: Some(presence.nick_color.clone()),
+                                    });
+                                    let outcome = handle_inbound_control_request(
+                                        &mut secure_runtime,
+                                        request,
+                                        &peer,
+                                        &local_peer,
+                                        expected_presence.as_ref(),
+                                        now_ms(),
+                                        Instant::now(),
+                                    );
+                                    if let Some(message) = outcome.private_message {
+                                        let _ = app.emit_event("private-message", message);
+                                    }
+                                    let _ = swarm
+                                        .behaviour_mut()
+                                        .secure_control
+                                        .send_response(channel, outcome.response);
+                                }
+                                request_response::Message::Response { request_id, response } => {
+                                    let correlation = secure_outbound_requests.remove(&request_id);
+                                    let outcome = secure_client.handle_response(&peer, response);
+                                    match outcome {
+                                        SecureResponseOutcome::RoomJoinGranted { .. } => {
+                                            if let Some(correlation) = correlation {
+                                                if let Some(reply) = pending_room_authorizations.remove(&correlation) {
+                                                    let _ = reply.send(Ok(()));
+                                                }
+                                            }
+                                        }
+                                        SecureResponseOutcome::RoomJoinRejected { reason, .. } => {
+                                            if let Some(correlation) = correlation {
+                                                if let Some(reply) = pending_room_authorizations.remove(&correlation) {
+                                                    let _ = reply.send(Err(reason));
+                                                }
+                                            }
+                                        }
+                                        SecureResponseOutcome::PrivateDelivered { message } => {
+                                            if let Some(correlation) = correlation {
+                                                if let Some(reply) = pending_private_messages.remove(&correlation) {
+                                                    let _ = reply.send(Ok(message));
+                                                }
+                                            }
+                                        }
+                                        SecureResponseOutcome::PrivateRejected { reason, .. } => {
+                                            if let Some(correlation) = correlation {
+                                                if let Some(reply) = pending_private_messages.remove(&correlation) {
+                                                    let _ = reply.send(Err(reason));
+                                                }
+                                            }
+                                        }
+                                        SecureResponseOutcome::Ignored => {
+                                            if let Some(correlation) = correlation {
+                                                secure_client.cancel_pending(&correlation);
+                                                if let Some(reply) = pending_room_authorizations.remove(&correlation) {
+                                                    let _ = reply.send(Err("Secure-control response failed identity binding.".into()));
+                                                }
+                                                if let Some(reply) = pending_private_messages.remove(&correlation) {
+                                                    let _ = reply.send(Err("Secure-control response failed identity binding.".into()));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        request_response::Event::OutboundFailure { request_id, error, .. } => {
+                            if let Some(correlation) = secure_outbound_requests.remove(&request_id) {
+                                secure_client.cancel_pending(&correlation);
+                                let reason = format!("Secure P2P request failed: {error}");
+                                if let Some(reply) = pending_room_authorizations.remove(&correlation) {
+                                    let _ = reply.send(Err(reason.clone()));
+                                }
+                                if let Some(reply) = pending_private_messages.remove(&correlation) {
+                                    let _ = reply.send(Err(reason));
+                                }
+                            }
+                        }
+                        request_response::Event::InboundFailure { peer, error, .. } => {
+                            let _ = app.emit_event(
+                                "network-warning",
+                                format!("Secure-control receive failure from {peer}: {error}"),
+                            );
+                        }
+                        request_response::Event::ResponseSent { .. } => {}
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::FileTransfer(event)) => {
@@ -3759,6 +4223,8 @@ mod room_admission_tests {
             title: format!("# {id}"),
             owner: Some(owner.to_string()),
             users: Some(1),
+            password_protected: false,
+            auth_revision: 0,
         }
     }
 
@@ -3802,6 +4268,44 @@ mod room_admission_tests {
         }
 
         assert!(room_create_admission(&rooms, &room("overflow", "new-peer")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod secure_room_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_room_metadata_defaults_to_unprotected() {
+        let owner = PeerId::random();
+        let json = serde_json::json!({
+            "id": "legacy",
+            "title": "# legacy",
+            "owner": owner.to_string(),
+            "users": 1
+        });
+        let room: RoomInfo = serde_json::from_value(json).unwrap();
+        assert!(!room.password_protected);
+        assert_eq!(room.auth_revision, 0);
+        assert!(wire_event_is_well_formed(&WireEvent::RoomCreate(room)));
+    }
+
+    #[test]
+    fn protected_room_metadata_requires_nonzero_revision() {
+        let owner = PeerId::random();
+        let mut room = RoomInfo {
+            id: "locked".into(),
+            title: "# locked".into(),
+            owner: Some(owner.to_string()),
+            users: Some(1),
+            password_protected: true,
+            auth_revision: 0,
+        };
+        assert!(!wire_event_is_well_formed(&WireEvent::RoomCreate(
+            room.clone()
+        )));
+        room.auth_revision = 1;
+        assert!(wire_event_is_well_formed(&WireEvent::RoomCreate(room)));
     }
 }
 
@@ -4214,7 +4718,9 @@ mod authenticated_event_tests {
                 id: "world".into(),
                 title: "# world".into(),
                 owner: Some(source_text.clone()),
-                users: Some(1)
+                users: Some(1),
+                password_protected: false,
+                auth_revision: 0,
             }
         )));
         assert!(!wire_event_is_well_formed(&WireEvent::RoomCreate(
@@ -4222,7 +4728,9 @@ mod authenticated_event_tests {
                 id: "different-room".into(),
                 title: "# valid room".into(),
                 owner: Some(source_text.clone()),
-                users: Some(1)
+                users: Some(1),
+                password_protected: false,
+                auth_revision: 0,
             }
         )));
         assert!(!wire_event_is_well_formed(&WireEvent::RoomClose {
@@ -4278,6 +4786,8 @@ mod authenticated_event_tests {
                 title: "# room".into(),
                 owner: Some(source_text.clone()),
                 users: Some(1),
+                password_protected: false,
+                auth_revision: 0,
             }),
             WireEvent::RoomClose {
                 room_id: "room".into(),
@@ -4304,6 +4814,8 @@ mod authenticated_event_tests {
             title: "# room".into(),
             owner: None,
             users: Some(1),
+            password_protected: false,
+            auth_revision: 0,
         });
         assert!(!wire_event_matches_source(&missing_room_owner, &source));
     }
@@ -4316,6 +4828,10 @@ pub fn run() {
             start_network,
             send_message,
             create_room,
+            create_secure_room,
+            update_room_password,
+            authorize_room_entry,
+            send_private_message,
             enter_room,
             add_bootstrap,
             refresh_discovery,

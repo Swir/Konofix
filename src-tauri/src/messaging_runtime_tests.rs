@@ -244,14 +244,17 @@ impl Drop for TestDirectory {
 }
 
 async fn chat(sender: &TestPeer, receiver: &mut TestPeer, room: &str, text: &str) {
+    let (reply, response) = oneshot::channel();
     sender
         .commands
         .send(NetworkCommand::SendMessage {
             room: room.into(),
             text: text.into(),
+            reply,
         })
         .await
         .unwrap();
+    response.await.unwrap().unwrap();
     let message = receiver
         .event("chat-message", |value| value["text"] == text)
         .await;
@@ -454,7 +457,10 @@ async fn two_application_loops_deliver_chat_and_accepted_binary_files_both_direc
                 title: "# runtime room".into(),
                 owner: None,
                 users: Some(1),
+                password_protected: false,
+                auth_revision: 0,
             },
+            password: None,
             reply,
         })
         .await
@@ -570,6 +576,242 @@ async fn two_application_loops_deliver_chat_and_accepted_binary_files_both_direc
         .unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn protected_room_and_private_chat_use_direct_secure_control_between_apps() {
+    let files = TestDirectory::new();
+    let mut alice = TestPeer::start_with_color(
+        "secure-alice",
+        "#62E5FF",
+        vec![],
+        files.0.join("secure-alice-downloads"),
+    )
+    .await;
+    let addresses = alice
+        .event("network-status", |value| {
+            value["listen_addresses"].as_array().is_some_and(|list| {
+                list.iter()
+                    .any(|address| address.as_str().is_some_and(|raw| raw.contains("/tcp/")))
+            })
+        })
+        .await;
+    let address = addresses["listen_addresses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|value| value.as_str().filter(|raw| raw.contains("/tcp/")))
+        .unwrap()
+        .to_string();
+
+    let mut bob = TestPeer::start_with_color(
+        "secure-bob",
+        "#FF8FAB",
+        vec![address],
+        files.0.join("secure-bob-downloads"),
+    )
+    .await;
+    alice
+        .event("peer-online", |value| value["peer_id"] == bob.id)
+        .await;
+    bob.event("peer-online", |value| value["peer_id"] == alice.id)
+        .await;
+
+    let (reply, response) = oneshot::channel();
+    alice
+        .commands
+        .send(NetworkCommand::CreateRoom {
+            room: RoomInfo {
+                id: "locked-runtime".into(),
+                title: "# locked runtime".into(),
+                owner: None,
+                users: Some(1),
+                password_protected: false,
+                auth_revision: 0,
+            },
+            password: Some(SecretString::new("runtime-room-secret".to_string())),
+            reply,
+        })
+        .await
+        .unwrap();
+    let created = response.await.unwrap().unwrap();
+    assert!(created.password_protected);
+    assert!(created.auth_revision > 0);
+    let first_revision = created.auth_revision;
+
+    bob.event("room-created", |value| {
+        value["id"] == "locked-runtime"
+            && value["password_protected"] == true
+            && value["auth_revision"] == first_revision
+    })
+    .await;
+
+    let (reply, response) = oneshot::channel();
+    bob.commands
+        .send(NetworkCommand::AuthorizeRoomEntry {
+            room_id: "locked-runtime".into(),
+            password: SecretString::new("wrong-runtime-secret".to_string()),
+            reply,
+        })
+        .await
+        .unwrap();
+    assert!(response.await.unwrap().is_err());
+
+    let (reply, response) = oneshot::channel();
+    bob.commands
+        .send(NetworkCommand::EnterRoom {
+            room_id: "locked-runtime".into(),
+            reply,
+        })
+        .await
+        .unwrap();
+    assert!(response.await.unwrap().is_err());
+
+    let (reply, response) = oneshot::channel();
+    bob.commands
+        .send(NetworkCommand::AuthorizeRoomEntry {
+            room_id: "locked-runtime".into(),
+            password: SecretString::new("runtime-room-secret".to_string()),
+            reply,
+        })
+        .await
+        .unwrap();
+    response.await.unwrap().unwrap();
+
+    let (reply, response) = oneshot::channel();
+    bob.commands
+        .send(NetworkCommand::EnterRoom {
+            room_id: "locked-runtime".into(),
+            reply,
+        })
+        .await
+        .unwrap();
+    response.await.unwrap().unwrap();
+    alice
+        .event("room-user-count", |value| {
+            value["room_id"] == "locked-runtime" && value["users"] == 2
+        })
+        .await;
+    chat(&bob, &mut alice, "locked-runtime", "Protected room message").await;
+
+    let (reply, response) = oneshot::channel();
+    bob.commands
+        .send(NetworkCommand::SendPrivateMessage {
+            peer_id: alice.id.clone(),
+            text: "private bob to alice :)".into(),
+            reply,
+        })
+        .await
+        .unwrap();
+    let sent_to_alice = response.await.unwrap().unwrap();
+    assert_eq!(sent_to_alice.peer_id, bob.id);
+    assert_eq!(sent_to_alice.target_peer_id, alice.id);
+    let alice_id = alice.id.clone();
+    let bob_id = bob.id.clone();
+    alice
+        .event("private-message", |value| {
+            value["peer_id"] == bob_id
+                && value["target_peer_id"] == alice_id
+                && value["text"] == "private bob to alice :)"
+        })
+        .await;
+
+    let (reply, response) = oneshot::channel();
+    alice
+        .commands
+        .send(NetworkCommand::SendPrivateMessage {
+            peer_id: bob.id.clone(),
+            text: "private alice to bob :D".into(),
+            reply,
+        })
+        .await
+        .unwrap();
+    let sent_to_bob = response.await.unwrap().unwrap();
+    assert_eq!(sent_to_bob.peer_id, alice.id);
+    assert_eq!(sent_to_bob.target_peer_id, bob.id);
+    let alice_id = alice.id.clone();
+    let bob_id = bob.id.clone();
+    bob.event("private-message", |value| {
+        value["peer_id"] == alice_id
+            && value["target_peer_id"] == bob_id
+            && value["text"] == "private alice to bob :D"
+    })
+    .await;
+
+    let (reply, response) = oneshot::channel();
+    alice
+        .commands
+        .send(NetworkCommand::UpdateRoomPassword {
+            room_id: "locked-runtime".into(),
+            password: Some(SecretString::new("runtime-room-secret-2".to_string())),
+            reply,
+        })
+        .await
+        .unwrap();
+    let updated = response.await.unwrap().unwrap();
+    assert!(updated.auth_revision > first_revision);
+    let second_revision = updated.auth_revision;
+    bob.event("room-created", |value| {
+        value["id"] == "locked-runtime"
+            && value["password_protected"] == true
+            && value["auth_revision"] == second_revision
+    })
+    .await;
+
+    let (reply, response) = oneshot::channel();
+    bob.commands
+        .send(NetworkCommand::EnterRoom {
+            room_id: "locked-runtime".into(),
+            reply,
+        })
+        .await
+        .unwrap();
+    assert!(response.await.unwrap().is_err());
+
+    let (reply, response) = oneshot::channel();
+    bob.commands
+        .send(NetworkCommand::AuthorizeRoomEntry {
+            room_id: "locked-runtime".into(),
+            password: SecretString::new("runtime-room-secret".to_string()),
+            reply,
+        })
+        .await
+        .unwrap();
+    assert!(response.await.unwrap().is_err());
+
+    let (reply, response) = oneshot::channel();
+    bob.commands
+        .send(NetworkCommand::AuthorizeRoomEntry {
+            room_id: "locked-runtime".into(),
+            password: SecretString::new("runtime-room-secret-2".to_string()),
+            reply,
+        })
+        .await
+        .unwrap();
+    response.await.unwrap().unwrap();
+
+    let (reply, response) = oneshot::channel();
+    bob.commands
+        .send(NetworkCommand::EnterRoom {
+            room_id: "locked-runtime".into(),
+            reply,
+        })
+        .await
+        .unwrap();
+    response.await.unwrap().unwrap();
+
+    alice.commands.send(NetworkCommand::Stop).await.unwrap();
+    bob.commands.send(NetworkCommand::Stop).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), &mut alice.task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), &mut bob.task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rooms2_counts_converge_across_many_application_loops_and_disconnects() {
     const GUESTS: usize = 4;
@@ -617,7 +859,10 @@ async fn rooms2_counts_converge_across_many_application_loops_and_disconnects() 
                 title: "# rooms runtime".into(),
                 owner: None,
                 users: Some(1),
+                password_protected: false,
+                auth_revision: 0,
             },
+            password: None,
             reply,
         })
         .await

@@ -87,7 +87,7 @@ if (!frontend.includes("type FileOfferCancelled = { transfer_id: string; peer_id
 const cancelledListener = sliceBetween(
   frontend,
   "await listen<FileOfferCancelled>('file-offer-cancelled', event => {",
-  "\n  });",
+  "\n  await listen<FileTransfer>('file-transfer', async event => {",
   'frontend cancelled-offer listener',
 );
 requireOrdered(cancelledListener, [

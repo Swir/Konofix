@@ -55,11 +55,14 @@ pub struct SecureControlClient {
 
 impl SecureControlClient {
     pub fn observe_room(&mut self, room: ObservedRoomSecurity) {
-        let changed = self.observed_rooms.get(&room.room_id).is_some_and(|previous| {
-            previous.owner != room.owner
-                || previous.password_protected != room.password_protected
-                || previous.auth_revision != room.auth_revision
-        });
+        let changed = self
+            .observed_rooms
+            .get(&room.room_id)
+            .is_some_and(|previous| {
+                previous.owner != room.owner
+                    || previous.password_protected != room.password_protected
+                    || previous.auth_revision != room.auth_revision
+            });
         if changed || !room.password_protected {
             self.authorized_room_revisions.remove(&room.room_id);
         }
@@ -70,7 +73,10 @@ impl SecureControlClient {
         self.observed_rooms.remove(room_id);
         self.authorized_room_revisions.remove(room_id);
         self.pending.retain(|_, pending| match pending {
-            PendingSecureRequest::RoomJoin { room_id: pending_room, .. } => pending_room != room_id,
+            PendingSecureRequest::RoomJoin {
+                room_id: pending_room,
+                ..
+            } => pending_room != room_id,
             PendingSecureRequest::PrivateMessage { .. } => true,
         });
     }
@@ -181,11 +187,14 @@ impl SecureControlClient {
                 if owner != *authenticated_peer {
                     return SecureResponseOutcome::Ignored;
                 }
-                let still_current = self.observed_rooms.get(&room_id).is_some_and(|room| {
-                    room.password_protected
-                        && room.owner == owner
-                        && room.auth_revision == auth_revision
-                });
+                let still_current =
+                    self.observed_rooms
+                        .get(&room_id)
+                        .is_some_and(|room| {
+                            room.password_protected
+                                && room.owner == owner
+                                && room.auth_revision == auth_revision
+                        });
                 if !still_current {
                     self.pending.remove(&request_id);
                     return SecureResponseOutcome::Ignored;

@@ -6,8 +6,9 @@ const source = fs.readFileSync('src/chat-expression.ts', 'utf8');
 // JavaScript API surface. ES2022 remains target value 9, so keep the test
 // compatible with both the older enum-backed API and TS 7+.
 const es2022Target = ts.ScriptTarget?.ES2022 ?? 9;
+const es2022Module = ts.ModuleKind?.ES2022 ?? 7;
 const output = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ES2022, target: es2022Target },
+  compilerOptions: { module: es2022Module, target: es2022Target },
 }).outputText;
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(output).toString('base64')}`;
 const mod = await import(moduleUrl);

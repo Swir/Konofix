@@ -92,28 +92,38 @@ function augmentMainUi(): void {
 
   document.querySelectorAll<HTMLElement>('#peerList .user').forEach(row => {
     const fileButton = row.querySelector<HTMLButtonElement>('[data-send-peer]');
-    if (!fileButton || row.querySelector('[data-private-peer]')) return;
+    if (!fileButton) return;
     const peerId = fileButton.dataset.sendPeer ?? '';
     if (!peerId) return;
     const nick = row.querySelector('strong')?.textContent?.trim() || peerId;
     const color = row.querySelector<HTMLElement>('strong')?.style.color || '';
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'mini-private';
-    button.dataset.privatePeer = peerId;
+    let button = row.querySelector<HTMLButtonElement>(`[data-private-peer="${CSS.escape(peerId)}"]`);
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'mini-private';
+      button.dataset.privatePeer = peerId;
+      button.textContent = '💬';
+      fileButton.insertAdjacentElement('beforebegin', button);
+    }
     button.dataset.privateNick = nick;
     button.dataset.privateColor = color;
     button.title = t('private.open', { nick });
     button.setAttribute('aria-label', t('private.open', { nick }));
-    button.textContent = '💬';
+
     const unread = conversations.unreadCount(peerId);
+    let badge = button.querySelector<HTMLSpanElement>('.private-unread');
     if (unread > 0) {
-      const badge = document.createElement('span');
-      badge.className = 'private-unread';
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'private-unread';
+        button.appendChild(badge);
+      }
       badge.textContent = String(Math.min(99, unread));
-      button.appendChild(badge);
+      badge.setAttribute('aria-label', t('private.unread', { count: unread }));
+    } else {
+      badge?.remove();
     }
-    fileButton.insertAdjacentElement('beforebegin', button);
   });
 }
 

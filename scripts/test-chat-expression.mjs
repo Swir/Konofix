@@ -2,8 +2,12 @@ import fs from 'node:fs';
 import ts from 'typescript';
 
 const source = fs.readFileSync('src/chat-expression.ts', 'utf8');
+// TypeScript 7 no longer exposes every historical compiler enum on the
+// JavaScript API surface. ES2022 remains target value 9, so keep the test
+// compatible with both the older enum-backed API and TS 7+.
+const es2022Target = ts.ScriptTarget?.ES2022 ?? 9;
 const output = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
+  compilerOptions: { module: ts.ModuleKind.ES2022, target: es2022Target },
 }).outputText;
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(output).toString('base64')}`;
 const mod = await import(moduleUrl);

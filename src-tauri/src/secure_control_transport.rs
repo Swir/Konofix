@@ -1,4 +1,7 @@
-use std::{fmt, time::{Duration, Instant}};
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 use libp2p::{request_response, PeerId, StreamProtocol};
 use uuid::Uuid;
@@ -162,8 +165,8 @@ pub fn handle_inbound_control_request(
             }
         }
         ControlRequest::PrivateMessage(message) => {
-            let response_id = canonical_request_id(&message.id)
-                .unwrap_or_else(|| Uuid::nil().to_string());
+            let response_id =
+                canonical_request_id(&message.id).unwrap_or_else(|| Uuid::nil().to_string());
             match runtime.accept_private_message(
                 message,
                 authenticated_source,

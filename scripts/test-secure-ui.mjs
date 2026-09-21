@@ -24,6 +24,10 @@ requireText("conversations.unreadCount(peerId)", 'private UI must expose unread 
 requireText("badge.textContent = String(Math.min(99, unread));", 'existing private-chat buttons must refresh their unread badge');
 requireText("badge?.remove();", 'opening a private conversation must be able to clear a stale unread badge');
 requireText("offlinePeers.has(activePrivatePeerId)", 'private UI must reflect peer disconnect state');
+requireText("let augmentQueued = false;", 'secure UI must coalesce DOM augmentation work');
+requireText("existingManage.textContent !== manageIcon", 'room password manager updates must be idempotent to avoid MutationObserver loops');
+requireText("badge.textContent !== unreadText", 'unread badge updates must be idempotent to avoid MutationObserver loops');
+requireText("secureRoomCreateModal", 'room creation must use one in-app modal instead of chained browser prompts');
 
 if (ui.includes("if (!fileButton || row.querySelector('[data-private-peer]')) return;")) {
   throw new Error('existing private-chat buttons must not skip unread-state refresh');
@@ -39,3 +43,7 @@ if (!index.includes('/src/secure-ui.ts')) {
 }
 
 console.log('secure room/private-chat UI contract: OK');
+
+if (/else if \(existingManage\)\s*\{\s*existingManage\.textContent\s*=/.test(ui)) {
+  throw new Error('unconditional room-manager text writes can reintroduce an infinite MutationObserver loop');
+}

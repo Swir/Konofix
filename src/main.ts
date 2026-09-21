@@ -30,7 +30,7 @@ type ChatMessage = {
   public_offer?: PublicShareOffer;
 };
 type PeerInfo = { peer_id: string; nick: string; nick_color?: string };
-type RoomInfo = { id: string; title: string; owner?: string; users?: number };
+type RoomInfo = { id: string; title: string; owner?: string; users?: number; password_protected?: boolean; auth_revision?: number };
 type RoomUserCountUpdate = { room_id: string; users: number };
 type NetworkStatus = {
   phase: string;
@@ -41,7 +41,7 @@ type NetworkStatus = {
   listen_addresses: string[];
   detail: string;
 };
-type FileOffer = { transfer_id: string; peer_id: string; nick: string; file_name: string; size: number };
+type FileOffer = { transfer_id: string; peer_id: string; nick: string; file_name: string; size: number; room_id?: string };
 type FileOfferExpired = { transfer_id: string; peer_id: string };
 type FileOfferCancelled = { transfer_id: string; peer_id: string };
 type FileTransfer = {
@@ -579,8 +579,13 @@ function showRecipientModal() {
   const modal = document.createElement('div');
   modal.id = 'recipientModal';
   modal.className = 'modal-wrap';
+  const currentRoom = state.rooms.get(state.room);
+  const roomContext = state.room !== 'world'
+    ? `<div class="room-transfer-context">${currentRoom?.password_protected ? '🔒' : '#'} <strong>${esc(currentRoom?.title ?? state.room)}</strong></div>`
+    : '';
   modal.innerHTML = `<div class="modal glass compact-modal">
     <div class="modal-head"><div><span class="eyebrow">P2P FILE TRANSFER</span><h3>${esc(t('transfer.sendFilePlain'))}</h3></div><button data-close>×</button></div>
+    ${roomContext}
     <p class="modal-lead">${esc(t('transfer.recipientHelp'))}</p>
     <div class="recipient-list">${peers.map(p => `<button data-recipient="${esc(p.peer_id)}"><span class="avatar">${esc(p.nick[0]?.toUpperCase() ?? '?')}</span><span><strong>${esc(p.nick)}</strong><small>${esc(shortPeer(p.peer_id))}</small></span><b>${esc(t('transfer.sendArrow'))}</b></button>`).join('')}</div>
   </div>`;
@@ -602,7 +607,10 @@ async function sendFileToPeer(peerId: string) {
     return;
   }
   try {
-    const transfer = await invoke<FileTransfer | null>('offer_file', { peerId });
+    const transfer = await invoke<FileTransfer | null>('offer_file', {
+      peerId,
+      roomId: state.room === 'world' ? null : state.room,
+    });
     if (transfer) {
       state.transfers.set(transfer.transfer_id, transfer);
       addSystem(state.room, t('transfer.offerSent', { file: transfer.file_name, nick: peer.nick }));
@@ -628,8 +636,13 @@ function showFileOfferModal(offer: FileOffer) {
   modal.id = `file-offer-${offer.transfer_id}`;
   modal.className = 'modal-wrap file-offer-wrap';
   const dangerous = dangerousFile(offer.file_name);
+  const room = offer.room_id ? state.rooms.get(offer.room_id) : undefined;
+  const roomContext = offer.room_id
+    ? `<div class="offer-room-context">${room?.password_protected ? '🔒' : '#'} <strong>${esc(room?.title ?? offer.room_id)}</strong></div>`
+    : '';
   modal.innerHTML = `<div class="modal glass file-offer-modal">
     <div class="offer-icon">📦</div>
+    ${roomContext}
     <span class="eyebrow">${esc(t('transfer.incoming'))}</span>
     <h3>${esc(t('transfer.wantsToSend', { nick: offer.nick }))}</h3>
     <div class="offer-file"><strong>${esc(offer.file_name)}</strong><span>${formatBytes(offer.size)}</span></div>

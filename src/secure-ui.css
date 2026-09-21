@@ -186,3 +186,33 @@
     border-radius: 0;
   }
 }
+
+.secure-room-create-wrap {
+  z-index: 1350;
+}
+
+.secure-room-create-modal {
+  width: min(520px, 92vw);
+}
+
+.secure-room-create-modal label {
+  margin-top: 12px;
+}
+
+.secure-room-create-hint {
+  margin: 9px 2px 2px;
+  color: #70899a;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.secure-room-create-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.secure-room-create-actions .primary {
+  margin: 0;
+}

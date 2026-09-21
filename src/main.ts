@@ -50,6 +50,7 @@ type FileTransfer = {
   peer_id: string;
   nick: string;
   public_offer_id?: string;
+  preview_only?: boolean;
   file_name: string;
   size: number;
   transferred: number;
@@ -457,7 +458,7 @@ async function claimPublicOffer(offerId: string, intent: 'download' | 'preview')
   if (!offer || offer.expired || offer.peer_id === state.peerId) return;
   state.publicIntents.set(offerId, intent);
   try {
-    await invoke('claim_public_file', { offerId });
+    await invoke('claim_public_file', { offerId, previewOnly: intent === 'preview' });
   } catch (error) {
     state.publicIntents.delete(offerId);
     alert(t('publicShare.error', { error: String(error) }));
@@ -867,7 +868,10 @@ async function wireEvents() {
         state.publicIntents.delete(offerId);
         if (offer?.kind === 'image' && event.payload.path) {
           try {
-            offer.preview_data = await invoke<string>('load_image_preview', { path: event.payload.path });
+            offer.preview_data = await invoke<string>('load_image_preview', {
+              path: event.payload.path,
+              previewOnly: Boolean(event.payload.preview_only),
+            });
             if (state.connected && state.room === 'world') renderChat();
             if (intent === 'preview') showImagePreview(offer);
           } catch (error) {
@@ -876,7 +880,11 @@ async function wireEvents() {
         }
       }
     } else if (['failed', 'rejected'].includes(event.payload.status)) {
+      if (event.payload.public_offer_id) state.publicIntents.delete(event.payload.public_offer_id);
       addSystem(state.room, t('transfer.problem', { file: event.payload.file_name, error: event.payload.error || transferStatus(event.payload.status) }));
+    } else if (event.payload.status === 'cancelled' && event.payload.public_offer_id) {
+      state.publicIntents.delete(event.payload.public_offer_id);
+      if (state.connected) renderChat();
     } else if (state.connected) {
       renderChat();
     }

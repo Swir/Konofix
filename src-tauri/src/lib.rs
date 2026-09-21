@@ -574,6 +574,8 @@ struct FileTransferView {
     nick: String,
     #[serde(default)]
     public_offer_id: Option<String>,
+    #[serde(default)]
+    preview_only: bool,
     file_name: String,
     size: u64,
     transferred: u64,
@@ -634,6 +636,7 @@ struct IncomingTransfer {
     peer: PeerId,
     nick: String,
     public_offer_id: Option<String>,
+    preview_only: bool,
     file_name: String,
     size: u64,
     received: u64,
@@ -763,6 +766,7 @@ struct RemotePublicOffer {
 #[derive(Debug, Clone)]
 struct PendingPublicClaim {
     peer: PeerId,
+    preview_only: bool,
     created_at: Instant,
 }
 
@@ -808,6 +812,7 @@ enum NetworkCommand {
     },
     ClaimPublicOffer {
         offer_id: String,
+        preview_only: bool,
         reply: oneshot::Sender<Result<(), String>>,
     },
     AcceptFile {
@@ -1109,6 +1114,10 @@ fn download_directory() -> Result<PathBuf, String> {
     Ok(base.join("Konofix Chat"))
 }
 
+fn preview_directory() -> Result<PathBuf, String> {
+    Ok(std::env::temp_dir().join("Konofix Chat").join("previews"))
+}
+
 fn file_view_outgoing(
     id: &str,
     t: &OutgoingTransfer,
@@ -1122,6 +1131,7 @@ fn file_view_outgoing(
         peer_id: t.peer.to_string(),
         nick: t.nick.clone(),
         public_offer_id: t.public_offer_id.clone(),
+        preview_only: false,
         file_name: t.file_name.clone(),
         size: t.size,
         transferred: t.sent,
@@ -1149,6 +1159,7 @@ fn file_view_incoming(
         peer_id: t.peer.to_string(),
         nick: t.nick.clone(),
         public_offer_id: t.public_offer_id.clone(),
+        preview_only: t.preview_only,
         file_name: t.file_name.clone(),
         size: t.size,
         transferred: t.received,
@@ -1170,6 +1181,10 @@ trait NetworkRuntime: Send + Sync + 'static {
 
     fn downloads(&self) -> Result<PathBuf, String> {
         download_directory()
+    }
+
+    fn previews(&self) -> Result<PathBuf, String> {
+        preview_directory()
     }
 
     fn load_peers(&self) -> PeerCacheFile {
@@ -1204,8 +1219,13 @@ async fn prepare_incoming_transfer(
     file_name: String,
     size: u64,
     public_offer_id: Option<String>,
+    preview_only: bool,
 ) -> Result<IncomingTransfer, String> {
-    let dir = app.downloads()?;
+    let dir = if preview_only {
+        app.previews()?
+    } else {
+        app.downloads()?
+    };
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|error| format!("Nie można utworzyć folderu Pobrane/Konofix Chat: {error}"))?;
@@ -1214,6 +1234,7 @@ async fn prepare_incoming_transfer(
         peer,
         nick,
         public_offer_id,
+        preview_only,
         file_name,
         size,
         received: 0,
@@ -1516,7 +1537,11 @@ async fn publish_public_file(
 }
 
 #[tauri::command]
-async fn claim_public_file(offer_id: String, state: State<'_, AppState>) -> Result<(), String> {
+async fn claim_public_file(
+    offer_id: String,
+    preview_only: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let tx = state
         .tx
         .lock()
@@ -1526,6 +1551,7 @@ async fn claim_public_file(offer_id: String, state: State<'_, AppState>) -> Resu
     let (reply_tx, reply_rx) = oneshot::channel();
     tx.send(NetworkCommand::ClaimPublicOffer {
         offer_id,
+        preview_only,
         reply: reply_tx,
     })
     .await
@@ -1536,8 +1562,12 @@ async fn claim_public_file(offer_id: String, state: State<'_, AppState>) -> Resu
 }
 
 #[tauri::command]
-async fn load_image_preview(path: String) -> Result<String, String> {
-    let root = download_directory()?;
+async fn load_image_preview(path: String, preview_only: bool) -> Result<String, String> {
+    let root = if preview_only {
+        preview_directory()?
+    } else {
+        download_directory()?
+    };
     let root = tokio::fs::canonicalize(&root)
         .await
         .map_err(|error| format!("Nie można zweryfikować folderu pobierania: {error}"))?;
@@ -1560,7 +1590,13 @@ async fn load_image_preview(path: String) -> Result<String, String> {
         .map_err(|error| format!("Nie można odczytać obrazu: {error}"))?;
     let mime = image_mime_from_header(&bytes)
         .ok_or("Plik nie jest obsługiwanym obrazem PNG/JPEG/GIF/WebP.")?;
-    Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
+    let data_url = format!("data:{mime};base64,{}", base64_encode(&bytes));
+    if preview_only {
+        tokio::fs::remove_file(&candidate)
+            .await
+            .map_err(|error| format!("Nie można usunąć tymczasowego podglądu: {error}"))?;
+    }
+    Ok(data_url)
 }
 
 #[tauri::command]
@@ -2498,7 +2534,11 @@ async fn network_task(
                         };
                         let _ = reply.send(result);
                     }
-                    NetworkCommand::ClaimPublicOffer { offer_id, reply } => {
+                    NetworkCommand::ClaimPublicOffer {
+                        offer_id,
+                        preview_only,
+                        reply,
+                    } => {
                         let result = (|| -> Result<(), String> {
                             let remote = remote_public_offers
                                 .get(&offer_id)
@@ -2531,6 +2571,7 @@ async fn network_task(
                                 offer_id,
                                 PendingPublicClaim {
                                     peer: target,
+                                    preview_only,
                                     created_at: Instant::now(),
                                 },
                             );
@@ -2551,6 +2592,7 @@ async fn network_task(
                                 pending.file_name,
                                 pending.size,
                                 None,
+                                false,
                             )
                             .await?;
                             if swarm.behaviour_mut().file_transfer.send_response(pending.channel, FileResponse::Accepted).is_err() {
@@ -3008,8 +3050,11 @@ async fn network_task(
                                             let safe = safe_filename(&file_name);
 
                                             if let Some(public_offer_id) = public_offer_id {
-                                                let claim_matches = public_claims
+                                                let pending_claim = public_claims
                                                     .get(&public_offer_id)
+                                                    .cloned();
+                                                let claim_matches = pending_claim
+                                                    .as_ref()
                                                     .is_some_and(|claim| {
                                                         claim.peer == peer
                                                             && !public_claim_is_expired(
@@ -3042,6 +3087,9 @@ async fn network_task(
                                                     );
                                                     continue;
                                                 }
+                                                let preview_only = pending_claim
+                                                    .as_ref()
+                                                    .is_some_and(|claim| claim.preview_only);
                                                 public_claims.remove(&public_offer_id);
                                                 match prepare_incoming_transfer(
                                                     &app,
@@ -3050,6 +3098,7 @@ async fn network_task(
                                                     safe,
                                                     size,
                                                     Some(public_offer_id),
+                                                    preview_only,
                                                 )
                                                 .await
                                                 {

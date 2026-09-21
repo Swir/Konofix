@@ -105,6 +105,7 @@ async fn binary_chunks_fit_the_production_codec_at_worst_case_encoded_size() {
 struct TestRuntime {
     events: mpsc::UnboundedSender<(String, serde_json::Value)>,
     downloads: PathBuf,
+    previews: PathBuf,
 }
 
 impl NetworkRuntime for TestRuntime {
@@ -118,6 +119,9 @@ impl NetworkRuntime for TestRuntime {
     }
     fn downloads(&self) -> Result<PathBuf, String> {
         Ok(self.downloads.clone())
+    }
+    fn previews(&self) -> Result<PathBuf, String> {
+        Ok(self.previews.clone())
     }
     fn load_peers(&self) -> PeerCacheFile {
         PeerCacheFile::default()
@@ -152,6 +156,13 @@ impl TestPeer {
         downloads: PathBuf,
     ) -> Self {
         let color = normalize_nick_color(Some(color));
+        let previews = downloads.with_file_name(format!(
+            "{}-previews",
+            downloads
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("konofix")
+        ));
         let (commands, rx) = mpsc::channel(128);
         let (events_tx, events) = mpsc::unbounded_channel();
         let (ready_tx, ready_rx) = oneshot::channel();
@@ -162,6 +173,7 @@ impl TestPeer {
             TestRuntime {
                 events: events_tx,
                 downloads,
+                previews,
             },
             rx,
             ready_tx,
@@ -281,6 +293,7 @@ async fn public_transfer(
     bytes: &[u8],
     kind: &str,
     mime: Option<&str>,
+    preview_only: bool,
 ) -> (PublicShareOffer, PathBuf) {
     tokio::fs::write(path, bytes).await.unwrap();
     let (reply, response) = oneshot::channel();
@@ -322,6 +335,7 @@ async fn public_transfer(
         .commands
         .send(NetworkCommand::ClaimPublicOffer {
             offer_id: offer.offer_id.clone(),
+            preview_only,
             reply,
         })
         .await
@@ -341,6 +355,7 @@ async fn public_transfer(
     assert_eq!(sent["transferred"], bytes.len() as u64);
     assert!(sent["path"].is_null());
 
+    assert_eq!(received["preview_only"], preview_only);
     let destination = PathBuf::from(received["path"].as_str().unwrap());
     let actual = tokio::fs::read(&destination).await.unwrap();
     assert_eq!(actual, bytes);
@@ -496,6 +511,7 @@ async fn two_application_loops_deliver_chat_and_accepted_binary_files_both_direc
         b"public world file",
         "file",
         None,
+        false,
     )
     .await;
     assert_eq!(public_file.kind, "file");
@@ -516,6 +532,7 @@ async fn two_application_loops_deliver_chat_and_accepted_binary_files_both_direc
         &png,
         "image",
         Some("image/png"),
+        true,
     )
     .await;
     assert_eq!(public_image.kind, "image");

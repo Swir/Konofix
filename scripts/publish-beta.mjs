@@ -119,7 +119,7 @@ async function main() {
   assertChecks(checks.check_runs, plan.commit);
   const result = await publishBeta(plan, api, readFile);
   console.log(`${result.skipped ? 'Already published; preserved' : 'Published beta preview'}: ${result.url}`);
-  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n[${result.skipped ? 'Existing beta (unchanged)' : 'Download beta preview'}](${result.url})\n\nGlobal Beta qualification remains 56/67 (82.1%); real-network gates remain open.\n`);
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n[${result.skipped ? 'Existing beta (unchanged)' : 'Download beta preview'}](${result.url})\n\nGlobal Beta qualification remains 56/67 (83.6%); real-network gates remain open.\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

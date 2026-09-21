@@ -302,7 +302,9 @@ async fn public_transfer(
     assert_eq!(offer.mime.as_deref(), mime);
 
     let announced = receiver
-        .event("public-file-offer", |value| value["offer_id"] == offer.offer_id)
+        .event("public-file-offer", |value| {
+            value["offer_id"] == offer.offer_id
+        })
         .await;
     assert_eq!(announced["peer_id"], sender.id);
     assert_eq!(announced["nick_color"], sender.color);
@@ -313,8 +315,7 @@ async fn public_transfer(
     assert!(!receiver
         .pending
         .iter()
-        .any(|(kind, data)| kind == "file-transfer"
-            && data["public_offer_id"] == offer.offer_id));
+        .any(|(kind, data)| kind == "file-transfer" && data["public_offer_id"] == offer.offer_id));
 
     let (reply, response) = oneshot::channel();
     receiver

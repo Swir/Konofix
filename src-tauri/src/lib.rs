@@ -3187,6 +3187,13 @@ async fn network_task(
                                                     public_outgoing.remove(&offer_id);
                                                     return Err("Shared file changed after it was announced.".into());
                                                 }
+                                                if offer.view.kind == "image" {
+                                                    let current_mime = detect_image_mime(&offer.path).await?;
+                                                    if offer.view.mime.as_deref() != Some(current_mime.as_str()) {
+                                                        public_outgoing.remove(&offer_id);
+                                                        return Err("Shared image type changed after it was announced.".into());
+                                                    }
+                                                }
 
                                                 let transfer_id = Uuid::new_v4().to_string();
                                                 let target_nick = peers

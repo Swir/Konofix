@@ -456,6 +456,7 @@ async function sharePublic(kind: 'file' | 'image') {
 async function claimPublicOffer(offerId: string, intent: 'download' | 'preview') {
   const offer = state.publicOffers.get(offerId);
   if (!offer || offer.expired || offer.peer_id === state.peerId) return;
+  if (state.publicIntents.has(offerId)) return;
   state.publicIntents.set(offerId, intent);
   try {
     await invoke('claim_public_file', { offerId, previewOnly: intent === 'preview' });
@@ -859,7 +860,9 @@ async function wireEvents() {
   await listen<FileTransfer>('file-transfer', async event => {
     state.transfers.set(event.payload.transfer_id, event.payload);
     if (event.payload.status === 'completed') {
-      const saved = event.payload.direction === 'incoming' ? t('transfer.saved', { path: event.payload.path || 'Downloads\\Konofix Chat' }) : '';
+      const saved = event.payload.direction === 'incoming' && !event.payload.preview_only
+        ? t('transfer.saved', { path: event.payload.path || 'Downloads\\Konofix Chat' })
+        : '';
       addSystem(state.room, t('transfer.finished', { file: event.payload.file_name, saved }));
       const offerId = event.payload.public_offer_id;
       if (offerId && event.payload.direction === 'incoming') {

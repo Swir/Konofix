@@ -162,14 +162,7 @@ fn private_runtime_rejects_peer_without_authenticated_presence() {
     let message = private_message(&sender, &local, Uuid::new_v4().to_string(), now_ms);
 
     assert_eq!(
-        runtime.accept_private_message(
-            message,
-            &sender,
-            &local,
-            None,
-            now_ms,
-            Instant::now(),
-        ),
+        runtime.accept_private_message(message, &sender, &local, None, now_ms, Instant::now(),),
         Err(PrivateMessageError::Validation(
             "Private sender has no authenticated presence."
         ))

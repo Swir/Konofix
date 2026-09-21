@@ -4,9 +4,9 @@ mod secure_channels;
 mod secure_control_client;
 
 use libp2p::PeerId;
+use secure_channels::{ControlRequest, ControlResponse, PrivateDirectMessage, SecretString};
 use secure_control_client::{ObservedRoomSecurity, SecureControlClient, SecureResponseOutcome};
 use secure_control_transport_helpers::{private_request, room_request};
-use secure_channels::{ControlRequest, ControlResponse, PrivateDirectMessage, SecretString};
 use uuid::Uuid;
 
 mod secure_control_transport_helpers {

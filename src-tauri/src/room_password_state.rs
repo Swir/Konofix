@@ -82,14 +82,19 @@ impl ProtectedRoomState {
             return Ok(false);
         }
 
-        self.revision = self.revision.checked_add(1).unwrap_or(1);
-        self.verifier = match validated {
+        let next_revision = self.revision.checked_add(1).ok_or_else(|| {
+            RoomAuthError::InvalidConfiguration("Room auth revision exhausted.".into())
+        })?;
+        let next_verifier = match validated {
             Some(password) => Some(
-                RoomPasswordVerifier::new(&password, self.revision)
+                RoomPasswordVerifier::new(&password, next_revision)
                     .map_err(RoomAuthError::InvalidConfiguration)?,
             ),
             None => None,
         };
+
+        self.revision = next_revision;
+        self.verifier = next_verifier;
         self.grants.clear();
         Ok(true)
     }

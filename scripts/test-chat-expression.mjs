@@ -1,14 +1,18 @@
 import fs from 'node:fs';
-import ts from 'typescript';
+import * as tsNamespace from 'typescript';
+
+const ts = tsNamespace.default ?? tsNamespace;
 
 const source = fs.readFileSync('src/chat-expression.ts', 'utf8');
-// TypeScript 7 no longer exposes every historical compiler enum on the
-// JavaScript API surface. ES2022 remains target value 9, so keep the test
-// compatible with both the older enum-backed API and TS 7+.
-const es2022Target = ts.ScriptTarget?.ES2022 ?? 9;
-const es2022Module = ts.ModuleKind?.ES2022 ?? 7;
+// TypeScript 7 no longer guarantees the historical compiler enums on the
+// JavaScript API surface. These are the stable numeric compiler-option values
+// for ES2022 module (7) and ES2022 target (9), so the test works with both the
+// legacy JS compiler and the current TypeScript 7 package.
+if (typeof ts.transpileModule !== 'function') {
+  throw new Error('The installed TypeScript package does not expose transpileModule.');
+}
 const output = ts.transpileModule(source, {
-  compilerOptions: { module: es2022Module, target: es2022Target },
+  compilerOptions: { module: 7, target: 9 },
 }).outputText;
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(output).toString('base64')}`;
 const mod = await import(moduleUrl);

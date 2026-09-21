@@ -16,7 +16,12 @@ fn peer() -> PeerId {
     PeerId::random()
 }
 
-fn private_message(sender: &PeerId, target: &PeerId, id: String, now_ms: u64) -> PrivateDirectMessage {
+fn private_message(
+    sender: &PeerId,
+    target: &PeerId,
+    id: String,
+    now_ms: u64,
+) -> PrivateDirectMessage {
     PrivateDirectMessage {
         id,
         peer_id: sender.to_string(),
@@ -114,14 +119,7 @@ fn private_runtime_binds_authenticated_peer_presence_target_replay_and_rate() {
 
     let spoofed = private_message(&sender, &local, Uuid::new_v4().to_string(), now_ms);
     assert!(matches!(
-        runtime.accept_private_message(
-            spoofed,
-            &attacker,
-            &local,
-            Some(&presence),
-            now_ms,
-            now,
-        ),
+        runtime.accept_private_message(spoofed, &attacker, &local, Some(&presence), now_ms, now,),
         Err(PrivateMessageError::Validation(_))
     ));
 

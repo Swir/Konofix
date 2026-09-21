@@ -5,7 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const repository = 'Swir/Konofix';
-const tag = 'v0.4.2-beta.1';
+const tag = 'v0.4.3-beta.1';
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 export function assertContext(env) {
@@ -29,13 +29,13 @@ export function assertChecks(checks, commit) {
 
 export function assertPlan(plan, env, readFile) {
   assert.equal(plan.tag, tag);
-  assert.equal(plan.version, '0.4.2');
+  assert.equal(plan.version, '0.4.3');
   assert.equal(plan.commit, env.GITHUB_SHA);
   assert.equal(plan.workflow_run, env.GITHUB_RUN_ID);
   assert(plan.body.includes('<!-- KONOFIX-BETA-PREVIEW -->'));
-  assert(plan.body.includes('55/67'));
-  const archive = `Konofix-Chat-0.4.2-Windows-${plan.commit}.zip`;
-  const expected = ['BUILD_INFO.json', 'Konofix-Chat-0.4.2-beta.1-setup.exe', 'Konofix-Chat-0.4.2-beta.1-setup.exe.sha256', archive, `${archive}.sha256`].sort();
+  assert(plan.body.includes('56/67'));
+  const archive = `Konofix-Chat-0.4.3-Windows-${plan.commit}.zip`;
+  const expected = ['BUILD_INFO.json', 'Konofix-Chat-0.4.3-beta.1-setup.exe', 'Konofix-Chat-0.4.3-beta.1-setup.exe.sha256', archive, `${archive}.sha256`].sort();
   assert.deepEqual(plan.files.map((file) => file.name).sort(), expected, 'Unexpected or duplicate release files');
   for (const file of plan.files) {
     const bytes = readFile(file.name);
@@ -74,7 +74,7 @@ export async function publishBeta(plan, api, readFile) {
     assert.equal(release.target_commitish, plan.commit, 'Existing draft belongs to another build');
     assert.equal(release.prerelease, true);
   } else {
-    release = await api('POST', '/releases', { tag_name: tag, target_commitish: plan.commit, name: 'Konofix Chat 0.4.2 Beta 1 — P2P Preview', body: plan.body, draft: true, prerelease: true, make_latest: 'false' });
+    release = await api('POST', '/releases', { tag_name: tag, target_commitish: plan.commit, name: 'Konofix Chat 0.4.3 Beta 1 — Room Stability Preview', body: plan.body, draft: true, prerelease: true, make_latest: 'false' });
   }
   const assets = await api('GET', `/releases/${release.id}/assets?per_page=100`);
   assert(assets.every((asset) => plan.files.some((file) => file.name === asset.name)), 'Unexpected draft assets; manual inspection required');
@@ -119,7 +119,7 @@ async function main() {
   assertChecks(checks.check_runs, plan.commit);
   const result = await publishBeta(plan, api, readFile);
   console.log(`${result.skipped ? 'Already published; preserved' : 'Published beta preview'}: ${result.url}`);
-  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n[${result.skipped ? 'Existing beta (unchanged)' : 'Download beta preview'}](${result.url})\n\nGlobal Beta qualification remains 55/67 (82.1%); real-network gates remain open.\n`);
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n[${result.skipped ? 'Existing beta (unchanged)' : 'Download beta preview'}](${result.url})\n\nGlobal Beta qualification remains 56/67 (83.6%); real-network gates remain open.\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

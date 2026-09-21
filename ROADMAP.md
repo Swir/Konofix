@@ -79,7 +79,7 @@ The active milestone now has 56 of 67 tasks complete. The Global Beta expansion 
 - [x] Windows CI for TypeScript + Rust
 - [x] public-bootstrap precheck script
 
-## 0.4.2 — Real Internet Test 🚧
+## 0.4.3 — Real Internet Test 🚧
 - [x] fixed Windows CI and restored `tsconfig.json`
 - [x] Windows/Tauri packaging and production app/Node build pipeline
 - [x] `Konofix Node --public-host` ready TCP/QUIC bootstrap addresses

@@ -280,6 +280,7 @@ async fn offer(sender: &TestPeer, receiver: &mut TestPeer, path: &Path, bytes: &
             path: path.into(),
             file_name: path.file_name().unwrap().to_str().unwrap().into(),
             size: bytes.len() as u64,
+            room_id: None,
             reply,
         })
         .await

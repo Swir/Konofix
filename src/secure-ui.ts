@@ -22,6 +22,7 @@ let activePrivateNick = '';
 let activePrivateColor = '';
 let bypassRoomClick = '';
 let roomOperationPending = false;
+let augmentQueued = false;
 
 function esc(value: string): string {
   return value.replace(/[&<>'"]/g, character => ({
@@ -53,7 +54,12 @@ function rememberRoom(room: SecureRoomInfo): void {
 }
 
 function queueAugment(): void {
-  queueMicrotask(augmentMainUi);
+  if (augmentQueued) return;
+  augmentQueued = true;
+  queueMicrotask(() => {
+    augmentQueued = false;
+    augmentMainUi();
+  });
 }
 
 function augmentMainUi(): void {
@@ -75,6 +81,7 @@ function augmentMainUi(): void {
       lock?.remove();
     }
 
+    const manageIcon = locked ? '🔐' : '🔓';
     const existingManage = document.querySelector<HTMLButtonElement>(`button[data-room-password-manage="${CSS.escape(roomId)}"]`);
     if (ownedRooms.has(roomId) && !existingManage) {
       const manage = document.createElement('button');
@@ -83,10 +90,10 @@ function augmentMainUi(): void {
       manage.dataset.roomPasswordManage = roomId;
       manage.title = t('rooms.passwordManage');
       manage.setAttribute('aria-label', `${t('rooms.passwordManage')}: ${roomId}`);
-      manage.textContent = locked ? '🔐' : '🔓';
+      manage.textContent = manageIcon;
       button.insertAdjacentElement('afterend', manage);
-    } else if (existingManage) {
-      existingManage.textContent = locked ? '🔐' : '🔓';
+    } else if (existingManage && existingManage.textContent !== manageIcon) {
+      existingManage.textContent = manageIcon;
     }
   });
 
@@ -119,48 +126,91 @@ function augmentMainUi(): void {
         badge.className = 'private-unread';
         button.appendChild(badge);
       }
-      badge.textContent = String(Math.min(99, unread));
-      badge.setAttribute('aria-label', t('private.unread', { count: unread }));
+      const unreadText = String(Math.min(99, unread));
+      if (badge.textContent !== unreadText) badge.textContent = unreadText;
+      const unreadLabel = t('private.unread', { count: unread });
+      if (badge.getAttribute('aria-label') !== unreadLabel) badge.setAttribute('aria-label', unreadLabel);
     } else {
       badge?.remove();
     }
   });
 }
 
-function promptRoomName(): string | null {
-  const raw = prompt(t('rooms.newPrompt'));
-  if (!raw) return null;
-  const title = raw.trim().replace(/^#/, '').trim();
-  if (!/^[\p{L}\p{N}_\- ]{3,32}$/u.test(title)) {
-    alert(t('rooms.invalidName'));
-    return null;
-  }
-  return title;
-}
+function createRoomWithOptionalPassword(): void {
+  if (roomOperationPending || document.querySelector('#secureRoomCreateModal')) return;
 
-async function createRoomWithOptionalPassword(): Promise<void> {
-  if (roomOperationPending) return;
-  const title = promptRoomName();
-  if (!title) return;
-  const password = prompt(t('rooms.passwordOptionalPrompt'));
-  if (password === null) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'secureRoomCreateModal';
+  wrap.className = 'modal-wrap secure-room-create-wrap';
+  wrap.innerHTML = `<section class="modal glass compact-modal secure-room-create-modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <div><span class="eyebrow">ROOMS 2.0</span><h3>${esc(t('rooms.create'))}</h3></div>
+      <button type="button" data-room-create-close aria-label="${esc(t('common.cancel'))}">×</button>
+    </div>
+    <label for="secureRoomName">${esc(t('rooms.newPrompt'))}</label>
+    <input id="secureRoomName" maxlength="32" autocomplete="off" spellcheck="false" />
+    <label for="secureRoomPassword">${esc(t('rooms.passwordManage'))}</label>
+    <input id="secureRoomPassword" type="password" maxlength="64" autocomplete="new-password" />
+    <p class="secure-room-create-hint">${esc(t('rooms.passwordOptionalPrompt'))}</p>
+    <div class="error" data-room-create-error></div>
+    <div class="secure-room-create-actions">
+      <button type="button" class="ghost" data-room-create-close>${esc(t('common.cancel'))}</button>
+      <button type="button" class="primary compact" data-room-create-submit>${esc(t('rooms.create'))}</button>
+    </div>
+  </section>`;
+  document.body.appendChild(wrap);
 
-  roomOperationPending = true;
-  try {
-    const room = password.length > 0
-      ? await invoke<SecureRoomInfo>('create_secure_room', { title, password })
-      : await invoke<SecureRoomInfo>('create_room', { title });
-    ownedRooms.add(room.id);
-    rememberRoom(room);
-    setTimeout(() => {
-      const button = roomButton(room.id);
-      if (button) button.click();
-    }, 0);
-  } catch (error) {
-    alert(t('rooms.passwordError', { error: String(error) }));
-  } finally {
-    roomOperationPending = false;
-  }
+  const nameInput = wrap.querySelector<HTMLInputElement>('#secureRoomName')!;
+  const passwordInput = wrap.querySelector<HTMLInputElement>('#secureRoomPassword')!;
+  const error = wrap.querySelector<HTMLDivElement>('[data-room-create-error]')!;
+  const submit = wrap.querySelector<HTMLButtonElement>('[data-room-create-submit]')!;
+  const close = () => {
+    if (!roomOperationPending) wrap.remove();
+  };
+  wrap.querySelectorAll('[data-room-create-close]').forEach(button => button.addEventListener('click', close));
+  wrap.addEventListener('click', event => { if (event.target === wrap) close(); });
+
+  const create = async () => {
+    if (roomOperationPending) return;
+    const title = nameInput.value.trim().replace(/^#/, '').trim();
+    const password = passwordInput.value;
+    error.textContent = '';
+    if (!/^[\p{L}\p{N}_\- ]{3,32}$/u.test(title)) {
+      error.textContent = t('rooms.invalidName');
+      nameInput.focus();
+      return;
+    }
+
+    roomOperationPending = true;
+    submit.disabled = true;
+    nameInput.disabled = true;
+    passwordInput.disabled = true;
+    try {
+      const room = password.length > 0
+        ? await invoke<SecureRoomInfo>('create_secure_room', { title, password })
+        : await invoke<SecureRoomInfo>('create_room', { title });
+      ownedRooms.add(room.id);
+      rememberRoom(room);
+      wrap.remove();
+      requestAnimationFrame(() => roomButton(room.id)?.click());
+    } catch (createError) {
+      error.textContent = t('rooms.passwordError', { error: String(createError) });
+      submit.disabled = false;
+      nameInput.disabled = false;
+      passwordInput.disabled = false;
+      passwordInput.focus();
+    } finally {
+      roomOperationPending = false;
+    }
+  };
+  submit.addEventListener('click', () => { void create(); });
+  [nameInput, passwordInput].forEach(input => input.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      void create();
+    }
+  }));
+  nameInput.focus();
 }
 
 async function authorizeProtectedRoom(roomId: string, button: HTMLButtonElement): Promise<void> {

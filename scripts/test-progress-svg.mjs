@@ -9,7 +9,7 @@ import {
   validateEmbeddings,
 } from './progress-svg.mjs';
 
-const fixture = (completed, open, heading = '## 0.4.2 — Real Internet Test 🚧') => `${heading}\n${'- [x] done\n'.repeat(completed)}${'- [ ] todo\n'.repeat(open)}\n## 0.5.0 — Next\n`;
+const fixture = (completed, open, heading = '## 0.4.3 — Real Internet Test 🚧') => `${heading}\n${'- [x] done\n'.repeat(completed)}${'- [ ] todo\n'.repeat(open)}\n## 0.5.0 — Next\n`;
 
 {
   const progress = { ...computeProgress(1, 13), project: 'Fixture', scope: 'Partial scope', source: 'fixture.md' };
@@ -75,14 +75,14 @@ const fixture = (completed, open, heading = '## 0.4.2 — Real Internet Test �
 }
 
 {
-  const parsed = parseMilestone('## 0.4.2 — Real Internet Test 🚧\nNo checklist yet.\n\n## 0.5.0 — Next\n');
+  const parsed = parseMilestone('## 0.4.3 — Real Internet Test 🚧\nNo checklist yet.\n\n## 0.5.0 — Next\n');
   assert.equal(parsed.total, 0);
   assert.equal(parsed.percentText, 'N/A');
   assert.equal(parsed.status, 'PLANNING');
 }
 
 {
-  const progress = { ...computeProgress(54, 59), project: 'Konofix Chat', scope: '0.4.2 — Real Internet Test', source: 'ROADMAP.md' };
+  const progress = { ...computeProgress(54, 59), project: 'Konofix Chat', scope: '0.4.3 — Real Internet Test', source: 'ROADMAP.md' };
   const fallback = '**Verified checklist fraction: 54 of 59 tasks — 91.5%.**';
   const cardAlt = 'alt="Konofix Chat Real Internet Test progress — 54 of 59 verified tasks, 91.5%, in progress; release readiness is a separate gate"';
   const miniAlt = 'alt="Konofix Chat Real Internet Test compact progress — 54 of 59 verified tasks, 91.5%, in progress"';

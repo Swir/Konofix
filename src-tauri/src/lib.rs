@@ -542,6 +542,8 @@ enum FileRequest {
         size: u64,
         #[serde(default)]
         public_offer_id: Option<String>,
+        #[serde(default)]
+        room_id: Option<String>,
     },
     ClaimPublic {
         offer_id: String,
@@ -593,6 +595,8 @@ struct FileOfferView {
     nick: String,
     file_name: String,
     size: u64,
+    #[serde(default)]
+    room_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -633,6 +637,7 @@ struct PendingIncomingOffer {
     nick: String,
     file_name: String,
     size: u64,
+    room_id: Option<String>,
     created_at: Instant,
     channel: request_response::ResponseChannel<FileResponse>,
 }
@@ -846,6 +851,7 @@ enum NetworkCommand {
         path: PathBuf,
         file_name: String,
         size: u64,
+        room_id: Option<String>,
         reply: oneshot::Sender<Result<FileTransferView, String>>,
     },
     PublishPublicOffer {
@@ -1593,6 +1599,7 @@ async fn refresh_discovery(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 async fn offer_file(
     peer_id: String,
+    room_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Option<FileTransferView>, String> {
     let tx = state
@@ -1634,6 +1641,7 @@ async fn offer_file(
         path,
         file_name,
         size: metadata.len(),
+        room_id,
         reply: reply_tx,
     })
     .await
@@ -2810,7 +2818,7 @@ async fn network_task(
                         swarm.behaviour_mut().kad.get_providers(world_provider_key());
                         publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
                     }
-                    NetworkCommand::OfferFile { peer_id: target, path, file_name, size, reply } => {
+                    NetworkCommand::OfferFile { peer_id: target, path, file_name, size, room_id, reply } => {
                         let result = (|| -> Result<FileTransferView, String> {
                             if outgoing.len() >= MAX_TRANSFERS_PER_DIRECTION {
                                 return Err("Masz już maksymalną liczbę aktywnych transferów wychodzących.".into());
@@ -2820,6 +2828,28 @@ async fn network_task(
                                 return Err("Nie możesz wysłać pliku do siebie.".into());
                             }
                             let target_nick = peers.get(&target_peer).map(|p| p.nick.clone()).unwrap_or_else(|| target.clone());
+                            let room_id = room_id
+                                .as_deref()
+                                .map(str::trim)
+                                .filter(|room| !room.is_empty() && *room != "world")
+                                .map(str::to_string);
+                            if let Some(room_id) = room_id.as_deref() {
+                                if !valid_wire_room_id(room_id) {
+                                    return Err("Nieprawidłowy kontekst pokoju transferu.".into());
+                                }
+                                let room = rooms
+                                    .get(room_id)
+                                    .ok_or("Pokój transferu nie jest już aktywny.")?;
+                                if room.password_protected {
+                                    if owned_rooms.contains_key(room_id) {
+                                        if !secure_runtime.room_authorized(room_id, &target_peer, now_ms()) {
+                                            return Err("Odbiorca nie jest autoryzowany w tym chronionym pokoju.".into());
+                                        }
+                                    } else if !secure_client.room_authorized(room_id, &local_peer) {
+                                        return Err("Najpierw autoryzuj wejście do chronionego pokoju.".into());
+                                    }
+                                }
+                            }
                             let transfer_id = Uuid::new_v4().to_string();
                             let transfer = OutgoingTransfer {
                                 peer: target_peer.clone(),
@@ -2839,6 +2869,7 @@ async fn network_task(
                                     file_name: transfer.file_name.clone(),
                                     size,
                                     public_offer_id: None,
+                                    room_id,
                                 },
                             );
                             outbound_requests.insert(request_id, OutboundMeta { transfer_id: transfer_id.clone(), kind: OutboundKind::Offer });
@@ -3558,6 +3589,7 @@ async fn network_task(
                                             file_name,
                                             size,
                                             public_offer_id,
+                                            room_id,
                                         } => {
                                             if Uuid::parse_str(&transfer_id).is_err() {
                                                 let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Rejected { reason: "Invalid transfer ID.".into() });
@@ -3586,6 +3618,38 @@ async fn network_task(
                                                 .map(|presence| presence.nick.clone())
                                                 .unwrap_or_else(|| peer.to_string());
                                             let safe = safe_filename(&file_name);
+
+                                            if let Some(room_id) = room_id.as_deref() {
+                                                if room_id == "world" || !valid_wire_room_id(room_id) {
+                                                    let _ = swarm.behaviour_mut().file_transfer.send_response(
+                                                        channel,
+                                                        FileResponse::Rejected { reason: "Invalid room transfer context.".into() },
+                                                    );
+                                                    continue;
+                                                }
+                                                let Some(room) = rooms.get(room_id) else {
+                                                    let _ = swarm.behaviour_mut().file_transfer.send_response(
+                                                        channel,
+                                                        FileResponse::Rejected { reason: "Room transfer context is no longer active.".into() },
+                                                    );
+                                                    continue;
+                                                };
+                                                if room.password_protected {
+                                                    let local_is_owner = room.owner.as_deref() == Some(peer_id.as_str());
+                                                    let authorized = if local_is_owner {
+                                                        secure_runtime.room_authorized(room_id, &peer, now_ms())
+                                                    } else {
+                                                        secure_client.room_authorized(room_id, &local_peer)
+                                                    };
+                                                    if !authorized {
+                                                        let _ = swarm.behaviour_mut().file_transfer.send_response(
+                                                            channel,
+                                                            FileResponse::Rejected { reason: "Protected-room transfer authorization failed.".into() },
+                                                        );
+                                                        continue;
+                                                    }
+                                                }
+                                            }
 
                                             if let Some(public_offer_id) = public_offer_id {
                                                 let pending_claim = public_claims
@@ -3691,6 +3755,7 @@ async fn network_task(
                                                 nick: remote_nick.clone(),
                                                 file_name: safe.clone(),
                                                 size,
+                                                room_id: room_id.clone(),
                                                 created_at: Instant::now(),
                                                 channel,
                                             });
@@ -3700,6 +3765,7 @@ async fn network_task(
                                                 nick: remote_nick,
                                                 file_name: safe,
                                                 size,
+                                                room_id,
                                             });
                                         }
                                         FileRequest::ClaimPublic { offer_id } => {
@@ -3756,6 +3822,7 @@ async fn network_task(
                                                         file_name: transfer.file_name.clone(),
                                                         size: transfer.size,
                                                         public_offer_id: Some(offer_id),
+                                                        room_id: None,
                                                     },
                                                 );
                                                 outbound_requests.insert(
@@ -4524,6 +4591,7 @@ mod file_offer_admission_tests {
                     file_name: "a".repeat(MAX_FILE_REQUEST_WIRE_BYTES as usize + 1),
                     size: 0,
                     public_offer_id: None,
+                    room_id: None,
                 },
             )
             .await

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.3
+
+- fixed the protected-room owner UI freeze by coalescing secure DOM augmentation and making room-manager/unread mutations idempotent, preventing the MutationObserver from feeding its own writes indefinitely,
+- replaced the chained browser prompts for room creation with one in-app Rooms 2.0 modal that collects the room name and optional password in one flow,
+- bound direct file offers started from a non-WORLD room to that room context, show the room on sender/receiver UI, and fail closed for invalid/stale protected-room authorization where the local node has authoritative security state,
+- retained the incumbent-nickname hotfix, password-protected rooms, authenticated private 1:1 chat, custom emoji, nickname colors and public WORLD file/image sharing,
+- prepared the explicitly requested v0.4.3-beta.1 Windows prerelease channel; Global Beta qualification remains 56/67 and still requires the separate real-network/load/failover gates.
+
 ## 0.4.2
 
 - fixed duplicate-nickname ownership so an established authenticated session keeps its nickname while a later session is rejected back to login; signed presence/nickname claims now carry monotonic session-age context with deterministic near-simultaneous/legacy fallback, and a fresh claim is re-announced on peer connection for prompt rejection,

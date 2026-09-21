@@ -260,3 +260,27 @@ button:disabled { opacity:.45; cursor:not-allowed; }
   .chat-header { height:auto; min-height:72px; }
   .header-actions { max-width:58%; }
 }
+
+.room-transfer-context,
+.offer-room-context {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  max-width: 100%;
+  margin: -4px 0 12px;
+  padding: 6px 9px;
+  border: 1px solid rgba(98,229,255,.14);
+  border-radius: 999px;
+  background: rgba(0,136,255,.07);
+  color: #7d8aa8;
+  font-size: 10px;
+}
+
+.room-transfer-context strong,
+.offer-room-context strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #cbd8ff;
+}

@@ -74,9 +74,10 @@ for (const file of docs) {
 
 const roadmapText = read('ROADMAP.md');
 const readmeText = read('README.md');
-const milestoneStart = roadmapText.indexOf('## 0.4.2 — Real Internet Test');
+const activeMilestoneHeading = `## ${pkg.version} — Real Internet Test`;
+const milestoneStart = roadmapText.indexOf(activeMilestoneHeading);
 if (milestoneStart < 0) {
-  fail('Could not locate the active 0.4.2 Real Internet Test milestone in ROADMAP.md.');
+  fail(`Could not locate the active ${pkg.version} Real Internet Test milestone in ROADMAP.md.`);
 } else {
   const milestoneEnd = roadmapText.indexOf('\n## 0.5.0', milestoneStart);
   const milestone = roadmapText.slice(milestoneStart, milestoneEnd < 0 ? undefined : milestoneEnd);
@@ -250,7 +251,7 @@ if (!/from\s+['"]\.\/i18n['"]/.test(main) || !/\bt\(['"][a-z0-9_.]+['"]/.test(ma
 console.log('Runtime localization migration: typed message keys enforced; no Polish UI literals remain in src/main.ts.');
 
 // Stable promotion must be cryptographically and operationally scoped to one exact source revision,
-// not merely to a mutable semantic version such as 0.4.2.
+// not merely to a mutable semantic package version.
 const buildScript = read('src-tauri/build.rs');
 const nodeSource = read('src-tauri/src/bin/konofix-node.rs');
 const healthValidator = read('scripts/check-node-health.ps1');

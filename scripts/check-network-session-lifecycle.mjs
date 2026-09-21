@@ -14,6 +14,20 @@ const requireText = (text, needle, message) => {
   if (!text.includes(needle)) fail(message);
 };
 
+const sliceBetween = (text, startMarker, endMarker, label) => {
+  const start = text.indexOf(startMarker);
+  if (start < 0) {
+    fail(`${label}: start marker is missing.`);
+    return '';
+  }
+  const end = text.indexOf(endMarker, start + startMarker.length);
+  if (end < 0) {
+    fail(`${label}: end marker is missing.`);
+    return text.slice(start);
+  }
+  return text.slice(start, end);
+};
+
 requireText(rust, 'fn install_network_sender(', 'active network sender must be installed through one atomic helper.');
 requireText(rust, 'let mut guard = state.tx.lock().map_err(|_| "Błąd blokady stanu")?;', 'sender installation/cleanup must remain lock-protected.');
 requireText(rust, 'if guard.is_some() {', 'atomic sender installation must reject an overlapping start while holding the state lock.');
@@ -24,10 +38,32 @@ requireText(rust, 'if owns_current_session {\n        guard.take();', 'a task ma
 requireText(rust, 'install_network_sender(state.inner(), tx.clone())?;', 'start_network must use the atomic install helper.');
 requireText(rust, 'let task_tx = tx.clone();', 'spawned task must retain an ownership sender clone.');
 requireText(rust, 'let startup_tx = tx;', 'startup handshake cleanup must retain the exact installed channel.');
-requireText(
+
+const spawnedTask = sliceBetween(
   rust,
-  'let task_result = network_task(\n            nick_for_task,\n            nick_color.clone(),\n            bootstrap_list,\n            app.clone(),\n            rx,\n            ready_tx,\n        )\n        .await;',
+  'tauri::async_runtime::spawn(async move {',
+  '\n    });',
+  'spawned network task',
+);
+requireText(
+  spawnedTask,
+  'let task_result = network_task(',
   'network task result must be captured before unconditional owned cleanup.',
+);
+requireText(
+  spawnedTask,
+  'nick_for_task,',
+  'spawned network task must receive the validated nickname.',
+);
+requireText(
+  spawnedTask,
+  'nick_color.clone(),',
+  'spawned network task must receive the validated nickname color.',
+);
+requireText(
+  spawnedTask,
+  ')\n        .await;',
+  'captured network task must be awaited before task-owned cleanup.',
 );
 requireText(rust, 'let owned_session =\n            clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);', 'network task cleanup must run after every network task return, including clean exits.');
 requireText(rust, 'if let Err(err) = task_result {\n            if owned_session {\n                let _ = app.emit("network-error", err);', 'terminal network-error must be emitted only for an owned fatal exit.');
@@ -95,5 +131,5 @@ requireText(
 );
 
 if (!process.exitCode) {
-  console.log('Network-session lifecycle policy: atomic start, channel-owned task cleanup, startup-safe terminal recovery, idempotent disconnect and terminal UI reset are enforced.');
+  console.log('Network-session lifecycle policy: atomic start, validated identity/color handoff, channel-owned task cleanup, startup-safe terminal recovery, idempotent disconnect and terminal UI reset are enforced.');
 }

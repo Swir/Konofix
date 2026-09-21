@@ -1405,8 +1405,8 @@ async fn create_room(title: String, state: State<'_, AppState>) -> Result<RoomIn
         password: None,
         reply,
     })
-        .await
-        .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
+    .await
+    .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
     response
         .await
         .map_err(|_| "Room creation interrupted.".to_string())?
@@ -1426,8 +1426,8 @@ async fn create_secure_room(
     if id.is_empty() || id == "world" {
         return Err("Nieprawidłowa nazwa pokoju.".into());
     }
-    let password = validate_room_password(Some(&password))?
-        .ok_or("Pokój chroniony wymaga hasła.")?;
+    let password =
+        validate_room_password(Some(&password))?.ok_or("Pokój chroniony wymaga hasła.")?;
     let room = RoomInfo {
         id,
         title: format!("# {clean}"),
@@ -1487,8 +1487,8 @@ async fn authorize_room_entry(
     password: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let password = validate_room_password(Some(&password))?
-        .ok_or("Pokój chroniony wymaga hasła.")?;
+    let password =
+        validate_room_password(Some(&password))?.ok_or("Pokój chroniony wymaga hasła.")?;
     let tx = state
         .tx
         .lock()
@@ -4301,7 +4301,9 @@ mod secure_room_metadata_tests {
             password_protected: true,
             auth_revision: 0,
         };
-        assert!(!wire_event_is_well_formed(&WireEvent::RoomCreate(room.clone())));
+        assert!(!wire_event_is_well_formed(&WireEvent::RoomCreate(
+            room.clone()
+        )));
         room.auth_revision = 1;
         assert!(wire_event_is_well_formed(&WireEvent::RoomCreate(room)));
     }

@@ -1,10 +1,35 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { t } from './i18n';
+import { DEFAULT_NICK_COLOR, KONOFIX_EMOJI, NICK_COLORS, normalizeNickColor, renderChatText } from './chat-expression';
 import './style.css';
 
-type ChatMessage = { id: string; kind: string; peer_id?: string; nick: string; room: string; text: string; timestamp: number };
-type PeerInfo = { peer_id: string; nick: string };
+type PublicShareOffer = {
+  offer_id: string;
+  peer_id: string;
+  nick: string;
+  nick_color?: string;
+  file_name: string;
+  size: number;
+  kind: 'file' | 'image';
+  mime?: string;
+  timestamp: number;
+  expires_at: number;
+  preview_data?: string;
+  expired?: boolean;
+};
+type ChatMessage = {
+  id: string;
+  kind: string;
+  peer_id?: string;
+  nick: string;
+  nick_color?: string;
+  room: string;
+  text: string;
+  timestamp: number;
+  public_offer?: PublicShareOffer;
+};
+type PeerInfo = { peer_id: string; nick: string; nick_color?: string };
 type RoomInfo = { id: string; title: string; owner?: string; users?: number };
 type RoomUserCountUpdate = { room_id: string; users: number };
 type NetworkStatus = {
@@ -24,6 +49,8 @@ type FileTransfer = {
   direction: 'incoming' | 'outgoing';
   peer_id: string;
   nick: string;
+  public_offer_id?: string;
+  preview_only?: boolean;
   file_name: string;
   size: number;
   transferred: number;
@@ -40,6 +67,7 @@ const EMPTY_STATUS: NetworkStatus = {
 
 const state = {
   nick: '',
+  nickColor: normalizeNickColor(localStorage.getItem('konofix.nickColor')),
   peerId: '',
   version: '0.4.2',
   room: 'world',
@@ -48,6 +76,8 @@ const state = {
   rooms: new Map<string, RoomInfo>([['world', { id: 'world', title: '# WORLD' }]]),
   messages: new Map<string, ChatMessage[]>([['world', []]]),
   transfers: new Map<string, FileTransfer>(),
+  publicOffers: new Map<string, PublicShareOffer>(),
+  publicIntents: new Map<string, 'download' | 'preview'>(),
   status: { ...EMPTY_STATUS } as NetworkStatus,
 };
 
@@ -121,6 +151,11 @@ function renderLogin() {
         <p class="muted">${esc(t('login.nickHelp'))}</p>
         <label for="nick">${esc(t('login.nickLabel'))}</label>
         <input id="nick" maxlength="24" autocomplete="off" spellcheck="false" placeholder="${esc(t('login.nickPlaceholder'))}" />
+        <label>${esc(t('login.nickColor'))}</label>
+        <div class="nick-color-picker" role="radiogroup" aria-label="${esc(t('login.nickColor'))}">
+          ${NICK_COLORS.map(item => `<button type="button" class="nick-color-swatch ${item.value === state.nickColor ? 'selected' : ''}" data-nick-color="${item.value}" role="radio" aria-checked="${item.value === state.nickColor}" title="${esc(item.label)}" style="--nick-color:${item.value}"></button>`).join('')}
+        </div>
+        <div class="nick-color-preview"><span style="color:${state.nickColor}">●</span> <strong style="color:${state.nickColor}">${esc(t('login.nickColorPreview'))}</strong></div>
         <div id="loginError" class="error"></div>
         <button id="connectBtn" class="primary">${esc(t('login.connect'))}</button>
         <button id="loginNetwork" class="link-btn">${esc(t('login.advancedNetwork'))}</button>
@@ -133,6 +168,13 @@ function renderLogin() {
   const input = document.querySelector<HTMLInputElement>('#nick')!;
   input.focus();
   input.addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
+  document.querySelectorAll<HTMLButtonElement>('[data-nick-color]').forEach(button => button.addEventListener('click', () => {
+    state.nickColor = normalizeNickColor(button.dataset.nickColor);
+    localStorage.setItem('konofix.nickColor', state.nickColor);
+    renderLogin();
+    document.querySelector<HTMLInputElement>('#nick')!.value = input.value;
+    document.querySelector<HTMLInputElement>('#nick')!.focus();
+  }));
   document.querySelector('#connectBtn')?.addEventListener('click', connect);
   document.querySelector('#loginNetwork')?.addEventListener('click', showNetworkModal);
 }
@@ -160,13 +202,16 @@ async function connect() {
   btn.textContent = t('login.starting');
 
   try {
-    const result = await invoke<{ peer_id: string; nick: string; version: string }>('start_network', {
+    const result = await invoke<{ peer_id: string; nick: string; nick_color: string; version: string }>('start_network', {
       nick,
+      nickColor: state.nickColor,
       bootstraps: loadBootstraps(),
     });
     if (revision !== sessionRevision) return;
     connectPending = false;
     state.nick = result.nick;
+    state.nickColor = normalizeNickColor(result.nick_color);
+    localStorage.setItem('konofix.nickColor', state.nickColor);
     state.peerId = result.peer_id;
     state.version = result.version;
     state.connected = true;
@@ -209,7 +254,7 @@ function renderChat() {
 
         <div class="sidebar-bottom">
           <div class="me-dot"></div>
-          <div class="me-info"><strong>${esc(state.nick)}</strong><span>${shortPeer(state.peerId)}</span></div>
+          <div class="me-info"><strong style="color:${state.nickColor}">${esc(state.nick)}</strong><span>${shortPeer(state.peerId)}</span></div>
           <button id="networkSettings" class="icon-btn" title="${esc(t('network.settings'))}">⚙</button>
           <button id="disconnect" class="icon-btn danger" title="${esc(t('network.disconnect'))}">⏻</button>
         </div>
@@ -223,7 +268,10 @@ function renderChat() {
           </div>
           <div class="header-actions">
             <span class="live"><i></i>${activeRoomCount} ${esc(t('common.online').toLowerCase())}</span>
-            <button id="sendFile" class="ghost" ${state.peers.size ? '' : 'disabled'}>${esc(t('transfer.sendFile'))}</button>
+            ${state.room === 'world' ? `
+              <button id="shareWorldFile" class="ghost">${esc(t('publicShare.file'))}</button>
+              <button id="shareWorldImage" class="ghost image-share">${esc(t('publicShare.image'))}</button>
+            ` : `<button id="sendFile" class="ghost" ${state.peers.size ? '' : 'disabled'}>${esc(t('transfer.sendFile'))}</button>`}
           </div>
         </header>
 
@@ -232,6 +280,12 @@ function renderChat() {
         </div>
 
         <footer class="composer">
+          <div class="emoji-wrap">
+            <button id="emojiToggle" class="emoji-toggle" type="button" title="${esc(t('chat.emoji'))}" aria-label="${esc(t('chat.emoji'))}">☺</button>
+            <div id="emojiPanel" class="emoji-panel" hidden>
+              ${KONOFIX_EMOJI.filter((item, index, items) => items.findIndex(other => other.glyph === item.glyph) === index).map(item => `<button type="button" data-emoji-code="${esc(item.code)}" title="${esc(item.code)} · ${esc(item.label)}">${item.glyph}</button>`).join('')}
+            </div>
+          </div>
           <input id="msg" maxlength="4000" autocomplete="off" placeholder="${esc(t('chat.messageTo', { room: currentRoom.title }))}" />
           <button id="send" class="send" title="${esc(t('common.send'))}">➤</button>
         </footer>
@@ -239,7 +293,7 @@ function renderChat() {
 
       <aside class="users glass">
         <div class="users-head"><strong>${esc(t('common.online'))}</strong><span>${onlineCount}</span></div>
-        <div class="user self"><div class="avatar">${esc(state.nick[0]?.toUpperCase() ?? 'S')}</div><div><strong>${esc(state.nick)}</strong><span>${esc(t('user.selfReserved'))}</span></div></div>
+        <div class="user self"><div class="avatar" style="--nick-color:${state.nickColor}">${esc(state.nick[0]?.toUpperCase() ?? 'S')}</div><div><strong style="color:${state.nickColor}">${esc(state.nick)}</strong><span>${esc(t('user.selfReserved'))}</span></div></div>
         <div id="peerList">${[...state.peers.values()].sort((a,b) => a.nick.localeCompare(b.nick)).map(peerHtml).join('')}</div>
         <div class="transfer-section">
           <div class="users-head"><strong>${esc(t('transfer.section'))}</strong><span>${transfers.filter(t => activeTransfer(t.status)).length}</span></div>
@@ -256,6 +310,20 @@ function renderChat() {
   document.querySelector('#newRoom')?.addEventListener('click', createRoom);
   document.querySelector('#send')?.addEventListener('click', sendMessage);
   document.querySelector('#sendFile')?.addEventListener('click', offerFile);
+  document.querySelector('#shareWorldFile')?.addEventListener('click', () => sharePublic('file'));
+  document.querySelector('#shareWorldImage')?.addEventListener('click', () => sharePublic('image'));
+  document.querySelectorAll<HTMLButtonElement>('[data-public-download]').forEach(button => button.addEventListener('click', () => {
+    claimPublicOffer(button.dataset.publicDownload!, 'download');
+  }));
+  document.querySelectorAll<HTMLButtonElement>('[data-public-preview]').forEach(button => button.addEventListener('click', () => {
+    const offer = state.publicOffers.get(button.dataset.publicPreview!);
+    if (offer?.preview_data) showImagePreview(offer);
+    else claimPublicOffer(button.dataset.publicPreview!, 'preview');
+  }));
+  document.querySelectorAll<HTMLImageElement>('[data-public-image]').forEach(image => image.addEventListener('click', () => {
+    const offer = state.publicOffers.get(image.dataset.publicImage!);
+    if (offer?.preview_data) showImagePreview(offer);
+  }));
   document.querySelector('#disconnect')?.addEventListener('click', disconnect);
   document.querySelector('#networkSettings')?.addEventListener('click', showNetworkModal);
   document.querySelector('#networkCard')?.addEventListener('click', showNetworkModal);
@@ -265,6 +333,26 @@ function renderChat() {
   });
   const msg = document.querySelector<HTMLInputElement>('#msg')!;
   msg.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) sendMessage(); });
+  document.querySelector('#emojiToggle')?.addEventListener('click', () => {
+    const panel = document.querySelector<HTMLDivElement>('#emojiPanel');
+    if (panel) panel.hidden = !panel.hidden;
+  });
+  document.querySelectorAll<HTMLButtonElement>('[data-emoji-code]').forEach(button => button.addEventListener('click', () => {
+    const code = button.dataset.emojiCode ?? '';
+    const start = msg.selectionStart ?? msg.value.length;
+    const end = msg.selectionEnd ?? start;
+    const before = msg.value.slice(0, start);
+    const after = msg.value.slice(end);
+    const prefix = before && !/\s$/.test(before) ? ' ' : '';
+    const suffix = after && !/^\s/.test(after) ? ' ' : '';
+    const inserted = `${prefix}${code}${suffix}`;
+    msg.value = `${before}${inserted}${after}`.slice(0, 4000);
+    const caret = Math.min(before.length + inserted.length, msg.value.length);
+    msg.focus();
+    msg.setSelectionRange(caret, caret);
+    const panel = document.querySelector<HTMLDivElement>('#emojiPanel');
+    if (panel) panel.hidden = true;
+  }));
   msg.focus();
   scrollBottom();
 }
@@ -289,19 +377,112 @@ function roomButton(room: RoomInfo): string {
 
 function peerHtml(peer: PeerInfo): string {
   const initial = peer.nick[0]?.toUpperCase() ?? '?';
-  return `<div class="user"><div class="avatar">${esc(initial)}</div><div><strong>${esc(peer.nick)}</strong><span>${shortPeer(peer.peer_id)}</span></div><button class="mini-file" data-send-peer="${esc(peer.peer_id)}" title="${esc(t('transfer.sendFileTo', { nick: peer.nick }))}">📎</button></div>`;
+  const color = normalizeNickColor(peer.nick_color);
+  return `<div class="user"><div class="avatar" style="--nick-color:${color}">${esc(initial)}</div><div><strong style="color:${color}">${esc(peer.nick)}</strong><span>${shortPeer(peer.peer_id)}</span></div><button class="mini-file" data-send-peer="${esc(peer.peer_id)}" title="${esc(t('transfer.sendFileTo', { nick: peer.nick }))}">📎</button></div>`;
 }
 
 function shortPeer(v: string): string { return v ? `${v.slice(0, 6)}…${v.slice(-4)}` : 'local'; }
 
 function messageHtml(m: ChatMessage): string {
   if (m.kind === 'system') return `<div class="system-msg">${esc(m.text)}</div>`;
+  if (m.kind === 'public_offer' && m.public_offer) return publicOfferHtml(m.public_offer);
   const mine = m.peer_id === state.peerId || m.nick === state.nick;
   const time = new Date(Number(m.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const color = mine ? state.nickColor : normalizeNickColor(m.nick_color);
   return `<article class="message ${mine ? 'mine' : ''}">
-    <div class="avatar">${esc(m.nick[0]?.toUpperCase() ?? '?')}</div>
-    <div class="bubble"><div class="meta"><strong>${esc(m.nick)}</strong><time>${time}</time></div><p>${esc(m.text)}</p></div>
+    <div class="avatar" style="--nick-color:${color}">${esc(m.nick[0]?.toUpperCase() ?? '?')}</div>
+    <div class="bubble"><div class="meta"><strong style="color:${color}">${esc(m.nick)}</strong><time>${time}</time></div><p>${renderChatText(m.text)}</p></div>
   </article>`;
+}
+
+function publicOfferHtml(offer: PublicShareOffer): string {
+  const mine = offer.peer_id === state.peerId;
+  const color = mine ? state.nickColor : normalizeNickColor(offer.nick_color);
+  const active = !offer.expired && Date.now() < Number(offer.expires_at);
+  const dangerous = dangerousFile(offer.file_name);
+  const image = offer.kind === 'image';
+  const preview = image && offer.preview_data
+    ? `<img class="public-image" data-public-image="${esc(offer.offer_id)}" src="${esc(offer.preview_data)}" alt="${esc(offer.file_name)}" />`
+    : image
+      ? `<div class="public-image-placeholder">🖼️<span>${esc(t('publicShare.previewHint'))}</span></div>`
+      : '';
+  const buttons = mine
+    ? `<span class="public-own">${esc(t('publicShare.shared'))}</span>`
+    : active
+      ? `<div class="public-actions">
+          ${image ? `<button class="ghost" data-public-preview="${esc(offer.offer_id)}">${esc(t('publicShare.preview'))}</button>` : ''}
+          <button class="primary compact" data-public-download="${esc(offer.offer_id)}">${esc(t('publicShare.download'))}</button>
+        </div>`
+      : `<span class="public-expired">${esc(t('publicShare.expired'))}</span>`;
+
+  return `<article class="message public-message ${mine ? 'mine' : ''}">
+    <div class="avatar" style="--nick-color:${color}">${esc(offer.nick[0]?.toUpperCase() ?? '?')}</div>
+    <div class="bubble public-bubble">
+      <div class="meta"><strong style="color:${color}">${esc(offer.nick)}</strong><time>${new Date(Number(offer.timestamp)).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</time></div>
+      ${preview}
+      <div class="public-file-row">
+        <span class="public-file-icon">${image ? '🖼️' : '📎'}</span>
+        <div><strong>${esc(offer.file_name)}</strong><small>${formatBytes(offer.size)}${offer.mime ? ` · ${esc(offer.mime)}` : ''}</small></div>
+      </div>
+      ${dangerous ? `<div class="public-warning">${esc(t('publicShare.dangerous'))}</div>` : ''}
+      ${buttons}
+    </div>
+  </article>`;
+}
+
+async function sharePublic(kind: 'file' | 'image') {
+  if (!state.connected || state.room !== 'world') return;
+  try {
+    const offer = await invoke<PublicShareOffer | null>('publish_public_file', { kind });
+    if (!offer) return;
+    offer.nick_color = normalizeNickColor(offer.nick_color);
+    state.publicOffers.set(offer.offer_id, offer);
+    pushMessage({
+      id: `public:${offer.offer_id}`,
+      kind: 'public_offer',
+      peer_id: offer.peer_id,
+      nick: offer.nick,
+      nick_color: offer.nick_color,
+      room: 'world',
+      text: '',
+      timestamp: Number(offer.timestamp),
+      public_offer: offer,
+    });
+  } catch (error) {
+    alert(t('publicShare.error', { error: String(error) }));
+  }
+}
+
+async function claimPublicOffer(offerId: string, intent: 'download' | 'preview') {
+  const offer = state.publicOffers.get(offerId);
+  if (!offer || offer.expired || offer.peer_id === state.peerId) return;
+  if (state.publicIntents.has(offerId)) return;
+  state.publicIntents.set(offerId, intent);
+  try {
+    await invoke('claim_public_file', { offerId, previewOnly: intent === 'preview' });
+  } catch (error) {
+    state.publicIntents.delete(offerId);
+    alert(t('publicShare.error', { error: String(error) }));
+  }
+}
+
+function showImagePreview(offer: PublicShareOffer) {
+  if (!offer.preview_data) return;
+  document.querySelector('#imagePreviewModal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'imagePreviewModal';
+  modal.className = 'modal-wrap image-preview-wrap';
+  modal.innerHTML = `<div class="modal glass image-preview-modal">
+    <div class="modal-head"><div><span class="eyebrow">#WORLD IMAGE</span><h3>${esc(offer.file_name)}</h3></div><button data-close>×</button></div>
+    <img alt="${esc(offer.file_name)}" />
+    <div class="image-preview-meta">${formatBytes(offer.size)} · ${esc(offer.nick)}</div>
+  </div>`;
+  const image = modal.querySelector<HTMLImageElement>('img')!;
+  image.src = offer.preview_data;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.addEventListener('click', event => { if (event.target === modal) close(); });
+  modal.querySelector('[data-close]')?.addEventListener('click', close);
 }
 
 function activeTransfer(status: string): boolean {
@@ -486,11 +667,14 @@ function resetSessionView(errorMessage?: string) {
   document.querySelectorAll('.modal-wrap').forEach(el => el.remove());
   state.connected = false;
   state.nick = '';
+  state.nickColor = normalizeNickColor(localStorage.getItem('konofix.nickColor'));
   state.peerId = '';
   state.peers.clear();
   state.rooms = new Map([['world', { id: 'world', title: '# WORLD' }]]);
   state.messages = new Map([['world', []]]);
   state.transfers.clear();
+  state.publicOffers.clear();
+  state.publicIntents.clear();
   state.status = { ...EMPTY_STATUS };
   state.room = 'world';
   renderLogin();
@@ -628,6 +812,38 @@ async function wireEvents() {
     alert(t('nick.conflict', { nick: event.payload.nick }));
     disconnect();
   });
+  await listen<PublicShareOffer>('public-file-offer', event => {
+    const offer = event.payload;
+    if (state.publicOffers.has(offer.offer_id)) {
+      const existing = state.publicOffers.get(offer.offer_id)!;
+      existing.expires_at = offer.expires_at;
+      return;
+    }
+    offer.nick_color = normalizeNickColor(offer.nick_color);
+    state.publicOffers.set(offer.offer_id, offer);
+    pushMessage({
+      id: `public:${offer.offer_id}`,
+      kind: 'public_offer',
+      peer_id: offer.peer_id,
+      nick: offer.nick,
+      nick_color: offer.nick_color,
+      room: 'world',
+      text: '',
+      timestamp: Number(offer.timestamp),
+      public_offer: offer,
+    });
+  });
+  await listen<{ offer_id: string }>('public-offer-expired', event => {
+    const offer = state.publicOffers.get(event.payload.offer_id);
+    if (!offer) return;
+    offer.expired = true;
+    state.publicIntents.delete(event.payload.offer_id);
+    if (state.connected && state.room === 'world') renderChat();
+  });
+  await listen<{ offer_id: string; error: string }>('public-offer-error', event => {
+    state.publicIntents.delete(event.payload.offer_id);
+    if (state.connected) addSystem('world', t('publicShare.error', { error: event.payload.error }));
+  });
   await listen<FileOffer>('file-offer', event => showFileOfferModal(event.payload));
   await listen<FileOfferExpired>('file-offer-expired', event => {
     const modal = document.querySelector(`#file-offer-${CSS.escape(event.payload.transfer_id)}`);
@@ -641,13 +857,37 @@ async function wireEvents() {
     modal.remove();
     if (state.connected) addSystem(state.room, t('transfer.offerCancelled'));
   });
-  await listen<FileTransfer>('file-transfer', event => {
+  await listen<FileTransfer>('file-transfer', async event => {
     state.transfers.set(event.payload.transfer_id, event.payload);
     if (event.payload.status === 'completed') {
-      const saved = event.payload.direction === 'incoming' ? t('transfer.saved', { path: event.payload.path || 'Downloads\\Konofix Chat' }) : '';
+      const saved = event.payload.direction === 'incoming' && !event.payload.preview_only
+        ? t('transfer.saved', { path: event.payload.path || 'Downloads\\Konofix Chat' })
+        : '';
       addSystem(state.room, t('transfer.finished', { file: event.payload.file_name, saved }));
+      const offerId = event.payload.public_offer_id;
+      if (offerId && event.payload.direction === 'incoming') {
+        const offer = state.publicOffers.get(offerId);
+        const intent = state.publicIntents.get(offerId);
+        state.publicIntents.delete(offerId);
+        if (offer?.kind === 'image' && event.payload.path) {
+          try {
+            offer.preview_data = await invoke<string>('load_image_preview', {
+              path: event.payload.path,
+              previewOnly: Boolean(event.payload.preview_only),
+            });
+            if (state.connected && state.room === 'world') renderChat();
+            if (intent === 'preview') showImagePreview(offer);
+          } catch (error) {
+            addSystem('world', t('publicShare.previewError', { error: String(error) }));
+          }
+        }
+      }
     } else if (['failed', 'rejected'].includes(event.payload.status)) {
+      if (event.payload.public_offer_id) state.publicIntents.delete(event.payload.public_offer_id);
       addSystem(state.room, t('transfer.problem', { file: event.payload.file_name, error: event.payload.error || transferStatus(event.payload.status) }));
+    } else if (event.payload.status === 'cancelled' && event.payload.public_offer_id) {
+      state.publicIntents.delete(event.payload.public_offer_id);
+      if (state.connected) renderChat();
     } else if (state.connected) {
       renderChat();
     }

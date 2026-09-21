@@ -14,6 +14,8 @@ const EN = {
   'login.nickHelp': 'Choose a nickname. It is reserved only while you are online.',
   'login.nickLabel': 'Your nickname',
   'login.nickPlaceholder': 'e.g. SWIR',
+  'login.nickColor': 'Nickname color',
+  'login.nickColorPreview': 'Your nickname preview',
   'login.connect': 'Connect to network',
   'login.advancedNetwork': 'Advanced network settings',
   'login.privacy': '🔒 Connections are encrypted by libp2p. A nickname is not an account.',
@@ -38,7 +40,18 @@ const EN = {
   'rooms.invalidName': 'Invalid room name.',
   'rooms.closed': 'The room was closed because its host left the network.',
   'chat.messageTo': 'Write a message to {room}…',
+  'chat.emoji': 'Konofix emoji',
   'chat.sendError': 'Send error: {error}',
+  'publicShare.file': '📎 Share file',
+  'publicShare.image': '🖼 Share image',
+  'publicShare.download': 'Download',
+  'publicShare.preview': 'Preview',
+  'publicShare.previewHint': 'Click Preview to fetch this image directly from the sender',
+  'publicShare.shared': 'Shared on #WORLD',
+  'publicShare.expired': 'Offer expired',
+  'publicShare.dangerous': 'Executable/script file — download only if you trust the sender.',
+  'publicShare.error': 'Public sharing: {error}',
+  'publicShare.previewError': 'Image preview: {error}',
   'user.selfReserved': 'You · nickname reserved',
   'network.refresh': 'Refresh discovery',
   'network.settings': 'P2P network',
@@ -102,6 +115,9 @@ export type MessageKey = keyof typeof EN;
 type Dictionary = Partial<Record<MessageKey, string>>;
 
 const PL: Dictionary = {
+  'login.nickColor': 'Kolor nicka', 'login.nickColorPreview': 'Podgląd Twojego nicka',
+  'chat.emoji': 'Emotki Konofix',
+
   'network.participantNode': 'Ta aplikacja jest węzłem sieci, gdy jesteś połączony. Osobny serwer nie jest potrzebny. Przy pierwszym dołączeniu przez Internet wklej osiągalny adres od uczestnika, który jest online. Wykrywanie w LAN jest automatyczne; dostęp przez Internet zależy od NAT i zapory albo pośrednictwa innego osiągalnego uczestnika.',
   'network.copyAddress': 'Kopiuj adres',
   'network.addressCopied': 'Skopiowano',
@@ -136,6 +152,12 @@ const PL: Dictionary = {
   'rooms.closed': 'Pokój został zamknięty, ponieważ host opuścił sieć.',
   'chat.messageTo': 'Napisz wiadomość do {room}…',
   'chat.sendError': 'Błąd wysyłania: {error}',
+  'publicShare.file': '📎 Udostępnij plik', 'publicShare.image': '🖼 Udostępnij obraz',
+  'publicShare.download': 'Pobierz', 'publicShare.preview': 'Podgląd',
+  'publicShare.previewHint': 'Kliknij Podgląd, aby pobrać obraz bezpośrednio od nadawcy',
+  'publicShare.shared': 'Udostępniono na #WORLD', 'publicShare.expired': 'Oferta wygasła',
+  'publicShare.dangerous': 'Plik wykonywalny/skrypt — pobieraj tylko od zaufanego nadawcy.',
+  'publicShare.error': 'Udostępnianie publiczne: {error}', 'publicShare.previewError': 'Podgląd obrazu: {error}',
   'user.selfReserved': 'Ty · nick zarezerwowany',
   'network.refresh': 'Odśwież discovery',
   'network.settings': 'Sieć P2P',
@@ -192,6 +214,9 @@ const PL: Dictionary = {
 };
 
 const NO: Dictionary = {
+  'login.nickColor': 'Farge på kallenavn', 'login.nickColorPreview': 'Forhåndsvisning av kallenavn',
+  'chat.emoji': 'Konofix-emojier',
+
   'app.tagline': 'Bli med. Chat. Gå ut — og forsvinn fra nettverket.',
   'app.noAccount': '◆ ingen konto',
   'app.noServerHistory': '◆ ingen historikk på serveren',
@@ -207,6 +232,11 @@ const NO: Dictionary = {
   'rooms.temporary': 'MIDLERTIDIGE ROM', 'rooms.create': '＋ Opprett rom', 'rooms.globalChannel': 'Felles global P2P-kanal',
   'rooms.hostOnly': 'Rommet finnes bare mens verten er pålogget', 'rooms.firstMessage': 'Skriv den første meldingen.',
   'chat.messageTo': 'Skriv en melding til {room}…', 'user.selfReserved': 'Du · kallenavn reservert',
+  'publicShare.file': '📎 Del fil', 'publicShare.image': '🖼 Del bilde', 'publicShare.download': 'Last ned',
+  'publicShare.preview': 'Forhåndsvis', 'publicShare.previewHint': 'Hent bildet direkte fra avsenderen for forhåndsvisning',
+  'publicShare.shared': 'Delt i #WORLD', 'publicShare.expired': 'Tilbudet er utløpt',
+  'publicShare.dangerous': 'Kjørbar fil/skript — last ned bare fra en avsender du stoler på.',
+  'publicShare.error': 'Offentlig deling: {error}', 'publicShare.previewError': 'Bildeforhåndsvisning: {error}',
   'network.refresh': 'Oppdater discovery', 'network.settings': 'P2P-nettverk', 'network.disconnect': 'Koble fra',
   'network.searching': 'SØKER ETTER PEERS', 'network.connectionsCount': '{count} tilkoblinger', 'network.status': 'Nettverksstatus',
   'network.connections': 'Tilkoblinger', 'network.dhtPeers': 'DHT-noder', 'network.bootstraps': 'Bootstrap-noder',
@@ -220,10 +250,18 @@ const NO: Dictionary = {
 };
 
 const DE: Dictionary = {
+  'login.nickColor': 'Nickname-Farbe', 'login.nickColorPreview': 'Nickname-Vorschau',
+  'chat.emoji': 'Konofix-Emojis',
+
   'login.joinWorld': '#WORLD beitreten', 'login.nickLabel': 'Dein Nickname', 'login.nickPlaceholder': 'z. B. SWIR',
   'login.connect': 'Mit Netzwerk verbinden', 'login.advancedNetwork': 'Erweiterte Netzwerkeinstellungen',
   'rooms.temporary': 'TEMPORÄRE RÄUME', 'rooms.create': '＋ Raum erstellen', 'rooms.firstMessage': 'Schreibe die erste Nachricht.',
   'chat.messageTo': 'Nachricht an {room}…', 'network.disconnect': 'Trennen', 'network.status': 'Netzwerkstatus',
+  'publicShare.file': '📎 Datei teilen', 'publicShare.image': '🖼 Bild teilen', 'publicShare.download': 'Herunterladen',
+  'publicShare.preview': 'Vorschau', 'publicShare.previewHint': 'Bild für die Vorschau direkt vom Absender laden',
+  'publicShare.shared': 'In #WORLD geteilt', 'publicShare.expired': 'Angebot abgelaufen',
+  'publicShare.dangerous': 'Ausführbare Datei/Skript — nur von vertrauenswürdigen Absendern laden.',
+  'publicShare.error': 'Öffentliches Teilen: {error}', 'publicShare.previewError': 'Bildvorschau: {error}',
   'network.connections': 'Verbindungen', 'network.connectionsCount': '{count} Verbindungen', 'common.add': 'Hinzufügen',
   'transfer.section': 'ÜBERTRAGUNGEN', 'transfer.none': 'Keine Übertragungen', 'transfer.sendFile': '📎 Datei senden',
   'transfer.sendFilePlain': 'Datei senden', 'transfer.reject': 'Ablehnen', 'transfer.accept': 'Akzeptieren',
@@ -232,10 +270,18 @@ const DE: Dictionary = {
 };
 
 const FR: Dictionary = {
+  'login.nickColor': 'Couleur du pseudo', 'login.nickColorPreview': 'Aperçu du pseudo',
+  'chat.emoji': 'Émojis Konofix',
+
   'login.joinWorld': 'Rejoindre #WORLD', 'login.nickLabel': 'Votre pseudo', 'login.nickPlaceholder': 'ex. SWIR',
   'login.connect': 'Se connecter au réseau', 'login.advancedNetwork': 'Paramètres réseau avancés',
   'rooms.temporary': 'SALONS TEMPORAIRES', 'rooms.create': '＋ Créer un salon', 'rooms.firstMessage': 'Écrivez le premier message.',
   'chat.messageTo': 'Écrire à {room}…', 'network.disconnect': 'Déconnecter', 'network.status': 'État du réseau',
+  'publicShare.file': '📎 Partager un fichier', 'publicShare.image': '🖼 Partager une image', 'publicShare.download': 'Télécharger',
+  'publicShare.preview': 'Aperçu', 'publicShare.previewHint': 'Récupérer l’image directement auprès de l’expéditeur pour l’aperçu',
+  'publicShare.shared': 'Partagé dans #WORLD', 'publicShare.expired': 'Offre expirée',
+  'publicShare.dangerous': 'Fichier exécutable/script — téléchargez seulement si vous faites confiance à l’expéditeur.',
+  'publicShare.error': 'Partage public : {error}', 'publicShare.previewError': 'Aperçu de l’image : {error}',
   'network.connections': 'Connexions', 'network.connectionsCount': '{count} connexions', 'common.add': 'Ajouter',
   'transfer.section': 'TRANSFERTS', 'transfer.none': 'Aucun transfert', 'transfer.sendFile': '📎 Envoyer un fichier',
   'transfer.sendFilePlain': 'Envoyer un fichier', 'transfer.reject': 'Refuser', 'transfer.accept': 'Accepter',
@@ -244,10 +290,18 @@ const FR: Dictionary = {
 };
 
 const ES: Dictionary = {
+  'login.nickColor': 'Color del apodo', 'login.nickColorPreview': 'Vista previa del apodo',
+  'chat.emoji': 'Emojis Konofix',
+
   'login.joinWorld': 'Entrar en #WORLD', 'login.nickLabel': 'Tu apodo', 'login.nickPlaceholder': 'p. ej. SWIR',
   'login.connect': 'Conectar a la red', 'login.advancedNetwork': 'Ajustes de red avanzados',
   'rooms.temporary': 'SALAS TEMPORALES', 'rooms.create': '＋ Crear sala', 'rooms.firstMessage': 'Escribe el primer mensaje.',
   'chat.messageTo': 'Escribir a {room}…', 'network.disconnect': 'Desconectar', 'network.status': 'Estado de red',
+  'publicShare.file': '📎 Compartir archivo', 'publicShare.image': '🖼 Compartir imagen', 'publicShare.download': 'Descargar',
+  'publicShare.preview': 'Vista previa', 'publicShare.previewHint': 'Obtener la imagen directamente del remitente para verla',
+  'publicShare.shared': 'Compartido en #WORLD', 'publicShare.expired': 'Oferta caducada',
+  'publicShare.dangerous': 'Archivo ejecutable/script — descárgalo solo si confías en el remitente.',
+  'publicShare.error': 'Compartir públicamente: {error}', 'publicShare.previewError': 'Vista previa de imagen: {error}',
   'network.connections': 'Conexiones', 'network.connectionsCount': '{count} conexiones', 'common.add': 'Añadir',
   'transfer.section': 'TRANSFERENCIAS', 'transfer.none': 'Sin transferencias', 'transfer.sendFile': '📎 Enviar archivo',
   'transfer.sendFilePlain': 'Enviar archivo', 'transfer.reject': 'Rechazar', 'transfer.accept': 'Aceptar',
@@ -256,10 +310,18 @@ const ES: Dictionary = {
 };
 
 const UK: Dictionary = {
+  'login.nickColor': 'Колір ніка', 'login.nickColorPreview': 'Попередній вигляд ніка',
+  'chat.emoji': 'Емодзі Konofix',
+
   'login.joinWorld': 'Увійти до #WORLD', 'login.nickLabel': 'Ваш нік', 'login.nickPlaceholder': 'напр. SWIR',
   'login.connect': 'Підключитися до мережі', 'login.advancedNetwork': 'Розширені налаштування мережі',
   'rooms.temporary': 'ТИМЧАСОВІ КІМНАТИ', 'rooms.create': '＋ Створити кімнату', 'rooms.firstMessage': 'Напишіть перше повідомлення.',
   'chat.messageTo': 'Написати повідомлення до {room}…', 'network.disconnect': 'Від’єднати', 'network.status': 'Стан мережі',
+  'publicShare.file': '📎 Поділитися файлом', 'publicShare.image': '🖼 Поділитися зображенням', 'publicShare.download': 'Завантажити',
+  'publicShare.preview': 'Перегляд', 'publicShare.previewHint': 'Отримати зображення безпосередньо від відправника для перегляду',
+  'publicShare.shared': 'Опубліковано в #WORLD', 'publicShare.expired': 'Пропозиція минула',
+  'publicShare.dangerous': 'Виконуваний файл/скрипт — завантажуйте лише від надійного відправника.',
+  'publicShare.error': 'Публічний обмін: {error}', 'publicShare.previewError': 'Перегляд зображення: {error}',
   'network.connections': 'З’єднання', 'network.connectionsCount': '{count} з’єднань', 'common.add': 'Додати',
   'transfer.section': 'ПЕРЕДАЧІ', 'transfer.none': 'Немає передач', 'transfer.sendFile': '📎 Надіслати файл',
   'transfer.sendFilePlain': 'Надіслати файл', 'transfer.reject': 'Відхилити', 'transfer.accept': 'Прийняти',

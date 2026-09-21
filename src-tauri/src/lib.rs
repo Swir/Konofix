@@ -54,6 +54,11 @@ const MAX_FILE_OFFER_NAME_BYTES: usize = 4 * 1024;
 const MAX_FILE_REQUEST_WIRE_BYTES: u64 = 2 * FILE_CHUNK_SIZE as u64 + 4096;
 const MAX_FILE_RESPONSE_WIRE_BYTES: u64 = 16 * 1024;
 const MAX_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024;
+const MAX_PUBLIC_IMAGE_SIZE: u64 = 8 * 1024 * 1024;
+const PUBLIC_OFFER_TTL_SECS: u64 = 10 * 60;
+const PUBLIC_CLAIM_TTL_SECS: u64 = 45;
+const MAX_PUBLIC_OFFERS_LOCAL: usize = 8;
+const MAX_PUBLIC_OFFERS_REMOTE: usize = 256;
 const MAX_TRANSFERS_PER_DIRECTION: usize = 4;
 const MAX_PENDING_OFFERS_PER_PEER: usize = 1;
 const PENDING_FILE_OFFER_TTL_SECS: u64 = 45;
@@ -208,6 +213,22 @@ struct RoomInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct PublicShareOffer {
+    offer_id: String,
+    peer_id: String,
+    nick: String,
+    #[serde(default)]
+    nick_color: Option<String>,
+    file_name: String,
+    size: u64,
+    kind: String,
+    #[serde(default)]
+    mime: Option<String>,
+    timestamp: u64,
+    expires_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct NetworkStatus {
     phase: String,
     connected_peers: usize,
@@ -358,6 +379,7 @@ enum WireEvent {
         expires_at: u64,
     },
     Chat(ChatMessage),
+    PublicFileOffer(PublicShareOffer),
     RoomCreate(RoomInfo),
     MembershipSnapshot(MembershipSnapshotPayload),
     RoomClose {
@@ -372,6 +394,7 @@ fn wire_event_claimed_peer_id(event: &WireEvent) -> Option<&str> {
         | WireEvent::Goodbye { peer_id }
         | WireEvent::NickClaim { peer_id, .. } => Some(peer_id.as_str()),
         WireEvent::Chat(message) => message.peer_id.as_deref(),
+        WireEvent::PublicFileOffer(offer) => Some(offer.peer_id.as_str()),
         WireEvent::RoomCreate(room) => room.owner.as_deref(),
         WireEvent::MembershipSnapshot(snapshot) => Some(snapshot.peer_id.as_str()),
         WireEvent::RoomClose { owner, .. } => Some(owner.as_str()),
@@ -430,6 +453,7 @@ fn wire_event_is_well_formed(event: &WireEvent) -> bool {
                 && !message.text.trim().is_empty()
                 && message.text.chars().count() <= 4000
         }
+        WireEvent::PublicFileOffer(offer) => public_share_offer_is_well_formed(offer),
         WireEvent::RoomCreate(room) => {
             let Some(owner) = room.owner.as_deref() else {
                 return false;
@@ -487,6 +511,11 @@ enum FileRequest {
         transfer_id: String,
         file_name: String,
         size: u64,
+        #[serde(default)]
+        public_offer_id: Option<String>,
+    },
+    ClaimPublic {
+        offer_id: String,
     },
     Chunk {
         transfer_id: String,
@@ -543,6 +572,8 @@ struct FileTransferView {
     direction: String,
     peer_id: String,
     nick: String,
+    #[serde(default)]
+    public_offer_id: Option<String>,
     file_name: String,
     size: u64,
     transferred: u64,
@@ -556,6 +587,7 @@ struct FileTransferView {
 struct OutgoingTransfer {
     peer: PeerId,
     nick: String,
+    public_offer_id: Option<String>,
     file_name: String,
     path: PathBuf,
     size: u64,
@@ -601,6 +633,7 @@ fn incoming_transfer_is_expired(last_activity: Instant, now: Instant) -> bool {
 struct IncomingTransfer {
     peer: PeerId,
     nick: String,
+    public_offer_id: Option<String>,
     file_name: String,
     size: u64,
     received: u64,
@@ -614,6 +647,7 @@ struct IncomingTransfer {
 #[derive(Debug, Clone, Copy)]
 enum OutboundKind {
     Offer,
+    PublicClaim,
     Chunk,
     Complete,
     Cancel,
@@ -622,6 +656,10 @@ enum OutboundKind {
 fn file_response_matches_outbound_kind(kind: OutboundKind, response: &FileResponse) -> bool {
     match kind {
         OutboundKind::Offer => matches!(
+            response,
+            FileResponse::Accepted | FileResponse::Rejected { .. } | FileResponse::Error { .. }
+        ),
+        OutboundKind::PublicClaim => matches!(
             response,
             FileResponse::Accepted | FileResponse::Rejected { .. } | FileResponse::Error { .. }
         ),
@@ -671,6 +709,15 @@ mod file_response_phase_tests {
                 )
             );
             assert_eq!(
+                file_response_matches_outbound_kind(OutboundKind::PublicClaim, &response),
+                matches!(
+                    &response,
+                    FileResponse::Accepted
+                        | FileResponse::Rejected { .. }
+                        | FileResponse::Error { .. }
+                )
+            );
+            assert_eq!(
                 file_response_matches_outbound_kind(OutboundKind::Chunk, &response),
                 matches!(
                     &response,
@@ -698,6 +745,25 @@ mod file_response_phase_tests {
             ));
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct PublicOutgoingOffer {
+    view: PublicShareOffer,
+    path: PathBuf,
+    created_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct RemotePublicOffer {
+    view: PublicShareOffer,
+    received_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct PendingPublicClaim {
+    peer: PeerId,
+    created_at: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -731,6 +797,18 @@ enum NetworkCommand {
         file_name: String,
         size: u64,
         reply: oneshot::Sender<Result<FileTransferView, String>>,
+    },
+    PublishPublicOffer {
+        path: PathBuf,
+        file_name: String,
+        size: u64,
+        kind: String,
+        mime: Option<String>,
+        reply: oneshot::Sender<Result<PublicShareOffer, String>>,
+    },
+    ClaimPublicOffer {
+        offer_id: String,
+        reply: oneshot::Sender<Result<(), String>>,
     },
     AcceptFile {
         transfer_id: String,
@@ -881,6 +959,94 @@ fn file_offer_name_error(file_name: &str) -> Option<&'static str> {
     }
 }
 
+fn image_mime_from_header(data: &[u8]) -> Option<&'static str> {
+    if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        Some("image/png")
+    } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+async fn detect_image_mime(path: &Path) -> Result<String, String> {
+    let mut file = File::open(path)
+        .await
+        .map_err(|error| format!("Nie można otworzyć obrazu: {error}"))?;
+    let mut header = [0u8; 16];
+    let read = file
+        .read(&mut header)
+        .await
+        .map_err(|error| format!("Nie można sprawdzić obrazu: {error}"))?;
+    image_mime_from_header(&header[..read])
+        .map(str::to_string)
+        .ok_or_else(|| "Obsługiwane obrazy: PNG, JPEG, GIF i WebP.".to_string())
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let a = chunk[0] as u32;
+        let b = chunk.get(1).copied().unwrap_or(0) as u32;
+        let c = chunk.get(2).copied().unwrap_or(0) as u32;
+        let value = (a << 16) | (b << 8) | c;
+        output.push(TABLE[((value >> 18) & 63) as usize] as char);
+        output.push(TABLE[((value >> 12) & 63) as usize] as char);
+        output.push(if chunk.len() > 1 {
+            TABLE[((value >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            TABLE[(value & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    output
+}
+
+fn public_share_offer_is_well_formed(offer: &PublicShareOffer) -> bool {
+    let lifetime = offer.expires_at.saturating_sub(offer.timestamp);
+    let kind_valid = match offer.kind.as_str() {
+        "file" => offer.mime.is_none(),
+        "image" => {
+            offer.size > 0
+                && offer.size <= MAX_PUBLIC_IMAGE_SIZE
+                && matches!(
+                    offer.mime.as_deref(),
+                    Some("image/png" | "image/jpeg" | "image/gif" | "image/webp")
+                )
+        }
+        _ => false,
+    };
+    Uuid::parse_str(&offer.offer_id).is_ok()
+        && offer.peer_id.parse::<PeerId>().is_ok()
+        && validate_nick(&offer.nick).is_ok()
+        && optional_nick_color_is_valid(offer.nick_color.as_deref())
+        && file_offer_name_error(&offer.file_name).is_none()
+        && offer.file_name == safe_filename(&offer.file_name)
+        && offer.size <= MAX_FILE_SIZE
+        && offer.timestamp > 0
+        && lifetime > 0
+        && lifetime <= PUBLIC_OFFER_TTL_SECS * 1000
+        && kind_valid
+}
+
+fn public_offer_is_expired(created_at: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(created_at) >= Duration::from_secs(PUBLIC_OFFER_TTL_SECS)
+}
+
+fn public_claim_is_expired(created_at: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(created_at) >= Duration::from_secs(PUBLIC_CLAIM_TTL_SECS)
+}
+
 fn safe_filename(raw: &str) -> String {
     let mut name = raw
         .chars()
@@ -956,6 +1122,7 @@ fn file_view_outgoing(
         direction: "outgoing".into(),
         peer_id: t.peer.to_string(),
         nick: t.nick.clone(),
+        public_offer_id: t.public_offer_id.clone(),
         file_name: t.file_name.clone(),
         size: t.size,
         transferred: t.sent,
@@ -982,6 +1149,7 @@ fn file_view_incoming(
         direction: "incoming".into(),
         peer_id: t.peer.to_string(),
         nick: t.nick.clone(),
+        public_offer_id: t.public_offer_id.clone(),
         file_name: t.file_name.clone(),
         size: t.size,
         transferred: t.received,
@@ -1028,6 +1196,34 @@ impl NetworkRuntime for AppHandle {
 
 fn emit_transfer(app: &impl NetworkRuntime, transfer: &FileTransferView) {
     let _ = app.emit_event("file-transfer", transfer.clone());
+}
+
+async fn prepare_incoming_transfer(
+    app: &impl NetworkRuntime,
+    peer: PeerId,
+    nick: String,
+    file_name: String,
+    size: u64,
+    public_offer_id: Option<String>,
+) -> Result<IncomingTransfer, String> {
+    let dir = app.downloads()?;
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|error| format!("Nie można utworzyć folderu Pobrane/Konofix Chat: {error}"))?;
+    let reservation = reserve_incoming_file(&dir, &file_name).await?;
+    Ok(IncomingTransfer {
+        peer,
+        nick,
+        public_offer_id,
+        file_name,
+        size,
+        received: 0,
+        file: reservation.file,
+        hasher: Sha256::new(),
+        final_path: reservation.final_path,
+        temp_path: reservation.temp_path.clone(),
+        last_activity: Instant::now(),
+    })
 }
 
 #[tauri::command]
@@ -1248,6 +1444,125 @@ async fn offer_file(
         .await
         .map_err(|_| "Brak odpowiedzi modułu transferu.".to_string())??;
     Ok(Some(transfer))
+}
+
+#[tauri::command]
+async fn publish_public_file(
+    kind: String,
+    state: State<'_, AppState>,
+) -> Result<Option<PublicShareOffer>, String> {
+    let kind = kind.trim().to_ascii_lowercase();
+    if !matches!(kind.as_str(), "file" | "image") {
+        return Err("Nieprawidłowy typ publicznego udostępnienia.".into());
+    }
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "Błąd blokady stanu")?
+        .clone()
+        .ok_or("Najpierw połącz się z siecią.")?;
+
+    let dialog_title = if kind == "image" {
+        "Udostępnij obraz na #WORLD"
+    } else {
+        "Udostępnij plik na #WORLD"
+    };
+    let path = tokio::task::spawn_blocking(move || {
+        rfd::FileDialog::new().set_title(dialog_title).pick_file()
+    })
+    .await
+    .map_err(|error| format!("Błąd okna wyboru pliku: {error}"))?;
+    let Some(path) = path else {
+        return Ok(None);
+    };
+
+    let metadata = tokio::fs::metadata(&path)
+        .await
+        .map_err(|error| format!("Nie można odczytać pliku: {error}"))?;
+    if !metadata.is_file() {
+        return Err("Można udostępniać tylko zwykłe pliki.".into());
+    }
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err("Plik jest większy niż limit 32 GiB tej wersji.".into());
+    }
+    let mime = if kind == "image" {
+        if metadata.len() > MAX_PUBLIC_IMAGE_SIZE {
+            return Err("Obraz do podglądu #WORLD może mieć maksymalnie 8 MiB.".into());
+        }
+        Some(detect_image_mime(&path).await?)
+    } else {
+        None
+    };
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(safe_filename)
+        .ok_or("Nieprawidłowa nazwa pliku.")?;
+
+    let (reply_tx, reply_rx) = oneshot::channel();
+    tx.send(NetworkCommand::PublishPublicOffer {
+        path,
+        file_name,
+        size: metadata.len(),
+        kind,
+        mime,
+        reply: reply_tx,
+    })
+    .await
+    .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
+    let offer = reply_rx
+        .await
+        .map_err(|_| "Brak odpowiedzi modułu publicznych plików.".to_string())??;
+    Ok(Some(offer))
+}
+
+#[tauri::command]
+async fn claim_public_file(
+    offer_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "Błąd blokady stanu")?
+        .clone()
+        .ok_or("Brak połączenia P2P")?;
+    let (reply_tx, reply_rx) = oneshot::channel();
+    tx.send(NetworkCommand::ClaimPublicOffer {
+        offer_id,
+        reply: reply_tx,
+    })
+    .await
+    .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "Brak odpowiedzi modułu publicznych plików.".to_string())?
+}
+
+#[tauri::command]
+async fn load_image_preview(path: String) -> Result<String, String> {
+    let root = download_directory()?;
+    let root = tokio::fs::canonicalize(&root)
+        .await
+        .map_err(|error| format!("Nie można zweryfikować folderu pobierania: {error}"))?;
+    let candidate = tokio::fs::canonicalize(PathBuf::from(path))
+        .await
+        .map_err(|error| format!("Nie można otworzyć pobranego obrazu: {error}"))?;
+    if !candidate.starts_with(&root) {
+        return Err("Podgląd obrazu jest dozwolony tylko dla plików odebranych przez Konofix Chat.".into());
+    }
+    let metadata = tokio::fs::metadata(&candidate)
+        .await
+        .map_err(|error| format!("Nie można odczytać obrazu: {error}"))?;
+    if !metadata.is_file() || metadata.len() > MAX_PUBLIC_IMAGE_SIZE {
+        return Err("Obraz jest nieprawidłowy albo zbyt duży do podglądu.".into());
+    }
+    let bytes = tokio::fs::read(&candidate)
+        .await
+        .map_err(|error| format!("Nie można odczytać obrazu: {error}"))?;
+    let mime = image_mime_from_header(&bytes)
+        .ok_or("Plik nie jest obsługiwanym obrazem PNG/JPEG/GIF/WebP.")?;
+    Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
 }
 
 #[tauri::command]
@@ -1836,6 +2151,9 @@ async fn network_task(
     let mut outgoing: HashMap<String, OutgoingTransfer> = HashMap::new();
     let mut pending_incoming: HashMap<String, PendingIncomingOffer> = HashMap::new();
     let mut incoming: HashMap<String, IncomingTransfer> = HashMap::new();
+    let mut public_outgoing: HashMap<String, PublicOutgoingOffer> = HashMap::new();
+    let mut remote_public_offers: HashMap<String, RemotePublicOffer> = HashMap::new();
+    let mut public_claims: HashMap<String, PendingPublicClaim> = HashMap::new();
     let mut outbound_requests: HashMap<request_response::OutboundRequestId, OutboundMeta> =
         HashMap::new();
 
@@ -1868,6 +2186,13 @@ async fn network_task(
                 publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical);
                 for room in owned_rooms.values() {
                     publish(&mut swarm, &world, &WireEvent::RoomCreate(room.clone()));
+                }
+                for offer in public_outgoing.values() {
+                    publish(
+                        &mut swarm,
+                        &world,
+                        &WireEvent::PublicFileOffer(offer.view.clone()),
+                    );
                 }
                 apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.heartbeat());
                 swarm.behaviour_mut().kad.get_record(nick_record_key(&canonical));
@@ -1952,6 +2277,30 @@ async fn network_task(
                         );
                     }
                 }
+
+                let expired_public_local: Vec<String> = public_outgoing
+                    .iter()
+                    .filter(|(_, offer)| public_offer_is_expired(offer.created_at, now))
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for offer_id in expired_public_local {
+                    public_outgoing.remove(&offer_id);
+                }
+
+                let expired_public_remote: Vec<String> = remote_public_offers
+                    .iter()
+                    .filter(|(_, offer)| public_offer_is_expired(offer.received_at, now))
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for offer_id in expired_public_remote {
+                    remote_public_offers.remove(&offer_id);
+                    public_claims.remove(&offer_id);
+                    let _ = app.emit_event(
+                        "public-offer-expired",
+                        serde_json::json!({ "offer_id": offer_id }),
+                    );
+                }
+                public_claims.retain(|_, claim| !public_claim_is_expired(claim.created_at, now));
 
                 let expired_incoming: Vec<String> = incoming
                     .iter()
@@ -2077,6 +2426,7 @@ async fn network_task(
                             let transfer = OutgoingTransfer {
                                 peer: target_peer.clone(),
                                 nick: target_nick,
+                                public_offer_id: None,
                                 file_name: safe_filename(&file_name),
                                 path,
                                 size,
@@ -2090,6 +2440,7 @@ async fn network_task(
                                     transfer_id: transfer_id.clone(),
                                     file_name: transfer.file_name.clone(),
                                     size,
+                                    public_offer_id: None,
                                 },
                             );
                             outbound_requests.insert(request_id, OutboundMeta { transfer_id: transfer_id.clone(), kind: OutboundKind::Offer });
@@ -2100,27 +2451,110 @@ async fn network_task(
                         })();
                         let _ = reply.send(result);
                     }
+                    NetworkCommand::PublishPublicOffer {
+                        path,
+                        file_name,
+                        size,
+                        kind,
+                        mime,
+                        reply,
+                    } => {
+                        let now = Instant::now();
+                        public_outgoing.retain(|_, offer| !public_offer_is_expired(offer.created_at, now));
+                        let result = if public_outgoing.len() >= MAX_PUBLIC_OFFERS_LOCAL {
+                            Err(format!(
+                                "Możesz mieć maksymalnie {MAX_PUBLIC_OFFERS_LOCAL} aktywnych ofert na #WORLD."
+                            ))
+                        } else {
+                            let timestamp = now_ms();
+                            let offer = PublicShareOffer {
+                                offer_id: Uuid::new_v4().to_string(),
+                                peer_id: peer_id.clone(),
+                                nick: nick.clone(),
+                                nick_color: Some(nick_color.clone()),
+                                file_name: safe_filename(&file_name),
+                                size,
+                                kind,
+                                mime,
+                                timestamp,
+                                expires_at: timestamp + PUBLIC_OFFER_TTL_SECS * 1000,
+                            };
+                            if !public_share_offer_is_well_formed(&offer) {
+                                Err("Publiczna oferta pliku nie przeszła walidacji.".into())
+                            } else {
+                                public_outgoing.insert(
+                                    offer.offer_id.clone(),
+                                    PublicOutgoingOffer {
+                                        view: offer.clone(),
+                                        path,
+                                        created_at: now,
+                                    },
+                                );
+                                publish(
+                                    &mut swarm,
+                                    &world,
+                                    &WireEvent::PublicFileOffer(offer.clone()),
+                                );
+                                Ok(offer)
+                            }
+                        };
+                        let _ = reply.send(result);
+                    }
+                    NetworkCommand::ClaimPublicOffer { offer_id, reply } => {
+                        let result = (|| -> Result<(), String> {
+                            let remote = remote_public_offers
+                                .get(&offer_id)
+                                .ok_or("Publiczna oferta wygasła albo nie istnieje.")?;
+                            if public_offer_is_expired(remote.received_at, Instant::now()) {
+                                return Err("Publiczna oferta wygasła.".into());
+                            }
+                            let target: PeerId = remote
+                                .view
+                                .peer_id
+                                .parse()
+                                .map_err(|_| "Nieprawidłowy Peer ID nadawcy.")?;
+                            if target == local_peer {
+                                return Err("Nie można pobrać własnej publicznej oferty.".into());
+                            }
+                            let request_id = swarm
+                                .behaviour_mut()
+                                .file_transfer
+                                .send_request(&target, FileRequest::ClaimPublic {
+                                    offer_id: offer_id.clone(),
+                                });
+                            outbound_requests.insert(
+                                request_id,
+                                OutboundMeta {
+                                    transfer_id: offer_id.clone(),
+                                    kind: OutboundKind::PublicClaim,
+                                },
+                            );
+                            public_claims.insert(
+                                offer_id,
+                                PendingPublicClaim {
+                                    peer: target,
+                                    created_at: Instant::now(),
+                                },
+                            );
+                            Ok(())
+                        })();
+                        let _ = reply.send(result);
+                    }
                     NetworkCommand::AcceptFile { transfer_id, reply } => {
                         let result = async {
                             if incoming.len() >= MAX_TRANSFERS_PER_DIRECTION {
                                 return Err("Masz już maksymalną liczbę aktywnych transferów przychodzących.".to_string());
                             }
                             let pending = pending_incoming.remove(&transfer_id).ok_or("Oferta pliku wygasła albo nie istnieje.")?;
-                            let dir = app.downloads()?;
-                            tokio::fs::create_dir_all(&dir).await.map_err(|e| format!("Nie można utworzyć folderu Pobrane/Konofix Chat: {e}"))?;
-                            let reservation = reserve_incoming_file(&dir, &pending.file_name).await?;
-                            let transfer = IncomingTransfer {
-                                peer: pending.peer,
-                                nick: pending.nick,
-                                file_name: pending.file_name,
-                                size: pending.size,
-                                received: 0,
-                                file: reservation.file,
-                                hasher: Sha256::new(),
-                                final_path: reservation.final_path,
-                                temp_path: reservation.temp_path.clone(),
-                                last_activity: Instant::now(),
-                            };
+                            let transfer = prepare_incoming_transfer(
+                                &app,
+                                pending.peer,
+                                pending.nick,
+                                pending.file_name,
+                                pending.size,
+                                None,
+                            )
+                            .await?;
                             if swarm.behaviour_mut().file_transfer.send_response(pending.channel, FileResponse::Accepted).is_err() {
                                 let _ = tokio::fs::remove_file(&transfer.temp_path).await;
                                 return Err("Nadawca rozłączył się zanim zaakceptowano plik.".to_string());
@@ -2469,6 +2903,30 @@ async fn network_task(
                                     let _ = app.emit_event("chat-message", msg);
                                 }
                             }
+                            WireEvent::PublicFileOffer(offer) => {
+                                if offer.peer_id != peer_id {
+                                    if !remote_public_offers.contains_key(&offer.offer_id)
+                                        && remote_public_offers.len() >= MAX_PUBLIC_OFFERS_REMOTE
+                                    {
+                                        if let Some(oldest) = remote_public_offers
+                                            .iter()
+                                            .min_by_key(|(_, candidate)| candidate.received_at)
+                                            .map(|(id, _)| id.clone())
+                                        {
+                                            remote_public_offers.remove(&oldest);
+                                            public_claims.remove(&oldest);
+                                        }
+                                    }
+                                    remote_public_offers.insert(
+                                        offer.offer_id.clone(),
+                                        RemotePublicOffer {
+                                            view: offer.clone(),
+                                            received_at: Instant::now(),
+                                        },
+                                    );
+                                    let _ = app.emit_event("public-file-offer", offer);
+                                }
+                            }
                             WireEvent::MembershipSnapshot(snapshot) => {
                                 if let Ok(effects) = membership.authenticated_snapshot(snapshot, authenticated_source) {
                                     membership_seen.insert(*authenticated_source, Instant::now());
@@ -2517,7 +2975,12 @@ async fn network_task(
                             match message {
                                 request_response::Message::Request { request, channel, .. } => {
                                     match request {
-                                        FileRequest::Offer { transfer_id, file_name, size } => {
+                                        FileRequest::Offer {
+                                            transfer_id,
+                                            file_name,
+                                            size,
+                                            public_offer_id,
+                                        } => {
                                             if Uuid::parse_str(&transfer_id).is_err() {
                                                 let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Rejected { reason: "Invalid transfer ID.".into() });
                                                 continue;
@@ -2540,6 +3003,89 @@ async fn network_task(
                                                 let _ = swarm.behaviour_mut().file_transfer.send_response(channel, FileResponse::Rejected { reason: "Plik przekracza limit 32 GiB.".into() });
                                                 continue;
                                             }
+                                            let remote_nick = peers
+                                                .get(&peer)
+                                                .map(|presence| presence.nick.clone())
+                                                .unwrap_or_else(|| peer.to_string());
+                                            let safe = safe_filename(&file_name);
+
+                                            if let Some(public_offer_id) = public_offer_id {
+                                                let claim_matches = public_claims
+                                                    .get(&public_offer_id)
+                                                    .is_some_and(|claim| {
+                                                        claim.peer == peer
+                                                            && !public_claim_is_expired(
+                                                                claim.created_at,
+                                                                Instant::now(),
+                                                            )
+                                                    });
+                                                let announcement_matches = remote_public_offers
+                                                    .get(&public_offer_id)
+                                                    .is_some_and(|remote| {
+                                                        remote.view.peer_id == peer.to_string()
+                                                            && remote.view.file_name == safe
+                                                            && remote.view.size == size
+                                                    });
+                                                if !claim_matches || !announcement_matches {
+                                                    let _ = swarm.behaviour_mut().file_transfer.send_response(
+                                                        channel,
+                                                        FileResponse::Rejected {
+                                                            reason: "Public file request was not initiated by this receiver or metadata changed.".into(),
+                                                        },
+                                                    );
+                                                    continue;
+                                                }
+                                                if incoming.len() >= MAX_TRANSFERS_PER_DIRECTION {
+                                                    let _ = swarm.behaviour_mut().file_transfer.send_response(
+                                                        channel,
+                                                        FileResponse::Rejected {
+                                                            reason: "All incoming file-transfer slots are currently busy.".into(),
+                                                        },
+                                                    );
+                                                    continue;
+                                                }
+                                                public_claims.remove(&public_offer_id);
+                                                match prepare_incoming_transfer(
+                                                    &app,
+                                                    peer,
+                                                    remote_nick,
+                                                    safe,
+                                                    size,
+                                                    Some(public_offer_id),
+                                                )
+                                                .await
+                                                {
+                                                    Ok(transfer) => {
+                                                        let temp_path = transfer.temp_path.clone();
+                                                        if swarm
+                                                            .behaviour_mut()
+                                                            .file_transfer
+                                                            .send_response(channel, FileResponse::Accepted)
+                                                            .is_err()
+                                                        {
+                                                            let _ = tokio::fs::remove_file(&temp_path).await;
+                                                            continue;
+                                                        }
+                                                        let view = file_view_incoming(
+                                                            &transfer_id,
+                                                            &transfer,
+                                                            "receiving",
+                                                            None,
+                                                            None,
+                                                        );
+                                                        emit_transfer(&app, &view);
+                                                        incoming.insert(transfer_id, transfer);
+                                                    }
+                                                    Err(reason) => {
+                                                        let _ = swarm.behaviour_mut().file_transfer.send_response(
+                                                            channel,
+                                                            FileResponse::Rejected { reason },
+                                                        );
+                                                    }
+                                                }
+                                                continue;
+                                            }
+
                                             let pending_from_peer = pending_incoming
                                                 .values()
                                                 .filter(|offer| offer.peer == peer)
@@ -2555,8 +3101,6 @@ async fn network_task(
                                                 );
                                                 continue;
                                             }
-                                            let remote_nick = peers.get(&peer).map(|p| p.nick.clone()).unwrap_or_else(|| peer.to_string());
-                                            let safe = safe_filename(&file_name);
                                             pending_incoming.insert(transfer_id.clone(), PendingIncomingOffer {
                                                 peer: peer.clone(),
                                                 nick: remote_nick.clone(),
@@ -2572,6 +3116,83 @@ async fn network_task(
                                                 file_name: safe,
                                                 size,
                                             });
+                                        }
+                                        FileRequest::ClaimPublic { offer_id } => {
+                                            let result = async {
+                                                if Uuid::parse_str(&offer_id).is_err() {
+                                                    return Err("Invalid public offer ID.".to_string());
+                                                }
+                                                if outgoing.len() >= MAX_TRANSFERS_PER_DIRECTION {
+                                                    return Err("Sender transfer slots are busy.".to_string());
+                                                }
+                                                let offer = public_outgoing
+                                                    .get(&offer_id)
+                                                    .cloned()
+                                                    .ok_or("Public offer expired or does not exist.")?;
+                                                if public_offer_is_expired(offer.created_at, Instant::now()) {
+                                                    public_outgoing.remove(&offer_id);
+                                                    return Err("Public offer expired.".into());
+                                                }
+                                                let metadata = tokio::fs::metadata(&offer.path)
+                                                    .await
+                                                    .map_err(|_| "Shared file is no longer available.".to_string())?;
+                                                if !metadata.is_file() || metadata.len() != offer.view.size {
+                                                    public_outgoing.remove(&offer_id);
+                                                    return Err("Shared file changed after it was announced.".into());
+                                                }
+
+                                                let transfer_id = Uuid::new_v4().to_string();
+                                                let target_nick = peers
+                                                    .get(&peer)
+                                                    .map(|presence| presence.nick.clone())
+                                                    .unwrap_or_else(|| peer.to_string());
+                                                let transfer = OutgoingTransfer {
+                                                    peer,
+                                                    nick: target_nick,
+                                                    public_offer_id: Some(offer_id.clone()),
+                                                    file_name: offer.view.file_name.clone(),
+                                                    path: offer.path.clone(),
+                                                    size: offer.view.size,
+                                                    sent: 0,
+                                                    file: None,
+                                                    hasher: Sha256::new(),
+                                                };
+                                                let request_id = swarm.behaviour_mut().file_transfer.send_request(
+                                                    &peer,
+                                                    FileRequest::Offer {
+                                                        transfer_id: transfer_id.clone(),
+                                                        file_name: transfer.file_name.clone(),
+                                                        size: transfer.size,
+                                                        public_offer_id: Some(offer_id),
+                                                    },
+                                                );
+                                                outbound_requests.insert(
+                                                    request_id,
+                                                    OutboundMeta {
+                                                        transfer_id: transfer_id.clone(),
+                                                        kind: OutboundKind::Offer,
+                                                    },
+                                                );
+                                                let view = file_view_outgoing(
+                                                    &transfer_id,
+                                                    &transfer,
+                                                    "waiting",
+                                                    None,
+                                                    None,
+                                                );
+                                                emit_transfer(&app, &view);
+                                                outgoing.insert(transfer_id, transfer);
+                                                Ok(())
+                                            }
+                                            .await;
+                                            let response = match result {
+                                                Ok(()) => FileResponse::Accepted,
+                                                Err(reason) => FileResponse::Rejected { reason },
+                                            };
+                                            let _ = swarm
+                                                .behaviour_mut()
+                                                .file_transfer
+                                                .send_response(channel, response);
                                         }
                                         FileRequest::Chunk { transfer_id, offset, data } => {
                                             let response = if data.is_empty() {
@@ -2758,6 +3379,32 @@ async fn network_task(
                                                 _ => {}
                                             }
                                         }
+                                        OutboundKind::PublicClaim => {
+                                            match response {
+                                                FileResponse::Accepted => {}
+                                                FileResponse::Rejected { reason } => {
+                                                    public_claims.remove(&meta.transfer_id);
+                                                    let _ = app.emit_event(
+                                                        "public-offer-error",
+                                                        serde_json::json!({
+                                                            "offer_id": meta.transfer_id,
+                                                            "error": reason,
+                                                        }),
+                                                    );
+                                                }
+                                                FileResponse::Error { message } => {
+                                                    public_claims.remove(&meta.transfer_id);
+                                                    let _ = app.emit_event(
+                                                        "public-offer-error",
+                                                        serde_json::json!({
+                                                            "offer_id": meta.transfer_id,
+                                                            "error": message,
+                                                        }),
+                                                    );
+                                                }
+                                                _ => {}
+                                            }
+                                        }
                                         OutboundKind::Chunk => {
                                             match response {
                                                 FileResponse::Ack { received } => {
@@ -2816,7 +3463,16 @@ async fn network_task(
                         }
                         request_response::Event::OutboundFailure { request_id, error, .. } => {
                             if let Some(meta) = outbound_requests.remove(&request_id) {
-                                if !matches!(meta.kind, OutboundKind::Cancel) {
+                                if matches!(meta.kind, OutboundKind::PublicClaim) {
+                                    public_claims.remove(&meta.transfer_id);
+                                    let _ = app.emit_event(
+                                        "public-offer-error",
+                                        serde_json::json!({
+                                            "offer_id": meta.transfer_id,
+                                            "error": format!("Błąd P2P: {error}"),
+                                        }),
+                                    );
+                                } else if !matches!(meta.kind, OutboundKind::Cancel) {
                                     if let Some(transfer) = outgoing.remove(&meta.transfer_id) {
                                         emit_transfer(&app, &file_view_outgoing(&meta.transfer_id, &transfer, "failed", None, Some(format!("Błąd P2P: {error}"))));
                                     }
@@ -3235,6 +3891,7 @@ mod file_offer_admission_tests {
                     transfer_id: Uuid::new_v4().to_string(),
                     file_name: "a".repeat(MAX_FILE_REQUEST_WIRE_BYTES as usize + 1),
                     size: 0,
+                    public_offer_id: None,
                 },
             )
             .await
@@ -3289,6 +3946,86 @@ mod file_offer_admission_tests {
             .expect("test Instant must support short subtraction");
         assert!(!incoming_transfer_is_expired(fresh, now));
         assert!(incoming_transfer_is_expired(expired, now));
+    }
+}
+
+#[cfg(test)]
+mod public_share_tests {
+    use super::*;
+
+    fn offer(peer: PeerId, kind: &str, mime: Option<&str>, size: u64) -> PublicShareOffer {
+        PublicShareOffer {
+            offer_id: Uuid::new_v4().to_string(),
+            peer_id: peer.to_string(),
+            nick: "alice".into(),
+            nick_color: Some(DEFAULT_NICK_COLOR.into()),
+            file_name: if kind == "image" {
+                "photo.png".into()
+            } else {
+                "notes.txt".into()
+            },
+            size,
+            kind: kind.into(),
+            mime: mime.map(str::to_string),
+            timestamp: 1_000,
+            expires_at: 1_000 + PUBLIC_OFFER_TTL_SECS * 1000,
+        }
+    }
+
+    #[test]
+    fn public_offer_metadata_is_bounded_and_source_safe() {
+        let peer = PeerId::random();
+        assert!(public_share_offer_is_well_formed(&offer(peer, "file", None, 42)));
+        assert!(public_share_offer_is_well_formed(&offer(
+            peer,
+            "image",
+            Some("image/png"),
+            1024
+        )));
+        assert!(!public_share_offer_is_well_formed(&offer(
+            peer,
+            "image",
+            Some("text/html"),
+            1024
+        )));
+        assert!(!public_share_offer_is_well_formed(&offer(
+            peer,
+            "image",
+            Some("image/png"),
+            MAX_PUBLIC_IMAGE_SIZE + 1
+        )));
+    }
+
+    #[test]
+    fn image_magic_and_preview_encoding_are_strict() {
+        assert_eq!(
+            image_mime_from_header(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
+            Some("image/png")
+        );
+        assert_eq!(
+            image_mime_from_header(&[0xFF, 0xD8, 0xFF, 0x00]),
+            Some("image/jpeg")
+        );
+        assert_eq!(image_mime_from_header(b"<html>"), None);
+        assert_eq!(base64_encode(b"Man"), "TWFu");
+        assert_eq!(base64_encode(b"M"), "TQ==");
+    }
+
+    #[test]
+    fn public_offer_and_claim_ttls_are_bounded() {
+        let now = Instant::now();
+        let fresh_offer = now
+            .checked_sub(Duration::from_secs(PUBLIC_OFFER_TTL_SECS - 1))
+            .unwrap();
+        let old_offer = now
+            .checked_sub(Duration::from_secs(PUBLIC_OFFER_TTL_SECS))
+            .unwrap();
+        assert!(!public_offer_is_expired(fresh_offer, now));
+        assert!(public_offer_is_expired(old_offer, now));
+        let old_claim = now
+            .checked_sub(Duration::from_secs(PUBLIC_CLAIM_TTL_SECS))
+            .unwrap();
+        assert!(public_claim_is_expired(old_claim, now));
     }
 }
 
@@ -3462,9 +4199,22 @@ mod authenticated_event_tests {
                 kind: "chat".into(),
                 peer_id: Some(source_text.clone()),
                 nick: "alice".into(),
+                nick_color: Some(DEFAULT_NICK_COLOR.into()),
                 room: "world".into(),
                 text: "hello".into(),
                 timestamp: 1,
+            }),
+            WireEvent::PublicFileOffer(PublicShareOffer {
+                offer_id: Uuid::new_v4().to_string(),
+                peer_id: source_text.clone(),
+                nick: "alice".into(),
+                nick_color: Some(DEFAULT_NICK_COLOR.into()),
+                file_name: "notes.txt".into(),
+                size: 42,
+                kind: "file".into(),
+                mime: None,
+                timestamp: 1,
+                expires_at: 1 + PUBLIC_OFFER_TTL_SECS * 1000,
             }),
             WireEvent::RoomCreate(RoomInfo {
                 id: "room".into(),
@@ -3513,6 +4263,9 @@ pub fn run() {
             add_bootstrap,
             refresh_discovery,
             offer_file,
+            publish_public_file,
+            claim_public_file,
+            load_image_preview,
             accept_file,
             reject_file,
             cancel_file,

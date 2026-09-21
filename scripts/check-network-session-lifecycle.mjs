@@ -24,7 +24,11 @@ requireText(rust, 'if owns_current_session {\n        guard.take();', 'a task ma
 requireText(rust, 'install_network_sender(state.inner(), tx.clone())?;', 'start_network must use the atomic install helper.');
 requireText(rust, 'let task_tx = tx.clone();', 'spawned task must retain an ownership sender clone.');
 requireText(rust, 'let startup_tx = tx;', 'startup handshake cleanup must retain the exact installed channel.');
-requireText(rust, 'let task_result =\n            network_task(nick_for_task, bootstrap_list, app.clone(), rx, ready_tx).await;', 'network task result must be captured before unconditional owned cleanup.');
+requireText(
+  rust,
+  'let task_result = network_task(\n            nick_for_task,\n            nick_color.clone(),\n            bootstrap_list,\n            app.clone(),\n            rx,\n            ready_tx,\n        )\n        .await;',
+  'network task result must be captured before unconditional owned cleanup.',
+);
 requireText(rust, 'let owned_session =\n            clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);', 'network task cleanup must run after every network task return, including clean exits.');
 requireText(rust, 'if let Err(err) = task_result {\n            if owned_session {\n                let _ = app.emit("network-error", err);', 'terminal network-error must be emitted only for an owned fatal exit.');
 requireText(rust, 'fn owned_clean_exit_cleanup_allows_reconnect()', 'clean task exit/reconnect regression test is missing.');

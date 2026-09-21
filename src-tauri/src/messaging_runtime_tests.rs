@@ -704,10 +704,12 @@ async fn protected_room_and_private_chat_use_direct_secure_control_between_apps(
     let sent_to_alice = response.await.unwrap().unwrap();
     assert_eq!(sent_to_alice.peer_id, bob.id);
     assert_eq!(sent_to_alice.target_peer_id, alice.id);
+    let alice_id = alice.id.clone();
+    let bob_id = bob.id.clone();
     alice
         .event("private-message", |value| {
-            value["peer_id"] == bob.id
-                && value["target_peer_id"] == alice.id
+            value["peer_id"] == bob_id
+                && value["target_peer_id"] == alice_id
                 && value["text"] == "private bob to alice :)"
         })
         .await;
@@ -725,9 +727,11 @@ async fn protected_room_and_private_chat_use_direct_secure_control_between_apps(
     let sent_to_bob = response.await.unwrap().unwrap();
     assert_eq!(sent_to_bob.peer_id, alice.id);
     assert_eq!(sent_to_bob.target_peer_id, bob.id);
+    let alice_id = alice.id.clone();
+    let bob_id = bob.id.clone();
     bob.event("private-message", |value| {
-        value["peer_id"] == alice.id
-            && value["target_peer_id"] == bob.id
+        value["peer_id"] == alice_id
+            && value["target_peer_id"] == bob_id
             && value["text"] == "private alice to bob :D"
     })
     .await;

@@ -690,13 +690,7 @@ async fn protected_room_and_private_chat_use_direct_secure_control_between_apps(
             value["room_id"] == "locked-runtime" && value["users"] == 2
         })
         .await;
-    chat(
-        &bob,
-        &mut alice,
-        "locked-runtime",
-        "Protected room message",
-    )
-    .await;
+    chat(&bob, &mut alice, "locked-runtime", "Protected room message").await;
 
     let (reply, response) = oneshot::channel();
     bob.commands

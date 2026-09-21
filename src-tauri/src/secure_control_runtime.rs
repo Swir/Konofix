@@ -116,12 +116,16 @@ impl SecureControlRuntime {
         now_ms: u64,
         monotonic_now: Instant,
     ) -> Result<PrivateDirectMessage, PrivateMessageError> {
+        let expected_presence = expected_presence.ok_or(PrivateMessageError::Validation(
+            "Private sender has no authenticated presence.",
+        ))?;
+
         validate_private_message(
             &message,
             authenticated_source,
             local_peer,
-            expected_presence.map(|presence| presence.nick.as_str()),
-            expected_presence.and_then(|presence| presence.nick_color.as_deref()),
+            Some(expected_presence.nick.as_str()),
+            expected_presence.nick_color.as_deref(),
             now_ms,
         )
         .map_err(PrivateMessageError::Validation)?;

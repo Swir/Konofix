@@ -46,10 +46,10 @@ const cases = [
     expected: 'result must be captured',
   },
   {
-    name: 'validated nickname color is dropped at task handoff',
+    name: 'validated nickname color clone is replaced before task handoff',
     target: 'rust',
-    source: '            nick_color.clone(),\n            bootstrap_list,',
-    replacement: '            DEFAULT_NICK_COLOR.to_string(),\n            bootstrap_list,',
+    source: 'let nick_color_for_task = nick_color.clone();',
+    replacement: 'let nick_color_for_task = DEFAULT_NICK_COLOR.to_string();',
     expected: 'validated nickname color',
   },
   {

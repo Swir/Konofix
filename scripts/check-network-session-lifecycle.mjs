@@ -38,6 +38,11 @@ requireText(rust, 'if owns_current_session {\n        guard.take();', 'a task ma
 requireText(rust, 'install_network_sender(state.inner(), tx.clone())?;', 'start_network must use the atomic install helper.');
 requireText(rust, 'let task_tx = tx.clone();', 'spawned task must retain an ownership sender clone.');
 requireText(rust, 'let startup_tx = tx;', 'startup handshake cleanup must retain the exact installed channel.');
+requireText(
+  rust,
+  'let nick_color_for_task = nick_color.clone();',
+  'validated nickname color must be cloned for the spawned task without moving the StartResult value.',
+);
 
 const spawnedTask = sliceBetween(
   rust,
@@ -57,8 +62,8 @@ requireText(
 );
 requireText(
   spawnedTask,
-  'nick_color.clone(),',
-  'spawned network task must receive the validated nickname color.',
+  'nick_color_for_task,',
+  'spawned network task must receive the validated nickname color clone.',
 );
 requireText(
   spawnedTask,

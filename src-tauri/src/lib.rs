@@ -1264,10 +1264,11 @@ async fn start_network(
     let startup_tx = tx;
     let (ready_tx, ready_rx) = oneshot::channel();
     let nick_for_task = nick.clone();
+    let nick_color_for_task = nick_color.clone();
     tauri::async_runtime::spawn(async move {
         let task_result = network_task(
             nick_for_task,
-            nick_color.clone(),
+            nick_color_for_task,
             bootstrap_list,
             app.clone(),
             rx,

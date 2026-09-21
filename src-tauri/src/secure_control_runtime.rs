@@ -67,7 +67,9 @@ impl SecureControlRuntime {
     }
 
     pub fn room_metadata(&self, room_id: &str) -> Option<RoomLockMetadata> {
-        self.protected_rooms.get(room_id).map(ProtectedRoomState::metadata)
+        self.protected_rooms
+            .get(room_id)
+            .map(ProtectedRoomState::metadata)
     }
 
     pub fn update_room_password(
@@ -76,9 +78,10 @@ impl SecureControlRuntime {
         requester: &PeerId,
         password: Option<&str>,
     ) -> Result<RoomLockMetadata, RoomAuthError> {
-        let room = self.protected_rooms.get_mut(room_id).ok_or_else(|| {
-            RoomAuthError::InvalidConfiguration("Unknown protected room.".into())
-        })?;
+        let room = self
+            .protected_rooms
+            .get_mut(room_id)
+            .ok_or_else(|| RoomAuthError::InvalidConfiguration("Unknown protected room.".into()))?;
         room.update_password(requester, password)?;
         Ok(room.metadata())
     }
@@ -91,9 +94,10 @@ impl SecureControlRuntime {
         now_ms: u64,
         monotonic_now: Instant,
     ) -> Result<Option<RoomAccessGrant>, RoomAuthError> {
-        let room = self.protected_rooms.get_mut(room_id).ok_or_else(|| {
-            RoomAuthError::InvalidConfiguration("Unknown protected room.".into())
-        })?;
+        let room = self
+            .protected_rooms
+            .get_mut(room_id)
+            .ok_or_else(|| RoomAuthError::InvalidConfiguration("Unknown protected room.".into()))?;
         room.authorize_join(requester, password, now_ms, monotonic_now)
     }
 

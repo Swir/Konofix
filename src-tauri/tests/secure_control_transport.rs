@@ -41,15 +41,8 @@ fn protected_room_join_handler_returns_peer_bound_grant_without_secret_echo() {
     let request = room_join_request("friends", "secret room".into()).unwrap();
     let debug = format!("{request:?}");
     assert!(!debug.contains("secret room"));
-    let outcome = handle_inbound_control_request(
-        &mut runtime,
-        request,
-        &guest,
-        &local,
-        None,
-        now_ms,
-        now,
-    );
+    let outcome =
+        handle_inbound_control_request(&mut runtime, request, &guest, &local, None, now_ms, now);
     assert!(matches!(
         outcome.response,
         ControlResponse::RoomJoin {
@@ -86,9 +79,7 @@ fn wrong_password_and_malformed_requests_fail_closed_with_bounded_reasons() {
     );
     match denied.response {
         ControlResponse::RoomJoin {
-            granted,
-            reason,
-            ..
+            granted, reason, ..
         } => {
             assert!(!granted);
             assert_eq!(reason.as_deref(), Some("access_denied"));
@@ -215,9 +206,7 @@ fn outbound_private_builder_rejects_self_empty_and_oversize_targets() {
     let remote = peer();
     assert!(private_message_request(&local, &local, "Alice", None, "hello", 1).is_err());
     assert!(private_message_request(&local, &remote, "Alice", None, "   ", 1).is_err());
-    assert!(
-        private_message_request(&local, &remote, "Alice", None, &"x".repeat(4001), 1).is_err()
-    );
+    assert!(private_message_request(&local, &remote, "Alice", None, &"x".repeat(4001), 1).is_err());
     assert!(private_message_request(&local, &remote, "Alice", None, "hello", 1).is_ok());
 }
 

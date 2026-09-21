@@ -1,0 +1,51 @@
+name: Rustfmt Diagnostic
+
+on:
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: rustfmt-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rustfmt-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Capture canonical rustfmt diff
+        id: rustfmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all
+          git diff -- src-tauri > rustfmt.patch
+          if [[ -s rustfmt.patch ]]; then
+            echo 'rustfmt changed tracked Rust sources:'
+            cat rustfmt.patch
+            exit 1
+          fi
+          echo 'rustfmt produced no diff.'
+
+      - name: Upload rustfmt diff
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustfmt-diff-${{ github.sha }}
+          path: rustfmt.patch
+          if-no-files-found: warn
+          retention-days: 1

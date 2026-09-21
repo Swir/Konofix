@@ -215,7 +215,9 @@ fn outbound_private_builder_rejects_self_empty_and_oversize_targets() {
     let remote = peer();
     assert!(private_message_request(&local, &local, "Alice", None, "hello", 1).is_err());
     assert!(private_message_request(&local, &remote, "Alice", None, "   ", 1).is_err());
-    assert!(private_message_request(&local, &remote, "Alice", None, &"x".repeat(4001), 1).is_err());
+    assert!(
+        private_message_request(&local, &remote, "Alice", None, &"x".repeat(4001), 1).is_err()
+    );
     assert!(private_message_request(&local, &remote, "Alice", None, "hello", 1).is_ok());
 }
 
@@ -231,7 +233,9 @@ async fn control_codec_rejects_oversized_request_and_response_frames() {
             ControlRequest::RoomJoin {
                 request_id: Uuid::new_v4().to_string(),
                 room_id: "friends".into(),
-                password: SecretString::new("x".repeat(MAX_CONTROL_REQUEST_WIRE_BYTES as usize + 1)),
+                password: SecretString::new(
+                    "x".repeat(MAX_CONTROL_REQUEST_WIRE_BYTES as usize + 1),
+                ),
             },
         )
         .await

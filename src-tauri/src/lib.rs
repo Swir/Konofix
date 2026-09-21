@@ -62,8 +62,8 @@ const MAX_ROOMS_TOTAL: usize = 256;
 const MAX_ROOMS_PER_OWNER: usize = 16;
 const DEFAULT_NICK_COLOR: &str = "#8FA0FF";
 const ALLOWED_NICK_COLORS: &[&str] = &[
-    "#8FA0FF", "#62E5FF", "#44E6A8", "#FFD166", "#FF8FAB", "#C77DFF",
-    "#FF9F68", "#7AE582", "#5CC8FF", "#B8C0FF", "#F4A261", "#E879F9",
+    "#8FA0FF", "#62E5FF", "#44E6A8", "#FFD166", "#FF8FAB", "#C77DFF", "#FF9F68", "#7AE582",
+    "#5CC8FF", "#B8C0FF", "#F4A261", "#E879F9",
 ];
 const MAX_BOOTSTRAP_SOURCES: usize = 32;
 const BOOTSTRAP_RETRY_TICK_SECS: u64 = 5;
@@ -776,7 +776,10 @@ fn canonical_nick(raw: &str) -> String {
 }
 
 fn normalize_nick_color(raw: Option<&str>) -> String {
-    let candidate = raw.unwrap_or(DEFAULT_NICK_COLOR).trim().to_ascii_uppercase();
+    let candidate = raw
+        .unwrap_or(DEFAULT_NICK_COLOR)
+        .trim()
+        .to_ascii_uppercase();
     if ALLOWED_NICK_COLORS.contains(&candidate.as_str()) {
         candidate
     } else {
@@ -1046,8 +1049,15 @@ async fn start_network(
     let (ready_tx, ready_rx) = oneshot::channel();
     let nick_for_task = nick.clone();
     tauri::async_runtime::spawn(async move {
-        let task_result =
-            network_task(nick_for_task, nick_color.clone(), bootstrap_list, app.clone(), rx, ready_tx).await;
+        let task_result = network_task(
+            nick_for_task,
+            nick_color.clone(),
+            bootstrap_list,
+            app.clone(),
+            rx,
+            ready_tx,
+        )
+        .await;
         let app_state = app.state::<AppState>();
         let owned_session =
             clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);

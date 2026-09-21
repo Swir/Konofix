@@ -92,8 +92,9 @@ function augmentMainUi(): void {
 
   document.querySelectorAll<HTMLElement>('#peerList .user').forEach(row => {
     const fileButton = row.querySelector<HTMLButtonElement>('[data-send-peer]');
-    const peerId = fileButton?.dataset.sendPeer ?? '';
-    if (!peerId || row.querySelector('[data-private-peer]')) return;
+    if (!fileButton || row.querySelector('[data-private-peer]')) return;
+    const peerId = fileButton.dataset.sendPeer ?? '';
+    if (!peerId) return;
     const nick = row.querySelector('strong')?.textContent?.trim() || peerId;
     const color = row.querySelector<HTMLElement>('strong')?.style.color || '';
     const button = document.createElement('button');

@@ -54,19 +54,26 @@ pub struct SecureControlClient {
 }
 
 impl SecureControlClient {
-    pub fn observe_room(&mut self, room: ObservedRoomSecurity) {
+    pub fn observe_room(&mut self, room: ObservedRoomSecurity) -> bool {
+        if let Some(previous) = self.observed_rooms.get(&room.room_id) {
+            if previous.owner != room.owner
+                || room.auth_revision < previous.auth_revision
+                || (room.auth_revision == previous.auth_revision
+                    && previous.password_protected != room.password_protected)
+            {
+                return false;
+            }
+        }
+
         let changed = self
             .observed_rooms
             .get(&room.room_id)
-            .is_some_and(|previous| {
-                previous.owner != room.owner
-                    || previous.password_protected != room.password_protected
-                    || previous.auth_revision != room.auth_revision
-            });
+            .is_some_and(|previous| previous.auth_revision != room.auth_revision);
         if changed || !room.password_protected {
             self.authorized_room_revisions.remove(&room.room_id);
         }
         self.observed_rooms.insert(room.room_id.clone(), room);
+        true
     }
 
     pub fn remove_room(&mut self, room_id: &str) {

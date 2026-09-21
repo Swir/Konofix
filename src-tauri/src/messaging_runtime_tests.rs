@@ -10,6 +10,7 @@ fn timestamped_chat_and_nick_claim_decode_from_the_actual_wire_envelope() {
             kind: "chat".into(),
             peer_id: Some(peer.to_string()),
             nick: "test-alice".into(),
+            nick_color: Some("#62E5FF".into()),
             room: "world".into(),
             text: "Hello, \u{17c}\u{f3}\u{142}w!".into(),
             timestamp: 1_790_000_000_123,
@@ -126,6 +127,7 @@ impl NetworkRuntime for TestRuntime {
 
 struct TestPeer {
     id: String,
+    color: String,
     commands: mpsc::Sender<NetworkCommand>,
     events: mpsc::UnboundedReceiver<(String, serde_json::Value)>,
     pending: VecDeque<(String, serde_json::Value)>,
@@ -140,11 +142,22 @@ impl Drop for TestPeer {
 
 impl TestPeer {
     async fn start(nick: &str, bootstraps: Vec<String>, downloads: PathBuf) -> Self {
+        Self::start_with_color(nick, DEFAULT_NICK_COLOR, bootstraps, downloads).await
+    }
+
+    async fn start_with_color(
+        nick: &str,
+        color: &str,
+        bootstraps: Vec<String>,
+        downloads: PathBuf,
+    ) -> Self {
+        let color = normalize_nick_color(Some(color));
         let (commands, rx) = mpsc::channel(128);
         let (events_tx, events) = mpsc::unbounded_channel();
         let (ready_tx, ready_rx) = oneshot::channel();
         let task = tokio::spawn(network_task(
             nick.into(),
+            color.clone(),
             bootstraps,
             TestRuntime {
                 events: events_tx,
@@ -160,6 +173,7 @@ impl TestPeer {
             .unwrap();
         Self {
             id,
+            color,
             commands,
             events,
             pending: VecDeque::new(),
@@ -230,6 +244,7 @@ async fn chat(sender: &TestPeer, receiver: &mut TestPeer, room: &str, text: &str
         .event("chat-message", |value| value["text"] == text)
         .await;
     assert_eq!(message["peer_id"], sender.id);
+    assert_eq!(message["nick_color"], sender.color);
     assert_eq!(message["room"], room);
     assert!(message["timestamp"].as_u64().unwrap() > 0);
 }
@@ -257,6 +272,79 @@ async fn offer(sender: &TestPeer, receiver: &mut TestPeer, path: &Path, bytes: &
     assert_eq!(incoming["peer_id"], sender.id);
     assert_eq!(incoming["size"], bytes.len() as u64);
     view.transfer_id
+}
+
+async fn public_transfer(
+    sender: &mut TestPeer,
+    receiver: &mut TestPeer,
+    path: &Path,
+    bytes: &[u8],
+    kind: &str,
+    mime: Option<&str>,
+) -> (PublicShareOffer, PathBuf) {
+    tokio::fs::write(path, bytes).await.unwrap();
+    let (reply, response) = oneshot::channel();
+    sender
+        .commands
+        .send(NetworkCommand::PublishPublicOffer {
+            path: path.into(),
+            file_name: path.file_name().unwrap().to_str().unwrap().into(),
+            size: bytes.len() as u64,
+            kind: kind.into(),
+            mime: mime.map(str::to_string),
+            reply,
+        })
+        .await
+        .unwrap();
+    let offer = response.await.unwrap().unwrap();
+    assert_eq!(offer.nick_color.as_deref(), Some(sender.color.as_str()));
+    assert_eq!(offer.kind, kind);
+    assert_eq!(offer.mime.as_deref(), mime);
+
+    let announced = receiver
+        .event("public-file-offer", |value| value["offer_id"] == offer.offer_id)
+        .await;
+    assert_eq!(announced["peer_id"], sender.id);
+    assert_eq!(announced["nick_color"], sender.color);
+    assert_eq!(announced["file_name"], offer.file_name);
+    assert_eq!(announced["size"], bytes.len() as u64);
+
+    // An announcement is metadata-only: the receiver must explicitly claim it.
+    assert!(!receiver
+        .pending
+        .iter()
+        .any(|(kind, data)| kind == "file-transfer"
+            && data["public_offer_id"] == offer.offer_id));
+
+    let (reply, response) = oneshot::channel();
+    receiver
+        .commands
+        .send(NetworkCommand::ClaimPublicOffer {
+            offer_id: offer.offer_id.clone(),
+            reply,
+        })
+        .await
+        .unwrap();
+    response.await.unwrap().unwrap();
+
+    let received = receiver
+        .event("file-transfer", |value| {
+            value["public_offer_id"] == offer.offer_id && value["status"] == "completed"
+        })
+        .await;
+    let sent = sender
+        .event("file-transfer", |value| {
+            value["public_offer_id"] == offer.offer_id && value["status"] == "completed"
+        })
+        .await;
+    assert_eq!(sent["transferred"], bytes.len() as u64);
+    assert!(sent["path"].is_null());
+
+    let destination = PathBuf::from(received["path"].as_str().unwrap());
+    let actual = tokio::fs::read(&destination).await.unwrap();
+    assert_eq!(actual, bytes);
+    assert_eq!(Sha256::digest(&actual), Sha256::digest(bytes));
+    (offer, destination)
 }
 
 async fn transfer(sender: &mut TestPeer, receiver: &mut TestPeer, path: &Path, bytes: &[u8]) {
@@ -301,7 +389,13 @@ async fn transfer(sender: &mut TestPeer, receiver: &mut TestPeer, path: &Path, b
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_application_loops_deliver_chat_and_accepted_binary_files_both_directions() {
     let files = TestDirectory::new();
-    let mut alice = TestPeer::start("test-alice", vec![], files.0.join("alice-downloads")).await;
+    let mut alice = TestPeer::start_with_color(
+        "test-alice",
+        "#62E5FF",
+        vec![],
+        files.0.join("alice-downloads"),
+    )
+    .await;
     let addresses = alice
         .event("network-status", |value| {
             value["listen_addresses"].as_array().is_some_and(|list| {
@@ -317,12 +411,21 @@ async fn two_application_loops_deliver_chat_and_accepted_binary_files_both_direc
         .find_map(|value| value.as_str().filter(|address| address.contains("/tcp/")))
         .unwrap()
         .to_string();
-    let mut bob = TestPeer::start("test-bob", vec![address], files.0.join("bob-downloads")).await;
-    alice
+    let mut bob = TestPeer::start_with_color(
+        "test-bob",
+        "#FF8FAB",
+        vec![address],
+        files.0.join("bob-downloads"),
+    )
+    .await;
+    let bob_presence = alice
         .event("peer-online", |value| value["peer_id"] == bob.id)
         .await;
-    bob.event("peer-online", |value| value["peer_id"] == alice.id)
+    assert_eq!(bob_presence["nick_color"], bob.color);
+    let alice_presence = bob
+        .event("peer-online", |value| value["peer_id"] == alice.id)
         .await;
+    assert_eq!(alice_presence["nick_color"], alice.color);
     chat(&alice, &mut bob, "world", "World from Alice").await;
     chat(&bob, &mut alice, "world", "World from Bob").await;
 
@@ -384,6 +487,39 @@ async fn two_application_loops_deliver_chat_and_accepted_binary_files_both_direc
     )
     .await;
     transfer(&mut alice, &mut bob, &files.0.join("empty.txt"), &[]).await;
+
+    let (public_file, public_file_path) = public_transfer(
+        &mut alice,
+        &mut bob,
+        &files.0.join("world-notes.txt"),
+        b"public world file",
+        "file",
+        None,
+    )
+    .await;
+    assert_eq!(public_file.kind, "file");
+    assert_eq!(
+        tokio::fs::read(public_file_path).await.unwrap(),
+        b"public world file"
+    );
+
+    let png: Vec<u8> = [
+        &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A][..],
+        b"konofix-image-fixture",
+    ]
+    .concat();
+    let (public_image, public_image_path) = public_transfer(
+        &mut bob,
+        &mut alice,
+        &files.0.join("world-image.png"),
+        &png,
+        "image",
+        Some("image/png"),
+    )
+    .await;
+    assert_eq!(public_image.kind, "image");
+    let image_bytes = tokio::fs::read(public_image_path).await.unwrap();
+    assert_eq!(image_mime_from_header(&image_bytes), Some("image/png"));
 
     let id = offer(&alice, &mut bob, &files.0.join("rejected.txt"), b"declined").await;
     let (reply, response) = oneshot::channel();

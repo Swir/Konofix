@@ -79,7 +79,9 @@ fn wrong_password_and_malformed_requests_fail_closed_with_bounded_reasons() {
     );
     match denied.response {
         ControlResponse::RoomJoin {
-            granted, reason, ..
+            granted,
+            ref reason,
+            ..
         } => {
             assert!(!granted);
             assert_eq!(reason.as_deref(), Some("access_denied"));

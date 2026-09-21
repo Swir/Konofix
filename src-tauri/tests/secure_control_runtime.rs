@@ -123,7 +123,12 @@ fn private_runtime_binds_authenticated_peer_presence_target_replay_and_rate() {
         Err(PrivateMessageError::Validation(_))
     ));
 
-    for _ in 1..PRIVATE_RATE_MAX_MESSAGES {
+    // A structurally valid replay is deliberately charged to the authenticated
+    // sender's rate window before replay rejection. This prevents replay spam
+    // from bypassing the per-peer rate limiter. The first accepted message and
+    // the replay therefore consume two slots; validation failures from another
+    // peer do not consume the sender's allowance.
+    for _ in 2..PRIVATE_RATE_MAX_MESSAGES {
         runtime
             .accept_private_message(
                 private_message(&sender, &local, Uuid::new_v4().to_string(), now_ms),

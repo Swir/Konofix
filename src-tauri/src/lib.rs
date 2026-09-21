@@ -988,8 +988,7 @@ async fn detect_image_mime(path: &Path) -> Result<String, String> {
 }
 
 fn base64_encode(data: &[u8]) -> String {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut output = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let a = chunk[0] as u32;
@@ -1517,10 +1516,7 @@ async fn publish_public_file(
 }
 
 #[tauri::command]
-async fn claim_public_file(
-    offer_id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+async fn claim_public_file(offer_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let tx = state
         .tx
         .lock()
@@ -1549,7 +1545,9 @@ async fn load_image_preview(path: String) -> Result<String, String> {
         .await
         .map_err(|error| format!("Nie można otworzyć pobranego obrazu: {error}"))?;
     if !candidate.starts_with(&root) {
-        return Err("Podgląd obrazu jest dozwolony tylko dla plików odebranych przez Konofix Chat.".into());
+        return Err(
+            "Podgląd obrazu jest dozwolony tylko dla plików odebranych przez Konofix Chat.".into(),
+        );
     }
     let metadata = tokio::fs::metadata(&candidate)
         .await
@@ -3975,7 +3973,9 @@ mod public_share_tests {
     #[test]
     fn public_offer_metadata_is_bounded_and_source_safe() {
         let peer = PeerId::random();
-        assert!(public_share_offer_is_well_formed(&offer(peer, "file", None, 42)));
+        assert!(public_share_offer_is_well_formed(&offer(
+            peer, "file", None, 42
+        )));
         assert!(public_share_offer_is_well_formed(&offer(
             peer,
             "image",

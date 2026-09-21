@@ -19,14 +19,12 @@ requireText(
   'SwarmEvent::Behaviour(BehaviourEvent::SecureControl(event)) => {',
   'Secure-control swarm events are not handled by the desktop runtime.',
 );
-requireText(
-  '.secure_control\n                                    .send_request(&owner, request)',
-  'Protected-room authorization is not routed directly to the authenticated owner peer.',
-);
-requireText(
-  '.secure_control\n                                    .send_request(&target, request)',
-  'Private chat is not routed directly to the authenticated target peer.',
-);
+if (!/\.secure_control\s*\.send_request\(&owner, request\)/m.test(rust)) {
+  errors.push('Protected-room authorization is not routed directly to the authenticated owner peer.');
+}
+if (!/\.secure_control\s*\.send_request\(&target, request\)/m.test(rust)) {
+  errors.push('Private chat is not routed directly to the authenticated target peer.');
+}
 requireText(
   'handle_inbound_control_request(',
   'Inbound secure-control requests do not pass through the authenticated runtime validator.',

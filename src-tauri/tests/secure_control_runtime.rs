@@ -154,6 +154,29 @@ fn private_runtime_binds_authenticated_peer_presence_target_replay_and_rate() {
 }
 
 #[test]
+fn private_runtime_rejects_peer_without_authenticated_presence() {
+    let sender = peer();
+    let local = peer();
+    let now_ms = 2_500_000u64;
+    let mut runtime = SecureControlRuntime::default();
+    let message = private_message(&sender, &local, Uuid::new_v4().to_string(), now_ms);
+
+    assert_eq!(
+        runtime.accept_private_message(
+            message,
+            &sender,
+            &local,
+            None,
+            now_ms,
+            Instant::now(),
+        ),
+        Err(PrivateMessageError::Validation(
+            "Private sender has no authenticated presence."
+        ))
+    );
+}
+
+#[test]
 fn removing_room_security_state_fails_closed_for_late_join_requests() {
     let owner = peer();
     let guest = peer();

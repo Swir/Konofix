@@ -187,14 +187,11 @@ impl SecureControlClient {
                 if owner != *authenticated_peer {
                     return SecureResponseOutcome::Ignored;
                 }
-                let still_current =
-                    self.observed_rooms
-                        .get(&room_id)
-                        .is_some_and(|room| {
-                            room.password_protected
-                                && room.owner == owner
-                                && room.auth_revision == auth_revision
-                        });
+                let still_current = self.observed_rooms.get(&room_id).is_some_and(|room| {
+                    room.password_protected
+                        && room.owner == owner
+                        && room.auth_revision == auth_revision
+                });
                 if !still_current {
                     self.pending.remove(&request_id);
                     return SecureResponseOutcome::Ignored;

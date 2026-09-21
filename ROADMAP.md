@@ -2,16 +2,16 @@
 
 ## Project progress
 
-<img width="100%" src="assets/readme/progress-mini.svg" alt="Konofix Chat Real Internet Test compact progress — 55 of 67 verified tasks, 82.1%, in progress" />
+<img width="100%" src="assets/readme/progress-mini.svg" alt="Konofix Chat Real Internet Test compact progress — 56 of 67 verified tasks, 83.6%, in progress" />
 
-**Verified checklist fraction: 55 of 67 tasks — 82.1%.** The generated mini card uses the exact checklist fraction; release readiness remains a separate evidence gate.
+**Verified checklist fraction: 56 of 67 tasks — 83.6%.** The generated mini card uses the exact checklist fraction; release readiness remains a separate evidence gate.
 
-**Real Internet Test milestone: 82.1% complete**
+**Real Internet Test milestone: 83.6% complete**
 
-The active milestone now has 55 of 67 tasks complete. The Global Beta expansion added eight many-computer release gates to the five original real-network gates. The reviewed public-Node connection-ceiling/per-peer/pending-admission gate is now the first verified Global Beta gate after its exact implementation head passed both Windows and Linux CI; the other seven Global Beta gates and the five original real-world gates remain open. CI alone cannot credit fleet deployment, real 50/100/250 load, cross-country clients, Rooms 2.0 live multi-user application evidence, failover or qualified Global Beta prerelease evidence.
+The active milestone now has 56 of 67 tasks complete. The Global Beta expansion added eight many-computer release gates to the five original real-network gates. The reviewed public-Node connection-ceiling/per-peer/pending-admission gate and the Rooms 2.0 production membership/count implementation gate are now verified after exact-head Windows/Linux qualification; the other six Global Beta gates and the five original real-world gates remain open. CI alone cannot credit participant-topology deployment, real 50/100/250 load, cross-country clients, public-network field soak, failover or qualified Global Beta prerelease evidence.
 
 - The Windows installer/startup regression is fixed and covered by actual MSI/NSIS payload, Start menu and rendered-login/event-subscription checks. Participant networking and Rooms 2.0 runtime wiring are implemented; real multi-network application qualification remains open.
-- Beta preview publication supplies exact-build installers for collecting those results. It does not mark the qualified Global Beta release gate complete, increase the verified 55/67 fraction, or replace real clients with synthetic evidence.
+- Beta preview publication supplies exact-build installers for collecting those results. It does not mark the qualified Global Beta release gate complete or replace real clients with synthetic evidence.
 - The Global Beta evidence validator verifies actual candidate/load file hashes, exact build identity, 50/100/250 load, network/country diversity and participant failover records. Rooms 2.0 live-evidence creation/validation tools are included in Windows test bundles. These tools prepare qualification and grant no completion credit by themselves.
 - Global Beta qualification evidence is being hardened to schema 2 so each required WORLD/rooms/reconnect/transport/NAT/file observation and participant-failover claim must point to bounded package-contained bytes plus a lowercase SHA-256; free-text-only schema-1 claims, path escapes and tampered attachments fail closed. This integrity work changes no checklist state and adds no Real Internet Test credit without real field evidence.
 - Global Beta evidence collection now includes a fail-closed package sealer that computes or verifies the candidate artifact, 50/100/250 load outputs, every required field-evidence attachment and participant-failover SHA-256 binding from the package-contained bytes. It rejects escaped/portable-absolute/symlinked paths, missing or changing inputs and digest mismatches, never changes PASS/PENDING/readiness semantics, and adds no Real Internet Test credit by itself.
@@ -190,22 +190,24 @@ The existing `v0.4.2-test1` pre-release is a controlled preview for gathering re
 
 ## Global Beta readiness — many-computer public network
 
-Product decision, 2026-09-20: every connected desktop is a participant node; dedicated servers are optional. The existing topology/discovery/failover deliverables below now qualify participant-operated connectivity instead of requiring a centrally provisioned fleet. This changes the deployment model, not the 67-item denominator, verified count or real-network evidence requirement. See `docs/GLOBAL_BETA.md`.
+Product decision, 2026-09-20: every connected desktop is a participant node; dedicated servers are optional. The existing topology/discovery/failover deliverables below now qualify participant-operated connectivity instead of requiring a centrally provisioned fleet. This changes the deployment model, not the 67-item denominator or real-network evidence requirement. See `docs/GLOBAL_BETA.md`.
 
-This user-approved many-computer beta scope is part of the authoritative active readiness denominator. It expanded the measured scope from 59 to 67 tasks. The reviewed public-Node admission-limit gate is now verified after exact-head Windows and Linux CI, bringing the active scope to 55 verified completions; the seven remaining Global Beta gates stay open until their own acceptance evidence exists.
+This user-approved many-computer beta scope is part of the authoritative active readiness denominator. It expanded the measured scope from 59 to 67 tasks. The reviewed public-Node admission-limit gate and the Rooms 2.0 production membership/count implementation gate are now verified after exact-head Windows/Linux qualification, bringing the active scope to 56 verified completions; the six remaining Global Beta gates stay open until their own acceptance evidence exists.
 
 The 2026-09-20 two-user test exposed missing remote chat and an EOF after accepting binary files. The repair uses decodable u64 wire timestamps and a CBOR limit that includes worst-case chunk encoding. Regression tests run two actual application network loops with WORLD/room messages, accepted binary files in both directions, persisted-byte/hash checks, empty files and rejection. This local regression coverage adds no multi-network or load qualification credit.
+
+PR #140 extends that production-runtime verification to one owner plus four guest application loops on the real desktop network task. It proves room counts converge 1→5, repeated heartbeat/resync snapshots do not inflate membership, WORLD leave/rejoin converges 5→4→5, authenticated Goodbye removes the departing member, and an abrupt task abort converges through final-connection cleanup. Combined with the existing 128-peer production membership-bridge coverage for replay, room switching and presence-expiry behavior, this is sufficient for the implementation/wiring gate only; it does not satisfy the separate public-network, 20-client soak or participant-failover gates.
 
 - [ ] at least three participant-operated Konofix nodes across at least two independent networks, with verified TCP + QUIC/relay reachability and continuity during the test; dedicated servers are optional
 - [ ] clients join through LAN discovery, remembered or invited participants and automatically recover through at least two independent reachable contact/relay identities; optional operator seeds and manual contacts remain supported
 - [x] public Nodes enforce reviewed connection ceilings and per-peer/pending admission limits, with exact-build regression tests
 - [ ] repeatable concurrent admission harness proves 50, 100 and 250 exact-build Netprobe clients without Node restart/crash and with an agreed success threshold
-- [ ] Rooms 2.0 production membership/count wiring is complete for many simultaneous peers, including disconnect/expiry/resync
+- [x] Rooms 2.0 production membership/count wiring is complete for many simultaneous peers, including disconnect/expiry/resync
 - [ ] multi-user soak with at least 20 real clients across at least five independent networks and at least three countries for at least 60 minutes
 - [ ] participant-node failover drill proves clients recover discovery/chat/rooms after losing one contact/relay participant
 - [ ] exact-build Global Beta prerelease is published with rollback/tester handoff, participant-joining instructions and evidence package
 
-The Global Beta branch has exact-head Windows and Linux CI evidence for the reviewed Node admission ceilings and per-peer/pending limits, so that implementation gate is complete. The schema-v2 concurrent-load tooling can bind successful probes to one exact Netprobe build and prove stable pre/post Node health continuity, but the capacity gate remains unchecked until real 50/100/250 runs and their required public-infrastructure evidence pass.
+The Global Beta branch has exact-head Windows and Linux CI evidence for the reviewed Node admission ceilings and the Rooms 2.0 production membership/count runtime, so those implementation gates are complete. The schema-v2 concurrent-load tooling can bind successful probes to one exact Netprobe build and prove stable pre/post Node health continuity, but the capacity gate remains unchecked until real 50/100/250 runs and their required public-infrastructure evidence pass.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

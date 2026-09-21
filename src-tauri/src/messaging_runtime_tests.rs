@@ -415,3 +415,152 @@ async fn two_application_loops_deliver_chat_and_accepted_binary_files_both_direc
         .unwrap()
         .unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rooms2_counts_converge_across_many_application_loops_and_disconnects() {
+    const GUESTS: usize = 4;
+    let files = TestDirectory::new();
+    let mut owner = TestPeer::start("rooms-owner", vec![], files.0.join("owner-downloads")).await;
+    let addresses = owner
+        .event("network-status", |value| {
+            value["listen_addresses"].as_array().is_some_and(|list| {
+                list.iter()
+                    .any(|address| address.as_str().is_some_and(|raw| raw.contains("/tcp/")))
+            })
+        })
+        .await;
+    let address = addresses["listen_addresses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|value| value.as_str().filter(|raw| raw.contains("/tcp/")))
+        .unwrap()
+        .to_string();
+
+    let mut guests = Vec::with_capacity(GUESTS);
+    for index in 0..GUESTS {
+        let mut guest = TestPeer::start(
+            &format!("rooms-guest-{index}"),
+            vec![address.clone()],
+            files.0.join(format!("guest-{index}-downloads")),
+        )
+        .await;
+        owner
+            .event("peer-online", |value| value["peer_id"] == guest.id)
+            .await;
+        guest
+            .event("peer-online", |value| value["peer_id"] == owner.id)
+            .await;
+        guests.push(guest);
+    }
+
+    let (reply, response) = oneshot::channel();
+    owner
+        .commands
+        .send(NetworkCommand::CreateRoom {
+            room: RoomInfo {
+                id: "rooms-runtime".into(),
+                title: "# rooms runtime".into(),
+                owner: None,
+                users: Some(1),
+            },
+            reply,
+        })
+        .await
+        .unwrap();
+    let created = response.await.unwrap().unwrap();
+    assert_eq!(created.users, Some(1));
+
+    for guest in &mut guests {
+        guest
+            .event("room-created", |value| value["id"] == "rooms-runtime")
+            .await;
+    }
+
+    for (index, guest) in guests.iter_mut().enumerate() {
+        let (reply, response) = oneshot::channel();
+        guest
+            .commands
+            .send(NetworkCommand::EnterRoom {
+                room_id: "rooms-runtime".into(),
+                reply,
+            })
+            .await
+            .unwrap();
+        response.await.unwrap().unwrap();
+        let expected = (index + 2) as u64;
+        owner
+            .event("room-user-count", |value| {
+                value["room_id"] == "rooms-runtime" && value["users"] == expected
+            })
+            .await;
+    }
+
+    // Let unchanged heartbeat snapshots traverse the real production GossipSub
+    // path, then prove they did not inflate membership by switching one peer out
+    // and back in. The count must move 5 -> 4 -> 5, not accumulate duplicates.
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    let (reply, response) = oneshot::channel();
+    guests[0]
+        .commands
+        .send(NetworkCommand::EnterRoom {
+            room_id: "world".into(),
+            reply,
+        })
+        .await
+        .unwrap();
+    response.await.unwrap().unwrap();
+    owner
+        .event("room-user-count", |value| {
+            value["room_id"] == "rooms-runtime" && value["users"] == GUESTS as u64
+        })
+        .await;
+
+    let (reply, response) = oneshot::channel();
+    guests[0]
+        .commands
+        .send(NetworkCommand::EnterRoom {
+            room_id: "rooms-runtime".into(),
+            reply,
+        })
+        .await
+        .unwrap();
+    response.await.unwrap().unwrap();
+    owner
+        .event("room-user-count", |value| {
+            value["room_id"] == "rooms-runtime" && value["users"] == (GUESTS + 1) as u64
+        })
+        .await;
+
+    // Graceful shutdown exercises authenticated-goodbye cleanup.
+    guests[1].commands.send(NetworkCommand::Stop).await.unwrap();
+    owner
+        .event("room-user-count", |value| {
+            value["room_id"] == "rooms-runtime" && value["users"] == GUESTS as u64
+        })
+        .await;
+    tokio::time::timeout(Duration::from_secs(5), &mut guests[1].task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    // Abrupt task cancellation drops the swarm without a Goodbye frame and
+    // exercises final-connection cleanup in the production SwarmEvent path.
+    guests[2].task.abort();
+    owner
+        .event("room-user-count", |value| {
+            value["room_id"] == "rooms-runtime" && value["users"] == (GUESTS - 1) as u64
+        })
+        .await;
+
+    owner.commands.send(NetworkCommand::Stop).await.unwrap();
+    for index in [0usize, 3usize] {
+        let _ = guests[index].commands.send(NetworkCommand::Stop).await;
+    }
+    tokio::time::timeout(Duration::from_secs(5), &mut owner.task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}

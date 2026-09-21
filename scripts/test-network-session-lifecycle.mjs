@@ -39,6 +39,20 @@ const terminalRecovery = "await listen<string>('network-error', async event => {
 
 const cases = [
   {
+    name: 'network task result is discarded before cleanup',
+    target: 'rust',
+    source: 'let task_result = network_task(',
+    replacement: 'let _discarded_result = network_task(',
+    expected: 'result must be captured',
+  },
+  {
+    name: 'validated nickname color is dropped at task handoff',
+    target: 'rust',
+    source: '            nick_color.clone(),\n            bootstrap_list,',
+    replacement: '            DEFAULT_NICK_COLOR.to_string(),\n            bootstrap_list,',
+    expected: 'validated nickname color',
+  },
+  {
     name: 'channel ownership comparison removed',
     target: 'rust',
     source: 'current.same_channel(task_tx)',

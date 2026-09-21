@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::{Duration, Instant}};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use libp2p::PeerId;
 
@@ -33,8 +36,13 @@ pub struct ProtectedRoomState {
 }
 
 impl ProtectedRoomState {
-    pub fn new(room_id: String, owner: PeerId, password: Option<&str>) -> Result<Self, RoomAuthError> {
-        let validated = validate_room_password(password).map_err(RoomAuthError::InvalidConfiguration)?;
+    pub fn new(
+        room_id: String,
+        owner: PeerId,
+        password: Option<&str>,
+    ) -> Result<Self, RoomAuthError> {
+        let validated =
+            validate_room_password(password).map_err(RoomAuthError::InvalidConfiguration)?;
         let revision = 1;
         let verifier = match validated {
             Some(password) => Some(
@@ -68,7 +76,8 @@ impl ProtectedRoomState {
         if requester != &self.owner {
             return Err(RoomAuthError::NotOwner);
         }
-        let validated = validate_room_password(password).map_err(RoomAuthError::InvalidConfiguration)?;
+        let validated =
+            validate_room_password(password).map_err(RoomAuthError::InvalidConfiguration)?;
         if validated.is_none() && self.verifier.is_none() {
             return Ok(false);
         }
@@ -107,7 +116,10 @@ impl ProtectedRoomState {
         }
 
         let password = password.ok_or(RoomAuthError::PasswordRequired)?;
-        let verifier = self.verifier.as_ref().expect("protected room has verifier");
+        let verifier = self
+            .verifier
+            .as_ref()
+            .expect("protected room has verifier");
         if !verifier.verify(password) {
             return Err(RoomAuthError::InvalidPassword);
         }

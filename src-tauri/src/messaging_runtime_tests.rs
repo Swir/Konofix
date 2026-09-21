@@ -244,14 +244,17 @@ impl Drop for TestDirectory {
 }
 
 async fn chat(sender: &TestPeer, receiver: &mut TestPeer, room: &str, text: &str) {
+    let (reply, response) = oneshot::channel();
     sender
         .commands
         .send(NetworkCommand::SendMessage {
             room: room.into(),
             text: text.into(),
+            reply,
         })
         .await
         .unwrap();
+    response.await.unwrap().unwrap();
     let message = receiver
         .event("chat-message", |value| value["text"] == text)
         .await;
@@ -454,7 +457,10 @@ async fn two_application_loops_deliver_chat_and_accepted_binary_files_both_direc
                 title: "# runtime room".into(),
                 owner: None,
                 users: Some(1),
+                password_protected: false,
+                auth_revision: 0,
             },
+            password: None,
             reply,
         })
         .await
@@ -617,7 +623,10 @@ async fn rooms2_counts_converge_across_many_application_loops_and_disconnects() 
                 title: "# rooms runtime".into(),
                 owner: None,
                 users: Some(1),
+                password_protected: false,
+                auth_revision: 0,
             },
+            password: None,
             reply,
         })
         .await

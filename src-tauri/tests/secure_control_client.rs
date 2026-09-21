@@ -93,6 +93,38 @@ fn protected_room_requires_matching_owner_ack_and_current_revision() {
 }
 
 #[test]
+fn stale_or_conflicting_room_security_metadata_is_rejected() {
+    let local = PeerId::random();
+    let owner = PeerId::random();
+    let mut client = SecureControlClient::default();
+
+    assert!(client.observe_room(protected_room(owner, 9)));
+    assert!(client.room_requires_authorization("friends", &local));
+
+    let stale = ObservedRoomSecurity {
+        room_id: "friends".into(),
+        owner,
+        password_protected: true,
+        auth_revision: 8,
+    };
+    assert!(!client.observe_room(stale));
+
+    let conflicting = ObservedRoomSecurity {
+        room_id: "friends".into(),
+        owner,
+        password_protected: false,
+        auth_revision: 9,
+    };
+    assert!(!client.observe_room(conflicting));
+
+    let request = room_request("friends", "secret room");
+    assert!(client.track_room_join(&request, owner, 9).is_ok());
+
+    let stale_request = room_request("friends", "old secret");
+    assert!(client.track_room_join(&stale_request, owner, 8).is_err());
+}
+
+#[test]
 fn unlocked_and_owned_rooms_do_not_require_remote_authorization() {
     let local = PeerId::random();
     let remote = PeerId::random();

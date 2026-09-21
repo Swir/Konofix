@@ -52,7 +52,9 @@ fn protected_room_requires_matching_owner_ack_and_current_revision() {
     assert!(client.room_requires_authorization("friends", &local));
 
     let request = room_request("friends", "secret room");
-    let ControlRequest::RoomJoin { request_id, .. } = &request else { unreachable!() };
+    let ControlRequest::RoomJoin { request_id, .. } = &request else {
+        unreachable!()
+    };
     let request_id = request_id.clone();
     client.track_room_join(&request, owner, 7).unwrap();
 
@@ -121,7 +123,9 @@ fn private_ack_is_bound_to_expected_peer_and_message_id() {
     let mut client = SecureControlClient::default();
 
     let request = private_request(&sender, &target);
-    let ControlRequest::PrivateMessage(message) = &request else { unreachable!() };
+    let ControlRequest::PrivateMessage(message) = &request else {
+        unreachable!()
+    };
     let message = message.clone();
     client.track_private_message(&request, target).unwrap();
 
@@ -157,7 +161,9 @@ fn response_reasons_are_bounded_before_reaching_ui() {
     let mut client = SecureControlClient::default();
     client.observe_room(protected_room(owner, 3));
     let request = room_request("friends", "secret room");
-    let ControlRequest::RoomJoin { request_id, .. } = &request else { unreachable!() };
+    let ControlRequest::RoomJoin { request_id, .. } = &request else {
+        unreachable!()
+    };
     let request_id = request_id.clone();
     client.track_room_join(&request, owner, 3).unwrap();
     assert_eq!(

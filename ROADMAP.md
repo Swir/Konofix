@@ -213,12 +213,12 @@ The Global Beta branch has exact-head Windows and Linux CI evidence for the revi
 
 This short feature-freeze package is completed before the next user-led publication test cycle. It is intentionally tracked outside the active Global Beta qualification denominator so product polish does not distort real-network readiness evidence.
 
-- [ ] Konofix emoji picker + common typed emoticons render safely
-- [ ] user-selectable nickname color propagates across authenticated presence/chat
-- [ ] public #WORLD file offers are on-demand downloads, never automatic
-- [ ] public image offers provide safe in-chat preview/download behavior
+- **PENDING** — Konofix emoji picker + common typed emoticons render safely
+- **PENDING** — user-selectable nickname color propagates across authenticated presence/chat
+- **PENDING** — public #WORLD file offers are on-demand downloads, never automatic
+- **PENDING** — public image offers provide safe in-chat preview/download behavior
 
-Automatic feature development stops after these four items are implemented on `main` with green exact-head CI; publication remains a separate manual decision.
+These four status bullets are deliberately not roadmap checkboxes: the authoritative 56/67 fraction measures Real Internet Test / Global Beta qualification, while this temporary feature-freeze has its own stop gate. Automatic feature development stops after all four items are **VERIFIED on main** with green exact-head CI; publication remains a separate manual decision.
 
 ## 0.5.0 — Rooms 2.0
 - full room-member synchronization

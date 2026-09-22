@@ -71,6 +71,7 @@
 .private-chat-modal {
   width: min(430px, calc(100vw - 32px));
   height: min(620px, calc(100vh - 44px));
+  max-height: calc(100dvh - 44px);
   display: grid;
   grid-template-rows: auto 1fr auto;
   overflow: hidden;
@@ -93,6 +94,7 @@
 .private-chat-head h3 {
   margin: 3px 0 2px;
   font-size: 18px;
+  overflow-wrap: anywhere;
 }
 
 .private-chat-head small {
@@ -174,6 +176,17 @@
   min-width: 0;
 }
 
+.secure-room-manage:focus-visible,
+.mini-private:focus-visible,
+.private-chat-head > button:focus-visible,
+.private-compose input:focus-visible,
+.private-compose button:focus-visible,
+.secure-room-create-modal input:focus-visible,
+.secure-room-create-modal button:focus-visible {
+  outline: 2px solid #62e5ff;
+  outline-offset: 2px;
+}
+
 @media (max-width: 720px) {
   .private-chat-wrap {
     padding: 0;
@@ -183,7 +196,19 @@
   .private-chat-modal {
     width: 100vw;
     height: 100vh;
+    max-height: 100dvh;
     border-radius: 0;
+  }
+}
+
+@media (max-height: 560px) and (min-width: 721px) {
+  .private-chat-wrap {
+    padding: 10px;
+  }
+
+  .private-chat-modal {
+    height: calc(100dvh - 20px);
+    max-height: calc(100dvh - 20px);
   }
 }
 
@@ -193,6 +218,8 @@
 
 .secure-room-create-modal {
   width: min(520px, 92vw);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
 }
 
 .secure-room-create-modal label {

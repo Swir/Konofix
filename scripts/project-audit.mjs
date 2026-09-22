@@ -80,7 +80,10 @@ const milestoneStart = activeMilestoneHeading ? roadmapText.indexOf(activeMilest
 if (milestoneStart < 0) {
   fail('Could not locate the canonical Real Internet Test milestone in ROADMAP.md.');
 } else {
-  const milestoneEnd = roadmapText.indexOf('\n## ', milestoneStart + activeMilestoneHeading.length);
+  const milestoneTailStart = milestoneStart + activeMilestoneHeading.length;
+  const milestoneTail = roadmapText.slice(milestoneTailStart);
+  const nextVersionOffset = milestoneTail.search(/\n## \d+\.\d+\.\d+ /);
+  const milestoneEnd = nextVersionOffset < 0 ? -1 : milestoneTailStart + nextVersionOffset;
   const milestone = roadmapText.slice(milestoneStart, milestoneEnd < 0 ? undefined : milestoneEnd);
   const completedTasks = (milestone.match(/^- \[[xX]\] /gm) || []).length;
   const openTasks = (milestone.match(/^- \[ \] /gm) || []).length;

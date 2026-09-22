@@ -84,10 +84,10 @@ jobs:
           probe_binary="$GITHUB_WORKSPACE/node-linux/target/release/konofix-netprobe"
           test -x "$node_binary"
           test -x "$probe_binary"
-          "$node_binary" --help | grep -F 'Konofix Node 0.4.4'
+          "$node_binary" --help | grep -F 'Konofix Node 0.5.0'
           "$node_binary" --help | grep -F -- '--identity-file'
           "$node_binary" --help | grep -F -- '--health-file'
-          "$probe_binary" --help | grep -F 'Konofix Netprobe 0.4.4'
+          "$probe_binary" --help | grep -F 'Konofix Netprobe 0.5.0'
 
           runtime_dir="$(mktemp -d)"
           identity="$runtime_dir/node-identity.key"
@@ -143,7 +143,7 @@ jobs:
               raise SystemExit(1)
           if payload.get("schema") != 2 or payload.get("status") != "running":
               raise SystemExit(1)
-          if payload.get("version") != "0.4.4":
+          if payload.get("version") != "0.5.0":
               raise SystemExit(1)
           if payload.get("source_commit") != os.environ["EXPECTED_SOURCE_COMMIT"]:
               raise SystemExit(1)
@@ -180,13 +180,13 @@ jobs:
               "schema": 1,
               "status": "pass",
               "tool": "konofix-netprobe",
-              "version": "0.4.4",
+              "version": "0.5.0",
               "source_commit": os.environ["EXPECTED_SOURCE_COMMIT"],
               "transport": os.environ["EXPECTED_TRANSPORT"],
               "expected_peer_id": os.environ["EXPECTED_PEER"],
               "observed_peer_id": os.environ["EXPECTED_PEER"],
               "protocol_version": "/konofix/4.0",
-              "agent_version": "Konofix-Node/0.4.4",
+              "agent_version": "Konofix-Node/0.5.0",
           }
           for key, value in expected.items():
               if payload.get(key) != value:
@@ -253,33 +253,33 @@ jobs:
             --root artifact-linux \
             --commit "$GITHUB_SHA" \
             --version "$version"
-          tar -C artifact-linux -czf Konofix-Node-0.4.4-Linux-x86_64.tar.gz .
-          sha256sum Konofix-Node-0.4.4-Linux-x86_64.tar.gz > Konofix-Node-0.4.4-Linux-x86_64.tar.gz.sha256
+          tar -C artifact-linux -czf Konofix-Node-0.5.0-Linux-x86_64.tar.gz .
+          sha256sum Konofix-Node-0.5.0-Linux-x86_64.tar.gz > Konofix-Node-0.5.0-Linux-x86_64.tar.gz.sha256
 
       - name: Verify Linux Node bundle
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/linux-bundle-provenance.py verify \
-            --archive Konofix-Node-0.4.4-Linux-x86_64.tar.gz \
-            --checksum Konofix-Node-0.4.4-Linux-x86_64.tar.gz.sha256 \
+            --archive Konofix-Node-0.5.0-Linux-x86_64.tar.gz \
+            --checksum Konofix-Node-0.5.0-Linux-x86_64.tar.gz.sha256 \
             --expected-commit "$GITHUB_SHA" \
-            --expected-version 0.4.4
+            --expected-version 0.5.0
           verify_dir="$(mktemp -d)"
           trap 'rm -rf -- "$verify_dir"' EXIT
-          tar -xzf Konofix-Node-0.4.4-Linux-x86_64.tar.gz -C "$verify_dir"
+          tar -xzf Konofix-Node-0.5.0-Linux-x86_64.tar.gz -C "$verify_dir"
           test -x "$verify_dir/konofix-node"
           test -x "$verify_dir/scripts/install-public-node-linux.sh"
-          "$verify_dir/konofix-node" --help | grep -F 'Konofix Node 0.4.4'
+          "$verify_dir/konofix-node" --help | grep -F 'Konofix Node 0.5.0'
 
       - name: Upload Linux Node bundle
         if: github.event_name == 'push'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: Konofix-Node-0.4.4-Linux-x86_64-${{ github.sha }}
+          name: Konofix-Node-0.5.0-Linux-x86_64-${{ github.sha }}
           path: |
             artifact-linux
-            Konofix-Node-0.4.4-Linux-x86_64.tar.gz
-            Konofix-Node-0.4.4-Linux-x86_64.tar.gz.sha256
+            Konofix-Node-0.5.0-Linux-x86_64.tar.gz
+            Konofix-Node-0.5.0-Linux-x86_64.tar.gz.sha256
           if-no-files-found: error
           retention-days: 14

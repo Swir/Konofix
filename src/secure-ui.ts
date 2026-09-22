@@ -317,12 +317,12 @@ function renderPrivateModal(): void {
     });
   };
   wrap.querySelector('[data-private-close]')?.addEventListener('click', close);
-  wrap.addEventListener('keydown', event => {
+  wrap.onkeydown = event => {
     if (event.key === 'Escape') {
       event.preventDefault();
       close();
     }
-  });
+  };
   const input = wrap.querySelector<HTMLInputElement>('[data-private-input]');
   const send = () => { void sendPrivateMessage(); };
   input?.addEventListener('keydown', event => {

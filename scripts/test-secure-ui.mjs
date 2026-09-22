@@ -33,6 +33,7 @@ requireText("secureRoomCreateModal", 'room creation must use one in-app modal in
 requireText('aria-labelledby="secureRoomCreateTitle"', 'room creation dialog must expose its visible title to assistive technology');
 requireText('aria-labelledby="privateChatTitle"', 'private chat dialog must expose its visible title to assistive technology');
 requireText("if (event.key === 'Escape')", 'secure/private dialogs must support Escape dismissal');
+requireText("wrap.onkeydown = event =>", 'private chat rerenders must replace the Escape handler instead of accumulating listeners');
 requireText("document.querySelector<HTMLButtonElement>('#newRoom')?.focus()", 'room creation dismissal must restore keyboard focus to its trigger');
 requireText("[data-private-peer=\"${CSS.escape(peerId)}\"]", 'private chat dismissal must restore keyboard focus to the originating peer action');
 

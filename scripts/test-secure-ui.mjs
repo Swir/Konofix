@@ -52,6 +52,12 @@ if (!css.includes('@media (pointer: coarse)') || !css.includes('min-width: 44px'
 if (!css.includes('env(safe-area-inset-top)') || !css.includes('env(safe-area-inset-bottom)')) {
   throw new Error('mobile private chat must respect display safe-area insets');
 }
+if (!css.includes('@media (forced-colors: active)') || !css.includes('background: Highlight;') || !css.includes('color: HighlightText;')) {
+  throw new Error('secure/private UI must preserve controls and unread status in Windows forced-colors mode');
+}
+if (!css.includes('outline-color: Highlight;')) {
+  throw new Error('forced-colors mode must keep keyboard focus visibly distinct');
+}
 
 if (ui.includes("if (!fileButton || row.querySelector('[data-private-peer]')) return;")) {
   throw new Error('existing private-chat buttons must not skip unread-state refresh');

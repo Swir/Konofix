@@ -277,3 +277,43 @@
     }
   }
 }
+
+@media (forced-colors: active) {
+  .secure-room-locked,
+  .secure-room-manage,
+  .mini-private,
+  .private-chat-modal,
+  .private-message,
+  .private-message.mine,
+  .private-chat-head > button,
+  .private-compose {
+    border-color: CanvasText;
+    box-shadow: none;
+  }
+
+  .secure-room-manage,
+  .mini-private,
+  .private-chat-head > button,
+  .private-chat-modal,
+  .private-compose {
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .private-unread {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+    box-shadow: none;
+  }
+
+  .secure-room-manage:focus-visible,
+  .mini-private:focus-visible,
+  .private-chat-head > button:focus-visible,
+  .private-compose input:focus-visible,
+  .private-compose button:focus-visible,
+  .secure-room-create-modal input:focus-visible,
+  .secure-room-create-modal button:focus-visible {
+    outline-color: Highlight;
+  }
+}

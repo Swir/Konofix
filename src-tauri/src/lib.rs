@@ -1559,11 +1559,23 @@ async fn send_private_message(
 }
 
 #[tauri::command]
-async fn set_private_messages_enabled(enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
-    let tx = state.tx.lock().map_err(|_| "Błąd blokady stanu")?.clone().ok_or("Brak połączenia P2P")?;
+async fn set_private_messages_enabled(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "Błąd blokady stanu")?
+        .clone()
+        .ok_or("Brak połączenia P2P")?;
     let (reply, response) = oneshot::channel();
-    tx.send(NetworkCommand::SetPrivateMessagesEnabled { enabled, reply }).await.map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
-    response.await.map_err(|_| "Private-message policy update interrupted.".to_string())?
+    tx.send(NetworkCommand::SetPrivateMessagesEnabled { enabled, reply })
+        .await
+        .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
+    response
+        .await
+        .map_err(|_| "Private-message policy update interrupted.".to_string())?
 }
 
 #[tauri::command]

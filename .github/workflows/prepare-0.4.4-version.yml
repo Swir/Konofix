@@ -128,7 +128,6 @@ jobs:
           progress_test_path = Path("scripts/test-progress-svg.mjs")
           progress_test = progress_test_path.read_text(encoding="utf-8")
           progress_test = progress_test.replace("## 0.4.3 — Real Internet Test", "## 0.4.4 — Real Internet Test")
-          progress_test = progress_test.replace("scope: '0.4.3 — Real Internet Test'", "scope: '0.4.4 — Real Internet Test'")
           progress_test_path.write_text(progress_test, encoding="utf-8")
 
           windows_path = Path(".github/workflows/windows-ci.yml")
@@ -164,6 +163,7 @@ jobs:
         shell: bash
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
+          node scripts/progress-svg.mjs
           npm run audit
 
       - name: Final version-package assertions
@@ -191,7 +191,7 @@ jobs:
         run: |
           set -euo pipefail
           git rm -- .github/workflows/prepare-0.4.4-version.yml
-          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock node-linux/Cargo.toml ROADMAP.md CHANGELOG.md scripts/progress-svg.mjs scripts/test-progress-svg.mjs .github/workflows/windows-ci.yml .github/workflows/linux-node-ci.yml
+          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock node-linux/Cargo.toml ROADMAP.md CHANGELOG.md scripts/progress-svg.mjs scripts/test-progress-svg.mjs assets/readme/progress-card.svg assets/readme/progress-mini.svg assets/readme/progress-template.svg .github/workflows/windows-ci.yml .github/workflows/linux-node-ci.yml
           git diff --cached --check
           if git diff --cached --quiet; then
             echo 'No coherent package changes remain to commit.'

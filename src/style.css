@@ -284,3 +284,20 @@ button:disabled { opacity:.45; cursor:not-allowed; }
   white-space: nowrap;
   color: #cbd8ff;
 }
+
+
+/* Konofix 0.5 room-scoped sharing */
+.public-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin: 2px 0 9px;
+  padding: 4px 8px;
+  border: 1px solid rgba(98, 229, 255, .16);
+  border-radius: 999px;
+  background: rgba(0, 136, 255, .07);
+  color: #8da8b8;
+  font-size: 10px;
+}
+.public-scope strong { color: #dff8ff; font-weight: 700; }

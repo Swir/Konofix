@@ -1,20 +1,28 @@
 [package]
 name = "konofix-chat"
-default-run = "konofix-chat"
-version = "0.4.3"
+version = "0.4.4"
 description = "Ephemeral global peer-to-peer chat for Windows"
 authors = ["Swir"]
 edition = "2021"
 rust-version = "1.88"
 
-[lib]
-name = "konofix_chat_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+[[bin]]
+name = "konofix-chat"
+path = "src/main.rs"
 
-[target.'cfg(windows)'.build-dependencies]
+[[bin]]
+name = "konofix-node"
+path = "src/bin/konofix-node.rs"
+
+[[bin]]
+name = "konofix-netprobe"
+path = "src/bin/konofix-netprobe.rs"
+
+[build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "signal"] }
@@ -45,7 +53,4 @@ libp2p = { version = "0.57", features = [
   "cbor",
   "macros"
 ] }
-
-[target.'cfg(windows)'.dependencies]
-tauri = { version = "2", features = [] }
 rfd = "0.17.2"

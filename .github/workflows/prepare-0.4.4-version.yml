@@ -1,0 +1,187 @@
+name: Prepare 0.4.4 coherent version package
+
+on:
+  push:
+    branches: [ beta/0.4.4-accessibility ]
+    paths:
+      - '.github/workflows/prepare-0.4.4-version.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prepare-0.4.4-version
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact development branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: beta/0.4.4-accessibility
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+
+      - name: Align 0.4.4 manifests, locks, roadmap, changelog and CI metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          VERSION = "0.4.4"
+
+          def write_json(path: str, payload: dict) -> None:
+              Path(path).write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+          package_path = Path("package.json")
+          package = json.loads(package_path.read_text(encoding="utf-8"))
+          package["version"] = VERSION
+          write_json(str(package_path), package)
+
+          package_lock_path = Path("package-lock.json")
+          package_lock = json.loads(package_lock_path.read_text(encoding="utf-8"))
+          package_lock["version"] = VERSION
+          package_lock["packages"][""]["version"] = VERSION
+          write_json(str(package_lock_path), package_lock)
+
+          tauri_path = Path("src-tauri/tauri.conf.json")
+          tauri = json.loads(tauri_path.read_text(encoding="utf-8"))
+          tauri["version"] = VERSION
+          write_json(str(tauri_path), tauri)
+
+          for manifest_name in ("src-tauri/Cargo.toml", "node-linux/Cargo.toml"):
+              manifest_path = Path(manifest_name)
+              manifest = manifest_path.read_text(encoding="utf-8")
+              updated, count = re.subn(
+                  r'(^\[package\]\s*\n(?:.*\n)*?^version\s*=\s*")[^"]+("\s*$)',
+                  rf'\g<1>{VERSION}\g<2>',
+                  manifest,
+                  count=1,
+                  flags=re.MULTILINE,
+              )
+              if count != 1:
+                  raise SystemExit(f"Could not update package version in {manifest_name}")
+              manifest_path.write_text(updated, encoding="utf-8")
+
+          cargo_lock_path = Path("src-tauri/Cargo.lock")
+          cargo_lock = cargo_lock_path.read_text(encoding="utf-8")
+          current_root = '[[package]]\nname = "konofix-chat"\nversion = "0.4.3"'
+          updated_root = f'[[package]]\nname = "konofix-chat"\nversion = "{VERSION}"'
+          if updated_root not in cargo_lock:
+              if cargo_lock.count(current_root) != 1:
+                  raise SystemExit("Expected exactly one 0.4.3 konofix-chat root package in Cargo.lock")
+              cargo_lock = cargo_lock.replace(current_root, updated_root, 1)
+          cargo_lock_path.write_text(cargo_lock, encoding="utf-8")
+
+          roadmap_path = Path("ROADMAP.md")
+          roadmap = roadmap_path.read_text(encoding="utf-8")
+          old_heading = "## 0.4.3 — Real Internet Test 🚧"
+          new_heading = "## 0.4.4 — Real Internet Test 🚧"
+          if new_heading not in roadmap:
+              if roadmap.count(old_heading) != 1:
+                  raise SystemExit("Expected one active 0.4.3 roadmap heading")
+              roadmap = roadmap.replace(old_heading, new_heading, 1)
+          roadmap_path.write_text(roadmap, encoding="utf-8")
+
+          changelog_path = Path("CHANGELOG.md")
+          changelog = changelog_path.read_text(encoding="utf-8")
+          if "## 0.4.4\n" not in changelog:
+              marker = "# Changelog\n\n"
+              if not changelog.startswith(marker):
+                  raise SystemExit("Unexpected CHANGELOG.md header")
+              entry = (
+                  "## 0.4.4\n\n"
+                  "- improved protected-room and private 1:1 chat responsiveness/accessibility with keyboard focus trapping, Escape close/focus restoration, visible focus states, mobile safe-area support and touch targets of at least 44 px,\n"
+                  "- added Windows High Contrast / forced-colors handling, reduced-motion behavior, accessible labels and live error/unread announcements with focused regression coverage,\n"
+                  "- aligned frontend, Tauri, Rust and isolated Linux Node version metadata plus beta publication tooling on 0.4.4 while preserving P2P rooms, private chat, duplicate-nickname incumbent ownership, emoji/colors, WORLD sharing and room-aware transfers,\n"
+                  "- kept Global Beta qualification at the evidence-backed 56/67 = 83.6%; this UX/version checkpoint completes no real-network/load/failover gate by itself.\n\n"
+              )
+              changelog = marker + entry + changelog[len(marker):]
+          changelog_path.write_text(changelog, encoding="utf-8")
+
+          windows_path = Path(".github/workflows/windows-ci.yml")
+          windows = windows_path.read_text(encoding="utf-8")
+          old_note = "docs\\RELEASE_0.4.3_BETA1.md"
+          new_note = "docs\\RELEASE_0.4.4_BETA1.md"
+          if old_note in windows:
+              windows = windows.replace(old_note, new_note)
+          if new_note not in windows:
+              raise SystemExit("Windows CI does not stage the 0.4.4 beta note")
+          windows_path.write_text(windows, encoding="utf-8")
+
+          linux_path = Path(".github/workflows/linux-node-ci.yml")
+          linux = linux_path.read_text(encoding="utf-8")
+          replacements = linux.count("0.4.3")
+          if replacements == 0 and "0.4.4" not in linux:
+              raise SystemExit("Linux CI has no recognizable version literals")
+          linux = linux.replace("0.4.3", VERSION)
+          linux_path.write_text(linux, encoding="utf-8")
+
+          print(f"Aligned 0.4.4 package; Linux CI version replacements: {replacements}")
+          PY
+
+      - name: Canonicalize frontend lockfile without dependency upgrades
+        shell: bash
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Verify locked Rust metadata
+        shell: bash
+        run: cargo metadata --locked --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 >/dev/null
+
+      - name: Verify frontend install and project audit
+        shell: bash
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run audit
+
+      - name: Final version-package assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F '## 0.4.4 — Real Internet Test' ROADMAP.md >/dev/null
+          grep -F '## 0.4.4' CHANGELOG.md >/dev/null
+          grep -F 'name = "konofix-chat"' src-tauri/Cargo.lock >/dev/null
+          python3 - <<'PY'
+          import json, pathlib, re
+          assert json.load(open('package.json', encoding='utf-8'))['version'] == '0.4.4'
+          lock = json.load(open('package-lock.json', encoding='utf-8'))
+          assert lock['version'] == '0.4.4' and lock['packages']['']['version'] == '0.4.4'
+          cargo = pathlib.Path('src-tauri/Cargo.lock').read_text(encoding='utf-8')
+          assert re.search(r'\[\[package\]\]\nname = "konofix-chat"\nversion = "0\.4\.4"', cargo)
+          PY
+          git diff --check
+
+      - name: Commit coherent package and remove one-shot helper
+        shell: bash
+        env:
+          GH_PUSH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git rm -- .github/workflows/prepare-0.4.4-version.yml
+          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock node-linux/Cargo.toml ROADMAP.md CHANGELOG.md .github/workflows/windows-ci.yml .github/workflows/linux-node-ci.yml
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'No coherent package changes remain to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore(version): finalize coherent 0.4.4 beta package'
+          git remote set-url origin "https://x-access-token:${GH_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin HEAD:beta/0.4.4-accessibility

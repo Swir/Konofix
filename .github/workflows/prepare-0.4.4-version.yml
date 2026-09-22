@@ -1,0 +1,159 @@
+name: Prepare 0.4.4 coherent version package
+
+on:
+  push:
+    branches: [ beta/0.4.4-accessibility ]
+    paths:
+      - '.github/workflows/prepare-0.4.4-version.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prepare-0.4.4-version
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact development branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: beta/0.4.4-accessibility
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+
+      - name: Align non-workflow 0.4.4 package files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          VERSION = "0.4.4"
+
+          def write_json(path: str, payload: dict) -> None:
+              Path(path).write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+          package = json.loads(Path("package.json").read_text(encoding="utf-8"))
+          package["version"] = VERSION
+          write_json("package.json", package)
+
+          lock = json.loads(Path("package-lock.json").read_text(encoding="utf-8"))
+          lock["version"] = VERSION
+          lock["packages"][""]["version"] = VERSION
+          write_json("package-lock.json", lock)
+
+          tauri = json.loads(Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+          tauri["version"] = VERSION
+          write_json("src-tauri/tauri.conf.json", tauri)
+
+          for name in ("src-tauri/Cargo.toml", "node-linux/Cargo.toml"):
+              path = Path(name)
+              text = path.read_text(encoding="utf-8")
+              updated, count = re.subn(
+                  r'(^\[package\]\s*\n(?:.*\n)*?^version\s*=\s*")[^"]+("\s*$)',
+                  rf'\g<1>{VERSION}\g<2>',
+                  text,
+                  count=1,
+                  flags=re.MULTILINE,
+              )
+              if count != 1:
+                  raise SystemExit(f"Could not update package version in {name}")
+              path.write_text(updated, encoding="utf-8")
+
+          cargo_path = Path("src-tauri/Cargo.lock")
+          cargo = cargo_path.read_text(encoding="utf-8")
+          old = '[[package]]\nname = "konofix-chat"\nversion = "0.4.3"'
+          new = '[[package]]\nname = "konofix-chat"\nversion = "0.4.4"'
+          if new not in cargo:
+              if cargo.count(old) != 1:
+                  raise SystemExit("Expected exactly one 0.4.3 konofix-chat root package")
+              cargo = cargo.replace(old, new, 1)
+          cargo_path.write_text(cargo, encoding="utf-8")
+
+          roadmap_path = Path("ROADMAP.md")
+          roadmap = roadmap_path.read_text(encoding="utf-8")
+          old_heading = "## 0.4.3 — Real Internet Test 🚧"
+          new_heading = "## 0.4.4 — Real Internet Test 🚧"
+          if new_heading not in roadmap:
+              if roadmap.count(old_heading) != 1:
+                  raise SystemExit("Expected one active 0.4.3 roadmap heading")
+              roadmap = roadmap.replace(old_heading, new_heading, 1)
+          roadmap_path.write_text(roadmap, encoding="utf-8")
+
+          changelog_path = Path("CHANGELOG.md")
+          changelog = changelog_path.read_text(encoding="utf-8")
+          if "## 0.4.4\n" not in changelog:
+              marker = "# Changelog\n\n"
+              entry = (
+                  "## 0.4.4\n\n"
+                  "- improved protected-room and private 1:1 chat responsiveness/accessibility with keyboard focus trapping, Escape close/focus restoration, visible focus states, mobile safe-area support and touch targets of at least 44 px,\n"
+                  "- added Windows High Contrast / forced-colors handling, reduced-motion behavior, accessible labels and live error/unread announcements with focused regression coverage,\n"
+                  "- aligned frontend, Tauri, Rust and isolated Linux Node version metadata plus beta publication tooling on 0.4.4 while preserving P2P rooms, private chat, duplicate-nickname incumbent ownership, emoji/colors, WORLD sharing and room-aware transfers,\n"
+                  "- kept Global Beta qualification at the evidence-backed 56/67 = 83.6%; this UX/version checkpoint completes no real-network/load/failover gate by itself.\n\n"
+              )
+              if not changelog.startswith(marker):
+                  raise SystemExit("Unexpected changelog header")
+              changelog = marker + entry + changelog[len(marker):]
+          changelog_path.write_text(changelog, encoding="utf-8")
+
+          progress_path = Path("scripts/progress-svg.mjs")
+          progress = progress_path.read_text(encoding="utf-8").replace(
+              "const MILESTONE_PREFIX = '## 0.4.3 — Real Internet Test';",
+              "const MILESTONE_PREFIX = '## 0.4.4 — Real Internet Test';",
+          )
+          if "## 0.4.4 — Real Internet Test" not in progress:
+              raise SystemExit("Progress generator not bound to 0.4.4")
+          progress_path.write_text(progress, encoding="utf-8")
+
+          test_path = Path("scripts/test-progress-svg.mjs")
+          test_text = test_path.read_text(encoding="utf-8").replace(
+              "## 0.4.3 — Real Internet Test", "## 0.4.4 — Real Internet Test"
+          )
+          test_path.write_text(test_text, encoding="utf-8")
+          PY
+
+      - name: Canonicalize locks and regenerate progress assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          cargo metadata --locked --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 >/dev/null
+          node scripts/progress-svg.mjs
+          node scripts/project-audit.mjs
+          node scripts/test-progress-svg.mjs
+          node scripts/progress-svg.mjs --check
+          git diff --check
+
+      - name: Commit non-workflow coherent package
+        shell: bash
+        env:
+          GH_PUSH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock node-linux/Cargo.toml ROADMAP.md CHANGELOG.md scripts/progress-svg.mjs scripts/test-progress-svg.mjs assets/readme/progress-card.svg assets/readme/progress-mini.svg assets/readme/progress-template.svg
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'No non-workflow package changes remain to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore(version): finalize non-workflow 0.4.4 package'
+          git remote set-url origin "https://x-access-token:${GH_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin HEAD:beta/0.4.4-accessibility

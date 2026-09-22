@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE_PATH = 'ROADMAP.md';
 const PROJECT = 'Konofix Chat';
-const MILESTONE_PREFIX = '## 0.4.3 — Real Internet Test';
+const MILESTONE_PREFIX = '## 0.4.4 — Real Internet Test';
 const NEXT_MILESTONE_PREFIX = '## 0.5.0';
 const OUTPUTS = {
   card: 'assets/readme/progress-card.svg',

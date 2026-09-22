@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.4
+
+- improved protected-room and private 1:1 chat responsiveness/accessibility with keyboard focus trapping, Escape close/focus restoration, visible focus states, mobile safe-area support and touch targets of at least 44 px,
+- added Windows High Contrast / forced-colors handling, reduced-motion behavior, accessible labels and live error/unread announcements with focused regression coverage,
+- aligned frontend, Tauri, Rust and isolated Linux Node version metadata plus beta publication tooling on 0.4.4 while preserving P2P rooms, private chat, duplicate-nickname incumbent ownership, emoji/colors, WORLD sharing and room-aware transfers,
+- kept Global Beta qualification at the evidence-backed 56/67 = 83.6%; this UX/version checkpoint completes no real-network/load/failover gate by itself.
+
 ## 0.4.3
 
 - fixed the protected-room owner UI freeze by coalescing secure DOM augmentation and making room-manager/unread mutations idempotent, preventing the MutationObserver from feeding its own writes indefinitely,

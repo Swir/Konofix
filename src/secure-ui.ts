@@ -30,6 +30,24 @@ function esc(value: string): string {
   }[character]!));
 }
 
+function trapDialogFocus(container: HTMLElement, event: KeyboardEvent): void {
+  if (event.key !== 'Tab') return;
+  const focusable = Array.from(container.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  )).filter(element => element.getAttribute('aria-hidden') !== 'true');
+  if (focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (event.shiftKey && (active === first || !container.contains(active))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function roomButton(roomId: string): HTMLButtonElement | null {
   return document.querySelector<HTMLButtonElement>(`button[data-room="${CSS.escape(roomId)}"]`);
 }
@@ -115,8 +133,8 @@ function augmentMainUi(): void {
     }
     button.dataset.privateNick = nick;
     button.dataset.privateColor = color;
-    button.title = t('private.open', { nick });
-    button.setAttribute('aria-label', t('private.open', { nick }));
+    const openLabel = t('private.open', { nick });
+    button.title = openLabel;
 
     const unread = conversations.unreadCount(peerId);
     let badge = button.querySelector<HTMLSpanElement>('.private-unread');
@@ -130,8 +148,11 @@ function augmentMainUi(): void {
       if (badge.textContent !== unreadText) badge.textContent = unreadText;
       const unreadLabel = t('private.unread', { count: unread });
       if (badge.getAttribute('aria-label') !== unreadLabel) badge.setAttribute('aria-label', unreadLabel);
+      const accessibleLabel = `${openLabel}. ${unreadLabel}`;
+      if (button.getAttribute('aria-label') !== accessibleLabel) button.setAttribute('aria-label', accessibleLabel);
     } else {
       badge?.remove();
+      if (button.getAttribute('aria-label') !== openLabel) button.setAttribute('aria-label', openLabel);
     }
   });
 }
@@ -142,9 +163,9 @@ function createRoomWithOptionalPassword(): void {
   const wrap = document.createElement('div');
   wrap.id = 'secureRoomCreateModal';
   wrap.className = 'modal-wrap secure-room-create-wrap';
-  wrap.innerHTML = `<section class="modal glass compact-modal secure-room-create-modal" role="dialog" aria-modal="true">
+  wrap.innerHTML = `<section class="modal glass compact-modal secure-room-create-modal" role="dialog" aria-modal="true" aria-labelledby="secureRoomCreateTitle">
     <div class="modal-head">
-      <div><span class="eyebrow">ROOMS 2.0</span><h3>${esc(t('rooms.create'))}</h3></div>
+      <div><span class="eyebrow">ROOMS 2.0</span><h3 id="secureRoomCreateTitle">${esc(t('rooms.create'))}</h3></div>
       <button type="button" data-room-create-close aria-label="${esc(t('common.cancel'))}">×</button>
     </div>
     <label for="secureRoomName">${esc(t('rooms.newPrompt'))}</label>
@@ -152,7 +173,7 @@ function createRoomWithOptionalPassword(): void {
     <label for="secureRoomPassword">${esc(t('rooms.passwordManage'))}</label>
     <input id="secureRoomPassword" type="password" maxlength="64" autocomplete="new-password" />
     <p class="secure-room-create-hint">${esc(t('rooms.passwordOptionalPrompt'))}</p>
-    <div class="error" data-room-create-error></div>
+    <div class="error" data-room-create-error role="alert" aria-live="polite"></div>
     <div class="secure-room-create-actions">
       <button type="button" class="ghost" data-room-create-close>${esc(t('common.cancel'))}</button>
       <button type="button" class="primary compact" data-room-create-submit>${esc(t('rooms.create'))}</button>
@@ -165,10 +186,19 @@ function createRoomWithOptionalPassword(): void {
   const error = wrap.querySelector<HTMLDivElement>('[data-room-create-error]')!;
   const submit = wrap.querySelector<HTMLButtonElement>('[data-room-create-submit]')!;
   const close = () => {
-    if (!roomOperationPending) wrap.remove();
+    if (roomOperationPending) return;
+    wrap.remove();
+    requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('#newRoom')?.focus());
   };
   wrap.querySelectorAll('[data-room-create-close]').forEach(button => button.addEventListener('click', close));
   wrap.addEventListener('click', event => { if (event.target === wrap) close(); });
+  wrap.addEventListener('keydown', event => {
+    if (event.key === 'Tab') trapDialogFocus(wrap, event);
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+    }
+  });
 
   const create = async () => {
     if (roomOperationPending) return;
@@ -283,27 +313,39 @@ function renderPrivateModal(): void {
   const messages = conversations.conversation(activePrivatePeerId);
   const offline = offlinePeers.has(activePrivatePeerId);
   const color = normalizeNickColor(activePrivateColor);
-  wrap.innerHTML = `<section class="private-chat-modal glass" role="dialog" aria-modal="true" aria-label="${esc(t('private.open', { nick: activePrivateNick }))}">
+  wrap.innerHTML = `<section class="private-chat-modal glass" role="dialog" aria-modal="true" aria-labelledby="privateChatTitle">
     <header class="private-chat-head">
-      <div><span class="eyebrow">PRIVATE P2P</span><h3 style="color:${color}">${esc(activePrivateNick)}</h3><small>${esc(offline ? t('private.offline') : t('private.subtitle'))}</small></div>
+      <div><span class="eyebrow">PRIVATE P2P</span><h3 id="privateChatTitle" style="color:${color}">${esc(activePrivateNick)}</h3><small>${esc(offline ? t('private.offline') : t('private.subtitle'))}</small></div>
       <button type="button" data-private-close aria-label="${esc(t('common.cancel'))}">×</button>
     </header>
     <div class="private-messages" data-private-messages>
       ${messages.length ? messages.map(message => privateMessageHtml(message, activePrivatePeerId)).join('') : `<div class="private-empty">${esc(t('private.subtitle'))}</div>`}
     </div>
     <footer class="private-compose">
-      <input data-private-input maxlength="4000" autocomplete="off" spellcheck="true" placeholder="${esc(t('private.messageTo', { nick: activePrivateNick }))}" ${offline ? 'disabled' : ''}/>
-      <button type="button" class="send" data-private-send ${offline ? 'disabled' : ''}>➤</button>
+      <input data-private-input maxlength="4000" autocomplete="off" spellcheck="true" placeholder="${esc(t('private.messageTo', { nick: activePrivateNick }))}" aria-label="${esc(t('private.messageTo', { nick: activePrivateNick }))}" ${offline ? 'disabled' : ''}/>
+      <button type="button" class="send" data-private-send aria-label="${esc(t('common.send'))}" ${offline ? 'disabled' : ''}>➤</button>
     </footer>
   </section>`;
 
   const close = () => {
+    const peerId = activePrivatePeerId;
     conversations.close();
     activePrivatePeerId = '';
     wrap?.remove();
     queueAugment();
+    requestAnimationFrame(() => {
+      if (!peerId) return;
+      document.querySelector<HTMLButtonElement>(`[data-private-peer="${CSS.escape(peerId)}"]`)?.focus();
+    });
   };
   wrap.querySelector('[data-private-close]')?.addEventListener('click', close);
+  wrap.onkeydown = event => {
+    if (event.key === 'Tab') trapDialogFocus(wrap, event);
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+    }
+  };
   const input = wrap.querySelector<HTMLInputElement>('[data-private-input]');
   const send = () => { void sendPrivateMessage(); };
   input?.addEventListener('keydown', event => {

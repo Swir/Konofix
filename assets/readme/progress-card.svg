@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="180" viewBox="0 0 1200 180" role="img" aria-labelledby="progressTitle progressDesc" data-source="ROADMAP.md" data-completed="56" data-total="67" data-progress-percent="83.6%" data-fill-width="919.403">
-  <title id="progressTitle">Konofix Chat — 0.4.3 — Real Internet Test progress</title>
-  <desc id="progressDesc">Konofix Chat 0.4.3 — Real Internet Test: 56 of 67 verified tasks, 83.6%, IN PROGRESS. Release readiness is a separate gate.</desc>
+  <title id="progressTitle">Konofix Chat — 0.4.4 — Real Internet Test progress</title>
+  <desc id="progressDesc">Konofix Chat 0.4.4 — Real Internet Test: 56 of 67 verified tasks, 83.6%, IN PROGRESS. Release readiness is a separate gate.</desc>
   <defs>
     <linearGradient id="progressGradient" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0088FF"/><stop offset="1" stop-color="#62E5FF"/></linearGradient>
     <linearGradient id="surfaceGradient" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#02050A"/><stop offset="1" stop-color="#07111C"/></linearGradient>
@@ -13,7 +13,7 @@
   <rect width="1200" height="180" rx="24" fill="url(#grid)"/>
   <text x="50" y="35" fill="#62E5FF" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="2">SWIR PROGRESS • KONOFIX CHAT</text>
   <text x="1150" y="35" text-anchor="end" fill="#62E5FF" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="1.2">IN PROGRESS</text>
-  <text x="50" y="72" fill="#F4FAFF" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="600">0.4.3 — Real Internet Test</text>
+  <text x="50" y="72" fill="#F4FAFF" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="600">0.4.4 — Real Internet Test</text>
   <rect x="50" y="108" width="1100" height="18" rx="9" fill="#0B1825" stroke="#62E5FF" stroke-opacity="0.22"/>
   <rect data-role="progress-fill" x="50" y="108" width="919.403" height="18" fill="url(#progressGradient)" clip-path="url(#cardTrack)" filter="url(#glow)"/>
   <text x="50" y="158" fill="#8DA8B8" font-family="Segoe UI, Arial, sans-serif" font-size="14">56 / 67 VERIFIED TASKS</text>

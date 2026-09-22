@@ -9,7 +9,7 @@ import {
   validateEmbeddings,
 } from './progress-svg.mjs';
 
-const fixture = (completed, open, heading = '## 0.4.3 — Real Internet Test 🚧') => `${heading}\n${'- [x] done\n'.repeat(completed)}${'- [ ] todo\n'.repeat(open)}\n## 0.5.0 — Next\n`;
+const fixture = (completed, open, heading = '## 0.4.4 — Real Internet Test 🚧') => `${heading}\n${'- [x] done\n'.repeat(completed)}${'- [ ] todo\n'.repeat(open)}\n## 0.5.0 — Next\n`;
 
 {
   const progress = { ...computeProgress(1, 13), project: 'Fixture', scope: 'Partial scope', source: 'fixture.md' };
@@ -75,7 +75,7 @@ const fixture = (completed, open, heading = '## 0.4.3 — Real Internet Test �
 }
 
 {
-  const parsed = parseMilestone('## 0.4.3 — Real Internet Test 🚧\nNo checklist yet.\n\n## 0.5.0 — Next\n');
+  const parsed = parseMilestone('## 0.4.4 — Real Internet Test 🚧\nNo checklist yet.\n\n## 0.5.0 — Next\n');
   assert.equal(parsed.total, 0);
   assert.equal(parsed.percentText, 'N/A');
   assert.equal(parsed.status, 'PLANNING');

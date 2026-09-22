@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { normalizeNickColor, renderChatText } from './chat-expression';
+import { KONOFIX_EMOJI, normalizeNickColor, renderChatText } from './chat-expression';
 import { t } from './i18n';
 import {
   PrivateConversationStore,
@@ -315,13 +315,20 @@ function renderPrivateModal(): void {
   const color = normalizeNickColor(activePrivateColor);
   wrap.innerHTML = `<section class="private-chat-modal glass" role="dialog" aria-modal="true" aria-labelledby="privateChatTitle">
     <header class="private-chat-head">
-      <div><span class="eyebrow">PRIVATE P2P</span><h3 id="privateChatTitle" style="color:${color}">${esc(activePrivateNick)}</h3><small>${esc(offline ? t('private.offline') : t('private.subtitle'))}</small></div>
+      <div><span class="eyebrow">PRIVATE P2P</span><h3 id="privateChatTitle" style="color:${color}">${esc(activePrivateNick)}</h3><span class="private-peer-status ${offline ? 'offline' : ''}"><i></i>${esc(offline ? t('private.offline') : t('private.subtitle'))}</span></div>
       <button type="button" data-private-close aria-label="${esc(t('common.cancel'))}">×</button>
     </header>
     <div class="private-messages" data-private-messages>
       ${messages.length ? messages.map(message => privateMessageHtml(message, activePrivatePeerId)).join('') : `<div class="private-empty">${esc(t('private.subtitle'))}</div>`}
     </div>
     <footer class="private-compose">
+      <div class="private-compose-tools">
+        <button type="button" data-private-file title="${esc(t('private.sendFile', { nick: activePrivateNick }))}" aria-label="${esc(t('private.sendFile', { nick: activePrivateNick }))}" ${offline ? 'disabled' : ''}>📎</button>
+        <button type="button" data-private-emoji title="${esc(t('chat.emoji'))}" aria-label="${esc(t('chat.emoji'))}">☺</button>
+        <div class="private-emoji-panel" data-private-emoji-panel hidden>
+          ${KONOFIX_EMOJI.filter((item, index, items) => items.findIndex(other => other.glyph === item.glyph) === index).map(item => `<button type="button" data-private-emoji-code="${esc(item.code)}" title="${esc(item.code)} · ${esc(item.label)}">${item.glyph}</button>`).join('')}
+        </div>
+      </div>
       <input data-private-input maxlength="4000" autocomplete="off" spellcheck="true" placeholder="${esc(t('private.messageTo', { nick: activePrivateNick }))}" aria-label="${esc(t('private.messageTo', { nick: activePrivateNick }))}" ${offline ? 'disabled' : ''}/>
       <button type="button" class="send" data-private-send aria-label="${esc(t('common.send'))}" ${offline ? 'disabled' : ''}>➤</button>
     </footer>
@@ -352,6 +359,28 @@ function renderPrivateModal(): void {
     if (event.key === 'Enter' && !event.shiftKey) send();
   });
   wrap.querySelector('[data-private-send]')?.addEventListener('click', send);
+  wrap.querySelector('[data-private-file]')?.addEventListener('click', () => { void sendPrivateFile(); });
+  const emojiToggle = wrap.querySelector<HTMLButtonElement>('[data-private-emoji]');
+  const emojiPanel = wrap.querySelector<HTMLDivElement>('[data-private-emoji-panel]');
+  emojiToggle?.addEventListener('click', () => {
+    if (emojiPanel) emojiPanel.hidden = !emojiPanel.hidden;
+  });
+  wrap.querySelectorAll<HTMLButtonElement>('[data-private-emoji-code]').forEach(button => button.addEventListener('click', () => {
+    if (!input) return;
+    const code = button.dataset.privateEmojiCode ?? '';
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const before = input.value.slice(0, start);
+    const after = input.value.slice(end);
+    const prefix = before && !/\s$/.test(before) ? ' ' : '';
+    const suffix = after && !/^\s/.test(after) ? ' ' : '';
+    const inserted = `${prefix}${code}${suffix}`;
+    input.value = `${before}${inserted}${after}`.slice(0, 4000);
+    const caret = Math.min(before.length + inserted.length, input.value.length);
+    input.focus();
+    input.setSelectionRange(caret, caret);
+    if (emojiPanel) emojiPanel.hidden = true;
+  }));
   const messageList = wrap.querySelector<HTMLDivElement>('[data-private-messages]');
   if (messageList) messageList.scrollTop = messageList.scrollHeight;
   input?.focus();
@@ -364,6 +393,18 @@ function openPrivateChat(peerId: string, nick: string, color: string): void {
   conversations.open(peerId);
   renderPrivateModal();
   queueAugment();
+}
+
+async function sendPrivateFile(): Promise<void> {
+  if (!activePrivatePeerId || offlinePeers.has(activePrivatePeerId)) return;
+  try {
+    await invoke('offer_file', {
+      peerId: activePrivatePeerId,
+      roomId: null,
+    });
+  } catch (error) {
+    alert(t('transfer.startError', { error: String(error) }));
+  }
 }
 
 async function sendPrivateMessage(): Promise<void> {

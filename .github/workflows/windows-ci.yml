@@ -180,7 +180,7 @@ jobs:
           Copy-Item 'docs\NODE_SOAK.md' 'artifact\NODE_SOAK.md'
           Copy-Item 'docs\GLOBAL_BETA.md' 'artifact\GLOBAL_BETA.md'
           New-Item -ItemType Directory -Path 'artifact\docs' | Out-Null
-          Copy-Item 'docs\global-beta-evidence.template.json', 'docs\RELEASE_0.5.0_BETA1.md' 'artifact\docs'
+          Copy-Item 'docs\global-beta-evidence.template.json', 'docs\RELEASE_0.5.1_BETA1.md' 'artifact\docs'
           $package = Get-Content 'package.json' -Raw | ConvertFrom-Json
           & .\scripts\new-tester-handoff.ps1 -OutputPath 'artifact\TESTER_HANDOFF.md' -Version ([string]$package.version) -Commit ([string]$env:GITHUB_SHA) -WorkflowRun ([string]$env:GITHUB_RUN_ID)
 
@@ -428,7 +428,7 @@ jobs:
       - name: Upload Windows test bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: Konofix-Chat-0.5.0-Windows-${{ github.sha }}
+          name: Konofix-Chat-0.5.1-Windows-${{ github.sha }}
           path: |
             artifact
             Konofix-Chat-*-Windows-${{ github.sha }}.zip
@@ -458,7 +458,7 @@ jobs:
       - name: Download this build's verified Windows bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: Konofix-Chat-0.5.0-Windows-${{ github.sha }}
+          name: Konofix-Chat-0.5.1-Windows-${{ github.sha }}
           path: downloaded
       - name: Prepare exact-build beta files
         shell: pwsh

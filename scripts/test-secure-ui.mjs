@@ -5,6 +5,7 @@ function read(path) {
 }
 
 const ui = read('src/secure-ui.ts');
+const css = read('src/secure-ui.css');
 const index = read('index.html');
 
 function requireText(text, message) {
@@ -29,6 +30,16 @@ requireText("let augmentQueued = false;", 'secure UI must coalesce DOM augmentat
 requireText("existingManage.textContent !== manageIcon", 'room password manager updates must be idempotent to avoid MutationObserver loops');
 requireText("badge.textContent !== unreadText", 'unread badge updates must be idempotent to avoid MutationObserver loops');
 requireText("secureRoomCreateModal", 'room creation must use one in-app modal instead of chained browser prompts');
+
+if (!css.includes(':focus-visible')) {
+  throw new Error('secure-room and private-chat controls must expose a visible keyboard focus state');
+}
+if (!css.includes('max-height: calc(100dvh - 32px)')) {
+  throw new Error('secure-room creation modal must remain bounded inside short application windows');
+}
+if (!css.includes('@media (max-height: 560px) and (min-width: 721px)')) {
+  throw new Error('private chat must adapt to short desktop windows instead of clipping controls');
+}
 
 if (ui.includes("if (!fileButton || row.querySelector('[data-private-peer]')) return;")) {
   throw new Error('existing private-chat buttons must not skip unread-state refresh');

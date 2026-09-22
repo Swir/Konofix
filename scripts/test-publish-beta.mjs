@@ -15,15 +15,18 @@ assert.throws(() => assertChecks(checks, 'b'.repeat(40)));
 assert.throws(() => assertChecks([...checks, { ...checks[0], id: 99, status: 'in_progress', conclusion: null }], commit));
 assert.throws(() => assertChecks(checks.map((item) => ({ ...item, app: { slug: 'unknown-app' } })), commit));
 
-const archive = `Konofix-Chat-0.4.4-Windows-${commit}.zip`;
-const bytes = new Map(['BUILD_INFO.json', 'Konofix-Chat-0.4.4-beta.1-setup.exe', 'Konofix-Chat-0.4.4-beta.1-setup.exe.sha256', archive, `${archive}.sha256`].map((name) => [name, Buffer.from(name)]));
-bytes.set('BUILD_INFO.json', Buffer.from(JSON.stringify({ commit, version: '0.4.4', workflow_run: '1234' })));
+const version = '0.4.5';
+const archive = `Konofix-Chat-${version}-Windows-${commit}.zip`;
+const installer = `Konofix-Chat-${version}-beta.1-setup.exe`;
+const bytes = new Map(['BUILD_INFO.json', installer, `${installer}.sha256`, archive, `${archive}.sha256`].map((name) => [name, Buffer.from(name)]));
+bytes.set('BUILD_INFO.json', Buffer.from(JSON.stringify({ commit, version, workflow_run: '1234' })));
 const read = (name) => bytes.get(name);
-const plan = { tag: 'v0.4.4-beta.1', version: '0.4.4', commit, workflow_run: '1234', body: '<!-- KONOFIX-BETA-PREVIEW --> 56/67', files: [...bytes].map(([name, value]) => ({ name, bytes: value.length, sha256: createHash('sha256').update(value).digest('hex') })) };
+const plan = { tag: `v${version}-beta.1`, name: 'Konofix Chat 0.4.5 Beta 1', version, commit, workflow_run: '1234', body: '<!-- KONOFIX-BETA-PREVIEW --> readiness remains roadmap-gated', files: [...bytes].map(([name, value]) => ({ name, bytes: value.length, sha256: createHash('sha256').update(value).digest('hex') })) };
 assertPlan(plan, env, read);
 assert.throws(() => assertPlan({ ...plan, commit: 'b'.repeat(40) }, env, read));
-assert.throws(() => assertPlan({ ...plan, version: '0.4.3' }, env, read));
-assert.throws(() => assertPlan({ ...plan, tag: 'v0.4.3-beta.1' }, env, read));
+assert.throws(() => assertPlan({ ...plan, version: '0.4.4' }, env, read));
+assert.throws(() => assertPlan({ ...plan, tag: 'v0.4.4-beta.1' }, env, read));
+assert.throws(() => assertPlan({ ...plan, name: '   ' }, env, read));
 assert.throws(() => assertPlan({ ...plan, files: [...plan.files, plan.files[0]] }, env, read));
 assert.throws(() => assertPlan(plan, env, () => Buffer.from('tampered')));
 
@@ -35,7 +38,7 @@ function service({ existing, tagCommit, failUpload, corruptDigest, seedAssets = 
     if (method === 'GET' && endpoint === '/releases?per_page=100') return state.release ? [{ tag_name: plan.tag, ...state.release }] : [];
     if (method === 'GET' && endpoint.startsWith('/git/ref/')) return state.tagCommit ? { object: { sha: state.tagCommit } } : null;
     if (method === 'POST') {
-      state.release = { id: 10, ...body, html_url: 'https://github.com/Swir/Konofix/releases/tag/v0.4.4-beta.1' };
+      state.release = { id: 10, ...body, html_url: `https://github.com/Swir/Konofix/releases/tag/${plan.tag}` };
       return state.release;
     }
     if (method === 'GET' && endpoint.includes('/assets?')) return state.assets;
@@ -57,6 +60,7 @@ assert.equal(good.state.assets.length, 5);
 const patchIndex = good.state.calls.findIndex((call) => call.method === 'PATCH');
 assert(good.state.calls.slice(0, patchIndex).filter((call) => call.method === 'UPLOAD').length === 5);
 assert.equal(good.state.calls.find((call) => call.method === 'POST').body.draft, true);
+assert.equal(good.state.calls.find((call) => call.method === 'POST').body.name, plan.name);
 assert.equal(good.state.release.prerelease, true);
 assert.equal(good.state.release.make_latest, 'false');
 
@@ -69,7 +73,9 @@ const retry = service({ existing: { id: 10, draft: true, prerelease: true, targe
 await publishBeta(plan, retry.api, read);
 assert(!retry.state.calls.some((call) => call.method === 'UPLOAD'), 'Identical draft assets should be resumed');
 assert(!retry.state.calls.some((call) => call.method === 'POST'), 'Draft lookup must not create a duplicate release');
-const immutable = service({ existing: { draft: false, prerelease: true, html_url: 'existing' } });
+const immutable = service({ existing: { draft: false, prerelease: true, target_commitish: commit, html_url: 'existing' } });
 assert.equal((await publishBeta(plan, immutable.api, read)).skipped, true);
 assert(!immutable.state.calls.some((call) => call.method !== 'GET'), 'Published releases must never be rewritten');
-console.log('Beta publishing: trusted context, exact CI/build, 0.4.4 intent, draft upload verification, resume and immutable release tests PASS.');
+const wrongPublishedBuild = service({ existing: { draft: false, prerelease: true, target_commitish: 'b'.repeat(40), html_url: 'existing' } });
+await assert.rejects(() => publishBeta(plan, wrongPublishedBuild.api, read));
+console.log('Beta publishing: trusted context, exact CI/build, version-derived intent, draft upload verification, resume and immutable release tests PASS.');

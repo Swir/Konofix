@@ -242,6 +242,8 @@ struct PublicShareOffer {
     kind: String,
     #[serde(default)]
     mime: Option<String>,
+    #[serde(default)]
+    room_id: Option<String>,
     timestamp: u64,
     expires_at: u64,
 }
@@ -860,6 +862,7 @@ enum NetworkCommand {
         size: u64,
         kind: String,
         mime: Option<String>,
+        room_id: Option<String>,
         reply: oneshot::Sender<Result<PublicShareOffer, String>>,
     },
     ClaimPublicOffer {
@@ -1071,6 +1074,10 @@ fn base64_encode(data: &[u8]) -> String {
 
 fn public_share_offer_is_well_formed(offer: &PublicShareOffer) -> bool {
     let lifetime = offer.expires_at.saturating_sub(offer.timestamp);
+    let room_valid = match offer.room_id.as_deref() {
+        None => true,
+        Some(room_id) => room_id != "world" && valid_wire_room_id(room_id),
+    };
     let kind_valid = match offer.kind.as_str() {
         "file" => offer.mime.is_none(),
         "image" => {
@@ -1093,6 +1100,7 @@ fn public_share_offer_is_well_formed(offer: &PublicShareOffer) -> bool {
         && offer.timestamp > 0
         && lifetime > 0
         && lifetime <= PUBLIC_OFFER_TTL_SECS * 1000
+        && room_valid
         && kind_valid
 }
 
@@ -1656,6 +1664,7 @@ async fn offer_file(
 #[tauri::command]
 async fn publish_public_file(
     kind: String,
+    room_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Option<PublicShareOffer>, String> {
     let kind = kind.trim().to_ascii_lowercase();
@@ -1669,10 +1678,11 @@ async fn publish_public_file(
         .clone()
         .ok_or("Najpierw połącz się z siecią.")?;
 
-    let dialog_title = if kind == "image" {
-        "Udostępnij obraz na #WORLD"
-    } else {
-        "Udostępnij plik na #WORLD"
+    let dialog_title = match (room_id.as_deref(), kind.as_str()) {
+        (Some(_), "image") => "Udostępnij obraz w pokoju".to_string(),
+        (Some(_), _) => "Udostępnij plik w pokoju".to_string(),
+        (None, "image") => "Udostępnij obraz na #WORLD".to_string(),
+        (None, _) => "Udostępnij plik na #WORLD".to_string(),
     };
     let path = tokio::task::spawn_blocking(move || {
         rfd::FileDialog::new().set_title(dialog_title).pick_file()
@@ -1713,6 +1723,7 @@ async fn publish_public_file(
         size: metadata.len(),
         kind,
         mime,
+        room_id,
         reply: reply_tx,
     })
     .await
@@ -2886,11 +2897,29 @@ async fn network_task(
                         size,
                         kind,
                         mime,
+                        room_id,
                         reply,
                     } => {
                         let now = Instant::now();
                         public_outgoing.retain(|_, offer| !public_offer_is_expired(offer.created_at, now));
-                        let result = if public_outgoing.len() >= MAX_PUBLIC_OFFERS_LOCAL {
+                        let room_scope_error = room_id.as_deref().and_then(|room_id| {
+                            if room_id == "world" || !valid_wire_room_id(room_id) {
+                                return Some("Nieprawidłowy kontekst pokoju udostępnienia.".to_string());
+                            }
+                            let Some(room) = rooms.get(room_id) else {
+                                return Some("Pokój udostępnienia nie jest już aktywny.".to_string());
+                            };
+                            if room.password_protected
+                                && !owned_rooms.contains_key(room_id)
+                                && !secure_client.room_authorized(room_id, &local_peer)
+                            {
+                                return Some("Najpierw autoryzuj wejście do chronionego pokoju.".to_string());
+                            }
+                            None
+                        });
+                        let result = if let Some(reason) = room_scope_error {
+                            Err(reason)
+                        } else if public_outgoing.len() >= MAX_PUBLIC_OFFERS_LOCAL {
                             Err(format!(
                                 "Możesz mieć maksymalnie {MAX_PUBLIC_OFFERS_LOCAL} aktywnych ofert na #WORLD."
                             ))
@@ -2905,6 +2934,7 @@ async fn network_task(
                                 size,
                                 kind,
                                 mime,
+                                room_id: room_id.clone(),
                                 timestamp,
                                 expires_at: timestamp + PUBLIC_OFFER_TTL_SECS * 1000,
                             };
@@ -2946,6 +2976,20 @@ async fn network_task(
                                 .peer_id
                                 .parse()
                                 .map_err(|_| "Nieprawidłowy Peer ID nadawcy.")?;
+                            if let Some(room_id) = remote.view.room_id.as_deref() {
+                                let room = rooms
+                                    .get(room_id)
+                                    .ok_or("Pokój udostępnienia nie jest już aktywny.")?;
+                                if room.password_protected {
+                                    if owned_rooms.contains_key(room_id) {
+                                        if !secure_runtime.room_authorized(room_id, &target, now_ms()) {
+                                            return Err("Nadawca nie jest autoryzowany w tym chronionym pokoju.".into());
+                                        }
+                                    } else if !secure_client.room_authorized(room_id, &local_peer) {
+                                        return Err("Najpierw autoryzuj wejście do chronionego pokoju.".into());
+                                    }
+                                }
+                            }
                             if target == local_peer {
                                 return Err("Nie można pobrać własnej publicznej oferty.".into());
                             }
@@ -3390,6 +3434,24 @@ async fn network_task(
                             }
                             WireEvent::PublicFileOffer(offer) => {
                                 if offer.peer_id != peer_id {
+                                    let room_scope_allowed = match offer.room_id.as_deref() {
+                                        None => true,
+                                        Some(room_id) => match rooms.get(room_id) {
+                                            None => false,
+                                            Some(room) if !room.password_protected => true,
+                                            Some(_) if owned_rooms.contains_key(room_id) => {
+                                                secure_runtime.room_authorized(room_id, authenticated_source, now_ms())
+                                            }
+                                            Some(_) => secure_client.room_authorized(room_id, &local_peer),
+                                        },
+                                    };
+                                    if !room_scope_allowed {
+                                        let _ = app.emit_event(
+                                            "network-warning",
+                                            format!("Dropped room-scoped file offer from unauthorized or unknown context: {}.", offer.offer_id),
+                                        );
+                                        continue;
+                                    }
                                     if !remote_public_offers.contains_key(&offer.offer_id)
                                         && remote_public_offers.len() >= MAX_PUBLIC_OFFERS_REMOTE
                                     {
@@ -3784,6 +3846,18 @@ async fn network_task(
                                                     public_outgoing.remove(&offer_id);
                                                     return Err("Public offer expired.".into());
                                                 }
+                                                if let Some(room_id) = offer.view.room_id.as_deref() {
+                                                    let room = rooms.get(room_id).ok_or("Room-scoped offer context is no longer active.")?;
+                                                    if room.password_protected {
+                                                        if owned_rooms.contains_key(room_id) {
+                                                            if !secure_runtime.room_authorized(room_id, &peer, now_ms()) {
+                                                                return Err("Receiver is not authorized in this protected room.".into());
+                                                            }
+                                                        } else if !secure_client.room_authorized(room_id, &local_peer) {
+                                                            return Err("Protected-room authorization is required.".into());
+                                                        }
+                                                    }
+                                                }
                                                 let metadata = tokio::fs::metadata(&offer.path)
                                                     .await
                                                     .map_err(|_| "Shared file is no longer available.".to_string())?;
@@ -3822,7 +3896,7 @@ async fn network_task(
                                                         file_name: transfer.file_name.clone(),
                                                         size: transfer.size,
                                                         public_offer_id: Some(offer_id),
-                                                        room_id: None,
+                                                        room_id: offer.view.room_id.clone(),
                                                     },
                                                 );
                                                 outbound_requests.insert(
@@ -4667,6 +4741,7 @@ mod public_share_tests {
             size,
             kind: kind.into(),
             mime: mime.map(str::to_string),
+            room_id: None,
             timestamp: 1_000,
             expires_at: 1_000 + PUBLIC_OFFER_TTL_SECS * 1000,
         }
@@ -5014,6 +5089,7 @@ mod authenticated_event_tests {
                 size: 42,
                 kind: "file".into(),
                 mime: None,
+                room_id: None,
                 timestamp: 1,
                 expires_at: 1 + PUBLIC_OFFER_TTL_SECS * 1000,
             }),

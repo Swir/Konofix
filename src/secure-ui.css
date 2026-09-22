@@ -243,3 +243,37 @@
 .secure-room-create-actions .primary {
   margin: 0;
 }
+
+@media (pointer: coarse) {
+  .secure-room-manage,
+  .mini-private,
+  .private-chat-head > button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .private-compose {
+    grid-template-columns: 1fr 48px;
+  }
+
+  .private-compose button {
+    min-width: 48px;
+    min-height: 44px;
+  }
+}
+
+@supports (padding: max(0px)) {
+  @media (max-width: 720px) {
+    .private-chat-head {
+      padding-top: max(18px, env(safe-area-inset-top));
+      padding-left: max(18px, env(safe-area-inset-left));
+      padding-right: max(18px, env(safe-area-inset-right));
+    }
+
+    .private-compose {
+      padding-left: max(13px, env(safe-area-inset-left));
+      padding-right: max(13px, env(safe-area-inset-right));
+      padding-bottom: max(13px, env(safe-area-inset-bottom));
+    }
+  }
+}

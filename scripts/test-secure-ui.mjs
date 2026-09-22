@@ -40,6 +40,12 @@ if (!css.includes('max-height: calc(100dvh - 32px)')) {
 if (!css.includes('@media (max-height: 560px) and (min-width: 721px)')) {
   throw new Error('private chat must adapt to short desktop windows instead of clipping controls');
 }
+if (!css.includes('@media (pointer: coarse)') || !css.includes('min-width: 44px') || !css.includes('min-height: 44px')) {
+  throw new Error('touch-oriented secure/private controls must keep accessible coarse-pointer hit targets');
+}
+if (!css.includes('env(safe-area-inset-top)') || !css.includes('env(safe-area-inset-bottom)')) {
+  throw new Error('mobile private chat must respect display safe-area insets');
+}
 
 if (ui.includes("if (!fileButton || row.querySelector('[data-private-peer]')) return;")) {
   throw new Error('existing private-chat buttons must not skip unread-state refresh');

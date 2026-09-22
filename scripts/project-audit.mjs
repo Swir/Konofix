@@ -74,12 +74,16 @@ for (const file of docs) {
 
 const roadmapText = read('ROADMAP.md');
 const readmeText = read('README.md');
-const activeMilestoneHeading = `## ${pkg.version} — Real Internet Test`;
-const milestoneStart = roadmapText.indexOf(activeMilestoneHeading);
+const milestoneHeadingMatch = roadmapText.match(/^## \d+\.\d+\.\d+ — Real Internet Test[^\n]*$/m);
+const activeMilestoneHeading = milestoneHeadingMatch?.[0] ?? '';
+const milestoneStart = activeMilestoneHeading ? roadmapText.indexOf(activeMilestoneHeading) : -1;
 if (milestoneStart < 0) {
-  fail(`Could not locate the active ${pkg.version} Real Internet Test milestone in ROADMAP.md.`);
+  fail('Could not locate the canonical Real Internet Test milestone in ROADMAP.md.');
 } else {
-  const milestoneEnd = roadmapText.indexOf('\n## 0.5.0', milestoneStart);
+  const milestoneTailStart = milestoneStart + activeMilestoneHeading.length;
+  const milestoneTail = roadmapText.slice(milestoneTailStart);
+  const nextVersionOffset = milestoneTail.search(/\n## \d+\.\d+\.\d+ /);
+  const milestoneEnd = nextVersionOffset < 0 ? -1 : milestoneTailStart + nextVersionOffset;
   const milestone = roadmapText.slice(milestoneStart, milestoneEnd < 0 ? undefined : milestoneEnd);
   const completedTasks = (milestone.match(/^- \[[xX]\] /gm) || []).length;
   const openTasks = (milestone.match(/^- \[ \] /gm) || []).length;

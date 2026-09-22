@@ -97,8 +97,27 @@
   overflow-wrap: anywhere;
 }
 
-.private-chat-head small {
+.private-peer-status {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 330px;
   color: #8da8b8;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.private-peer-status i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: #44e6a8;
+  box-shadow: 0 0 10px rgba(68, 230, 168, .45);
+}
+.private-peer-status.offline i {
+  background: #70899a;
+  box-shadow: none;
 }
 
 .private-chat-head > button {
@@ -128,18 +147,19 @@
 }
 
 .private-message {
-  max-width: 84%;
-  padding: 10px 12px;
-  border: 1px solid rgba(98, 229, 255, .11);
-  border-radius: 13px 13px 13px 4px;
-  background: rgba(255, 255, 255, .035);
+  max-width: 82%;
+  padding: 11px 13px;
+  border: 1px solid rgba(98, 229, 255, .12);
+  border-radius: 16px 16px 16px 5px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, .055), rgba(255, 255, 255, .025));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .14);
 }
 
 .private-message.mine {
   align-self: flex-end;
-  border-radius: 13px 13px 4px 13px;
-  border-color: rgba(0, 136, 255, .25);
-  background: rgba(0, 136, 255, .1);
+  border-radius: 16px 16px 5px 16px;
+  border-color: rgba(0, 136, 255, .30);
+  background: linear-gradient(145deg, rgba(0, 136, 255, .16), rgba(0, 136, 255, .075));
 }
 
 .private-meta {
@@ -164,12 +184,65 @@
 }
 
 .private-compose {
+  position: relative;
   display: grid;
-  grid-template-columns: 1fr 42px;
+  grid-template-columns: auto 1fr 42px;
+  align-items: center;
   gap: 9px;
   padding: 13px;
   border-top: 1px solid rgba(98, 229, 255, .12);
-  background: rgba(2, 5, 10, .72);
+  background: rgba(2, 5, 10, .78);
+}
+
+.private-compose-tools {
+  position: relative;
+  display: flex;
+  gap: 6px;
+}
+
+.private-compose-tools > button {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(98, 229, 255, .18);
+  border-radius: 10px;
+  background: rgba(7, 17, 28, .82);
+  color: #dff8ff;
+  cursor: pointer;
+}
+
+.private-compose-tools > button:hover {
+  border-color: rgba(98, 229, 255, .5);
+  background: rgba(0, 136, 255, .12);
+}
+
+.private-emoji-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  z-index: 4;
+  width: 260px;
+  max-height: 190px;
+  padding: 9px;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+  border: 1px solid rgba(98, 229, 255, .22);
+  border-radius: 13px;
+  background: rgba(2, 5, 10, .98);
+  box-shadow: 0 16px 45px rgba(0, 0, 0, .42);
+}
+
+.private-emoji-panel[hidden] { display: none; }
+.private-emoji-panel button {
+  min-width: 32px;
+  min-height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .04);
+  cursor: pointer;
 }
 
 .private-compose input {
@@ -253,7 +326,12 @@
   }
 
   .private-compose {
-    grid-template-columns: 1fr 48px;
+    grid-template-columns: auto 1fr 48px;
+  }
+
+  .private-compose-tools > button {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .private-compose button {

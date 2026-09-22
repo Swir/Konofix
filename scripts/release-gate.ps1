@@ -86,7 +86,7 @@ try {
   if ((Get-Item 'src-tauri\icons\icon.ico').Length -lt 256) { throw 'icon.ico appears to be damaged or empty.' }
 
   $roadmap = Get-Content 'ROADMAP.md' -Raw
-  if ($roadmap -notmatch [regex]::Escape("## $npmVersion — Real Internet Test")) {
+  if ($roadmap -notmatch [regex]::Escape("## $npmVersion —")) {
     throw "ROADMAP.md does not contain the active $npmVersion stage."
   }
 

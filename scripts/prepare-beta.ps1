@@ -6,8 +6,8 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:GITHUB_REPOSITORY -cne 'Swir/Konofix
 $commit = $env:GITHUB_SHA
 if ($commit -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid source commit.' }
 $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-if ($version -cne '0.4.4') { throw 'This beta intent belongs to version 0.4.4.' }
-$tag = 'v0.4.4-beta.1'
+if ($version -cne '0.5.0') { throw 'This beta intent belongs to version 0.5.0.' }
+$tag = 'v0.5.0-beta.1'
 $name = "Konofix-Chat-$version-Windows-$commit.zip"
 $archive = Join-Path 'downloaded' $name
 & (Join-Path $PSScriptRoot 'verify-release.ps1') -ZipPath $archive -ChecksumPath "$archive.sha256"
@@ -21,9 +21,9 @@ try {
     if ($info.commit -cne $commit -or $info.version -cne $version -or $info.workflow_run -cne $env:GITHUB_RUN_ID) {
         throw 'Beta artifact must come from this exact main build and workflow.'
     }
-    $installerName = 'Konofix-Chat-0.4.4-beta.1-setup.exe'
+    $installerName = 'Konofix-Chat-0.5.0-beta.1-setup.exe'
     $installerPath = Join-Path $output.FullName $installerName
-    $source = 'bundle/nsis/Konofix Chat_0.4.4_x64-setup.exe'
+    $source = 'bundle/nsis/Konofix Chat_0.5.0_x64-setup.exe'
     $meta = @($info.installers | Where-Object path -CEQ $source)
     if ($meta.Count -ne 1) { throw 'Expected exactly one Chat setup executable.' }
     [IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry($source), $installerPath, $false)
@@ -37,7 +37,7 @@ Copy-Item -LiteralPath $archive, "$archive.sha256" -Destination $output.FullName
 $files = @(Get-ChildItem -LiteralPath $output.FullName -File | Sort-Object Name | ForEach-Object {
     [ordered]@{ name = $_.Name; bytes = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
 })
-$notes = Get-Content 'docs/RELEASE_0.4.4_BETA1.md' -Raw
+$notes = Get-Content 'docs/RELEASE_0.5.0_BETA1.md' -Raw
 $body = $notes.Trim() + "`n`nSource commit: ``$commit```nWindows build and installed GUI verification: https://github.com/Swir/Konofix/actions/runs/$env:GITHUB_RUN_ID`n`nSHA-256:`n"
 foreach ($file in $files) { $body += "`n- ``$($file.name)``: ``$($file.sha256)``" }
 $plan = [ordered]@{ tag = $tag; version = $version; commit = $commit; workflow_run = $env:GITHUB_RUN_ID; body = $body; files = $files }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 — in development
+
+- changed non-WORLD file sharing from a global peer chooser to room-scoped offer cards: bounded metadata is tied to the active room while file bytes remain explicit, on-demand direct P2P transfers,
+- added protected-room fail-closed checks around room-scoped offer publication, reception, claims and final direct transfer context while keeping older WORLD-only offer metadata compatible,
+- added a direct file attachment control to authenticated private 1:1 conversations without a second recipient-selection step,
+- refreshed private chat with clearer peer status, richer message bubbles and a compact Konofix emoji picker while continuing to use the existing safe text renderer,
+- aligned application/Tauri/Rust/Linux Node metadata on 0.5.0; Global Beta evidence progress remains 56/67 = 83.6% until real external qualification gates are completed.
+
 ## 0.4.4
 
 - improved protected-room and private 1:1 chat responsiveness/accessibility with keyboard focus trapping, Escape close/focus restoration, visible focus states, mobile safe-area support and touch targets of at least 44 px,

@@ -79,13 +79,6 @@ The active milestone now has 56 of 67 tasks complete. The Global Beta expansion 
 - [x] Windows CI for TypeScript + Rust
 - [x] public-bootstrap precheck script
 
-## 0.5.0 — Room & Private Sharing UX 🚧
-- [ ] room-scoped file offer cards in non-WORLD rooms with on-demand direct P2P download and protected-room fail-closed authorization
-- [ ] direct file attachment action in authenticated private 1:1 chat without a recipient picker
-- [ ] refreshed private-message bubbles, peer status and composer with the existing safe Konofix emoji system
-- [ ] coherent 0.5.0 manifests, regression coverage, exact-head Windows/Linux/RustSec qualification and verified Windows installer
-- This version target is separate from the 67-task Global Beta evidence checklist; implementing these UX features does not change **56/67 = 83.6%** by itself.
-
 ## 0.4.4 — Real Internet Test 🚧
 - [x] fixed Windows CI and restored `tsconfig.json`
 - [x] Windows/Tauri packaging and production app/Node build pipeline
@@ -228,6 +221,11 @@ This short feature-freeze package is completed before the next user-led publicat
 
 These four status bullets are deliberately not roadmap checkboxes: the authoritative 56/67 fraction measures Real Internet Test / Global Beta qualification, while this temporary feature-freeze has its own stop gate. Automatic feature development stops after all four items are **VERIFIED on main** with green exact-head CI; publication remains a separate manual decision.
 
-## 0.5.0 — Rooms 2.0
+## 0.5.0 — Rooms 2.0 / Sharing UX
 - full room-member synchronization
 - accurate per-room user count
+- room-scoped file offer cards in non-WORLD rooms with explicit on-demand direct P2P download
+- protected-room sharing keeps bounded room context and fail-closed authorization checks
+- private 1:1 conversations provide a direct attachment action for the active authenticated peer
+- refreshed private-message bubbles, peer status and safe Konofix emoji composer
+- 0.5.0 stays separate from the 67-task Global Beta evidence denominator; these UX features do not change **56/67 = 83.6%** by themselves

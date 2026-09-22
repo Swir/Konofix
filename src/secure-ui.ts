@@ -15,7 +15,10 @@ const roomState = new Map<string, SecureRoomInfo>();
 const authorizedRoomRevision = new Map<string, number>();
 const ownedRooms = new Set<string>();
 const offlinePeers = new Set<string>();
+const ignoredPrivatePeers = new Set<string>();
+const PRIVATE_MESSAGES_ENABLED_KEY = 'konofix.privateMessagesEnabled';
 
+let lastSyncedPrivateMessagesEnabled: boolean | null = null;
 let localPeerId = '';
 let activePrivatePeerId = '';
 let activePrivateNick = '';
@@ -28,6 +31,21 @@ function esc(value: string): string {
   return value.replace(/[&<>'"]/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;'
   }[character]!));
+}
+
+function privateMessagesEnabled(): boolean {
+  return localStorage.getItem(PRIVATE_MESSAGES_ENABLED_KEY) !== '0';
+}
+
+async function syncPrivateMessagePolicy(force = false): Promise<void> {
+  const enabled = privateMessagesEnabled();
+  if (!force && lastSyncedPrivateMessagesEnabled === enabled) return;
+  try {
+    await invoke('set_private_messages_enabled', { enabled });
+    lastSyncedPrivateMessagesEnabled = enabled;
+  } catch {
+    lastSyncedPrivateMessagesEnabled = null;
+  }
 }
 
 function trapDialogFocus(container: HTMLElement, event: KeyboardEvent): void {
@@ -115,6 +133,8 @@ function augmentMainUi(): void {
     }
   });
 
+  augmentPrivateSettings();
+
   document.querySelectorAll<HTMLElement>('#peerList .user').forEach(row => {
     const fileButton = row.querySelector<HTMLButtonElement>('[data-send-peer]');
     if (!fileButton) return;
@@ -154,6 +174,27 @@ function augmentMainUi(): void {
       badge?.remove();
       if (button.getAttribute('aria-label') !== openLabel) button.setAttribute('aria-label', openLabel);
     }
+  });
+}
+
+function augmentPrivateSettings(): void {
+  const modal = document.querySelector<HTMLDivElement>('#networkModal .modal');
+  if (!modal || modal.querySelector('[data-private-settings]')) return;
+  const section = document.createElement('section');
+  section.className = 'private-settings-card';
+  section.dataset.privateSettings = 'true';
+  section.innerHTML = `
+    <div><strong>${esc(t('private.settingsTitle'))}</strong><small>${esc(t('private.allowNewHelp'))}</small></div>
+    <label class="private-setting-toggle">
+      <input type="checkbox" data-private-enabled ${privateMessagesEnabled() ? 'checked' : ''} />
+      <span>${esc(t('private.allowNew'))}</span>
+    </label>`;
+  modal.appendChild(section);
+  section.querySelector<HTMLInputElement>('[data-private-enabled]')?.addEventListener('change', event => {
+    const enabled = (event.currentTarget as HTMLInputElement).checked;
+    localStorage.setItem(PRIVATE_MESSAGES_ENABLED_KEY, enabled ? '1' : '0');
+    if (!enabled) document.querySelectorAll('.private-notice-wrap').forEach(element => element.remove());
+    void syncPrivateMessagePolicy(true);
   });
 }
 
@@ -297,6 +338,39 @@ function privateMessageHtml(message: PrivateChatMessage, peerId: string): string
   </article>`;
 }
 
+function showPrivateNotification(message: PrivateChatMessage, peerId: string, nick: string, color: string): void {
+  if (!privateMessagesEnabled() || ignoredPrivatePeers.has(peerId)) return;
+  const id = `private-notice-${peerId}`;
+  if (document.getElementById(id)) return;
+  const wrap = document.createElement('div');
+  wrap.id = id;
+  wrap.className = 'modal-wrap file-offer-wrap private-notice-wrap';
+  const preview = message.text.slice(0, 240);
+  wrap.innerHTML = `<section class="modal glass file-offer-modal private-notice-modal" role="dialog" aria-modal="true" aria-labelledby="${esc(id)}-title">
+    <div class="offer-icon">💬</div>
+    <span class="eyebrow">PRIVATE P2P</span>
+    <h3 id="${esc(id)}-title">${esc(t('private.noticeTitle', { nick }))}</h3>
+    <div class="private-notice-preview" style="--nick-color:${normalizeNickColor(color)}">${renderChatText(preview)}</div>
+    <div class="safe-note">${esc(t('private.noticeHint'))}</div>
+    <div class="offer-actions">
+      <button type="button" class="ghost" data-private-ignore>${esc(t('private.ignore'))}</button>
+      <button type="button" class="primary compact" data-private-open-notice>${esc(t('private.openNow'))}</button>
+    </div>
+  </section>`;
+  document.body.appendChild(wrap);
+  const close = () => wrap.remove();
+  wrap.addEventListener('click', event => { if (event.target === wrap) close(); });
+  wrap.querySelector('[data-private-ignore]')?.addEventListener('click', () => {
+    ignoredPrivatePeers.add(peerId);
+    close();
+    queueAugment();
+  });
+  wrap.querySelector('[data-private-open-notice]')?.addEventListener('click', () => {
+    close();
+    openPrivateChat(peerId, nick, color);
+  });
+}
+
 function renderPrivateModal(): void {
   if (!activePrivatePeerId) {
     document.querySelector('#privateChatModal')?.remove();
@@ -387,6 +461,8 @@ function renderPrivateModal(): void {
 }
 
 function openPrivateChat(peerId: string, nick: string, color: string): void {
+  ignoredPrivatePeers.delete(peerId);
+  document.getElementById(`private-notice-${peerId}`)?.remove();
   activePrivatePeerId = peerId;
   activePrivateNick = nick;
   activePrivateColor = color;
@@ -424,7 +500,8 @@ async function sendPrivateMessage(): Promise<void> {
     input.value = '';
     renderPrivateModal();
   } catch (error) {
-    alert(t('private.sendError', { error: String(error) }));
+    const detail = String(error);
+    alert(detail.includes('private_disabled') ? t('private.blocked') : t('private.sendError', { error: detail }));
     input.disabled = false;
     input.focus();
   }
@@ -497,13 +574,24 @@ async function wireSecureEvents(): Promise<void> {
     const result = conversations.push(message, localPeerId);
     if (!result?.inserted) return;
     const peerButton = document.querySelector<HTMLButtonElement>(`[data-private-peer="${CSS.escape(result.peerId)}"]`);
+    const nick = peerButton?.dataset.privateNick || message.nick;
+    const color = peerButton?.dataset.privateColor || message.nick_color || '';
     if (activePrivatePeerId === result.peerId) {
-      activePrivateNick = peerButton?.dataset.privateNick || message.nick;
-      activePrivateColor = peerButton?.dataset.privateColor || message.nick_color || '';
+      activePrivateNick = nick;
+      activePrivateColor = color;
       conversations.open(result.peerId);
       renderPrivateModal();
+    } else {
+      showPrivateNotification(message, result.peerId, nick, color);
     }
     queueAugment();
+  });
+  await listen<{ phase?: string }>('network-status', event => {
+    if (event.payload?.phase === 'offline') {
+      lastSyncedPrivateMessagesEnabled = null;
+      return;
+    }
+    void syncPrivateMessagePolicy();
   });
   await listen<{ peer_id: string }>('peer-offline', event => {
     offlinePeers.add(event.payload.peer_id);
@@ -520,6 +608,8 @@ async function wireSecureEvents(): Promise<void> {
     authorizedRoomRevision.clear();
     ownedRooms.clear();
     offlinePeers.clear();
+    ignoredPrivatePeers.clear();
+    lastSyncedPrivateMessagesEnabled = null;
     localPeerId = '';
     activePrivatePeerId = '';
     document.querySelector('#privateChatModal')?.remove();

@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.5.0 — in development
+## 0.5.1 — in development
+
+- fixed receiver-side room/WORLD offer downloads so the Transfers panel immediately shows a requesting state, then reconciles to the real incoming P2P transfer and live progress instead of appearing only after completion,
+- added a prominent file-offer-style private-message notification with explicit Open and Ignore actions; Ignore lasts for the current session and manual opening restores notifications,
+- added a Private conversations setting that rejects new incoming private messages at the authenticated direct P2P control channel with a clear sender-side error,
+- preserved 0.5.0 room-scoped sharing, private attachments, SHA-256/no-clobber/cancel safety and safe rendering; Global Beta evidence remains 56/67 = 83.6%.
+
+## 0.5.0
 
 - changed non-WORLD file sharing from a global peer chooser to room-scoped offer cards: bounded metadata is tied to the active room while file bytes remain explicit, on-demand direct P2P transfers,
 - added protected-room fail-closed checks around room-scoped offer publication, reception, claims and final direct transfer context while keeping older WORLD-only offer metadata compatible,

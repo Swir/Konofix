@@ -839,6 +839,10 @@ enum NetworkCommand {
         text: String,
         reply: oneshot::Sender<Result<PrivateDirectMessage, String>>,
     },
+    SetPrivateMessagesEnabled {
+        enabled: bool,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     EnterRoom {
         room_id: String,
         reply: oneshot::Sender<Result<(), String>>,
@@ -1552,6 +1556,26 @@ async fn send_private_message(
     response
         .await
         .map_err(|_| "Private message delivery interrupted.".to_string())?
+}
+
+#[tauri::command]
+async fn set_private_messages_enabled(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "Błąd blokady stanu")?
+        .clone()
+        .ok_or("Brak połączenia P2P")?;
+    let (reply, response) = oneshot::channel();
+    tx.send(NetworkCommand::SetPrivateMessagesEnabled { enabled, reply })
+        .await
+        .map_err(|_| "Warstwa P2P została zatrzymana.".to_string())?;
+    response
+        .await
+        .map_err(|_| "Private-message policy update interrupted.".to_string())?
 }
 
 #[tauri::command]
@@ -2417,6 +2441,7 @@ async fn network_task(
         HashMap::<String, oneshot::Sender<Result<(), String>>>::new();
     let mut pending_private_messages =
         HashMap::<String, oneshot::Sender<Result<PrivateDirectMessage, String>>>::new();
+    let mut private_messages_enabled = true;
 
     let mut outgoing: HashMap<String, OutgoingTransfer> = HashMap::new();
     let mut pending_incoming: HashMap<String, PendingIncomingOffer> = HashMap::new();
@@ -2775,6 +2800,10 @@ async fn network_task(
                                 let _ = reply.send(Err(error));
                             }
                         }
+                    }
+                    NetworkCommand::SetPrivateMessagesEnabled { enabled, reply } => {
+                        private_messages_enabled = enabled;
+                        let _ = reply.send(Ok(()));
                     }
                     NetworkCommand::EnterRoom { room_id, reply } => {
                         if room_id != "world" && !secure_client.room_authorized(&room_id, &local_peer) {
@@ -3551,6 +3580,13 @@ async fn network_task(
                         request_response::Event::Message { peer, message, .. } => {
                             match message {
                                 request_response::Message::Request { request, channel, .. } => {
+                                    if !private_messages_enabled {
+                                        if let ControlRequest::PrivateMessage(message) = &request {
+                                            let response = ControlResponse::PrivateAck { message_id: message.id.clone(), accepted: false, reason: Some("private_disabled".into()) };
+                                            let _ = swarm.behaviour_mut().secure_control.send_response(channel, response);
+                                            continue;
+                                        }
+                                    }
                                     let expected_presence = peers.get(&peer).map(|presence| PresenceIdentity {
                                         nick: presence.nick.clone(),
                                         nick_color: Some(presence.nick_color.clone()),
@@ -5144,6 +5180,7 @@ pub fn run() {
             update_room_password,
             authorize_room_entry,
             send_private_message,
+            set_private_messages_enabled,
             enter_room,
             add_bootstrap,
             refresh_discovery,

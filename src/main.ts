@@ -467,10 +467,29 @@ async function claimPublicOffer(offerId: string, intent: 'download' | 'preview')
   if (!offer || offer.expired || offer.peer_id === state.peerId) return;
   if (state.publicIntents.has(offerId)) return;
   state.publicIntents.set(offerId, intent);
+
+  const placeholderId = `claim:${offerId}`;
+  state.transfers.set(placeholderId, {
+    transfer_id: placeholderId,
+    direction: 'incoming',
+    peer_id: offer.peer_id,
+    nick: offer.nick,
+    public_offer_id: offerId,
+    preview_only: intent === 'preview',
+    file_name: offer.file_name,
+    size: offer.size,
+    transferred: 0,
+    progress: 0,
+    status: 'requesting',
+  });
+  if (state.connected) renderChat();
+
   try {
     await invoke('claim_public_file', { offerId, previewOnly: intent === 'preview' });
   } catch (error) {
     state.publicIntents.delete(offerId);
+    state.transfers.delete(placeholderId);
+    if (state.connected) renderChat();
     alert(t('publicShare.error', { error: String(error) }));
   }
 }
@@ -495,12 +514,12 @@ function showImagePreview(offer: PublicShareOffer) {
 }
 
 function activeTransfer(status: string): boolean {
-  return ['waiting', 'sending', 'receiving', 'verifying'].includes(status);
+  return ['requesting', 'waiting', 'sending', 'receiving', 'verifying'].includes(status);
 }
 
 function transferStatus(status: string): string {
   const keys = {
-    waiting: 'transfer.waiting', sending: 'transfer.sending', receiving: 'transfer.receiving', verifying: 'transfer.verifying',
+    requesting: 'transfer.requesting', waiting: 'transfer.waiting', sending: 'transfer.sending', receiving: 'transfer.receiving', verifying: 'transfer.verifying',
     completed: 'transfer.completed', rejected: 'transfer.rejected', failed: 'transfer.failed', cancelled: 'transfer.cancelled'
   } as const;
   const key = keys[status as keyof typeof keys];
@@ -861,11 +880,16 @@ async function wireEvents() {
     if (!offer) return;
     offer.expired = true;
     state.publicIntents.delete(event.payload.offer_id);
+    state.transfers.delete(`claim:${event.payload.offer_id}`);
     if (state.connected && state.room === (offer.room_id ?? 'world')) renderChat();
   });
   await listen<{ offer_id: string; error: string }>('public-offer-error', event => {
     state.publicIntents.delete(event.payload.offer_id);
-    if (state.connected) addSystem('world', t('publicShare.error', { error: event.payload.error }));
+    state.transfers.delete(`claim:${event.payload.offer_id}`);
+    if (state.connected) {
+      renderChat();
+      addSystem('world', t('publicShare.error', { error: event.payload.error }));
+    }
   });
   await listen<FileOffer>('file-offer', event => showFileOfferModal(event.payload));
   await listen<FileOfferExpired>('file-offer-expired', event => {
@@ -881,6 +905,7 @@ async function wireEvents() {
     if (state.connected) addSystem(state.room, t('transfer.offerCancelled'));
   });
   await listen<FileTransfer>('file-transfer', async event => {
+    if (event.payload.public_offer_id) state.transfers.delete(`claim:${event.payload.public_offer_id}`);
     state.transfers.set(event.payload.transfer_id, event.payload);
     if (event.payload.status === 'completed') {
       const saved = event.payload.direction === 'incoming' && !event.payload.preview_only

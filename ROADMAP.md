@@ -221,6 +221,13 @@ This short feature-freeze package is completed before the next user-led publicat
 
 These four status bullets are deliberately not roadmap checkboxes: the authoritative 56/67 fraction measures Real Internet Test / Global Beta qualification, while this temporary feature-freeze has its own stop gate. Automatic feature development stops after all four items are **VERIFIED on main** with green exact-head CI; publication remains a separate manual decision.
 
+## 0.5.1 — Transfer visibility / Private attention
+- receiver-side room/WORLD downloads show an immediate requesting card and live P2P transfer progress in the Transfers panel
+- first/new incoming private messages use a prominent Open / Ignore notification instead of relying only on the unread badge
+- per-session peer Ignore is reversible by manually opening that private chat
+- settings can reject new incoming private conversations over the authenticated direct control channel
+- this stabilization work adds no Global Beta checklist credit; verified evidence remains **56/67 = 83.6%**
+
 ## 0.5.0 — Rooms 2.0 / Sharing UX
 - full room-member synchronization
 - accurate per-room user count

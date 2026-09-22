@@ -39,6 +39,9 @@ for (const [needle, label] of [
   ["data-public-download", 'Download control'],
   ["data-public-preview", 'Preview control'],
   ["listen<PublicShareOffer>('public-file-offer'", 'incoming metadata listener'],
+  ["const placeholderId = `claim:${offerId}`;", 'receiver-side claim placeholder'],
+  ["status: 'requesting'", 'visible receiver negotiation state'],
+  ["state.transfers.delete(`claim:${event.payload.public_offer_id}`);", 'claim placeholder reconciliation'],
 ]) requireText(frontend, needle, label);
 
 const listenerStart = frontend.indexOf("listen<PublicShareOffer>('public-file-offer'");

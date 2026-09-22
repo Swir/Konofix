@@ -412,3 +412,14 @@
     scroll-behavior: auto;
   }
 }
+
+
+/* 0.5.1: private-message attention + privacy controls */
+.private-notice-wrap { z-index: 1450; }
+.private-notice-modal { width: min(430px, 92vw); }
+.private-notice-preview { margin:12px 0; padding:12px 14px; border:1px solid rgba(98,229,255,.16); border-left:3px solid var(--nick-color,#62e5ff); border-radius:12px; background:rgba(0,136,255,.07); color:#f4faff; line-height:1.45; overflow-wrap:anywhere; }
+.private-settings-card { margin-top:14px; padding:13px 14px; display:grid; gap:10px; border:1px solid rgba(98,229,255,.14); border-radius:12px; background:rgba(2,5,10,.42); }
+.private-settings-card > div { display:grid; gap:4px; }
+.private-settings-card small { color:#8da8b8; line-height:1.4; }
+.private-setting-toggle { display:flex; align-items:center; gap:9px; cursor:pointer; }
+.private-setting-toggle input { width:18px; height:18px; }

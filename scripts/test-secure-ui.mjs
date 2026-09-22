@@ -7,6 +7,7 @@ function read(path) {
 const ui = read('src/secure-ui.ts');
 const css = read('src/secure-ui.css');
 const index = read('index.html');
+const rust = read('src-tauri/src/lib.rs');
 
 function requireText(text, message) {
   if (!ui.includes(text)) throw new Error(message);
@@ -22,6 +23,11 @@ requireText("invoke('offer_file'", 'private attachments must reuse the bounded d
 requireText("peerId: activePrivatePeerId", 'private attachments must target the active authenticated conversation peer without a recipient picker');
 requireText("roomId: null", 'private attachments must remain direct peer transfers, not room GossipSub transfers');
 requireText("data-private-emoji-code", 'private chat must reuse the Konofix emoji picker without unsafe message rendering');
+requireText("showPrivateNotification(message, result.peerId, nick, color);", 'incoming private conversations must show a visible attention modal');
+requireText("data-private-ignore", 'private notification must offer Ignore');
+requireText("data-private-open-notice", 'private notification must offer Open');
+requireText("PRIVATE_MESSAGES_ENABLED_KEY", 'private acceptance must have a persistent setting');
+requireText("set_private_messages_enabled", 'private acceptance setting must sync to runtime');
 requireText("listen<PrivateChatMessage>('private-message'", 'private incoming messages must use a dedicated event');
 requireText('renderChatText(message.text)', 'private messages must reuse safe chat rendering');
 requireText("authorizedRoomRevision.get(roomId) === revision", 'room authorization must be tied to the advertised auth revision');
@@ -93,6 +99,8 @@ if (ui.includes("invoke('send_message'") || ui.includes('gossipsub')) {
 if (/innerHTML\s*=.*message\.text/.test(ui)) {
   throw new Error('private message text must never be inserted as raw HTML');
 }
+if (!rust.includes('SetPrivateMessagesEnabled') || !rust.includes('private_messages_enabled = enabled')) throw new Error('Rust runtime must expose incoming-private policy');
+if (!rust.includes('reason: Some("private_disabled".into())')) throw new Error('disabled private conversations must fail closed');
 if (!index.includes('/src/secure-ui.ts')) {
   throw new Error('secure UI module must be loaded by the application shell');
 }

@@ -15,11 +15,11 @@ assert.throws(() => assertChecks(checks, 'b'.repeat(40)));
 assert.throws(() => assertChecks([...checks, { ...checks[0], id: 99, status: 'in_progress', conclusion: null }], commit));
 assert.throws(() => assertChecks(checks.map((item) => ({ ...item, app: { slug: 'unknown-app' } })), commit));
 
-const archive = `Konofix-Chat-0.5.0-Windows-${commit}.zip`;
-const bytes = new Map(['BUILD_INFO.json', 'Konofix-Chat-0.5.0-beta.1-setup.exe', 'Konofix-Chat-0.5.0-beta.1-setup.exe.sha256', archive, `${archive}.sha256`].map((name) => [name, Buffer.from(name)]));
-bytes.set('BUILD_INFO.json', Buffer.from(JSON.stringify({ commit, version: '0.5.0', workflow_run: '1234' })));
+const archive = `Konofix-Chat-0.5.1-Windows-${commit}.zip`;
+const bytes = new Map(['BUILD_INFO.json', 'Konofix-Chat-0.5.1-beta.1-setup.exe', 'Konofix-Chat-0.5.1-beta.1-setup.exe.sha256', archive, `${archive}.sha256`].map((name) => [name, Buffer.from(name)]));
+bytes.set('BUILD_INFO.json', Buffer.from(JSON.stringify({ commit, version: '0.5.1', workflow_run: '1234' })));
 const read = (name) => bytes.get(name);
-const plan = { tag: 'v0.5.0-beta.1', version: '0.5.0', commit, workflow_run: '1234', body: '<!-- KONOFIX-BETA-PREVIEW --> 56/67', files: [...bytes].map(([name, value]) => ({ name, bytes: value.length, sha256: createHash('sha256').update(value).digest('hex') })) };
+const plan = { tag: 'v0.5.1-beta.1', version: '0.5.1', commit, workflow_run: '1234', body: '<!-- KONOFIX-BETA-PREVIEW --> 56/67', files: [...bytes].map(([name, value]) => ({ name, bytes: value.length, sha256: createHash('sha256').update(value).digest('hex') })) };
 assertPlan(plan, env, read);
 assert.throws(() => assertPlan({ ...plan, commit: 'b'.repeat(40) }, env, read));
 assert.throws(() => assertPlan({ ...plan, version: '0.4.3' }, env, read));
@@ -35,7 +35,7 @@ function service({ existing, tagCommit, failUpload, corruptDigest, seedAssets = 
     if (method === 'GET' && endpoint === '/releases?per_page=100') return state.release ? [{ tag_name: plan.tag, ...state.release }] : [];
     if (method === 'GET' && endpoint.startsWith('/git/ref/')) return state.tagCommit ? { object: { sha: state.tagCommit } } : null;
     if (method === 'POST') {
-      state.release = { id: 10, ...body, html_url: 'https://github.com/Swir/Konofix/releases/tag/v0.5.0-beta.1' };
+      state.release = { id: 10, ...body, html_url: 'https://github.com/Swir/Konofix/releases/tag/v0.5.1-beta.1' };
       return state.release;
     }
     if (method === 'GET' && endpoint.includes('/assets?')) return state.assets;
@@ -72,4 +72,4 @@ assert(!retry.state.calls.some((call) => call.method === 'POST'), 'Draft lookup 
 const immutable = service({ existing: { draft: false, prerelease: true, html_url: 'existing' } });
 assert.equal((await publishBeta(plan, immutable.api, read)).skipped, true);
 assert(!immutable.state.calls.some((call) => call.method !== 'GET'), 'Published releases must never be rewritten');
-console.log('Beta publishing: trusted context, exact CI/build, 0.5.0 intent, draft upload verification, resume and immutable release tests PASS.');
+console.log('Beta publishing: trusted context, exact CI/build, 0.5.1 intent, draft upload verification, resume and immutable release tests PASS.');

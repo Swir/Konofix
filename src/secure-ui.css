@@ -317,3 +317,20 @@
     outline-color: Highlight;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .secure-room-manage,
+  .mini-private,
+  .private-unread,
+  .private-chat-modal,
+  .private-message,
+  .secure-room-create-modal {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .private-messages,
+  .secure-room-create-modal {
+    scroll-behavior: auto;
+  }
+}

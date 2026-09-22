@@ -58,6 +58,12 @@ if (!css.includes('@media (forced-colors: active)') || !css.includes('background
 if (!css.includes('outline-color: Highlight;')) {
   throw new Error('forced-colors mode must keep keyboard focus visibly distinct');
 }
+if (!css.includes('@media (prefers-reduced-motion: reduce)') || !css.includes('animation: none !important;') || !css.includes('transition: none !important;')) {
+  throw new Error('secure/private UI must respect the operating-system reduced-motion preference');
+}
+if (!css.includes('scroll-behavior: auto;')) {
+  throw new Error('reduced-motion mode must avoid smooth scrolling inside secure/private surfaces');
+}
 
 if (ui.includes("if (!fileButton || row.querySelector('[data-private-peer]')) return;")) {
   throw new Error('existing private-chat buttons must not skip unread-state refresh');

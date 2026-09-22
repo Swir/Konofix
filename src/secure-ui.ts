@@ -133,8 +133,8 @@ function augmentMainUi(): void {
     }
     button.dataset.privateNick = nick;
     button.dataset.privateColor = color;
-    button.title = t('private.open', { nick });
-    button.setAttribute('aria-label', t('private.open', { nick }));
+    const openLabel = t('private.open', { nick });
+    button.title = openLabel;
 
     const unread = conversations.unreadCount(peerId);
     let badge = button.querySelector<HTMLSpanElement>('.private-unread');
@@ -148,8 +148,11 @@ function augmentMainUi(): void {
       if (badge.textContent !== unreadText) badge.textContent = unreadText;
       const unreadLabel = t('private.unread', { count: unread });
       if (badge.getAttribute('aria-label') !== unreadLabel) badge.setAttribute('aria-label', unreadLabel);
+      const accessibleLabel = `${openLabel}. ${unreadLabel}`;
+      if (button.getAttribute('aria-label') !== accessibleLabel) button.setAttribute('aria-label', accessibleLabel);
     } else {
       badge?.remove();
+      if (button.getAttribute('aria-label') !== openLabel) button.setAttribute('aria-label', openLabel);
     }
   });
 }
@@ -170,7 +173,7 @@ function createRoomWithOptionalPassword(): void {
     <label for="secureRoomPassword">${esc(t('rooms.passwordManage'))}</label>
     <input id="secureRoomPassword" type="password" maxlength="64" autocomplete="new-password" />
     <p class="secure-room-create-hint">${esc(t('rooms.passwordOptionalPrompt'))}</p>
-    <div class="error" data-room-create-error></div>
+    <div class="error" data-room-create-error role="alert" aria-live="polite"></div>
     <div class="secure-room-create-actions">
       <button type="button" class="ghost" data-room-create-close>${esc(t('common.cancel'))}</button>
       <button type="button" class="primary compact" data-room-create-submit>${esc(t('rooms.create'))}</button>
@@ -319,8 +322,8 @@ function renderPrivateModal(): void {
       ${messages.length ? messages.map(message => privateMessageHtml(message, activePrivatePeerId)).join('') : `<div class="private-empty">${esc(t('private.subtitle'))}</div>`}
     </div>
     <footer class="private-compose">
-      <input data-private-input maxlength="4000" autocomplete="off" spellcheck="true" placeholder="${esc(t('private.messageTo', { nick: activePrivateNick }))}" ${offline ? 'disabled' : ''}/>
-      <button type="button" class="send" data-private-send ${offline ? 'disabled' : ''}>➤</button>
+      <input data-private-input maxlength="4000" autocomplete="off" spellcheck="true" placeholder="${esc(t('private.messageTo', { nick: activePrivateNick }))}" aria-label="${esc(t('private.messageTo', { nick: activePrivateNick }))}" ${offline ? 'disabled' : ''}/>
+      <button type="button" class="send" data-private-send aria-label="${esc(t('common.send'))}" ${offline ? 'disabled' : ''}>➤</button>
     </footer>
   </section>`;
 

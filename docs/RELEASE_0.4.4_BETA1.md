@@ -3,6 +3,17 @@
 
 This prerelease is reserved for the next qualified Windows beta after the frozen 0.4.3 room-stability candidate. Connected desktops remain the participant-operated P2P network and the separate headless Konofix Node remains optional. **Global Beta qualification remains 56/67 = 83.6%.**
 
+## Qualification gate
+
+This handoff note does **not** make 0.4.4 ready by itself. The candidate may be handed to the user only after the exact PR head passes Windows CI, Linux Node CI and RustSec, that exact qualified head is merged, the resulting exact `main` commit passes the same three gates, and a Windows installer/artifact is verified against that exact `main` commit. The frozen 0.4.3 build remains the user's first manual-test candidate and must not be rebuilt or replaced by 0.4.4 work.
+
+## Test order
+
+1. Complete manual testing of the frozen 0.4.3 candidate first.
+2. Keep that exact 0.4.3 installer/ZIP and its `BUILD_INFO.json` unchanged for reproducibility.
+3. Move to 0.4.4 only after the project reports that a verified Windows installer exists for the exact qualified 0.4.4 `main` commit.
+4. Use the same qualified 0.4.4 build on both computers during the 0.4.4 test pass.
+
 ## What changed
 
 - Improved protected-room and private-chat layouts for short and narrow windows without changing room, password or P2P semantics.

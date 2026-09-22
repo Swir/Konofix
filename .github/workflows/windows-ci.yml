@@ -180,7 +180,7 @@ jobs:
           Copy-Item 'docs\NODE_SOAK.md' 'artifact\NODE_SOAK.md'
           Copy-Item 'docs\GLOBAL_BETA.md' 'artifact\GLOBAL_BETA.md'
           New-Item -ItemType Directory -Path 'artifact\docs' | Out-Null
-          Copy-Item 'docs\global-beta-evidence.template.json', 'docs\RELEASE_0.4.3_BETA1.md' 'artifact\docs'
+          Copy-Item 'docs\global-beta-evidence.template.json', 'docs\RELEASE_0.5.0_BETA1.md' 'artifact\docs'
           $package = Get-Content 'package.json' -Raw | ConvertFrom-Json
           & .\scripts\new-tester-handoff.ps1 -OutputPath 'artifact\TESTER_HANDOFF.md' -Version ([string]$package.version) -Commit ([string]$env:GITHUB_SHA) -WorkflowRun ([string]$env:GITHUB_RUN_ID)
 

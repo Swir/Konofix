@@ -115,6 +115,22 @@ jobs:
               changelog = marker + entry + changelog[len(marker):]
           changelog_path.write_text(changelog, encoding="utf-8")
 
+          progress_path = Path("scripts/progress-svg.mjs")
+          progress = progress_path.read_text(encoding="utf-8")
+          old_progress = "const MILESTONE_PREFIX = '## 0.4.3 — Real Internet Test';"
+          new_progress = "const MILESTONE_PREFIX = '## 0.4.4 — Real Internet Test';"
+          if old_progress in progress:
+              progress = progress.replace(old_progress, new_progress, 1)
+          if new_progress not in progress:
+              raise SystemExit("Progress SVG generator is not bound to the 0.4.4 roadmap stage")
+          progress_path.write_text(progress, encoding="utf-8")
+
+          progress_test_path = Path("scripts/test-progress-svg.mjs")
+          progress_test = progress_test_path.read_text(encoding="utf-8")
+          progress_test = progress_test.replace("## 0.4.3 — Real Internet Test", "## 0.4.4 — Real Internet Test")
+          progress_test = progress_test.replace("scope: '0.4.3 — Real Internet Test'", "scope: '0.4.4 — Real Internet Test'")
+          progress_test_path.write_text(progress_test, encoding="utf-8")
+
           windows_path = Path(".github/workflows/windows-ci.yml")
           windows = windows_path.read_text(encoding="utf-8")
           old_note = "docs\\RELEASE_0.4.3_BETA1.md"
@@ -157,6 +173,7 @@ jobs:
           grep -F '## 0.4.4 — Real Internet Test' ROADMAP.md >/dev/null
           grep -F '## 0.4.4' CHANGELOG.md >/dev/null
           grep -F 'name = "konofix-chat"' src-tauri/Cargo.lock >/dev/null
+          grep -F "const MILESTONE_PREFIX = '## 0.4.4 — Real Internet Test';" scripts/progress-svg.mjs >/dev/null
           python3 - <<'PY'
           import json, pathlib, re
           assert json.load(open('package.json', encoding='utf-8'))['version'] == '0.4.4'
@@ -174,7 +191,7 @@ jobs:
         run: |
           set -euo pipefail
           git rm -- .github/workflows/prepare-0.4.4-version.yml
-          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock node-linux/Cargo.toml ROADMAP.md CHANGELOG.md .github/workflows/windows-ci.yml .github/workflows/linux-node-ci.yml
+          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock node-linux/Cargo.toml ROADMAP.md CHANGELOG.md scripts/progress-svg.mjs scripts/test-progress-svg.mjs .github/workflows/windows-ci.yml .github/workflows/linux-node-ci.yml
           git diff --cached --check
           if git diff --cached --quiet; then
             echo 'No coherent package changes remain to commit.'

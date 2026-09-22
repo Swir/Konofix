@@ -315,6 +315,7 @@ async fn public_transfer(
             size: bytes.len() as u64,
             kind: kind.into(),
             mime: mime.map(str::to_string),
+            room_id: None,
             reply,
         })
         .await

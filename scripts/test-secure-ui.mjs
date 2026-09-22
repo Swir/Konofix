@@ -30,6 +30,11 @@ requireText("let augmentQueued = false;", 'secure UI must coalesce DOM augmentat
 requireText("existingManage.textContent !== manageIcon", 'room password manager updates must be idempotent to avoid MutationObserver loops');
 requireText("badge.textContent !== unreadText", 'unread badge updates must be idempotent to avoid MutationObserver loops');
 requireText("secureRoomCreateModal", 'room creation must use one in-app modal instead of chained browser prompts');
+requireText('aria-labelledby="secureRoomCreateTitle"', 'room creation dialog must expose its visible title to assistive technology');
+requireText('aria-labelledby="privateChatTitle"', 'private chat dialog must expose its visible title to assistive technology');
+requireText("if (event.key === 'Escape')", 'secure/private dialogs must support Escape dismissal');
+requireText("document.querySelector<HTMLButtonElement>('#newRoom')?.focus()", 'room creation dismissal must restore keyboard focus to its trigger');
+requireText("[data-private-peer=\"${CSS.escape(peerId)}\"]", 'private chat dismissal must restore keyboard focus to the originating peer action');
 
 if (!css.includes(':focus-visible')) {
   throw new Error('secure-room and private-chat controls must expose a visible keyboard focus state');

@@ -142,9 +142,9 @@ function createRoomWithOptionalPassword(): void {
   const wrap = document.createElement('div');
   wrap.id = 'secureRoomCreateModal';
   wrap.className = 'modal-wrap secure-room-create-wrap';
-  wrap.innerHTML = `<section class="modal glass compact-modal secure-room-create-modal" role="dialog" aria-modal="true">
+  wrap.innerHTML = `<section class="modal glass compact-modal secure-room-create-modal" role="dialog" aria-modal="true" aria-labelledby="secureRoomCreateTitle">
     <div class="modal-head">
-      <div><span class="eyebrow">ROOMS 2.0</span><h3>${esc(t('rooms.create'))}</h3></div>
+      <div><span class="eyebrow">ROOMS 2.0</span><h3 id="secureRoomCreateTitle">${esc(t('rooms.create'))}</h3></div>
       <button type="button" data-room-create-close aria-label="${esc(t('common.cancel'))}">×</button>
     </div>
     <label for="secureRoomName">${esc(t('rooms.newPrompt'))}</label>
@@ -165,10 +165,18 @@ function createRoomWithOptionalPassword(): void {
   const error = wrap.querySelector<HTMLDivElement>('[data-room-create-error]')!;
   const submit = wrap.querySelector<HTMLButtonElement>('[data-room-create-submit]')!;
   const close = () => {
-    if (!roomOperationPending) wrap.remove();
+    if (roomOperationPending) return;
+    wrap.remove();
+    requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('#newRoom')?.focus());
   };
   wrap.querySelectorAll('[data-room-create-close]').forEach(button => button.addEventListener('click', close));
   wrap.addEventListener('click', event => { if (event.target === wrap) close(); });
+  wrap.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+    }
+  });
 
   const create = async () => {
     if (roomOperationPending) return;
@@ -283,9 +291,9 @@ function renderPrivateModal(): void {
   const messages = conversations.conversation(activePrivatePeerId);
   const offline = offlinePeers.has(activePrivatePeerId);
   const color = normalizeNickColor(activePrivateColor);
-  wrap.innerHTML = `<section class="private-chat-modal glass" role="dialog" aria-modal="true" aria-label="${esc(t('private.open', { nick: activePrivateNick }))}">
+  wrap.innerHTML = `<section class="private-chat-modal glass" role="dialog" aria-modal="true" aria-labelledby="privateChatTitle">
     <header class="private-chat-head">
-      <div><span class="eyebrow">PRIVATE P2P</span><h3 style="color:${color}">${esc(activePrivateNick)}</h3><small>${esc(offline ? t('private.offline') : t('private.subtitle'))}</small></div>
+      <div><span class="eyebrow">PRIVATE P2P</span><h3 id="privateChatTitle" style="color:${color}">${esc(activePrivateNick)}</h3><small>${esc(offline ? t('private.offline') : t('private.subtitle'))}</small></div>
       <button type="button" data-private-close aria-label="${esc(t('common.cancel'))}">×</button>
     </header>
     <div class="private-messages" data-private-messages>
@@ -298,12 +306,23 @@ function renderPrivateModal(): void {
   </section>`;
 
   const close = () => {
+    const peerId = activePrivatePeerId;
     conversations.close();
     activePrivatePeerId = '';
     wrap?.remove();
     queueAugment();
+    requestAnimationFrame(() => {
+      if (!peerId) return;
+      document.querySelector<HTMLButtonElement>(`[data-private-peer="${CSS.escape(peerId)}"]`)?.focus();
+    });
   };
   wrap.querySelector('[data-private-close]')?.addEventListener('click', close);
+  wrap.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+    }
+  });
   const input = wrap.querySelector<HTMLInputElement>('[data-private-input]');
   const send = () => { void sendPrivateMessage(); };
   input?.addEventListener('keydown', event => {

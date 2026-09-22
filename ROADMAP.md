@@ -79,6 +79,13 @@ The active milestone now has 56 of 67 tasks complete. The Global Beta expansion 
 - [x] Windows CI for TypeScript + Rust
 - [x] public-bootstrap precheck script
 
+## 0.5.0 — Room & Private Sharing UX 🚧
+- [ ] room-scoped file offer cards in non-WORLD rooms with on-demand direct P2P download and protected-room fail-closed authorization
+- [ ] direct file attachment action in authenticated private 1:1 chat without a recipient picker
+- [ ] refreshed private-message bubbles, peer status and composer with the existing safe Konofix emoji system
+- [ ] coherent 0.5.0 manifests, regression coverage, exact-head Windows/Linux/RustSec qualification and verified Windows installer
+- This version target is separate from the 67-task Global Beta evidence checklist; implementing these UX features does not change **56/67 = 83.6%** by itself.
+
 ## 0.4.4 — Real Internet Test 🚧
 - [x] fixed Windows CI and restored `tsconfig.json`
 - [x] Windows/Tauri packaging and production app/Node build pipeline

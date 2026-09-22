@@ -30,6 +30,24 @@ function esc(value: string): string {
   }[character]!));
 }
 
+function trapDialogFocus(container: HTMLElement, event: KeyboardEvent): void {
+  if (event.key !== 'Tab') return;
+  const focusable = Array.from(container.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  )).filter(element => element.getAttribute('aria-hidden') !== 'true');
+  if (focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (event.shiftKey && (active === first || !container.contains(active))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function roomButton(roomId: string): HTMLButtonElement | null {
   return document.querySelector<HTMLButtonElement>(`button[data-room="${CSS.escape(roomId)}"]`);
 }
@@ -172,6 +190,7 @@ function createRoomWithOptionalPassword(): void {
   wrap.querySelectorAll('[data-room-create-close]').forEach(button => button.addEventListener('click', close));
   wrap.addEventListener('click', event => { if (event.target === wrap) close(); });
   wrap.addEventListener('keydown', event => {
+    if (event.key === 'Tab') trapDialogFocus(wrap, event);
     if (event.key === 'Escape') {
       event.preventDefault();
       close();
@@ -318,6 +337,7 @@ function renderPrivateModal(): void {
   };
   wrap.querySelector('[data-private-close]')?.addEventListener('click', close);
   wrap.onkeydown = event => {
+    if (event.key === 'Tab') trapDialogFocus(wrap, event);
     if (event.key === 'Escape') {
       event.preventDefault();
       close();

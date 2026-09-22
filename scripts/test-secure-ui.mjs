@@ -36,6 +36,13 @@ requireText("if (event.key === 'Escape')", 'secure/private dialogs must support 
 requireText("wrap.onkeydown = event =>", 'private chat rerenders must replace the Escape handler instead of accumulating listeners');
 requireText("document.querySelector<HTMLButtonElement>('#newRoom')?.focus()", 'room creation dismissal must restore keyboard focus to its trigger');
 requireText("[data-private-peer=\"${CSS.escape(peerId)}\"]", 'private chat dismissal must restore keyboard focus to the originating peer action');
+requireText('function trapDialogFocus(container: HTMLElement, event: KeyboardEvent): void', 'secure/private dialogs must implement bounded keyboard focus trapping');
+requireText("button:not([disabled]), input:not([disabled])", 'focus trapping must ignore disabled primary controls');
+requireText("if (event.shiftKey && (active === first || !container.contains(active)))", 'Shift+Tab must wrap to the final dialog control when focus would escape');
+requireText("else if (!event.shiftKey && active === last)", 'Tab must wrap from the final dialog control to the first control');
+if ((ui.match(/trapDialogFocus\(wrap, event\)/g) || []).length < 2) {
+  throw new Error('room creation and private chat must both trap Tab focus inside their modal surface');
+}
 
 if (!css.includes(':focus-visible')) {
   throw new Error('secure-room and private-chat controls must expose a visible keyboard focus state');

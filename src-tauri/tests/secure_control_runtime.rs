@@ -241,26 +241,12 @@ fn voice_runtime_rejects_replay_spoofing_and_invite_spam() {
 
     assert_eq!(
         runtime
-            .accept_voice_signal(
-                first.clone(),
-                &sender,
-                &local,
-                Some(&presence),
-                now_ms,
-                now,
-            )
+            .accept_voice_signal(first.clone(), &sender, &local, Some(&presence), now_ms, now,)
             .unwrap(),
         first
     );
     assert_eq!(
-        runtime.accept_voice_signal(
-            first.clone(),
-            &sender,
-            &local,
-            Some(&presence),
-            now_ms,
-            now,
-        ),
+        runtime.accept_voice_signal(first.clone(), &sender, &local, Some(&presence), now_ms, now,),
         Err(VoiceSignalError::Replay)
     );
 
@@ -272,14 +258,7 @@ fn voice_runtime_rejects_replay_spoofing_and_invite_spam() {
         now_ms,
     );
     assert!(matches!(
-        runtime.accept_voice_signal(
-            spoofed,
-            &attacker,
-            &local,
-            Some(&presence),
-            now_ms,
-            now,
-        ),
+        runtime.accept_voice_signal(spoofed, &attacker, &local, Some(&presence), now_ms, now,),
         Err(VoiceSignalError::Validation(_))
     ));
 
@@ -335,14 +314,7 @@ fn voice_runtime_requires_authenticated_presence() {
     );
     let mut runtime = SecureControlRuntime::default();
     assert_eq!(
-        runtime.accept_voice_signal(
-            signal,
-            &sender,
-            &local,
-            None,
-            7_000_000,
-            Instant::now(),
-        ),
+        runtime.accept_voice_signal(signal, &sender, &local, None, 7_000_000, Instant::now(),),
         Err(VoiceSignalError::Validation(
             "Voice sender has no authenticated presence."
         ))

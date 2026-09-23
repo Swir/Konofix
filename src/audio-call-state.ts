@@ -2,6 +2,9 @@ export type VoiceScope =
   | { kind: 'private'; peerId: string }
   | { kind: 'room'; roomId: string };
 
+export type PrivateVoiceScope = Extract<VoiceScope, { kind: 'private' }>;
+export type RoomVoiceScope = Extract<VoiceScope, { kind: 'room' }>;
+
 export type VoicePhase =
   | 'idle'
   | 'calling'
@@ -198,10 +201,10 @@ export class VoiceSessionStore {
   }
 }
 
-export function roomVoiceScope(roomId: string): VoiceScope {
+export function roomVoiceScope(roomId: string): RoomVoiceScope {
   return { kind: 'room', roomId: cleanId(roomId, 'room ID') };
 }
 
-export function privateVoiceScope(peerId: string): VoiceScope {
+export function privateVoiceScope(peerId: string): PrivateVoiceScope {
   return { kind: 'private', peerId: cleanId(peerId, 'peer ID') };
 }

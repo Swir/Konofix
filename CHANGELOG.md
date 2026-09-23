@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.5.1 — in development
+## 0.6.0 — in development
+
+- started the authenticated P2P audio control plane for private 1:1 calls plus opt-in WORLD/room voice, with bounded invite/offer/answer/ICE/state signaling over the existing direct secure-control channel,
+- added explicit voice session states for calling/ringing/joining/connected/reconnecting/end/error plus independent microphone mute, incoming-audio deafening, chat/notification mute preferences and listen/speak room intent,
+- added per-peer voice signaling and invite-spam limits, replay protection and identity/presence binding before WebRTC media wiring,
+- bumped the development target consistently to 0.6.0 without publishing a release; GitHub Release publication remains user-triggered only.
+
+## 0.5.1
 
 - fixed receiver-side room/WORLD offer downloads so the Transfers panel immediately shows a requesting state, then reconciles to the real incoming P2P transfer and live progress instead of appearing only after completion,
 - added a prominent file-offer-style private-message notification with explicit Open and Ignore actions; Ignore lasts for the current session and manual opening restores notifications,

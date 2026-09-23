@@ -55,3 +55,4 @@ assert.doesNotMatch(source, /GossipSub|publish|public fallback/i,
   'room media signaling controller must not add a public signaling fallback');
 
 console.log('Room audio controller contract checks passed.');
+await import('./test-room-audio-runtime.mjs');

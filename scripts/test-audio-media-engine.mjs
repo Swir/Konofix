@@ -19,7 +19,7 @@ try {
       '--ignoreConfig',
       '--target', 'ES2022',
       '--module', 'commonjs',
-      '--moduleResolution', 'node',
+      '--moduleResolution', 'bundler',
       '--lib', 'ES2022,DOM,DOM.Iterable',
       '--outDir', tempDir,
       '--skipLibCheck',

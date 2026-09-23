@@ -196,15 +196,9 @@ fn voice_signal_binds_authenticated_sender_target_scope_and_payload_shape() {
         timestamp: now,
     };
 
-    assert!(validate_voice_signal(
-        &base,
-        &sender,
-        &local,
-        Some("Alice"),
-        Some("#62E5FF"),
-        now,
-    )
-    .is_ok());
+    assert!(
+        validate_voice_signal(&base, &sender, &local, Some("Alice"), Some("#62E5FF"), now,).is_ok()
+    );
     assert!(validate_voice_signal(
         &base,
         &attacker,
@@ -216,19 +210,15 @@ fn voice_signal_binds_authenticated_sender_target_scope_and_payload_shape() {
     .is_err());
 
     let room = VoiceSignal {
-        scope: VoiceScope::Room { room_id: "world".into() },
+        scope: VoiceScope::Room {
+            room_id: "world".into(),
+        },
         room_intent: Some(VoiceRoomIntent::Speak),
         ..base.clone()
     };
-    assert!(validate_voice_signal(
-        &room,
-        &sender,
-        &local,
-        Some("Alice"),
-        Some("#62E5FF"),
-        now,
-    )
-    .is_ok());
+    assert!(
+        validate_voice_signal(&room, &sender, &local, Some("Alice"), Some("#62E5FF"), now,).is_ok()
+    );
 
     let private_with_room_intent = VoiceSignal {
         room_intent: Some(VoiceRoomIntent::Listen),

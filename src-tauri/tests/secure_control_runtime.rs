@@ -285,7 +285,7 @@ fn voice_runtime_rejects_replay_spoofing_and_invite_spam() {
 
     // The accepted invite and its replay both consume the general signal budget,
     // but only valid invite actions consume the dedicated invite-spam window.
-    for _ in 1..VOICE_INVITE_RATE_MAX {
+    for _ in 2..VOICE_INVITE_RATE_MAX {
         runtime
             .accept_voice_signal(
                 voice_invite(

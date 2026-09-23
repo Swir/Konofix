@@ -95,7 +95,8 @@ impl SecureControlClient {
                 room_id: pending_room,
                 ..
             } => pending_room != room_id,
-            PendingSecureRequest::PrivateMessage { .. } | PendingSecureRequest::VoiceSignal { .. } => true,
+            PendingSecureRequest::PrivateMessage { .. }
+            | PendingSecureRequest::VoiceSignal { .. } => true,
         });
     }
 

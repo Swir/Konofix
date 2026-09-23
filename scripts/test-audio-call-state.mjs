@@ -10,6 +10,7 @@ try {
     'npx',
     [
       'tsc', sourcePath,
+      '--ignoreConfig',
       '--target', 'ES2022',
       '--module', 'ES2022',
       '--moduleResolution', 'bundler',

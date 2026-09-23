@@ -16,6 +16,7 @@ try {
     'npx',
     [
       'tsc', ...sources,
+      '--ignoreConfig',
       '--target', 'ES2022',
       '--module', 'commonjs',
       '--moduleResolution', 'node',

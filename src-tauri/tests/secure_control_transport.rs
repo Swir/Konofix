@@ -321,7 +321,9 @@ fn voice_builder_and_inbound_handler_keep_signaling_on_authenticated_control_cha
         "Alice",
         Some("#62E5FF".into()),
         session_id.clone(),
-        VoiceScope::Room { room_id: "world".into() },
+        VoiceScope::Room {
+            room_id: "world".into(),
+        },
         VoiceSignalAction::Invite,
         None,
         None,
@@ -349,7 +351,9 @@ fn voice_builder_and_inbound_handler_keep_signaling_on_authenticated_control_cha
             ..
         }
     ));
-    let signal = outcome.voice_signal.expect("accepted voice signal must be delivered");
+    let signal = outcome
+        .voice_signal
+        .expect("accepted voice signal must be delivered");
     assert_eq!(signal.session_id, session_id);
     assert_eq!(
         signal.scope,

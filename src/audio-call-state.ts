@@ -68,7 +68,7 @@ function assertTransition(from: VoicePhase, to: VoicePhase): void {
   if (from === to) return;
   const allowed: Record<VoicePhase, readonly VoicePhase[]> = {
     idle: ['calling', 'ringing', 'joining', 'ended', 'error'],
-    calling: ['connected', 'ended', 'error'],
+    calling: ['joining', 'connected', 'ended', 'error'],
     ringing: ['joining', 'connected', 'ended', 'error'],
     joining: ['connected', 'ended', 'error'],
     connected: ['reconnecting', 'ended', 'error'],

@@ -10,7 +10,6 @@ try {
     'npx',
     [
       'tsc', sourcePath,
-      '--ignoreConfig',
       '--target', 'ES2022',
       '--module', 'ES2022',
       '--moduleResolution', 'bundler',
@@ -39,6 +38,10 @@ try {
   const outgoing = store.begin('call-1', privateScope, 'calling');
   if (outgoing.phase !== 'calling' || outgoing.localMuted || outgoing.deafened) {
     throw new Error('Private call must start in an explicit outgoing calling state.');
+  }
+  const joiningOutgoing = store.transition(privateScope, 'joining', 90);
+  if (joiningOutgoing.phase !== 'joining') {
+    throw new Error('Accepted outgoing calls must be able to enter the joining phase before WebRTC connects.');
   }
   const connected = store.transition(privateScope, 'connected', 100);
   if (connected.phase !== 'connected' || connected.startedAt !== 100) {
@@ -118,3 +121,5 @@ try {
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
 }
+
+await import('./test-audio-media-engine.mjs');

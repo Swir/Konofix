@@ -161,6 +161,7 @@ try {
   const bobCapture = new FakeCapture('bob');
   const alicePeers = [];
   const bobPeers = [];
+  const aliceSessions = [];
   const bobSessions = [];
 
   alice = new RoomAudioCallController(
@@ -176,6 +177,9 @@ try {
         let value = 0;
         return () => `alice-session-${++value}`;
       })(),
+      events: {
+        onSession: session => aliceSessions.push(session),
+      },
     },
   );
   bob = new RoomAudioCallController(
@@ -251,8 +255,13 @@ try {
   }
 
   await alice.leaveRoom();
-  if (alice.activeSession()?.phase !== 'ended' || !alicePeers.at(-1)?.closed || aliceCapture.stopped !== 1) {
-    throw new Error('Leaving room voice must end state and release microphone/WebRTC resources.');
+  if (
+    alice.activeSession() !== undefined ||
+    aliceSessions.at(-1)?.phase !== 'ended' ||
+    !alicePeers.at(-1)?.closed ||
+    aliceCapture.stopped !== 1
+  ) {
+    throw new Error('Leaving room voice must emit ended state, clear active state and release microphone/WebRTC resources.');
   }
   if (bob.activeSession()?.participants.has('peer-alice')) {
     throw new Error('Remote leave must remove the departed voice participant.');

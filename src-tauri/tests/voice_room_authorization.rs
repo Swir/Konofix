@@ -123,14 +123,7 @@ fn unprotected_owned_room_does_not_require_a_password_grant_for_voice() {
     let signal = room_invite(&guest, &owner, "open-room", now_ms);
     assert_eq!(
         runtime
-            .accept_voice_signal(
-                signal.clone(),
-                &guest,
-                &owner,
-                Some(&presence),
-                now_ms,
-                now,
-            )
+            .accept_voice_signal(signal.clone(), &guest, &owner, Some(&presence), now_ms, now,)
             .expect("open-room voice"),
         signal
     );

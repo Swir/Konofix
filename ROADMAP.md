@@ -8,6 +8,19 @@
 
 **Real Internet Test milestone: 83.6% complete**
 
+### Active delivery target — Konofix 0.6.0 Audio
+
+0.6.0 is scope-frozen around opt-in voice without changing the evidence-backed 56/67 Real Internet Test score:
+
+- [ ] private authenticated 1:1 audio calls with ringing, accept/reject, mute, hang-up and reconnect,
+- [ ] opt-in #WORLD voice with an explicit listen / want-to-speak control; nobody auto-joins audio,
+- [ ] opt-in room voice, including protected rooms, with direct authenticated peer signaling,
+- [ ] microphone mute, incoming-audio deafening, chat/notification mute and full voice opt-out controls,
+- [ ] device selection and clear microphone/permission errors,
+- [ ] participant/speaking indicators plus bounded anti-spam/rate limits for call invitations,
+- [ ] focused TypeScript/Rust regressions and Windows runtime qualification while preserving all 0.5.1 features,
+- [ ] user-led audio test approval before any GitHub Release is published.
+
 The active milestone now has 56 of 67 tasks complete. The Global Beta expansion added eight many-computer release gates to the five original real-network gates. The reviewed public-Node connection-ceiling/per-peer/pending-admission gate and the Rooms 2.0 production membership/count implementation gate are now verified after exact-head Windows/Linux qualification; the other six Global Beta gates and the five original real-world gates remain open. CI alone cannot credit participant-topology deployment, real 50/100/250 load, cross-country clients, public-network field soak, failover or qualified Global Beta prerelease evidence.
 
 - The Windows installer/startup regression is fixed and covered by actual MSI/NSIS payload, Start menu and rendered-login/event-subscription checks. Participant networking and Rooms 2.0 runtime wiring are implemented; real multi-network application qualification remains open.

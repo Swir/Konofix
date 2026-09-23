@@ -8,7 +8,7 @@
 
 **Real Internet Test milestone: 83.6% complete**
 
-### Active delivery target — Konofix 0.6.0 Audio
+## 0.6.0 — Audio Calls (development)
 
 0.6.0 is scope-frozen around opt-in voice without changing the evidence-backed 56/67 Real Internet Test score:
 

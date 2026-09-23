@@ -1,0 +1,31 @@
+name: Publish Konofix 0.5.1 Stable
+
+on:
+  push:
+    branches:
+      - release/0.5.1-stable-publish
+    paths:
+      - .github/workflows/publish-stable-0.5.1.yml
+
+permissions:
+  contents: write
+  actions: read
+  checks: read
+
+jobs:
+  publish-stable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout publication branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Publish exact tested 0.5.1 build as stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/publish-stable-0.5.1.mjs

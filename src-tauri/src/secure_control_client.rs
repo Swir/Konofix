@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use libp2p::PeerId;
 
-use crate::secure_channels::{ControlRequest, ControlResponse, PrivateDirectMessage};
+use crate::secure_channels::{ControlRequest, ControlResponse, PrivateDirectMessage, VoiceSignal};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedRoomSecurity {
@@ -24,6 +24,10 @@ pub enum PendingSecureRequest {
         message: PrivateDirectMessage,
         target: PeerId,
     },
+    VoiceSignal {
+        signal: VoiceSignal,
+        target: PeerId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +45,13 @@ pub enum SecureResponseOutcome {
     },
     PrivateRejected {
         message: PrivateDirectMessage,
+        reason: String,
+    },
+    VoiceAccepted {
+        signal: VoiceSignal,
+    },
+    VoiceRejected {
+        signal: VoiceSignal,
         reason: String,
     },
     Ignored,
@@ -84,7 +95,7 @@ impl SecureControlClient {
                 room_id: pending_room,
                 ..
             } => pending_room != room_id,
-            PendingSecureRequest::PrivateMessage { .. } => true,
+            PendingSecureRequest::PrivateMessage { .. } | PendingSecureRequest::VoiceSignal { .. } => true,
         });
     }
 
@@ -167,6 +178,30 @@ impl SecureControlClient {
         Ok(message.id.clone())
     }
 
+    pub fn track_voice_signal(
+        &mut self,
+        request: &ControlRequest,
+        target: PeerId,
+    ) -> Result<String, &'static str> {
+        let ControlRequest::VoiceSignal(signal) = request else {
+            return Err("Voice signal request required.");
+        };
+        if signal.target_peer_id != target.to_string() {
+            return Err("Voice target does not match the tracked peer.");
+        }
+        if self.pending.contains_key(&signal.id) {
+            return Err("Voice signal is already pending.");
+        }
+        self.pending.insert(
+            signal.id.clone(),
+            PendingSecureRequest::VoiceSignal {
+                signal: signal.clone(),
+                target,
+            },
+        );
+        Ok(signal.id.clone())
+    }
+
     pub fn cancel_pending(&mut self, correlation_id: &str) -> Option<PendingSecureRequest> {
         self.pending.remove(correlation_id)
     }
@@ -238,6 +273,29 @@ impl SecureControlClient {
                     SecureResponseOutcome::PrivateRejected {
                         message,
                         reason: bounded_reason(reason, "private_rejected"),
+                    }
+                }
+            }
+            ControlResponse::VoiceAck {
+                signal_id,
+                accepted,
+                reason,
+            } => {
+                let Some(PendingSecureRequest::VoiceSignal { signal, target }) =
+                    self.pending.get(&signal_id).cloned()
+                else {
+                    return SecureResponseOutcome::Ignored;
+                };
+                if target != *authenticated_peer || signal.id != signal_id {
+                    return SecureResponseOutcome::Ignored;
+                }
+                self.pending.remove(&signal_id);
+                if accepted {
+                    SecureResponseOutcome::VoiceAccepted { signal }
+                } else {
+                    SecureResponseOutcome::VoiceRejected {
+                        signal,
+                        reason: bounded_reason(reason, "voice_rejected"),
                     }
                 }
             }

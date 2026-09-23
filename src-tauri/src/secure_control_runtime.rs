@@ -9,7 +9,7 @@ use crate::{
     room_password_state::{ProtectedRoomState, RoomAuthError, RoomLockMetadata},
     secure_channels::{
         validate_private_message, validate_voice_signal, PrivateDirectMessage, ReplayCache,
-        RoomAccessGrant, VoiceSignal, VoiceSignalAction, WindowRateLimiter,
+        RoomAccessGrant, VoiceScope, VoiceSignal, VoiceSignalAction, WindowRateLimiter,
         PRIVATE_RATE_MAX_MESSAGES, PRIVATE_RATE_WINDOW_SECS, PRIVATE_REPLAY_MAX_ENTRIES,
         PRIVATE_REPLAY_TTL_SECS, VOICE_INVITE_RATE_MAX, VOICE_INVITE_RATE_WINDOW_SECS,
         VOICE_RATE_MAX_SIGNALS, VOICE_RATE_WINDOW_SECS, VOICE_REPLAY_MAX_ENTRIES,
@@ -189,6 +189,16 @@ impl SecureControlRuntime {
             now_ms,
         )
         .map_err(VoiceSignalError::Validation)?;
+
+        if let VoiceScope::Room { room_id } = &signal.scope {
+            if self.protected_rooms.contains_key(room_id)
+                && !self.room_authorized(room_id, authenticated_source, now_ms)
+            {
+                return Err(VoiceSignalError::Validation(
+                    "Voice sender is not authorized for this protected room.",
+                ));
+            }
+        }
 
         if !self.voice_rate.allow(
             authenticated_source.to_string(),

@@ -327,7 +327,7 @@ fn validate_voice_payload(signal: &VoiceSignal) -> Result<(), &'static str> {
             if !no_sdp || !no_candidate || signal.muted.is_some() {
                 return Err("Voice invite contains unexpected media payload.");
             }
-            if matches!(signal.scope, VoiceScope::Private) && signal.room_intent.is_some() {
+            if matches!(&signal.scope, VoiceScope::Private) && signal.room_intent.is_some() {
                 return Err("Private voice invite cannot carry room intent.");
             }
         }
@@ -375,7 +375,7 @@ fn validate_voice_payload(signal: &VoiceSignal) -> Result<(), &'static str> {
             if signal.muted.is_none() && signal.room_intent.is_none() {
                 return Err("Voice state update is empty.");
             }
-            if matches!(signal.scope, VoiceScope::Private) && signal.room_intent.is_some() {
+            if matches!(&signal.scope, VoiceScope::Private) && signal.room_intent.is_some() {
                 return Err("Private voice state cannot carry room intent.");
             }
         }

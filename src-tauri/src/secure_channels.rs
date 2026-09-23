@@ -314,9 +314,9 @@ fn valid_voice_room_id(room_id: &str) -> bool {
     room_id == "world"
         || (!room_id.is_empty()
             && room_id.chars().count() <= 64
-            && room_id
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_')))
+            && room_id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            }))
 }
 
 fn validate_voice_payload(signal: &VoiceSignal) -> Result<(), &'static str> {
@@ -332,11 +332,7 @@ fn validate_voice_payload(signal: &VoiceSignal) -> Result<(), &'static str> {
             }
         }
         VoiceSignalAction::Accept | VoiceSignalAction::Reject | VoiceSignalAction::End => {
-            if !no_sdp
-                || !no_candidate
-                || signal.room_intent.is_some()
-                || signal.muted.is_some()
-            {
+            if !no_sdp || !no_candidate || signal.room_intent.is_some() || signal.muted.is_some() {
                 return Err("Voice control action contains unexpected media payload.");
             }
         }
@@ -516,7 +512,10 @@ impl fmt::Debug for ControlRequest {
                 .field("scope", &signal.scope)
                 .field("action", &signal.action)
                 .field("sdp", &signal.sdp.as_ref().map(|_| "<redacted>"))
-                .field("candidate", &signal.candidate.as_ref().map(|_| "<redacted>"))
+                .field(
+                    "candidate",
+                    &signal.candidate.as_ref().map(|_| "<redacted>"),
+                )
                 .field("room_intent", &signal.room_intent)
                 .field("muted", &signal.muted)
                 .finish(),

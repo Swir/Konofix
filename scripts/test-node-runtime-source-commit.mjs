@@ -23,6 +23,26 @@ function checkResolver(text) {
   assert.match(resolver, /finally\s*{\s*Pop-Location\s*}/);
 }
 
+const netprobeSource = fs.readFileSync(path.resolve('src-tauri/src/bin/konofix-netprobe.rs'), 'utf8');
+
+function checkNetprobeSmokeContract(smokeText, cliText) {
+  const start = smokeText.indexOf('function Invoke-TransportProbe {');
+  const end = smokeText.indexOf('$expectedSourceCommit = Get-ExpectedSourceCommit', start);
+  assert(start >= 0 && end > start, 'Runtime Netprobe smoke function is missing');
+  const probe = smokeText.slice(start, end);
+  assert.match(cliText, /konofix-netprobe \[--timeout SEC\] <NODE_MULTIADDR>/, 'Netprobe CLI usage changed; update the smoke contract deliberately');
+  assert.match(probe, /& \$probe --timeout 20 \$target/);
+  assert.doesNotMatch(probe, /--transport|--target|--timeout-ms|--json/, 'Runtime smoke must not pass flags unsupported by konofix-netprobe');
+  assert.match(probe, /\$evidence\.status -cne 'pass'/);
+  assert.match(probe, /\$evidence\.expected_peer_id/);
+  assert.match(probe, /\$evidence\.observed_peer_id/);
+  assert.match(probe, /\$evidence\.protocol_version/);
+  assert.match(probe, /\$evidence\.agent_version/);
+  assert.match(smokeText, /-Transport 'quic-v1'/, 'QUIC smoke must use the evidence transport name emitted by Netprobe');
+}
+
+checkNetprobeSmokeContract(source, netprobeSource);
+
 checkResolver(source);
 assert.throws(() => checkResolver(source.replace('$expectedPin = $env:KONOFIX_SOURCE_SHA', '$expectedPin = $env:GITHUB_SHA')));
 assert.throws(() => checkResolver(source.replace('git rev-parse --verify HEAD', 'git rev-parse HEAD')));

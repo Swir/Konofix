@@ -17,10 +17,13 @@ jobs:
   node-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      KONOFIX_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.KONOFIX_SOURCE_SHA }}
           persist-credentials: false
 
       - name: Setup Rust
@@ -70,14 +73,12 @@ jobs:
         run: cargo test --locked --manifest-path node-linux/Cargo.toml --bin konofix-netprobe
 
       - name: Build release Linux Node and Netprobe
-        env:
-          GITHUB_SHA: ${{ github.sha }}
         run: cargo build --locked --manifest-path node-linux/Cargo.toml --release --bin konofix-node --bin konofix-netprobe
 
       - name: Linux Node runtime smoke
         shell: bash
         env:
-          EXPECTED_SOURCE_COMMIT: ${{ github.sha }}
+          EXPECTED_SOURCE_COMMIT: ${{ env.KONOFIX_SOURCE_SHA }}
         run: |
           set -euo pipefail
           node_binary="$GITHUB_WORKSPACE/node-linux/target/release/konofix-node"
@@ -251,7 +252,7 @@ jobs:
           version="$(python3 -c 'import json; print(json.load(open("package.json", encoding="utf-8"))["version"])')"
           python3 scripts/linux-bundle-provenance.py build-info \
             --root artifact-linux \
-            --commit "$GITHUB_SHA" \
+            --commit "$KONOFIX_SOURCE_SHA" \
             --version "$version"
           tar -C artifact-linux -czf Konofix-Node-0.6.0-Linux-x86_64.tar.gz .
           sha256sum Konofix-Node-0.6.0-Linux-x86_64.tar.gz > Konofix-Node-0.6.0-Linux-x86_64.tar.gz.sha256
@@ -263,7 +264,7 @@ jobs:
           python3 scripts/linux-bundle-provenance.py verify \
             --archive Konofix-Node-0.6.0-Linux-x86_64.tar.gz \
             --checksum Konofix-Node-0.6.0-Linux-x86_64.tar.gz.sha256 \
-            --expected-commit "$GITHUB_SHA" \
+            --expected-commit "$KONOFIX_SOURCE_SHA" \
             --expected-version 0.6.0
           verify_dir="$(mktemp -d)"
           trap 'rm -rf -- "$verify_dir"' EXIT
@@ -276,7 +277,7 @@ jobs:
         if: github.event_name == 'push'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: Konofix-Node-0.6.0-Linux-x86_64-${{ github.sha }}
+          name: Konofix-Node-0.6.0-Linux-x86_64-${{ env.KONOFIX_SOURCE_SHA }}
           path: |
             artifact-linux
             Konofix-Node-0.6.0-Linux-x86_64.tar.gz

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { testCaptureLifecycle } from './test-audio-capture-lifecycle.mjs';
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-audio-media-'));
 try {
@@ -38,6 +39,7 @@ try {
   const requireFromTemp = createRequire(pathToFileURL(path.join(tempDir, 'entry.cjs')));
   const media = requireFromTemp('./audio-media-engine.js');
   const calls = requireFromTemp('./private-audio-call.js');
+  await testCaptureLifecycle(media);
 
   const makeTrack = deviceId => ({
     kind: 'audio',

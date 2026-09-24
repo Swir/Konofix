@@ -183,32 +183,59 @@ function Wait-RunningSnapshot {
 
 function Invoke-TransportProbe {
     param(
-        [Parameter(Mandatory = $true)][string]$Transport,
+        [Parameter(Mandatory = $true)][ValidateSet('tcp', 'quic-v1')][string]$Transport,
         [Parameter(Mandatory = $true)][int]$Port,
-        [Parameter(Mandatory = $true)][string]$ExpectedPeerId,
+        [Parameter(Mandatory = $true)][string]$PeerId,
         [Parameter(Mandatory = $true)][string]$ExpectedVersion,
-        [Parameter(Mandatory = $true)][string]$ExpectedSourceCommit
+        [Parameter(Mandatory = $true)][string]$ExpectedCommit
     )
 
     $target = if ($Transport -ceq 'tcp') {
-        "/ip4/127.0.0.1/tcp/$Port/p2p/$ExpectedPeerId"
+        "/ip4/127.0.0.1/tcp/$Port/p2p/$PeerId"
     } else {
-        "/ip4/127.0.0.1/udp/$Port/quic-v1/p2p/$ExpectedPeerId"
+        "/ip4/127.0.0.1/udp/$Port/quic-v1/p2p/$PeerId"
     }
-    $output = & $probe '--transport' $Transport '--target' $target '--timeout-ms' '5000' '--json'
-    if ($LASTEXITCODE -ne 0) {
-        throw "Konofix Netprobe $Transport smoke failed with exit code $LASTEXITCODE."
+
+    $output = @(& $probe --timeout 20 $target 2>&1)
+    $exitCode = $LASTEXITCODE
+    $text = ($output | ForEach-Object { [string]$_ }) -join "`n"
+    if ($exitCode -ne 0) {
+        throw "Konofix Netprobe $Transport failed with exit code $exitCode. Output: $text"
     }
-    $result = ($output -join "`n") | ConvertFrom-Json
-    if (-not $result.success -or
-        $result.transport -cne $Transport -or
-        $result.target -cne $target -or
-        $result.authenticated_peer_id -cne $ExpectedPeerId -or
-        $result.version -cne $ExpectedVersion -or
-        $result.source_commit -cne $ExpectedSourceCommit) {
-        throw "Konofix Netprobe $Transport returned unexpected identity/provenance metadata."
+
+    try {
+        $evidence = $text | ConvertFrom-Json
+    } catch {
+        throw "Konofix Netprobe $Transport returned invalid JSON: $($_.Exception.Message). Output: $text"
     }
-    return $result
+
+    if ([int]$evidence.schema -ne 1 -or [string]$evidence.status -cne 'pass') {
+        throw "Konofix Netprobe $Transport returned an unsupported or non-PASS evidence record."
+    }
+    if ([string]$evidence.transport -cne $Transport) {
+        throw "Konofix Netprobe transport mismatch: expected '$Transport', got '$($evidence.transport)'."
+    }
+    if ([string]$evidence.expected_peer_id -cne $PeerId -or [string]$evidence.observed_peer_id -cne $PeerId) {
+        throw "Konofix Netprobe Peer ID mismatch for $Transport."
+    }
+    if ([string]$evidence.protocol_version -cne '/konofix/4.0') {
+        throw "Konofix Netprobe observed unexpected protocol version '$($evidence.protocol_version)'."
+    }
+    if ([string]$evidence.agent_version -cne "Konofix-Node/$ExpectedVersion") {
+        throw "Konofix Netprobe observed unexpected Node agent '$($evidence.agent_version)'."
+    }
+    if ([string]$evidence.version -cne $ExpectedVersion) {
+        throw "Konofix Netprobe build version mismatch: expected '$ExpectedVersion', got '$($evidence.version)'."
+    }
+    if ([string]$evidence.source_commit -cne $ExpectedCommit) {
+        throw "Konofix Netprobe source commit mismatch: expected '$ExpectedCommit', got '$($evidence.source_commit)'."
+    }
+    if ([int64]$evidence.rtt_micros -lt 0 -or [int64]$evidence.elapsed_millis -lt 0) {
+        throw "Konofix Netprobe returned invalid timing evidence for $Transport."
+    }
+
+    Write-Host "PASS: authenticated libp2p $Transport probe reached Peer ID $PeerId (RTT $($evidence.rtt_micros) us)." -ForegroundColor Green
+    return $evidence
 }
 
 $expectedSourceCommit = Get-ExpectedSourceCommit
@@ -240,9 +267,9 @@ try {
     $peerId = [string]$snapshot.peer_id
 
     & $healthValidator -HealthPath $healthPath -ExpectedVersion $expectedVersion -ExpectedPeerId $peerId -ExpectedSourceCommit $expectedSourceCommit -RequirePeer:$false | Out-Null
-    $tcp = Invoke-TransportProbe -Transport 'tcp' -Port $nodeRun.Port -ExpectedPeerId $peerId -ExpectedVersion $expectedVersion -ExpectedSourceCommit $expectedSourceCommit
-    $quic = Invoke-TransportProbe -Transport 'quic' -Port $nodeRun.Port -ExpectedPeerId $peerId -ExpectedVersion $expectedVersion -ExpectedSourceCommit $expectedSourceCommit
-    if ($tcp.authenticated_peer_id -cne $quic.authenticated_peer_id) {
+    $tcp = Invoke-TransportProbe -Transport 'tcp' -Port $nodeRun.Port -PeerId $peerId -ExpectedVersion $expectedVersion -ExpectedCommit $expectedSourceCommit
+    $quic = Invoke-TransportProbe -Transport 'quic-v1' -Port $nodeRun.Port -ExpectedPeerId $peerId -ExpectedVersion $expectedVersion -ExpectedSourceCommit $expectedSourceCommit
+    if ($tcp.observed_peer_id -cne $quic.observed_peer_id) {
         throw 'TCP and QUIC smoke probes authenticated different Node identities.'
     }
     Write-Host "Konofix Node runtime smoke passed: version=$expectedVersion source_commit=$expectedSourceCommit peer_id=$peerId tcp=PASS quic=PASS"

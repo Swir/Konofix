@@ -98,13 +98,12 @@ function Get-ExpectedSourceCommit {
 
     Push-Location $projectRoot
     try {
-        # Under StrictMode, $LASTEXITCODE may not exist yet in a fresh pwsh
-        # process. Seed it before the first native command so source resolution
-        # remains deterministic on clean Windows CI runners.
-        $LASTEXITCODE = 1
+        # A fresh pwsh process under StrictMode may not have LASTEXITCODE yet,
+        # and assigning it locally can mask the native-command update. The
+        # verified 40-char output is the source of truth; failed rev-parse
+        # calls produce no valid commit and therefore fail closed below.
         $commit = (& git rev-parse --verify HEAD 2>$null | Select-Object -First 1)
-        $gitExitCode = $LASTEXITCODE
-        if ($gitExitCode -eq 0 -and $commit -and $commit.Trim() -cmatch '^[0-9a-f]{40}$') {
+        if ($commit -and $commit.Trim() -cmatch '^[0-9a-f]{40}$') {
             $commit = $commit.Trim()
             if ($null -ne $expectedPin -and
                 -not [string]::Equals($expectedPin, $commit, [System.StringComparison]::Ordinal)) {

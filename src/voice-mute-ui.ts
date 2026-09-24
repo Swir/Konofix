@@ -107,10 +107,8 @@ function applyState(): void {
   document.body.classList.toggle('konofix-chat-muted', chatMuted());
   document.body.classList.toggle('konofix-notifications-muted', notificationsMuted());
 
-  if (chatMuted() || notificationsMuted()) {
-    document.querySelectorAll('.private-notice-wrap').forEach(node => node.remove());
-  }
   if (notificationsMuted()) {
+    document.querySelectorAll('.private-notice-wrap').forEach(node => node.remove());
     document.querySelector('#privateAudioIncoming')?.remove();
   }
 

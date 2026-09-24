@@ -13,6 +13,7 @@ function checkResolver(text) {
   assert(start >= 0 && end > start, 'Runtime source resolver is missing');
   const resolver = text.slice(start, end);
   assert.doesNotMatch(resolver, /\$env:GITHUB_SHA\b/i, 'Synthetic PR merge SHA must not override checked-out source');
+  assert.doesNotMatch(resolver, /\$LASTEXITCODE\b/i, 'Source resolver must not depend on ambient LASTEXITCODE under StrictMode');
   assert.match(resolver, /\$expectedPin = \$env:KONOFIX_SOURCE_SHA/);
   assert.match(resolver, /git rev-parse --verify HEAD/);
   assert.match(resolver, /\[string\]::Equals\(\$expectedPin, \$commit, \[System.StringComparison\]::Ordinal\)/);
@@ -26,6 +27,7 @@ checkResolver(source);
 assert.throws(() => checkResolver(source.replace('$expectedPin = $env:KONOFIX_SOURCE_SHA', '$expectedPin = $env:GITHUB_SHA')));
 assert.throws(() => checkResolver(source.replace('git rev-parse --verify HEAD', 'git rev-parse HEAD')));
 assert.throws(() => checkResolver(source.replace("throw 'KONOFIX_SOURCE_SHA does not match the checked-out source commit.'", 'return $expectedPin')));
+assert.throws(() => checkResolver(source.replace('$commit = (& git rev-parse --verify HEAD 2>$null | Select-Object -First 1)', '$LASTEXITCODE = 0; $commit = (& git rev-parse --verify HEAD 2>$null | Select-Object -First 1)')));
 console.log('Node runtime source binding: source checks and adversarial mutations PASS.');
 
 // Evaluate the actual PowerShell function, not a JS translation of its policy.

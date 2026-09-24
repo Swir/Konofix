@@ -245,13 +245,32 @@ try {
     throw new Error('A room listener must be able to deafen incoming audio independently.');
   }
 
+  const aliceOffersBeforeRestart = aliceOutbound.filter(signal => signal.action === 'offer').length;
+  const bobOffersBeforeRestart = bobOutbound.filter(signal => signal.action === 'offer').length;
+  const bobAnswersBeforeRestart = bobOutbound.filter(signal => signal.action === 'answer').length;
   alicePeers.at(-1)?.state('disconnected');
-  if (alice.activeSession()?.phase !== 'reconnecting' || alicePeers.at(-1)?.restarts !== 1) {
-    throw new Error('A disconnected room peer must enter reconnecting and request ICE restart.');
+  alicePeers.at(-1)?.state('disconnected');
+  bobPeers.at(-1)?.state('disconnected');
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  if (
+    alice.activeSession()?.phase !== 'reconnecting' ||
+    bob.activeSession()?.phase !== 'reconnecting' ||
+    alicePeers.at(-1)?.restarts !== 1 ||
+    bobPeers.at(-1)?.restarts !== 0 ||
+    aliceOutbound.filter(signal => signal.action === 'offer').length !== aliceOffersBeforeRestart + 1 ||
+    bobOutbound.filter(signal => signal.action === 'offer').length !== bobOffersBeforeRestart ||
+    bobOutbound.filter(signal => signal.action === 'answer').length !== bobAnswersBeforeRestart + 1
+  ) {
+    throw new Error('WORLD reconnect must use one deterministic ICE restart offerer and complete a fresh offer/answer exchange.');
   }
   alicePeers.at(-1)?.state('connected');
-  if (alice.activeSession()?.phase !== 'connected') {
-    throw new Error('Room voice must recover from reconnecting to connected.');
+  if (alice.activeSession()?.phase !== 'connected' || bob.activeSession()?.phase !== 'reconnecting') {
+    throw new Error('Room reconnect state must remain active until every reconnecting peer reports connected.');
+  }
+  bobPeers.at(-1)?.state('connected');
+  if (alice.activeSession()?.phase !== 'connected' || bob.activeSession()?.phase !== 'connected') {
+    throw new Error('WORLD voice must recover both peers from reconnecting to connected after renegotiation succeeds.');
   }
 
   await alice.leaveRoom();

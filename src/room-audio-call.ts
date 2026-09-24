@@ -49,6 +49,9 @@ type PeerRuntime = {
   peer: PeerLike | null;
   remoteDescriptionReady: boolean;
   pendingIce: string[];
+  offerer: boolean;
+  restartPending: boolean;
+  reconnecting: boolean;
 };
 
 type RoomRuntime = {
@@ -346,6 +349,9 @@ export class RoomAudioCallController {
       peer: null,
       remoteDescriptionReady: false,
       pendingIce: [],
+      offerer: true,
+      restartPending: false,
+      reconnecting: false,
     };
     runtime.peers.set(peer.peerId, peerRuntime);
     const session = this.sessions.session(roomVoiceScope(runtime.roomId));
@@ -396,6 +402,9 @@ export class RoomAudioCallController {
       peer: null,
       remoteDescriptionReady: false,
       pendingIce: [],
+      offerer: false,
+      restartPending: false,
+      reconnecting: false,
     };
     runtime.peers.set(peerRuntime.peerId, peerRuntime);
     const incomingMuted = signal.room_intent !== 'speak';
@@ -446,6 +455,7 @@ export class RoomAudioCallController {
         capture.setMuted(session.localMuted);
       }
       const peer = this.ensurePeer(peerRuntime);
+      peerRuntime.remoteDescriptionReady = false;
       const answer = await peer.acceptOffer(sdp, stream);
       peerRuntime.remoteDescriptionReady = true;
       await this.flushIce(peerRuntime);
@@ -535,19 +545,55 @@ export class RoomAudioCallController {
     if (!session) return;
 
     if (state === 'connected') {
-      if (['joining', 'reconnecting'].includes(session.phase)) {
+      peerRuntime.reconnecting = false;
+      peerRuntime.restartPending = false;
+      if (session.phase === 'joining' || (session.phase === 'reconnecting' && !this.hasReconnectingPeers(runtime))) {
         this.emit(this.sessions.transition(scope, 'connected'));
       }
     } else if (state === 'disconnected') {
-      peerRuntime.peer?.restartIce();
+      peerRuntime.reconnecting = true;
       if (session.phase === 'connected') this.emit(this.sessions.transition(scope, 'reconnecting'));
+      if (peerRuntime.offerer && !peerRuntime.restartPending) {
+        peerRuntime.restartPending = true;
+        void this.restartPeerConnection(peerRuntime);
+      }
     } else if (state === 'failed' || state === 'closed') {
+      peerRuntime.reconnecting = false;
+      peerRuntime.restartPending = false;
       this.removePeer(peerId);
       const current = this.sessions.session(scope);
-      if (current?.phase === 'reconnecting' && runtime.peers.size === 0) {
+      if (current?.phase === 'reconnecting' && !this.hasReconnectingPeers(runtime)) {
         this.emit(this.sessions.transition(scope, 'connected'));
       }
     }
+  }
+
+  private async restartPeerConnection(peerRuntime: PeerRuntime): Promise<void> {
+    const runtime = this.active;
+    if (!runtime || runtime.peers.get(peerRuntime.peerId) !== peerRuntime || !peerRuntime.peer) return;
+    try {
+      peerRuntime.remoteDescriptionReady = false;
+      peerRuntime.pendingIce.length = 0;
+      peerRuntime.peer.restartIce();
+      const sdp = await peerRuntime.peer.createOffer();
+      if (this.active !== runtime || runtime.peers.get(peerRuntime.peerId) !== peerRuntime) return;
+      await this.send(peerRuntime, 'offer', { sdp });
+    } catch (error) {
+      if (this.active !== runtime || runtime.peers.get(peerRuntime.peerId) !== peerRuntime) return;
+      this.events.onMediaError?.(normalizeAudioMediaError(error));
+      peerRuntime.reconnecting = false;
+      peerRuntime.restartPending = false;
+      this.removePeer(peerRuntime.peerId);
+      const scope = roomVoiceScope(runtime.roomId);
+      const current = this.sessions.session(scope);
+      if (current?.phase === 'reconnecting' && !this.hasReconnectingPeers(runtime)) {
+        this.emit(this.sessions.transition(scope, 'connected'));
+      }
+    }
+  }
+
+  private hasReconnectingPeers(runtime: RoomRuntime): boolean {
+    return [...runtime.peers.values()].some(peer => peer.reconnecting);
   }
 
   private async flushIce(peerRuntime: PeerRuntime): Promise<void> {

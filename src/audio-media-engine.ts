@@ -108,6 +108,10 @@ function stopStream(stream: MediaStream | null | undefined): void {
 export class AudioCaptureController {
   private readonly mediaDevices: MediaDevicesLike;
   private stream: MediaStream | null = null;
+  private captureRevision = 0;
+  private lifecycleRevision = 0;
+  private desiredMuted = false;
+  private readonly permissionStreams = new Set<MediaStream>();
 
   constructor(mediaDevices?: MediaDevicesLike) {
     this.mediaDevices = mediaDevices ?? mediaDevicesOrThrow();
@@ -118,12 +122,20 @@ export class AudioCaptureController {
   }
 
   async listInputDevices(requestPermission = false): Promise<AudioInputDevice[]> {
+    const lifecycle = this.lifecycleRevision;
     let permissionStream: MediaStream | null = null;
     try {
       if (requestPermission) {
         permissionStream = await this.mediaDevices.getUserMedia({ audio: true, video: false });
+        if (lifecycle !== this.lifecycleRevision) {
+          throw new AudioMediaError('capture_failed', 'Microphone device lookup was cancelled.');
+        }
+        this.permissionStreams.add(permissionStream);
       }
       const devices = await this.mediaDevices.enumerateDevices();
+      if (lifecycle !== this.lifecycleRevision) {
+        throw new AudioMediaError('capture_failed', 'Microphone device lookup was cancelled.');
+      }
       return devices
         .filter(device => device.kind === 'audioinput')
         .map(device => ({
@@ -135,13 +147,15 @@ export class AudioCaptureController {
     } catch (error) {
       throw normalizeAudioMediaError(error);
     } finally {
+      if (permissionStream) this.permissionStreams.delete(permissionStream);
       stopStream(permissionStream);
     }
   }
 
   async start(options: AudioCaptureOptions = {}): Promise<MediaStream> {
-    const previous = this.stream;
-    const previousMuted = Boolean(previous) && previous!.getAudioTracks().every(track => !track.enabled);
+    const revision = ++this.captureRevision;
+    const previousTracks = this.stream?.getAudioTracks() ?? [];
+    if (previousTracks.length) this.desiredMuted = previousTracks.every(track => !track.enabled);
     const constraints: MediaTrackConstraints = {
       echoCancellation: options.echoCancellation ?? true,
       noiseSuppression: options.noiseSuppression ?? true,
@@ -155,12 +169,19 @@ export class AudioCaptureController {
     } catch (error) {
       throw normalizeAudioMediaError(error);
     }
+    // getUserMedia cannot be synchronously aborted. A cancelled or superseded
+    // result must be released, never installed as the current microphone.
+    if (revision !== this.captureRevision) {
+      stopStream(next);
+      throw new AudioMediaError('capture_failed', 'Microphone capture request was cancelled.');
+    }
     const tracks = next.getAudioTracks();
     if (!tracks.length) {
       stopStream(next);
       throw new AudioMediaError('device_missing', 'The selected capture source did not provide an audio track.');
     }
-    tracks.forEach(track => { track.enabled = !previousMuted; });
+    tracks.forEach(track => { track.enabled = !this.desiredMuted; });
+    const previous = this.stream;
     this.stream = next;
     stopStream(previous);
     return next;
@@ -173,6 +194,7 @@ export class AudioCaptureController {
   }
 
   setMuted(muted: boolean): void {
+    this.desiredMuted = muted;
     this.stream?.getAudioTracks().forEach(track => { track.enabled = !muted; });
   }
 
@@ -182,8 +204,12 @@ export class AudioCaptureController {
   }
 
   stop(): void {
+    this.captureRevision += 1;
+    this.lifecycleRevision += 1;
     stopStream(this.stream);
     this.stream = null;
+    this.permissionStreams.forEach(stopStream);
+    this.permissionStreams.clear();
   }
 }
 

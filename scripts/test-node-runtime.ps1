@@ -89,15 +89,23 @@ function Get-ExpectedSourceCommit {
         return $commit
     }
 
-    if ($env:GITHUB_SHA -cmatch '^[0-9a-f]{40}$') {
-        return $env:GITHUB_SHA
+    # GITHUB_SHA is the synthetic merge commit on pull_request events. It is
+    # not evidence of the source actually checked out for this build.
+    $expectedPin = $env:KONOFIX_SOURCE_SHA
+    if ($null -ne $expectedPin -and $expectedPin -cnotmatch '^[0-9a-f]{40}$') {
+        throw 'KONOFIX_SOURCE_SHA must be a full lowercase source commit.'
     }
 
     Push-Location $projectRoot
     try {
-        $commit = (& git rev-parse HEAD 2>$null | Select-Object -First 1)
+        $commit = (& git rev-parse --verify HEAD 2>$null | Select-Object -First 1)
         if ($LASTEXITCODE -eq 0 -and $commit -and $commit.Trim() -cmatch '^[0-9a-f]{40}$') {
-            return $commit.Trim()
+            $commit = $commit.Trim()
+            if ($null -ne $expectedPin -and
+                -not [string]::Equals($expectedPin, $commit, [System.StringComparison]::Ordinal)) {
+                throw 'KONOFIX_SOURCE_SHA does not match the checked-out source commit.'
+            }
+            return $commit
         }
     } finally {
         Pop-Location

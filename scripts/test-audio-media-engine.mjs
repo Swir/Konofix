@@ -129,14 +129,15 @@ try {
       this.localStreams = [];
       this.answers = [];
       this.candidates = [];
+      this.restarts = 0;
     }
-    async createOffer(stream) { this.localStreams.push(stream); return 'offer-sdp'; }
+    async createOffer(stream) { if (stream) this.localStreams.push(stream); return 'offer-sdp'; }
     async acceptOffer(sdp, stream) { this.answers.push(sdp); this.localStreams.push(stream); return 'answer-sdp'; }
     async acceptAnswer(sdp) { this.answers.push(sdp); }
     async addIceCandidate(candidateValue) { this.candidates.push(candidateValue); }
     async setLocalStream(stream) { this.localStreams.push(stream); }
     setMuted(value) { this.muted = value; }
-    restartIce() { this.restarted = true; }
+    restartIce() { this.restarts += 1; }
     close() { this.closed = true; }
     state(value) { this.callbacks.onConnectionState?.(value); }
     ice(value) { return this.callbacks.onIceCandidate?.(value); }
@@ -172,6 +173,26 @@ try {
   if (caller.activeSession()?.phase !== 'connected') {
     throw new Error('WebRTC connected state must promote the private call to connected.');
   }
+
+  const privateOffersBeforeRestart = outbound.filter(signal => signal.action === 'offer').length;
+  callerPeer.state('disconnected');
+  await new Promise(resolve => setImmediate(resolve));
+  if (
+    caller.activeSession()?.phase !== 'reconnecting' ||
+    callerPeer.restarts !== 1 ||
+    outbound.filter(signal => signal.action === 'offer').length !== privateOffersBeforeRestart + 1
+  ) {
+    throw new Error('Outgoing private-call reconnect must restart ICE and send a fresh authenticated offer.');
+  }
+  await caller.handleSignal({
+    id: 'sig-reconnect-answer', session_id: '11111111-1111-4111-8111-111111111111', peer_id: 'peer-b', target_peer_id: 'peer-a',
+    nick: 'Bob', scope: { kind: 'private' }, action: 'answer', sdp: 'reconnect-answer-sdp', timestamp: Date.now(),
+  });
+  callerPeer.state('connected');
+  if (caller.activeSession()?.phase !== 'connected') {
+    throw new Error('Private-call reconnect must recover from reconnecting to connected after the restart answer.');
+  }
+
   await caller.setMuted(true);
   if (!caller.activeSession()?.localMuted || !outbound.some(signal => signal.action === 'state' && signal.muted === true)) {
     throw new Error('Private-call microphone mute must update local state and authenticated peer state.');
@@ -218,6 +239,24 @@ try {
   if (incoming.activeSession()?.phase !== 'connected') {
     throw new Error('Incoming private audio must reach connected state after WebRTC connects.');
   }
+
+  const incomingAnswersBeforeRestart = incomingOutbound.filter(signal => signal.action === 'answer').length;
+  incomingPeer.state('disconnected');
+  if (incoming.activeSession()?.phase !== 'reconnecting' || incomingPeer.restarts !== 0) {
+    throw new Error('Incoming private-call side must wait for the deterministic offerer to restart ICE.');
+  }
+  await incoming.handleSignal({
+    id: 'sig-reconnect-offer', session_id: '33333333-3333-4333-8333-333333333333', peer_id: 'peer-a', target_peer_id: 'peer-b',
+    nick: 'Alice', scope: { kind: 'private' }, action: 'offer', sdp: 'restart-offer-sdp', timestamp: Date.now(),
+  });
+  if (incomingOutbound.filter(signal => signal.action === 'answer').length !== incomingAnswersBeforeRestart + 1) {
+    throw new Error('Incoming private-call side must answer a reconnect offer while in reconnecting state.');
+  }
+  incomingPeer.state('connected');
+  if (incoming.activeSession()?.phase !== 'connected') {
+    throw new Error('Incoming private-call side must return to connected after restart negotiation succeeds.');
+  }
+  await incoming.endPrivateCall();
 
   const blockedOutbound = [];
   const blocked = new calls.PrivateAudioCallController({ send: async signal => { blockedOutbound.push(signal); } });

@@ -82,6 +82,8 @@ type Runtime = {
   peer: PeerLike | null;
   remoteDescriptionReady: boolean;
   pendingIce: string[];
+  offerer: boolean;
+  restartPending: boolean;
 };
 
 const PRIVATE_SCOPE: DirectVoiceScope = { kind: 'private' };
@@ -151,6 +153,8 @@ export class PrivateAudioCallController {
       peer: null,
       remoteDescriptionReady: false,
       pendingIce: [],
+      offerer: true,
+      restartPending: false,
     };
     this.emit(session);
     try {
@@ -286,6 +290,8 @@ export class PrivateAudioCallController {
       peer: null,
       remoteDescriptionReady: false,
       pendingIce: [],
+      offerer: false,
+      restartPending: false,
     };
     this.sessions.upsertParticipant(scope, {
       peerId: signal.peer_id,
@@ -322,7 +328,7 @@ export class PrivateAudioCallController {
     const runtime = this.requireActive();
     const scope = privateVoiceScope(runtime.peerId);
     const session = this.sessions.session(scope);
-    if (!session || session.phase !== 'joining') return;
+    if (!session || !['joining', 'reconnecting'].includes(session.phase)) return;
     try {
       const capture = this.ensureCapture();
       let stream = capture.currentStream();
@@ -407,15 +413,21 @@ export class PrivateAudioCallController {
   }
 
   private handleConnectionState(state: RTCPeerConnectionState): void {
-    if (!this.active) return;
-    const scope = privateVoiceScope(this.active.peerId);
+    const runtime = this.active;
+    if (!runtime) return;
+    const scope = privateVoiceScope(runtime.peerId);
     const session = this.sessions.session(scope);
     if (!session) return;
     try {
       if (state === 'connected' && ['joining', 'reconnecting'].includes(session.phase)) {
+        runtime.restartPending = false;
         this.emit(this.sessions.transition(scope, 'connected'));
-      } else if (state === 'disconnected' && session.phase === 'connected') {
-        this.emit(this.sessions.transition(scope, 'reconnecting'));
+      } else if (state === 'disconnected' && ['connected', 'reconnecting'].includes(session.phase)) {
+        if (session.phase === 'connected') this.emit(this.sessions.transition(scope, 'reconnecting'));
+        if (runtime.offerer && !runtime.restartPending) {
+          runtime.restartPending = true;
+          void this.restartConnection(runtime);
+        }
       } else if (state === 'failed' && !['error', 'ended'].includes(session.phase)) {
         try {
           this.fail(new AudioMediaError('capture_failed', 'The WebRTC audio connection failed.'));
@@ -428,6 +440,24 @@ export class PrivateAudioCallController {
       }
     } catch (error) {
       this.events.onMediaError?.(normalizeAudioMediaError(error));
+    }
+  }
+
+  private async restartConnection(runtime: Runtime): Promise<void> {
+    if (this.active !== runtime || !runtime.peer) return;
+    try {
+      runtime.remoteDescriptionReady = false;
+      runtime.peer.restartIce();
+      const sdp = await runtime.peer.createOffer();
+      if (this.active !== runtime) return;
+      await this.send('offer', { sdp });
+    } catch (error) {
+      if (this.active !== runtime) return;
+      try {
+        this.fail(error);
+      } catch {
+        // fail() records the terminal error and releases media resources.
+      }
     }
   }
 

@@ -234,7 +234,9 @@ fn verified_installer(extract: &Path, info: &TestUpdateInfo) -> Result<PathBuf, 
             entry
                 .get("path")
                 .and_then(Value::as_str)
-                .is_some_and(|path| path.starts_with("bundle/nsis/") && path.ends_with("-setup.exe"))
+                .is_some_and(|path| {
+                    path.starts_with("bundle/nsis/") && path.ends_with("-setup.exe")
+                })
         })
         .ok_or("No NSIS installer is present in the verified test artifact.")?;
 
@@ -246,7 +248,9 @@ fn verified_installer(extract: &Path, info: &TestUpdateInfo) -> Result<PathBuf, 
         .get("sha256")
         .and_then(Value::as_str)
         .ok_or("Installer SHA-256 is missing.")?;
-    if expected_sha.len() != 64 || !expected_sha.chars().all(|c| c.is_ascii_hexdigit()) {
+    if expected_sha.len() != 64
+        || !expected_sha.chars().all(|c| c.is_ascii_hexdigit())
+    {
         return Err("Installer SHA-256 in BUILD_INFO.json is invalid.".into());
     }
     let installer_path = extract.join("artifact").join(relative.replace('/', "\\"));

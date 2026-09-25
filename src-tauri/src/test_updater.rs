@@ -112,10 +112,17 @@ if ($digest -notmatch '^sha256:[0-9a-fA-F]{{64}}$') {{ throw 'GitHub artifact di
 
 fn update_info() -> Result<TestUpdateInfo, String> {
     let remote = query_remote_update()?;
-    if remote.source_commit.len() != 40 || !remote.source_commit.chars().all(|c| c.is_ascii_hexdigit()) {
+    if remote.source_commit.len() != 40
+        || !remote.source_commit.chars().all(|c| c.is_ascii_hexdigit())
+    {
         return Err("Updater rejected an invalid source commit from GitHub.".into());
     }
-    if remote.artifact_sha256.len() != 64 || !remote.artifact_sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+    if remote.artifact_sha256.len() != 64
+        || !remote
+            .artifact_sha256
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
+    {
         return Err("Updater rejected an invalid GitHub artifact digest.".into());
     }
     if !remote.artifact_name.starts_with(ARTIFACT_PREFIX) {
@@ -138,11 +145,14 @@ fn update_info() -> Result<TestUpdateInfo, String> {
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut file = fs::File::open(path).map_err(|error| format!("Could not open {}: {error}", path.display()))?;
+    let mut file = fs::File::open(path)
+        .map_err(|error| format!("Could not open {}: {error}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 1024 * 1024];
     loop {
-        let read = file.read(&mut buffer).map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
         if read == 0 {
             break;
         }
@@ -158,9 +168,11 @@ fn updater_dir(artifact_id: u64) -> PathBuf {
 fn download_and_extract(info: &TestUpdateInfo) -> Result<PathBuf, String> {
     let root = updater_dir(info.artifact_id);
     if root.exists() {
-        fs::remove_dir_all(&root).map_err(|error| format!("Could not clear old updater files: {error}"))?;
+        fs::remove_dir_all(&root)
+            .map_err(|error| format!("Could not clear old updater files: {error}"))?;
     }
-    fs::create_dir_all(&root).map_err(|error| format!("Could not create updater directory: {error}"))?;
+    fs::create_dir_all(&root)
+        .map_err(|error| format!("Could not create updater directory: {error}"))?;
     let zip = root.join("update.zip");
     let extract = root.join("extracted");
 
@@ -195,12 +207,19 @@ Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force"#,
 fn verified_installer(extract: &Path, info: &TestUpdateInfo) -> Result<PathBuf, String> {
     let build_info_path = extract.join("artifact").join("BUILD_INFO.json");
     let build_info: Value = serde_json::from_slice(
-        &fs::read(&build_info_path).map_err(|error| format!("Missing BUILD_INFO.json in update: {error}"))?,
+        &fs::read(&build_info_path)
+            .map_err(|error| format!("Missing BUILD_INFO.json in update: {error}"))?,
     )
     .map_err(|error| format!("Invalid BUILD_INFO.json in update: {error}"))?;
 
-    let version = build_info.get("version").and_then(Value::as_str).unwrap_or_default();
-    let commit = build_info.get("commit").and_then(Value::as_str).unwrap_or_default();
+    let version = build_info
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let commit = build_info
+        .get("commit")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if version != UPDATE_VERSION || !commit.eq_ignore_ascii_case(&info.source_commit) {
         return Err("Downloaded update provenance does not match the GitHub CI metadata.".into());
     }
@@ -219,8 +238,14 @@ fn verified_installer(extract: &Path, info: &TestUpdateInfo) -> Result<PathBuf, 
         })
         .ok_or("No NSIS installer is present in the verified test artifact.")?;
 
-    let relative = installer.get("path").and_then(Value::as_str).ok_or("Installer path is invalid.")?;
-    let expected_sha = installer.get("sha256").and_then(Value::as_str).ok_or("Installer SHA-256 is missing.")?;
+    let relative = installer
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or("Installer path is invalid.")?;
+    let expected_sha = installer
+        .get("sha256")
+        .and_then(Value::as_str)
+        .ok_or("Installer SHA-256 is missing.")?;
     if expected_sha.len() != 64 || !expected_sha.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("Installer SHA-256 in BUILD_INFO.json is invalid.".into());
     }

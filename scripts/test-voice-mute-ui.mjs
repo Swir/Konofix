@@ -14,6 +14,8 @@ assert.match(source, /#messages[\s\S]*\.composer[\s\S]*\.private-messages[\s\S]*
 assert.match(source, /private-notice-wrap/, 'notification mute must suppress intrusive private-message notifications');
 assert.match(source, /#privateAudioIncoming/, 'notification mute must suppress the incoming-call popup');
 assert.match(source, /chat is muted|Czat jest wyciszony/i, 'muted chat must show a clear local status banner');
+assert.match(source, /document\.querySelector\(\`\[data-voice-chat-muted-banner="\$\{kind\}"\]\`\)/, 'mute banners must be created idempotently under MutationObserver');
+assert.doesNotMatch(source, /document\.querySelectorAll\('\[data-voice-chat-muted-banner\]'\)\.forEach\(node => node\.remove\(\)\);\s*if \(!chatMuted\(\)\) return;/, 'muted state must not remove and recreate banners on every observer pass');
 assert.match(source, /if\s*\(notificationsMuted\(\)\)\s*\{[\s\S]*?private-notice-wrap[\s\S]*?#privateAudioIncoming[\s\S]*?\}/, 'notification suppression must be gated by the notification-mute preference');
 assert.doesNotMatch(source, /chatMuted\(\)\s*\|\|\s*notificationsMuted\(\)/, 'chat mute must not implicitly suppress notifications');
 assert.match(source, /window\.dispatchEvent\(new Event\(PREFERENCES_EVENT\)\)/, 'preference changes must propagate immediately');

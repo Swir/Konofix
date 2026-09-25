@@ -268,7 +268,7 @@ try {
 
     & $healthValidator -HealthPath $healthPath -ExpectedVersion $expectedVersion -ExpectedPeerId $peerId -ExpectedSourceCommit $expectedSourceCommit -RequirePeer:$false | Out-Null
     $tcp = Invoke-TransportProbe -Transport 'tcp' -Port $nodeRun.Port -PeerId $peerId -ExpectedVersion $expectedVersion -ExpectedCommit $expectedSourceCommit
-    $quic = Invoke-TransportProbe -Transport 'quic-v1' -Port $nodeRun.Port -ExpectedPeerId $peerId -ExpectedVersion $expectedVersion -ExpectedSourceCommit $expectedSourceCommit
+    $quic = Invoke-TransportProbe -Transport 'quic-v1' -Port $nodeRun.Port -PeerId $peerId -ExpectedVersion $expectedVersion -ExpectedCommit $expectedSourceCommit
     if ($tcp.observed_peer_id -cne $quic.observed_peer_id) {
         throw 'TCP and QUIC smoke probes authenticated different Node identities.'
     }

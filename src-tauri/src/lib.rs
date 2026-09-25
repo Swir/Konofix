@@ -1368,11 +1368,16 @@ async fn start_network(
         }
     });
 
-    let ready_result = match ready_rx.await {
-        Ok(result) => result,
-        Err(_) => {
+    let ready_result = match tokio::time::timeout(Duration::from_secs(15), ready_rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => {
             let _ = clear_network_sender_if_current(state.inner(), &startup_tx);
             return Err("Nie udało się uruchomić warstwy P2P.".to_string());
+        }
+        Err(_) => {
+            let _ = startup_tx.send(NetworkCommand::Stop).await;
+            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);
+            return Err("Uruchamianie sieci P2P przekroczyło 15 sekund. Spróbuj ponownie lub sprawdź zaporę/VPN.".to_string());
         }
     };
 

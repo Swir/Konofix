@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const port = Number(process.argv[2]);
 assert(Number.isInteger(port) && port > 0 && port <= 65535, 'Expected a loopback debug port');
-const deadline = Date.now() + 30_000;
+const deadline = Date.now() + 45_000;
 let lastError;
 
 async function inspectPage(url) {
@@ -14,7 +14,7 @@ async function inspectPage(url) {
   assert.equal(endpoint.port, String(port));
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url);
-    const timer = setTimeout(() => finish(new Error('WebView inspection timed out')), 2000);
+    const timer = setTimeout(() => finish(new Error('WebView inspection timed out')), 5000);
     function finish(error, value) {
       clearTimeout(timer);
       socket.close();

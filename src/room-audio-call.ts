@@ -193,10 +193,12 @@ export class RoomAudioCallController {
       if (wanted.size >= MAX_ROOM_VOICE_PEERS) break;
     }
 
+    const departureNotifications: Promise<void>[] = [];
     for (const peerId of [...runtime.peers.keys()]) {
       if (wanted.has(peerId)) continue;
-      await this.bestEffortSend(peerId, runtime.peers.get(peerId)!.sessionId, 'end');
+      const peerRuntime = runtime.peers.get(peerId)!;
       this.removePeer(peerId);
+      departureNotifications.push(this.bestEffortSend(peerId, peerRuntime.sessionId, 'end'));
     }
     for (const peer of wanted.values()) {
       if (runtime.peers.has(peer.peerId)) continue;
@@ -205,6 +207,7 @@ export class RoomAudioCallController {
         this.removePeer(peer.peerId);
       });
     }
+    await Promise.allSettled(departureNotifications);
   }
 
   async setIntent(intent: Exclude<RoomVoiceIntent, 'none'>): Promise<VoiceSession> {

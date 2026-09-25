@@ -13,6 +13,8 @@ assert.match(source, /listen<DirectVoiceSignal>\('voice-signal'/, 'authenticated
 assert.match(source, /controller\.joinRoom\(roomId, collectPeers\(\), 'listen'\)/, 'joining room voice must start listen-only and never open the microphone automatically');
 assert.match(source, /controller\.setIntent\(session\.roomIntent === 'speak' \? 'listen' : 'speak'\)/, 'room voice must expose an explicit want-to-speak action');
 assert.match(source, /data-room-audio-join/, 'WORLD and room headers need a clear join-voice action');
+assert.match(source, /if \(button\.textContent !== label\) button\.textContent = label;/, 'room voice join label updates must be mutation-idempotent');
+assert.doesNotMatch(source, /button\.textContent = sameRoom/, 'room voice MutationObserver must not rewrite join text unconditionally');
 assert.match(source, /data-room-audio-intent/, 'room voice needs a listen/want-to-speak control');
 assert.match(source, /data-room-audio-mute/, 'room voice needs microphone mute');
 assert.match(source, /data-room-audio-deafen/, 'room voice needs incoming-audio mute');

@@ -514,13 +514,18 @@ function augmentJoinButton(): void {
   const count = sameRoom && session ? session.participants.size + 1 : 0;
   button.classList.toggle('is-active', sameRoom);
   button.disabled = !roomVoiceEnabled();
-  button.textContent = sameRoom
+  const label = sameRoom
     ? `🎧 ${copy.voice} ${count}`
     : session
       ? `🎧 ${copy.change}`
       : `🎧 ${copy.join}`;
-  button.title = button.textContent;
-  button.setAttribute('aria-label', button.textContent);
+
+  // This function runs from a childList MutationObserver. Reassigning textContent
+  // unconditionally creates another childList mutation and can spin the WebView
+  // in a self-triggering loop immediately after the chat UI appears.
+  if (button.textContent !== label) button.textContent = label;
+  if (button.title !== label) button.title = label;
+  if (button.getAttribute('aria-label') !== label) button.setAttribute('aria-label', label);
 }
 
 function augmentRoomVoiceSettings(): void {

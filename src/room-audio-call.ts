@@ -291,14 +291,20 @@ export class RoomAudioCallController {
     if (!this.active) return;
     const runtime = this.active;
     const scope = roomVoiceScope(runtime.roomId);
-    await Promise.allSettled(
-      [...runtime.peers.values()].map(peer => this.bestEffortSend(peer.peerId, peer.sessionId, 'end')),
+    const notifications = [...runtime.peers.values()].map(peer =>
+      this.signaler.send({
+        peerId: peer.peerId,
+        sessionId: peer.sessionId,
+        scope: roomScope(runtime.roomId),
+        action: 'end',
+      }).catch(() => undefined),
     );
     const session = this.sessions.session(scope);
     if (session && !['ended', 'error'].includes(session.phase)) {
       this.emit(this.sessions.transition(scope, 'ended'));
     }
     this.cleanupRoom();
+    await Promise.allSettled(notifications);
   }
 
   async handleSignal(signal: DirectVoiceSignal): Promise<boolean> {

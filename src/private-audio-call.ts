@@ -190,21 +190,23 @@ export class PrivateAudioCallController {
 
   async rejectPrivateCall(): Promise<void> {
     const runtime = this.requireActive();
-    await this.bestEffortSend('reject');
+    const notify = this.sendForRuntime(runtime, 'reject').catch(() => undefined);
     const scope = privateVoiceScope(runtime.peerId);
     const session = this.sessions.session(scope);
     if (session && !['ended', 'error'].includes(session.phase)) this.emit(this.sessions.transition(scope, 'ended'));
     this.cleanup();
+    await notify;
   }
 
   async endPrivateCall(): Promise<void> {
     if (!this.active) return;
     const runtime = this.active;
-    await this.bestEffortSend('end');
+    const notify = this.sendForRuntime(runtime, 'end').catch(() => undefined);
     const scope = privateVoiceScope(runtime.peerId);
     const session = this.sessions.session(scope);
     if (session && !['ended', 'error'].includes(session.phase)) this.emit(this.sessions.transition(scope, 'ended'));
     this.cleanup();
+    await notify;
   }
 
   async setMuted(muted: boolean): Promise<VoiceSession> {
@@ -517,7 +519,14 @@ export class PrivateAudioCallController {
   }
 
   private send(action: DirectVoiceAction, payload: Partial<SendVoiceSignal> = {}): Promise<unknown> {
-    const runtime = this.requireActive();
+    return this.sendForRuntime(this.requireActive(), action, payload);
+  }
+
+  private sendForRuntime(
+    runtime: Runtime,
+    action: DirectVoiceAction,
+    payload: Partial<SendVoiceSignal> = {},
+  ): Promise<unknown> {
     return this.signaler.send({
       peerId: runtime.peerId,
       sessionId: runtime.sessionId,

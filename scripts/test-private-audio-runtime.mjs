@@ -267,6 +267,57 @@ try {
     throw new Error('Private hang-up must use authenticated direct end signaling.');
   }
 
+
+  {
+    let releaseEnd;
+    const endGate = new Promise(resolve => { releaseEnd = resolve; });
+    let endSignalStarted = false;
+    const slowCapture = new FakeCapture('slow-end');
+    const slowPeers = [];
+    const slowController = new PrivateAudioCallController(
+      {
+        async send(signal) {
+          if (signal.action === 'end') {
+            endSignalStarted = true;
+            await endGate;
+          }
+        },
+      },
+      {
+        captureFactory: () => slowCapture,
+        peerFactory: callbacks => {
+          const peer = new FakePeer(callbacks, 'slow-end');
+          slowPeers.push(peer);
+          return peer;
+        },
+        sessionIdFactory: () => '55555555-5555-4555-8555-555555555555',
+      },
+    );
+    await slowController.startPrivateCall('peer-slow', 'Slow peer');
+    await slowController.handleSignal({
+      id: 'slow-private-accept',
+      session_id: '55555555-5555-4555-8555-555555555555',
+      peer_id: 'peer-slow',
+      target_peer_id: 'peer-local',
+      nick: 'Slow peer',
+      scope: { kind: 'private' },
+      action: 'accept',
+      timestamp: Date.now(),
+    });
+    const ending = slowController.endPrivateCall();
+    await new Promise(resolve => setImmediate(resolve));
+    if (
+      !endSignalStarted ||
+      slowController.activeSession() !== undefined ||
+      slowCapture.stopped !== 1 ||
+      !slowPeers.at(-1)?.closed
+    ) {
+      throw new Error('Private hang-up must release microphone/WebRTC immediately without waiting for slow end signaling.');
+    }
+    releaseEnd();
+    await ending;
+  }
+
   let blockedCaller;
   let blockedCallee;
   const blockedCallerCapture = new FakeCapture('blocked-caller');

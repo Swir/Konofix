@@ -287,6 +287,40 @@ try {
   }
   await bob.leaveRoom();
 
+
+  {
+    let releaseEnd;
+    const endGate = new Promise(resolve => { releaseEnd = resolve; });
+    let endSignalStarted = false;
+    const slowCapture = new FakeCapture('slow-room-leave');
+    const slowRoom = new RoomAudioCallController(
+      {
+        async send(signal) {
+          if (signal.action === 'end') {
+            endSignalStarted = true;
+            await endGate;
+          }
+        },
+      },
+      {
+        captureFactory: () => slowCapture,
+        peerFactory: callbacks => new FakePeer(callbacks, 'slow-room-leave'),
+        sessionIdFactory: (() => {
+          let value = 0;
+          return () => `slow-room-session-${++value}`;
+        })(),
+      },
+    );
+    await slowRoom.joinRoom('world', [{ peerId: 'peer-slow', nick: 'Slow peer' }], 'speak');
+    const leaving = slowRoom.leaveRoom();
+    await new Promise(resolve => setImmediate(resolve));
+    if (!endSignalStarted || slowRoom.activeSession() !== undefined || slowCapture.stopped !== 1) {
+      throw new Error('Leaving room voice must release microphone immediately without waiting for slow end signaling.');
+    }
+    releaseEnd();
+    await leaving;
+  }
+
   const rejected = [];
   const outsider = new RoomAudioCallController({
     send: async signal => { rejected.push(signal); },

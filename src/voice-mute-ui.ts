@@ -80,26 +80,22 @@ function ensureStyles(): void {
 }
 
 function renderMutedBanners(): void {
-  document.querySelectorAll('[data-voice-chat-muted-banner]').forEach(node => node.remove());
-  if (!chatMuted()) return;
-
-  const mainHeader = document.querySelector<HTMLElement>('.chat-main .chat-header');
-  if (mainHeader) {
-    const banner = document.createElement('div');
-    banner.className = 'voice-mute-banner';
-    banner.dataset.voiceChatMutedBanner = 'main';
-    banner.textContent = copy.chatMuted;
-    mainHeader.insertAdjacentElement('afterend', banner);
+  if (!chatMuted()) {
+    document.querySelectorAll('[data-voice-chat-muted-banner]').forEach(node => node.remove());
+    return;
   }
 
-  const privateHeader = document.querySelector<HTMLElement>('#privateChatModal .private-chat-head');
-  if (privateHeader) {
+  const ensureBanner = (kind: 'main' | 'private', header: HTMLElement | null): void => {
+    if (!header || document.querySelector(`[data-voice-chat-muted-banner="${kind}"]`)) return;
     const banner = document.createElement('div');
     banner.className = 'voice-mute-banner';
-    banner.dataset.voiceChatMutedBanner = 'private';
+    banner.dataset.voiceChatMutedBanner = kind;
     banner.textContent = copy.chatMuted;
-    privateHeader.insertAdjacentElement('afterend', banner);
-  }
+    header.insertAdjacentElement('afterend', banner);
+  };
+
+  ensureBanner('main', document.querySelector<HTMLElement>('.chat-main .chat-header'));
+  ensureBanner('private', document.querySelector<HTMLElement>('#privateChatModal .private-chat-head'));
 }
 
 function applyState(): void {

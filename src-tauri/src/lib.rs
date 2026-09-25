@@ -40,6 +40,7 @@ mod secure_channels;
 mod secure_control_client;
 mod secure_control_runtime;
 mod secure_control_transport;
+mod test_updater;
 
 use incoming_file::{commit_reserved_file, reserve_incoming_file};
 use room_membership_application::{ApplicationMembershipEffects, MembershipSnapshotPayload};
@@ -54,6 +55,7 @@ use secure_control_transport::{
     control_behaviour, handle_inbound_control_request, private_message_request, room_join_request,
     voice_signal_request,
 };
+use test_updater::{check_test_update, install_test_update};
 
 const WORLD_TOPIC: &str = "konofix/world/v3";
 const KAD_PROTOCOL: &str = "/konofix/kad/1.0.0";
@@ -5402,6 +5404,8 @@ pub fn run() {
             reject_file,
             cancel_file,
             disconnect_network,
+            check_test_update,
+            install_test_update,
             open_github
         ])
         .run(tauri::generate_context!())

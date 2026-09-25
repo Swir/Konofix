@@ -107,16 +107,14 @@ function Assert-MetadataFile($Metadata, [string]$ExpectedPath, [string]$ActualPa
 }
 
 $artifactNameHelper = Join-Path $PSScriptRoot 'release-artifact-name.ps1'
+$sourceCommitHelper = Join-Path $PSScriptRoot 'release-source-commit.ps1'
 Assert-True (Test-Path -LiteralPath $artifactNameHelper -PathType Leaf) 'Release artifact naming helper is missing.'
+Assert-True (Test-Path -LiteralPath $sourceCommitHelper -PathType Leaf) 'Release source-commit helper is missing.'
+$expectedSourceCommit = & $sourceCommitHelper -RepoRoot $repoRoot
 
 if ([string]::IsNullOrWhiteSpace($ZipPath)) {
   $packageForName = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
-  $commitForName = [string]$env:GITHUB_SHA
-  if ([string]::IsNullOrWhiteSpace($commitForName)) {
-    $commitForName = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -Last 1).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the repository commit for the default release archive name.' }
-  }
-  $ZipPath = & $artifactNameHelper -Version ([string]$packageForName.version) -Commit $commitForName
+  $ZipPath = & $artifactNameHelper -Version ([string]$packageForName.version) -Commit $expectedSourceCommit
 }
 if ([string]::IsNullOrWhiteSpace($ChecksumPath)) {
   $ChecksumPath = "$ZipPath.sha256"
@@ -214,9 +212,7 @@ try {
 
   $commit = [string]$buildInfo.commit
   Assert-True ($commit -match '^[0-9a-f]{40}$') 'BUILD_INFO.json commit is not a full Git SHA.'
-  if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_SHA)) {
-    Assert-True ([string]::Equals($commit, [string]$env:GITHUB_SHA, [System.StringComparison]::Ordinal)) "BUILD_INFO.json commit does not match the workflow commit. expected=$env:GITHUB_SHA actual=$commit"
-  }
+  Assert-True ([string]::Equals($commit, $expectedSourceCommit, [System.StringComparison]::Ordinal)) "BUILD_INFO.json commit does not match the checked-out source commit. expected=$expectedSourceCommit actual=$commit"
   $workflowRun = [string]$buildInfo.workflow_run
   Assert-True ($workflowRun -match '^[0-9]+$') 'BUILD_INFO.json workflow_run is not a decimal GitHub Actions run ID.'
 

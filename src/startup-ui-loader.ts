@@ -1,3 +1,5 @@
+import './ui-layout.css';
+
 type UiModule = {
   name: string;
   load: () => Promise<unknown>;

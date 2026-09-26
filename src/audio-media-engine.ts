@@ -337,7 +337,10 @@ export class WebRtcAudioPeer {
   private requireSdp(value: string | undefined): string {
     const sdp = value?.trim();
     if (!sdp) throw new AudioMediaError('invalid_signal', 'Received an empty WebRTC session description.');
-    return sdp;
+    // SDP is a line protocol, not a display string. Chromium rejects the last
+    // attribute when trim() removes its CRLF. Normalize at both signaling
+    // boundaries, including peers running the earlier trimming build.
+    return sdp.replace(/\r\n|\r|\n/g, '\r\n') + '\r\n';
   }
 
   private dispatch(task: () => void | Promise<void>): void {

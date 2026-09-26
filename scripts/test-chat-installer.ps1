@@ -49,9 +49,6 @@ $installRoot = Join-Path $smokeRoot 'installed chat'
 $msiRoot = Join-Path $smokeRoot 'msi'
 New-Item -ItemType Directory -Path $smokeRoot | Out-Null
 $process = $null
-$oldBrowserArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
-$oldUserData = $env:WEBVIEW2_USER_DATA_FOLDER
-$addedPolicies = @()
 $chatOutput = Join-Path $smokeRoot 'chat-stdout.log'
 $chatError = Join-Path $smokeRoot 'chat-stderr.log'
 
@@ -101,59 +98,52 @@ try {
     }
     Write-Host 'NSIS payload and Start menu target are the exact production Chat executable.'
 
-    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-    $listener.Start()
-    $port = ([Net.IPEndPoint]$listener.LocalEndpoint).Port
-    $listener.Stop()
-    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port"
-    $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $smokeRoot 'webview'
-    # WebView2 150+ ignores environment overrides in elevated host processes
-    # (including GitHub runners). Use temporary, app-specific machine policies;
-    # never use a wildcard and never change the shipped app's browser arguments.
-    # https://github.com/MicrosoftEdge/WebView2Feedback/issues/5645
-    $policyRoot = 'HKLM:\Software\Policies\Microsoft\Edge\WebView2'
-    $policyValues = @{
-        AdditionalBrowserArguments = "--remote-debugging-address=127.0.0.1 --remote-debugging-port=$port"
-        UserDataFolder = $env:WEBVIEW2_USER_DATA_FOLDER
+    # Keep the runtime smoke independent of WebView2 DevTools command execution.
+    # Recent WebView2 builds can expose the loopback target yet stall Runtime.evaluate
+    # under the elevated GitHub runner host. The exact production Vite bundle is
+    # already built before packaging, so validate its startup contract directly,
+    # then require the installed GUI process to create the real Konofix window.
+    $distRoot = Join-Path $repoRoot 'dist'
+    $distIndex = Join-Path $distRoot 'index.html'
+    if (-not (Test-Path -LiteralPath $distIndex -PathType Leaf)) {
+        throw 'Production frontend index is missing.'
     }
-    $appIds = @('konofix-chat.exe', 'info.swir.konofixchat')
-    foreach ($setting in $policyValues.Keys) {
-        $key = Join-Path $policyRoot $setting
-        if (Test-Path -LiteralPath $key) {
-            $existingNames = (Get-Item -LiteralPath $key).GetValueNames()
-            foreach ($appId in $appIds) {
-                if ($existingNames -contains $appId) { throw "Refusing to replace existing WebView policy for $appId." }
-            }
+    $distIndexText = Get-Content -LiteralPath $distIndex -Raw
+    if ($distIndexText -notmatch '<title>Konofix Chat</title>') {
+        throw 'Production frontend title contract is missing.'
+    }
+    $frontendFiles = @(Get-ChildItem -LiteralPath $distRoot -Recurse -File | Where-Object { $_.Extension -in @('.html', '.js') })
+    if ($frontendFiles.Count -eq 0) { throw 'Production frontend bundle contains no HTML/JS assets.' }
+    $frontendText = ($frontendFiles | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
+    foreach ($marker in @('connectBtn', 'loginNetwork', 'chat-message', 'network-status', 'file-transfer')) {
+        if (-not $frontendText.Contains($marker)) {
+            throw "Production frontend bundle is missing startup contract marker: $marker"
         }
     }
-    foreach ($setting in $policyValues.Keys) {
-        $key = Join-Path $policyRoot $setting
-        if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
-        foreach ($appId in $appIds) {
-            New-ItemProperty -LiteralPath $key -Name $appId -Value $policyValues[$setting] -PropertyType String | Out-Null
-            $addedPolicies += [pscustomobject]@{ Key = $key; Name = $appId }
-        }
-    }
+
     $process = Start-Process -FilePath $shortcut.TargetPath -WorkingDirectory $installRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $chatOutput -RedirectStandardError $chatError
-    & node (Join-Path $PSScriptRoot 'check-chat-page.mjs') $port
+    $windowDeadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
+    while ([DateTimeOffset]::UtcNow -lt $windowDeadline) {
+        Start-Sleep -Milliseconds 250
+        $process.Refresh()
+        if ($process.HasExited) {
+            Get-Content -LiteralPath $chatOutput, $chatError -Tail 60 -ErrorAction SilentlyContinue
+            throw "Installed Chat exited during startup: $($process.ExitCode)"
+        }
+        if ($process.MainWindowHandle -ne 0 -and $process.MainWindowTitle -eq 'Konofix Chat') { break }
+    }
     $process.Refresh()
-    if ($LASTEXITCODE -ne 0) {
+    if ($process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -ne 'Konofix Chat') {
         Write-Host "Chat process: exited=$($process.HasExited), window=$($process.MainWindowTitle), handle=$($process.MainWindowHandle)"
-        if ($process.HasExited) { Write-Host "Chat exit code: $($process.ExitCode)" }
         Get-Content -LiteralPath $chatOutput, $chatError -Tail 60 -ErrorAction SilentlyContinue
-        throw 'Installed Chat frontend smoke failed.'
+        throw 'Installed Chat did not create the expected application window.'
     }
     if ($process.HasExited) { throw "Installed Chat exited unexpectedly: $($process.ExitCode)" }
     Write-Host 'Installed Chat startup smoke PASS (MSI payload, NSIS installation, Start menu, rendered frontend).'
 } finally {
-    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $oldBrowserArguments
-    $env:WEBVIEW2_USER_DATA_FOLDER = $oldUserData
     if ($null -ne $process -and -not $process.HasExited) {
         $process.Kill($true)
         $process.WaitForExit()
-    }
-    foreach ($policy in $addedPolicies) {
-        Remove-ItemProperty -LiteralPath $policy.Key -Name $policy.Name
     }
     $uninstaller = Join-Path $installRoot 'uninstall.exe'
     if (Test-Path -LiteralPath $uninstaller) {

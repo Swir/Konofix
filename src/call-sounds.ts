@@ -13,7 +13,7 @@ export function boundedCallVolume(value: number): number {
 }
 
 /** Original, bounded PCM: double ringback beep / soft four-note incoming chime. */
-export function synthesizeCallTone(kind: CallTone, sampleRate: number): Float32Array {
+export function synthesizeCallTone(kind: CallTone, sampleRate: number): Float32Array<ArrayBuffer> {
   if (!Number.isFinite(sampleRate) || sampleRate < 8000 || sampleRate > 192000) {
     throw new RangeError('Unsupported call-tone sample rate.');
   }

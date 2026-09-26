@@ -21,4 +21,7 @@ assert.doesNotMatch(rust, /releases\/latest|releases\/download|create.*release/i
 assert.match(lib, /check_test_update/, 'Tauri command registry must expose update checks');
 assert.match(lib, /install_test_update/, 'Tauri command registry must expose verified test update installation');
 
-console.log('Verified 0.6 test updater contract checks passed.');
+// A rendered HWND/source marker cannot prove that the renderer still accepts input.
+await import('./test-test-updater-dom.mjs');
+
+console.log('Verified 0.6 test updater contract and real-DOM responsiveness checks passed.');

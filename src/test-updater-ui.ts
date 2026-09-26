@@ -121,6 +121,12 @@ function ensureStyles(): void {
   document.head.appendChild(style);
 }
 
+// Cache our render input, not the browser's serialization of that input.
+// innerHTML normalizes bare data-* attributes to data-*=""; comparing it to
+// cardHtml() would rewrite the card on every observer delivery and starve input.
+// Weak keys also allow login/settings cards removed by the core UI to be collected.
+const renderedCards = new WeakMap<HTMLElement, string>();
+
 function ensureCard(parent: HTMLElement, key: string): void {
   let card = parent.querySelector<HTMLElement>('[data-test-updater="' + key + '"]');
   if (!card) {
@@ -130,9 +136,10 @@ function ensureCard(parent: HTMLElement, key: string): void {
     parent.appendChild(card);
   }
   const html = cardHtml();
-  if (card.innerHTML !== html) {
+  if (renderedCards.get(card) !== html || !card.childElementCount) {
     card.innerHTML = html;
     wire(card);
+    renderedCards.set(card, html);
   }
 }
 

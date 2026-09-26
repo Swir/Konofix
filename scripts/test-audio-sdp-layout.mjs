@@ -19,11 +19,13 @@ function findBrowser() {
 const root = process.cwd();
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-audio-browser-'));
 let browser;
+let closeBrowser;
+let testFailed = false;
 const pending = new Map();
 try {
   const config = path.join(temp, 'tsconfig.json');
   fs.writeFileSync(config, JSON.stringify({
-    compilerOptions: { target: 'ES2022', module: 'ES2022', lib: ['ES2022', 'DOM'], skipLibCheck: true, outDir: path.join(temp, 'built'), types: [] },
+    compilerOptions: { target: 'ES2022', module: 'ES2022', lib: ['ES2022', 'DOM'], skipLibCheck: true, rootDir: path.join(root, 'src'), outDir: path.join(temp, 'built'), types: [] },
     files: [path.join(root, 'src/audio-media-engine.ts')],
   }));
   const compile = spawnSync('npx', ['--no-install', 'tsc', '--project', config, '--pretty', 'false'], { cwd: root, encoding: 'utf8', shell: process.platform === 'win32', timeout: 60000 });
@@ -51,12 +53,13 @@ try {
       if (message.error) item.reject(new Error(JSON.stringify(message.error))); else item.resolve(message.result);
     }
   });
-  const call = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
+  const call = (method, params = {}, sessionId, timeoutMs = 45000) => new Promise((resolve, reject) => {
     const id = ++sequence;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Browser ${method} timed out: ${stderr}`)); }, 45000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Browser ${method} timed out: ${stderr}`)); }, timeoutMs);
     pending.set(id, { resolve, reject, timer });
     browser.stdio[3].write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0');
   });
+  closeBrowser = () => call('Browser.close', {}, undefined, 5000);
   const { targetId } = await call('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await call('Target.attachToTarget', { targetId, flatten: true });
   for (const width of [1600, 1280, 1024, 820]) {
@@ -66,12 +69,32 @@ try {
     assert.equal(result.result?.value?.pass, true, 'native SDP/layout fixture did not pass');
     console.log(`PASS SDP/layout ${width}px: ${JSON.stringify(result.result.value)}`);
   }
-  await call('Browser.close');
+} catch (error) {
+  testFailed = true;
+  throw error;
 } finally {
-  for (const item of pending.values()) clearTimeout(item.timer);
-  if (browser && browser.exitCode === null) {
-    browser.kill();
-    await new Promise(resolve => { browser.once('exit', resolve); setTimeout(resolve, 3000).unref(); });
+  // Close gracefully on both PASS and assertion failure. Killing Chromium first
+  // can leave child processes writing the profile and hide the real test error.
+  const waitForExit = milliseconds => new Promise(resolve => {
+    if (!browser || browser.exitCode !== null || browser.signalCode !== null) return resolve(true);
+    const onExit = () => { clearTimeout(timer); resolve(true); };
+    const timer = setTimeout(() => { browser.removeListener('exit', onExit); resolve(false); }, milliseconds);
+    browser.once('exit', onExit);
+  });
+  try {
+    if (browser && browser.exitCode === null && browser.signalCode === null) {
+      try { await closeBrowser?.(); } catch { /* An already-exiting browser can close the pipe first. */ }
+      if (!await waitForExit(5000)) {
+        browser.kill();
+        if (!await waitForExit(3000)) throw new Error('Test browser did not terminate during cleanup.');
+      }
+    }
+    fs.rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (error) {
+    if (!testFailed) throw error;
+    console.error('Additional cleanup error (original assertion retained):', error);
+  } finally {
+    for (const item of pending.values()) clearTimeout(item.timer);
+    pending.clear();
   }
-  fs.rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

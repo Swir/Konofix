@@ -133,7 +133,7 @@ function wireCredit() {
 
 function renderLogin() {
   app.innerHTML = `
-    <main class="login-shell">
+    <main class="login-shell" aria-label="Konofix core ready">
       <section class="brand-panel">
         <div class="brand-mark">K</div>
         <div>
@@ -178,6 +178,8 @@ function renderLogin() {
   }));
   document.querySelector('#connectBtn')?.addEventListener('click', connect);
   document.querySelector('#loginNetwork')?.addEventListener('click', showNetworkModal);
+  document.documentElement.dataset.konofixCoreReady = 'true';
+  window.dispatchEvent(new Event('konofix-core-ready'));
 }
 
 async function connect() {

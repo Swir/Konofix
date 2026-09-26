@@ -115,7 +115,7 @@ try {
     $frontendFiles = @(Get-ChildItem -LiteralPath $distRoot -Recurse -File | Where-Object { $_.Extension -in @('.html', '.js') })
     if ($frontendFiles.Count -eq 0) { throw 'Production frontend bundle contains no HTML/JS assets.' }
     $frontendText = ($frontendFiles | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
-    foreach ($marker in @('connectBtn', 'loginNetwork', 'chat-message', 'network-status', 'file-transfer')) {
+    foreach ($marker in @('connectBtn', 'loginNetwork', 'chat-message', 'network-status', 'file-transfer', 'konofixCoreReady', 'konofix-module-error')) {
         if (-not $frontendText.Contains($marker)) {
             throw "Production frontend bundle is missing startup contract marker: $marker"
         }
@@ -139,7 +139,44 @@ try {
         throw 'Installed Chat did not create the expected application window.'
     }
     if ($process.HasExited) { throw "Installed Chat exited unexpectedly: $($process.ExitCode)" }
-    Write-Host 'Installed Chat startup smoke PASS (MSI payload, NSIS installation, Start menu, rendered frontend).'
+
+    # Require the real WebView content to expose the stable core-ready accessibility marker.
+    # A top-level HWND alone is insufficient: a WebView can stay alive while rendering a
+    # completely blank/black client area.
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    $uiDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+    $coreUiVisible = $false
+    $lastAutomationError = $null
+    while ([DateTimeOffset]::UtcNow -lt $uiDeadline -and -not $coreUiVisible) {
+        Start-Sleep -Milliseconds 400
+        try {
+            $process.Refresh()
+            if ($process.HasExited) { throw "Installed Chat exited during UI automation: $($process.ExitCode)" }
+            $root = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
+            if ($null -eq $root) { continue }
+            $nodes = $root.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition
+            )
+            for ($i = 0; $i -lt $nodes.Count; $i++) {
+                $name = [string]$nodes.Item($i).Current.Name
+                if ($name -eq 'Konofix core ready') {
+                    $coreUiVisible = $true
+                    break
+                }
+            }
+        } catch {
+            $lastAutomationError = $_.Exception.Message
+        }
+    }
+    if (-not $coreUiVisible) {
+        Write-Host "UI Automation last error: $lastAutomationError"
+        Get-Content -LiteralPath $chatOutput, $chatError -Tail 80 -ErrorAction SilentlyContinue
+        throw 'Installed Chat window exists but the Konofix core UI did not render; possible blank/black-screen startup regression.'
+    }
+
+    Write-Host 'Installed Chat startup smoke PASS (MSI payload, NSIS installation, Start menu, accessible rendered core UI).'
 } finally {
     if ($null -ne $process -and -not $process.HasExited) {
         $process.Kill($true)

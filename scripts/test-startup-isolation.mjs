@@ -51,3 +51,4 @@ console.log('Startup isolation contract passed.');
 
 if (!loader.includes("import './ui-layout.css'")) throw new Error('Integrated responsive action layout must be loaded.');
 await import('./test-audio-sdp-layout.mjs');
+await import('./test-call-sounds.mjs');

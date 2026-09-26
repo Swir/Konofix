@@ -1,0 +1,15 @@
+.call-sound-settings { display: grid; gap: 12px; margin-top: 12px; min-width: 0; }
+.call-sound-settings > small { color: #8da8b8; line-height: 1.45; overflow-wrap: anywhere; }
+.call-sound-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.call-sound-row label { min-width: 0; margin: 0; }
+.call-sound-row label span { overflow-wrap: anywhere; }
+.call-sound-row button, .call-sound-settings > button { min-height: 44px; margin: 0; }
+.call-sound-volume { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin: 0; }
+.call-sound-volume > span { grid-column: 1 / -1; }
+.call-sound-volume input { width: 100%; min-width: 0; padding: 0; min-height: 32px; accent-color: #62e5ff; }
+.call-sound-volume output { align-self: center; min-width: 4ch; text-align: right; }
+.call-sound-settings :focus-visible { outline: 2px solid #62e5ff; outline-offset: 3px; }
+@media (max-width: 480px) {
+  .call-sound-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .call-sound-row button { justify-self: start; }
+}

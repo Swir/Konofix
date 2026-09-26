@@ -11,6 +11,7 @@ import {
   type AudioInputDevice,
 } from './audio-media-engine';
 import type { VoiceSession } from './audio-call-state';
+import { syncCallSoundSession, mountCallSoundSettings } from './call-sounds-ui';
 import './private-audio-ui.css';
 
 const PRIVATE_CALLS_ENABLED_KEY = 'konofix.privateCallsEnabled';
@@ -199,6 +200,7 @@ const signaler = {
 const controller = new PrivateAudioCallController(signaler, {
   events: {
     onSession(session) {
+      syncCallSoundSession(session);
       latestSession = session;
       if (session.scope.kind === 'private' && (!activePeer || activePeer.peerId !== session.scope.peerId)) {
         activePeer = resolvePeer(session.scope.peerId) ?? {
@@ -239,6 +241,7 @@ function applyLocalPreferences(): void {
     allowRoomVoice: roomVoiceEnabled(),
     defaultDeafened: defaultDeafened(),
   });
+  syncCallSoundSession(controller.activeSession() ?? null);
 }
 
 async function syncVoicePolicy(showError = false): Promise<void> {
@@ -290,6 +293,11 @@ function resolvePrivateModalPeer(): ActivePeer | null {
 async function startPrivateCall(peer: ActivePeer): Promise<void> {
   if (!privateCallsEnabled()) {
     alert(copy.disabled);
+    return;
+  }
+  // Reject before changing active peer/playback state of an existing call.
+  if (controller.activeSession()) {
+    alert(copy.busy);
     return;
   }
   currentError = '';
@@ -427,6 +435,7 @@ function escapeHtml(value: string): string {
 }
 
 function closeEndedPanel(): void {
+  syncCallSoundSession(null);
   document.querySelector('#privateAudioPanel')?.remove();
   latestSession = null;
   remoteStream = null;
@@ -554,7 +563,9 @@ function augmentPrivateChat(): void {
 
 function augmentVoiceSettings(): void {
   const modal = document.querySelector<HTMLDivElement>('#networkModal .modal');
-  if (!modal || modal.querySelector('[data-voice-settings]')) return;
+  if (!modal) return;
+  mountCallSoundSettings(modal);
+  if (modal.querySelector('[data-voice-settings]')) return;
   const section = document.createElement('section');
   section.className = 'private-settings-card private-audio-settings-card';
   section.dataset.voiceSettings = 'true';
@@ -622,7 +633,7 @@ void listen<DirectVoiceSignal>('voice-signal', event => {
 
 void listen<{ phase?: string }>('network-status', event => {
   if (event.payload?.phase === 'offline') {
-    policySynced = false;
+    resetPrivateAudioUi();
     return;
   }
   void syncVoicePolicy();
@@ -634,7 +645,8 @@ void listen<{ peer_id: string }>('peer-offline', event => {
   void controller.endPrivateCall().finally(() => renderCallPanel());
 });
 
-void listen('network-error', () => {
+function resetPrivateAudioUi(): void {
+  syncCallSoundSession(null);
   controller.reset();
   removeIncomingDialog();
   document.querySelector('#privateAudioPanel')?.remove();
@@ -646,7 +658,9 @@ void listen('network-error', () => {
   selectedDeviceId = '';
   loadedDevicesForSession = '';
   policySynced = false;
-});
+}
+
+void listen('network-error', resetPrivateAudioUi);
 
 new MutationObserver(augmentUi).observe(document.body, { childList: true, subtree: true });
 augmentUi();

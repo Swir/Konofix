@@ -1,6 +1,15 @@
 # Changelog
 
-## 0.5.1 — in development
+## 0.6.0 — in development
+
+- hardened 0.6 startup against blank/black UI failures by rendering the stable core before optional audio/updater modules, isolating module-load errors behind a post-first-paint loader, adding a visible startup diagnostic fallback, and requiring Windows installer smoke to observe the real core UI rather than only a top-level window handle,
+- enabled Internet/NAT WebRTC candidate discovery for 0.6 audio through a shared public STUN default while keeping private/WORLD/room signaling on Konofix's authenticated direct secure-control channel; restrictive networks that need TURN remain an explicit real-test gate,
+- started the authenticated P2P audio control plane for private 1:1 calls plus opt-in WORLD/room voice, with bounded invite/offer/answer/ICE/state signaling over the existing direct secure-control channel,
+- added explicit voice session states for calling/ringing/joining/connected/reconnecting/end/error plus independent microphone mute, incoming-audio deafening, chat/notification mute preferences and listen/speak room intent,
+- added per-peer voice signaling and invite-spam limits, replay protection and identity/presence binding before WebRTC media wiring,
+- bumped the development target consistently to 0.6.0 without publishing a release; GitHub Release publication remains user-triggered only.
+
+## 0.5.1
 
 - fixed receiver-side room/WORLD offer downloads so the Transfers panel immediately shows a requesting state, then reconciles to the real incoming P2P transfer and live progress instead of appearing only after completion,
 - added a prominent file-offer-style private-message notification with explicit Open and Ignore actions; Ignore lasts for the current session and manual opening restores notifications,

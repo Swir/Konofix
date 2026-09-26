@@ -81,11 +81,25 @@ const cases = [
     expected: 'start_network must use',
   },
   {
+    name: 'startup timeout guard is removed',
+    target: 'rust',
+    source: 'let ready_result = match tokio::time::timeout(Duration::from_secs(15), ready_rx).await {',
+    replacement: 'let ready_result = match tokio::time::timeout(Duration::from_secs(86400), ready_rx).await {',
+    expected: 'bounded',
+  },
+  {
     name: 'cancelled startup handshake clears state blindly',
     target: 'rust',
-    source: 'Err(_) => {\n            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);\n            return Err("Nie udało się uruchomić warstwy P2P.".to_string());\n        }',
-    replacement: 'Err(_) => {\n            let _ = state.tx.lock().map(|mut guard| guard.take());\n            return Err("Nie udało się uruchomić warstwy P2P.".to_string());\n        }',
+    source: 'Ok(Err(_)) => {\n            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);\n            return Err("Nie udało się uruchomić warstwy P2P.".to_string());\n        }',
+    replacement: 'Ok(Err(_)) => {\n            let _ = state.tx.lock().map(|mut guard| guard.take());\n            return Err("Nie udało się uruchomić warstwy P2P.".to_string());\n        }',
     expected: 'cancelled ready handshake',
+  },
+  {
+    name: 'startup timeout does not stop the owned task',
+    target: 'rust',
+    source: 'Err(_) => {\n            let _ = startup_tx.send(NetworkCommand::Stop).await;\n            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);',
+    replacement: 'Err(_) => {\n            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);',
+    expected: 'timed-out startup',
   },
   {
     name: 'explicit startup failure clears state blindly',

@@ -29,6 +29,17 @@ pub const PRIVATE_RATE_MAX_MESSAGES: u32 = 20;
 pub const PRIVATE_REPLAY_TTL_SECS: u64 = 10 * 60;
 pub const PRIVATE_REPLAY_MAX_ENTRIES: usize = 2_048;
 
+pub const VOICE_SIGNAL_MAX_SDP_BYTES: usize = 24 * 1024;
+pub const VOICE_SIGNAL_MAX_CANDIDATE_BYTES: usize = 4 * 1024;
+pub const VOICE_SIGNAL_MAX_AGE_MS: u64 = 2 * 60 * 1_000;
+pub const VOICE_SIGNAL_CLOCK_SKEW_MS: u64 = 60 * 1_000;
+pub const VOICE_RATE_WINDOW_SECS: u64 = 10;
+pub const VOICE_RATE_MAX_SIGNALS: u32 = 80;
+pub const VOICE_INVITE_RATE_WINDOW_SECS: u64 = 60;
+pub const VOICE_INVITE_RATE_MAX: u32 = 6;
+pub const VOICE_REPLAY_TTL_SECS: u64 = 10 * 60;
+pub const VOICE_REPLAY_MAX_ENTRIES: usize = 4_096;
+
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct SecretString(String);
@@ -250,6 +261,171 @@ pub struct PrivateDirectMessage {
     pub timestamp: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VoiceScope {
+    Private,
+    Room { room_id: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceSignalAction {
+    Invite,
+    Accept,
+    Reject,
+    End,
+    Offer,
+    Answer,
+    IceCandidate,
+    State,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceRoomIntent {
+    Listen,
+    Speak,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VoiceSignal {
+    pub id: String,
+    pub session_id: String,
+    pub peer_id: String,
+    pub target_peer_id: String,
+    pub nick: String,
+    #[serde(default)]
+    pub nick_color: Option<String>,
+    pub scope: VoiceScope,
+    pub action: VoiceSignalAction,
+    #[serde(default)]
+    pub sdp: Option<String>,
+    #[serde(default)]
+    pub candidate: Option<String>,
+    #[serde(default)]
+    pub room_intent: Option<VoiceRoomIntent>,
+    #[serde(default)]
+    pub muted: Option<bool>,
+    pub timestamp: u64,
+}
+
+fn valid_voice_room_id(room_id: &str) -> bool {
+    room_id == "world"
+        || (!room_id.is_empty()
+            && room_id.chars().count() <= 64
+            && room_id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            }))
+}
+
+fn validate_voice_payload(signal: &VoiceSignal) -> Result<(), &'static str> {
+    let no_sdp = signal.sdp.is_none();
+    let no_candidate = signal.candidate.is_none();
+    match signal.action {
+        VoiceSignalAction::Invite => {
+            if !no_sdp || !no_candidate || signal.muted.is_some() {
+                return Err("Voice invite contains unexpected media payload.");
+            }
+            if matches!(&signal.scope, VoiceScope::Private) && signal.room_intent.is_some() {
+                return Err("Private voice invite cannot carry room intent.");
+            }
+        }
+        VoiceSignalAction::Accept | VoiceSignalAction::Reject | VoiceSignalAction::End => {
+            if !no_sdp || !no_candidate || signal.room_intent.is_some() || signal.muted.is_some() {
+                return Err("Voice control action contains unexpected media payload.");
+            }
+        }
+        VoiceSignalAction::Offer | VoiceSignalAction::Answer => {
+            let Some(sdp) = signal.sdp.as_deref() else {
+                return Err("Voice SDP signal is missing SDP.");
+            };
+            if sdp.is_empty()
+                || sdp.len() > VOICE_SIGNAL_MAX_SDP_BYTES
+                || sdp.as_bytes().contains(&0)
+                || !no_candidate
+                || signal.room_intent.is_some()
+                || signal.muted.is_some()
+            {
+                return Err("Voice SDP signal is malformed or too large.");
+            }
+        }
+        VoiceSignalAction::IceCandidate => {
+            let Some(candidate) = signal.candidate.as_deref() else {
+                return Err("Voice ICE signal is missing a candidate.");
+            };
+            if candidate.is_empty()
+                || candidate.len() > VOICE_SIGNAL_MAX_CANDIDATE_BYTES
+                || candidate.as_bytes().contains(&0)
+                || !no_sdp
+                || signal.room_intent.is_some()
+                || signal.muted.is_some()
+            {
+                return Err("Voice ICE candidate is malformed or too large.");
+            }
+        }
+        VoiceSignalAction::State => {
+            if !no_sdp || !no_candidate {
+                return Err("Voice state update cannot carry SDP or ICE.");
+            }
+            if signal.muted.is_none() && signal.room_intent.is_none() {
+                return Err("Voice state update is empty.");
+            }
+            if matches!(&signal.scope, VoiceScope::Private) && signal.room_intent.is_some() {
+                return Err("Private voice state cannot carry room intent.");
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_voice_signal(
+    signal: &VoiceSignal,
+    authenticated_source: &PeerId,
+    local_peer: &PeerId,
+    expected_nick: Option<&str>,
+    expected_nick_color: Option<&str>,
+    now_ms: u64,
+) -> Result<(), &'static str> {
+    if Uuid::parse_str(&signal.id).is_err() || Uuid::parse_str(&signal.session_id).is_err() {
+        return Err("Invalid voice signal identity.");
+    }
+    let Ok(claimed_source) = signal.peer_id.parse::<PeerId>() else {
+        return Err("Invalid voice sender identity.");
+    };
+    let Ok(claimed_target) = signal.target_peer_id.parse::<PeerId>() else {
+        return Err("Invalid voice target identity.");
+    };
+    if claimed_source != *authenticated_source || claimed_source.to_string() != signal.peer_id {
+        return Err("Voice sender identity does not match the authenticated peer.");
+    }
+    if claimed_target != *local_peer || claimed_target.to_string() != signal.target_peer_id {
+        return Err("Voice signal is addressed to another peer.");
+    }
+    if let Some(expected) = expected_nick {
+        if signal.nick != expected {
+            return Err("Voice sender nickname does not match current authenticated presence.");
+        }
+    }
+    if let Some(expected) = expected_nick_color {
+        if signal.nick_color.as_deref() != Some(expected) {
+            return Err("Voice sender color does not match current authenticated presence.");
+        }
+    }
+    if let VoiceScope::Room { room_id } = &signal.scope {
+        if !valid_voice_room_id(room_id) {
+            return Err("Voice room scope is invalid.");
+        }
+    }
+    if signal.timestamp > now_ms.saturating_add(VOICE_SIGNAL_CLOCK_SKEW_MS) {
+        return Err("Voice signal timestamp is too far in the future.");
+    }
+    if now_ms.saturating_sub(signal.timestamp) > VOICE_SIGNAL_MAX_AGE_MS {
+        return Err("Voice signal is stale.");
+    }
+    validate_voice_payload(signal)
+}
+
 pub fn validate_private_message(
     message: &PrivateDirectMessage,
     authenticated_source: &PeerId,
@@ -304,6 +480,7 @@ pub enum ControlRequest {
         password: SecretString,
     },
     PrivateMessage(PrivateDirectMessage),
+    VoiceSignal(VoiceSignal),
 }
 
 impl fmt::Debug for ControlRequest {
@@ -326,6 +503,22 @@ impl fmt::Debug for ControlRequest {
                 .field("target_peer_id", &message.target_peer_id)
                 .field("text", &"<redacted>")
                 .finish(),
+            Self::VoiceSignal(signal) => formatter
+                .debug_struct("VoiceSignal")
+                .field("id", &signal.id)
+                .field("session_id", &signal.session_id)
+                .field("peer_id", &signal.peer_id)
+                .field("target_peer_id", &signal.target_peer_id)
+                .field("scope", &signal.scope)
+                .field("action", &signal.action)
+                .field("sdp", &signal.sdp.as_ref().map(|_| "<redacted>"))
+                .field(
+                    "candidate",
+                    &signal.candidate.as_ref().map(|_| "<redacted>"),
+                )
+                .field("room_intent", &signal.room_intent)
+                .field("muted", &signal.muted)
+                .finish(),
         }
     }
 }
@@ -341,6 +534,12 @@ pub enum ControlResponse {
     },
     PrivateAck {
         message_id: String,
+        accepted: bool,
+        #[serde(default)]
+        reason: Option<String>,
+    },
+    VoiceAck {
+        signal_id: String,
         accepted: bool,
         #[serde(default)]
         reason: Option<String>,

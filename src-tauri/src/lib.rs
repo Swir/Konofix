@@ -40,18 +40,22 @@ mod secure_channels;
 mod secure_control_client;
 mod secure_control_runtime;
 mod secure_control_transport;
+mod test_updater;
 
 use incoming_file::{commit_reserved_file, reserve_incoming_file};
 use room_membership_application::{ApplicationMembershipEffects, MembershipSnapshotPayload};
 use room_membership_production::RoomMembershipProductionBridge;
 use secure_channels::{
     validate_room_password, ControlRequest, ControlResponse, PrivateDirectMessage, SecretString,
+    VoiceRoomIntent, VoiceScope, VoiceSignal, VoiceSignalAction,
 };
 use secure_control_client::{ObservedRoomSecurity, SecureControlClient, SecureResponseOutcome};
 use secure_control_runtime::{PresenceIdentity, SecureControlRuntime};
 use secure_control_transport::{
     control_behaviour, handle_inbound_control_request, private_message_request, room_join_request,
+    voice_signal_request,
 };
+use test_updater::{check_test_update, install_test_update};
 
 const WORLD_TOPIC: &str = "konofix/world/v3";
 const KAD_PROTOCOL: &str = "/konofix/kad/1.0.0";
@@ -843,6 +847,22 @@ enum NetworkCommand {
         enabled: bool,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    SendVoiceSignal {
+        peer_id: String,
+        session_id: String,
+        scope: VoiceScope,
+        action: VoiceSignalAction,
+        sdp: Option<String>,
+        candidate: Option<String>,
+        room_intent: Option<VoiceRoomIntent>,
+        muted: Option<bool>,
+        reply: oneshot::Sender<Result<VoiceSignal, String>>,
+    },
+    SetVoicePolicy {
+        private_calls_enabled: bool,
+        room_voice_enabled: bool,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     EnterRoom {
         room_id: String,
         reply: oneshot::Sender<Result<(), String>>,
@@ -1350,11 +1370,16 @@ async fn start_network(
         }
     });
 
-    let ready_result = match ready_rx.await {
-        Ok(result) => result,
-        Err(_) => {
+    let ready_result = match tokio::time::timeout(Duration::from_secs(15), ready_rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => {
             let _ = clear_network_sender_if_current(state.inner(), &startup_tx);
             return Err("Nie udało się uruchomić warstwy P2P.".to_string());
+        }
+        Err(_) => {
+            let _ = startup_tx.send(NetworkCommand::Stop).await;
+            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);
+            return Err("Uruchamianie sieci P2P przekroczyło 15 sekund. Spróbuj ponownie lub sprawdź zaporę/VPN.".to_string());
         }
     };
 
@@ -1576,6 +1601,68 @@ async fn set_private_messages_enabled(
     response
         .await
         .map_err(|_| "Private-message policy update interrupted.".to_string())?
+}
+
+#[tauri::command]
+async fn send_voice_signal(
+    peer_id: String,
+    session_id: String,
+    scope: VoiceScope,
+    action: VoiceSignalAction,
+    sdp: Option<String>,
+    candidate: Option<String>,
+    room_intent: Option<VoiceRoomIntent>,
+    muted: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<VoiceSignal, String> {
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "State lock failed.")?
+        .clone()
+        .ok_or("No P2P connection.")?;
+    let (reply, response) = oneshot::channel();
+    tx.send(NetworkCommand::SendVoiceSignal {
+        peer_id,
+        session_id,
+        scope,
+        action,
+        sdp,
+        candidate,
+        room_intent,
+        muted,
+        reply,
+    })
+    .await
+    .map_err(|_| "P2P network stopped.".to_string())?;
+    response
+        .await
+        .map_err(|_| "Voice signaling delivery interrupted.".to_string())?
+}
+
+#[tauri::command]
+async fn set_voice_policy(
+    private_calls_enabled: bool,
+    room_voice_enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "State lock failed.")?
+        .clone()
+        .ok_or("No P2P connection.")?;
+    let (reply, response) = oneshot::channel();
+    tx.send(NetworkCommand::SetVoicePolicy {
+        private_calls_enabled,
+        room_voice_enabled,
+        reply,
+    })
+    .await
+    .map_err(|_| "P2P network stopped.".to_string())?;
+    response
+        .await
+        .map_err(|_| "Voice policy update interrupted.".to_string())?
 }
 
 #[tauri::command]
@@ -2441,7 +2528,11 @@ async fn network_task(
         HashMap::<String, oneshot::Sender<Result<(), String>>>::new();
     let mut pending_private_messages =
         HashMap::<String, oneshot::Sender<Result<PrivateDirectMessage, String>>>::new();
+    let mut pending_voice_signals =
+        HashMap::<String, oneshot::Sender<Result<VoiceSignal, String>>>::new();
     let mut private_messages_enabled = true;
+    let mut private_calls_enabled = true;
+    let mut room_voice_enabled = true;
 
     let mut outgoing: HashMap<String, OutgoingTransfer> = HashMap::new();
     let mut pending_incoming: HashMap<String, PendingIncomingOffer> = HashMap::new();
@@ -2803,6 +2894,76 @@ async fn network_task(
                     }
                     NetworkCommand::SetPrivateMessagesEnabled { enabled, reply } => {
                         private_messages_enabled = enabled;
+                        let _ = reply.send(Ok(()));
+                    }
+                    NetworkCommand::SendVoiceSignal {
+                        peer_id: target_raw,
+                        session_id,
+                        scope,
+                        action,
+                        sdp,
+                        candidate,
+                        room_intent,
+                        muted,
+                        reply,
+                    } => {
+                        let result = (|| -> Result<(PeerId, ControlRequest, String), String> {
+                            let target: PeerId = target_raw
+                                .parse()
+                                .map_err(|_| "Invalid voice Peer ID.")?;
+                            if !peers.contains_key(&target) {
+                                return Err("Voice peer is not currently authenticated online.".into());
+                            }
+                            if let VoiceScope::Room { room_id } = &scope {
+                                if room_id != "world" && !rooms.contains_key(room_id) {
+                                    return Err("Voice room is not known in this session.".into());
+                                }
+                                if room_id != "world"
+                                    && !secure_client.room_authorized(room_id, &local_peer)
+                                {
+                                    return Err("Protected room authorization is required for voice.".into());
+                                }
+                            }
+                            let request = voice_signal_request(
+                                &local_peer,
+                                &target,
+                                &nick,
+                                Some(nick_color.clone()),
+                                session_id,
+                                scope,
+                                action,
+                                sdp,
+                                candidate,
+                                room_intent,
+                                muted,
+                                now_ms(),
+                            )?;
+                            let correlation = secure_client
+                                .track_voice_signal(&request, target)
+                                .map_err(str::to_string)?;
+                            Ok((target, request, correlation))
+                        })();
+                        match result {
+                            Ok((target, request, correlation)) => {
+                                let outbound = swarm
+                                    .behaviour_mut()
+                                    .secure_control
+                                    .send_request(&target, request);
+                                secure_outbound_requests.insert(outbound, correlation.clone());
+                                pending_voice_signals.insert(correlation, reply);
+                            }
+                            Err(error) => {
+                                let _ = reply.send(Err(error));
+                            }
+                        }
+                    }
+                    NetworkCommand::SetVoicePolicy {
+                        private_calls_enabled: private_enabled,
+                        room_voice_enabled: room_enabled,
+                        reply,
+                    } => {
+                        private_calls_enabled = private_enabled;
+                        room_voice_enabled = room_enabled;
                         let _ = reply.send(Ok(()));
                     }
                     NetworkCommand::EnterRoom { room_id, reply } => {
@@ -3587,6 +3748,32 @@ async fn network_task(
                                             continue;
                                         }
                                     }
+                                    if let ControlRequest::VoiceSignal(signal) = &request {
+                                        let disabled_reason = match &signal.scope {
+                                            VoiceScope::Private if !private_calls_enabled => {
+                                                Some("voice_private_disabled")
+                                            }
+                                            VoiceScope::Room { .. } if !room_voice_enabled => {
+                                                Some("voice_room_disabled")
+                                            }
+                                            _ => None,
+                                        };
+                                        if let Some(reason) = disabled_reason {
+                                            let signal_id = Uuid::parse_str(&signal.id)
+                                                .map(|id| id.to_string())
+                                                .unwrap_or_else(|_| Uuid::nil().to_string());
+                                            let response = ControlResponse::VoiceAck {
+                                                signal_id,
+                                                accepted: false,
+                                                reason: Some(reason.into()),
+                                            };
+                                            let _ = swarm
+                                                .behaviour_mut()
+                                                .secure_control
+                                                .send_response(channel, response);
+                                            continue;
+                                        }
+                                    }
                                     let expected_presence = peers.get(&peer).map(|presence| PresenceIdentity {
                                         nick: presence.nick.clone(),
                                         nick_color: Some(presence.nick_color.clone()),
@@ -3602,6 +3789,9 @@ async fn network_task(
                                     );
                                     if let Some(message) = outcome.private_message {
                                         let _ = app.emit_event("private-message", message);
+                                    }
+                                    if let Some(signal) = outcome.voice_signal {
+                                        let _ = app.emit_event("voice-signal", signal);
                                     }
                                     let _ = swarm
                                         .behaviour_mut()
@@ -3640,6 +3830,20 @@ async fn network_task(
                                                 }
                                             }
                                         }
+                                        SecureResponseOutcome::VoiceAccepted { signal } => {
+                                            if let Some(correlation) = correlation {
+                                                if let Some(reply) = pending_voice_signals.remove(&correlation) {
+                                                    let _ = reply.send(Ok(signal));
+                                                }
+                                            }
+                                        }
+                                        SecureResponseOutcome::VoiceRejected { reason, .. } => {
+                                            if let Some(correlation) = correlation {
+                                                if let Some(reply) = pending_voice_signals.remove(&correlation) {
+                                                    let _ = reply.send(Err(reason));
+                                                }
+                                            }
+                                        }
                                         SecureResponseOutcome::Ignored => {
                                             if let Some(correlation) = correlation {
                                                 secure_client.cancel_pending(&correlation);
@@ -3647,6 +3851,9 @@ async fn network_task(
                                                     let _ = reply.send(Err("Secure-control response failed identity binding.".into()));
                                                 }
                                                 if let Some(reply) = pending_private_messages.remove(&correlation) {
+                                                    let _ = reply.send(Err("Secure-control response failed identity binding.".into()));
+                                                }
+                                                if let Some(reply) = pending_voice_signals.remove(&correlation) {
                                                     let _ = reply.send(Err("Secure-control response failed identity binding.".into()));
                                                 }
                                             }
@@ -3663,6 +3870,9 @@ async fn network_task(
                                     let _ = reply.send(Err(reason.clone()));
                                 }
                                 if let Some(reply) = pending_private_messages.remove(&correlation) {
+                                    let _ = reply.send(Err(reason.clone()));
+                                }
+                                if let Some(reply) = pending_voice_signals.remove(&correlation) {
                                     let _ = reply.send(Err(reason));
                                 }
                             }
@@ -5181,6 +5391,8 @@ pub fn run() {
             authorize_room_entry,
             send_private_message,
             set_private_messages_enabled,
+            send_voice_signal,
+            set_voice_policy,
             enter_room,
             add_bootstrap,
             refresh_discovery,
@@ -5192,6 +5404,8 @@ pub fn run() {
             reject_file,
             cancel_file,
             disconnect_network,
+            check_test_update,
+            install_test_update,
             open_github
         ])
         .run(tauri::generate_context!())

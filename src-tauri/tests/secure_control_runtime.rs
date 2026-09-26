@@ -8,8 +8,13 @@ mod secure_control_runtime;
 use std::time::Instant;
 
 use libp2p::PeerId;
-use secure_channels::{PrivateDirectMessage, PRIVATE_RATE_MAX_MESSAGES};
-use secure_control_runtime::{PresenceIdentity, PrivateMessageError, SecureControlRuntime};
+use secure_channels::{
+    PrivateDirectMessage, VoiceScope, VoiceSignal, VoiceSignalAction, PRIVATE_RATE_MAX_MESSAGES,
+    VOICE_INVITE_RATE_MAX,
+};
+use secure_control_runtime::{
+    PresenceIdentity, PrivateMessageError, SecureControlRuntime, VoiceSignalError,
+};
 use uuid::Uuid;
 
 fn peer() -> PeerId {
@@ -188,4 +193,130 @@ fn removing_room_security_state_fails_closed_for_late_join_requests() {
             Instant::now(),
         )
         .is_err());
+}
+
+fn voice_invite(
+    sender: &PeerId,
+    target: &PeerId,
+    id: String,
+    session_id: String,
+    now_ms: u64,
+) -> VoiceSignal {
+    VoiceSignal {
+        id,
+        session_id,
+        peer_id: sender.to_string(),
+        target_peer_id: target.to_string(),
+        nick: "Alice".into(),
+        nick_color: Some("#62E5FF".into()),
+        scope: VoiceScope::Private,
+        action: VoiceSignalAction::Invite,
+        sdp: None,
+        candidate: None,
+        room_intent: None,
+        muted: None,
+        timestamp: now_ms,
+    }
+}
+
+#[test]
+fn voice_runtime_rejects_replay_spoofing_and_invite_spam() {
+    let sender = peer();
+    let local = peer();
+    let attacker = peer();
+    let now_ms = 6_000_000u64;
+    let now = Instant::now();
+    let presence = PresenceIdentity {
+        nick: "Alice".into(),
+        nick_color: Some("#62E5FF".into()),
+    };
+    let mut runtime = SecureControlRuntime::default();
+    let first = voice_invite(
+        &sender,
+        &local,
+        Uuid::new_v4().to_string(),
+        Uuid::new_v4().to_string(),
+        now_ms,
+    );
+
+    assert_eq!(
+        runtime
+            .accept_voice_signal(first.clone(), &sender, &local, Some(&presence), now_ms, now,)
+            .unwrap(),
+        first
+    );
+    assert_eq!(
+        runtime.accept_voice_signal(first.clone(), &sender, &local, Some(&presence), now_ms, now,),
+        Err(VoiceSignalError::Replay)
+    );
+
+    let spoofed = voice_invite(
+        &sender,
+        &local,
+        Uuid::new_v4().to_string(),
+        Uuid::new_v4().to_string(),
+        now_ms,
+    );
+    assert!(matches!(
+        runtime.accept_voice_signal(spoofed, &attacker, &local, Some(&presence), now_ms, now,),
+        Err(VoiceSignalError::Validation(_))
+    ));
+
+    // The accepted invite and its replay both consume the general signal budget,
+    // but only valid invite actions consume the dedicated invite-spam window.
+    for _ in 2..VOICE_INVITE_RATE_MAX {
+        runtime
+            .accept_voice_signal(
+                voice_invite(
+                    &sender,
+                    &local,
+                    Uuid::new_v4().to_string(),
+                    Uuid::new_v4().to_string(),
+                    now_ms,
+                ),
+                &sender,
+                &local,
+                Some(&presence),
+                now_ms,
+                now,
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        runtime.accept_voice_signal(
+            voice_invite(
+                &sender,
+                &local,
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                now_ms,
+            ),
+            &sender,
+            &local,
+            Some(&presence),
+            now_ms,
+            now,
+        ),
+        Err(VoiceSignalError::InviteRateLimited)
+    );
+}
+
+#[test]
+fn voice_runtime_requires_authenticated_presence() {
+    let sender = peer();
+    let local = peer();
+    let signal = voice_invite(
+        &sender,
+        &local,
+        Uuid::new_v4().to_string(),
+        Uuid::new_v4().to_string(),
+        7_000_000,
+    );
+    let mut runtime = SecureControlRuntime::default();
+    assert_eq!(
+        runtime.accept_voice_signal(signal, &sender, &local, None, 7_000_000, Instant::now(),),
+        Err(VoiceSignalError::Validation(
+            "Voice sender has no authenticated presence."
+        ))
+    );
 }

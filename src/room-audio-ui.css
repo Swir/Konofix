@@ -1,0 +1,273 @@
+.room-audio-join {
+  min-height: 36px;
+  white-space: nowrap;
+  border-color: rgba(98, 229, 255, 0.24);
+}
+
+.room-audio-join.is-active {
+  color: #dff8ff;
+  border-color: rgba(98, 229, 255, 0.72);
+  background: rgba(0, 136, 255, 0.16);
+  box-shadow: inset 0 0 18px rgba(0, 136, 255, 0.08);
+}
+
+#roomAudioPanel {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  z-index: 1240;
+  width: min(390px, calc(100vw - 32px));
+}
+
+.room-audio-panel {
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(98, 229, 255, 0.24);
+  background: linear-gradient(145deg, rgba(3, 10, 18, 0.97), rgba(6, 18, 30, 0.96));
+  box-shadow: 0 20px 62px rgba(0, 0, 0, 0.48), 0 0 34px rgba(0, 136, 255, 0.1);
+}
+
+.room-audio-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.room-audio-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.room-audio-head strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #f4faff;
+}
+
+.room-audio-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #9fb6c6;
+  font-size: 0.82rem;
+}
+
+.room-audio-phase i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7d8d98;
+}
+
+.room-audio-phase.phase-connected i {
+  background: #62e5ff;
+  box-shadow: 0 0 12px rgba(98, 229, 255, 0.72);
+}
+
+.room-audio-phase.phase-joining i,
+.room-audio-phase.phase-reconnecting i {
+  background: #f6c85f;
+  box-shadow: 0 0 10px rgba(246, 200, 95, 0.5);
+}
+
+.room-audio-phase.phase-error i {
+  background: #ff6685;
+}
+
+.room-audio-count {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: #9fdff0;
+  background: rgba(98, 229, 255, 0.08);
+  border: 1px solid rgba(98, 229, 255, 0.16);
+  font-size: 0.74rem;
+}
+
+.room-audio-participants {
+  max-height: 150px;
+  overflow: auto;
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+  padding-right: 2px;
+}
+
+.room-audio-participant {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(141, 168, 184, 0.12);
+  background: rgba(7, 17, 28, 0.64);
+}
+
+.room-audio-participant.is-speaking {
+  border-color: rgba(98, 229, 255, 0.5);
+  background: rgba(0, 136, 255, 0.1);
+}
+
+.room-audio-participant-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(98, 229, 255, 0.08);
+}
+
+.room-audio-participant span:last-child {
+  min-width: 0;
+  display: grid;
+}
+
+.room-audio-participant strong,
+.room-audio-participant small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-audio-participant small,
+.room-audio-empty {
+  color: #8da8b8;
+  font-size: 0.75rem;
+}
+
+.room-audio-empty {
+  padding: 10px;
+  text-align: center;
+}
+
+.room-audio-intent {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.room-audio-intent button {
+  min-height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(98, 229, 255, 0.25);
+  background: rgba(8, 21, 34, 0.78);
+  color: #dff8ff;
+  cursor: pointer;
+}
+
+.room-audio-intent button.is-speaking {
+  border-color: rgba(98, 229, 255, 0.68);
+  background: rgba(0, 136, 255, 0.18);
+}
+
+.room-audio-intent span {
+  color: #8da8b8;
+  font-size: 0.76rem;
+}
+
+.room-audio-device {
+  display: grid;
+  gap: 6px;
+  color: #9fb6c6;
+  font-size: 0.78rem;
+}
+
+.room-audio-device select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid rgba(98, 229, 255, 0.16);
+  border-radius: 10px;
+  background: #07111c;
+  color: #f4faff;
+  padding: 0 10px;
+}
+
+.room-audio-controls {
+  display: grid;
+  grid-template-columns: 46px 46px minmax(0, 1fr);
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.room-audio-controls button {
+  min-height: 42px;
+  border: 1px solid rgba(98, 229, 255, 0.2);
+  border-radius: 11px;
+  background: rgba(8, 21, 34, 0.82);
+  color: #f4faff;
+  cursor: pointer;
+}
+
+.room-audio-controls button.is-active {
+  border-color: rgba(246, 200, 95, 0.55);
+  background: rgba(246, 200, 95, 0.12);
+}
+
+.room-audio-controls button:disabled,
+.room-audio-intent button:disabled,
+.room-audio-join:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.room-audio-leave {
+  color: #ffd4dc !important;
+  border-color: rgba(255, 102, 133, 0.28) !important;
+}
+
+.room-audio-close {
+  color: #dff8ff !important;
+}
+
+.room-audio-error,
+.room-audio-settings-status {
+  min-height: 1.1em;
+  margin-top: 9px;
+  color: #ff9db0;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.room-audio-streams {
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.room-audio-settings-card {
+  margin-top: 12px;
+}
+
+@media (max-width: 720px) {
+  #roomAudioPanel {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
+  }
+
+  .room-audio-panel {
+    max-height: min(72vh, 620px);
+    overflow: auto;
+  }
+
+  .room-audio-intent {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (forced-colors: active) {
+  .room-audio-panel,
+  .room-audio-participant,
+  .room-audio-intent button,
+  .room-audio-controls button,
+  .room-audio-device select {
+    border: 1px solid CanvasText;
+  }
+}

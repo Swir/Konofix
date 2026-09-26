@@ -5,10 +5,12 @@ use std::time::{Duration, Instant};
 
 use libp2p::PeerId;
 use secure_channels::{
-    validate_private_message, validate_room_password, ControlRequest, PrivateDirectMessage,
-    ReplayCache, RoomAccessGrant, SecretString, WindowRateLimiter, PRIVATE_MESSAGE_MAX_AGE_MS,
+    validate_private_message, validate_room_password, validate_voice_signal, ControlRequest,
+    PrivateDirectMessage, ReplayCache, RoomAccessGrant, SecretString, VoiceRoomIntent, VoiceScope,
+    VoiceSignal, VoiceSignalAction, WindowRateLimiter, PRIVATE_MESSAGE_MAX_AGE_MS,
     PRIVATE_RATE_MAX_MESSAGES, PRIVATE_RATE_WINDOW_SECS, ROOM_ACCESS_GRANT_TTL_SECS,
-    ROOM_AUTH_MAX_ATTEMPTS, ROOM_AUTH_WINDOW_SECS,
+    ROOM_AUTH_MAX_ATTEMPTS, ROOM_AUTH_WINDOW_SECS, VOICE_SIGNAL_MAX_CANDIDATE_BYTES,
+    VOICE_SIGNAL_MAX_SDP_BYTES,
 };
 use uuid::Uuid;
 
@@ -170,4 +172,119 @@ fn private_rate_and_replay_guards_are_bounded() {
     assert!(replay.accept("message-c", now + Duration::from_secs(2), ttl));
     assert!(replay.accept("message-a", now + Duration::from_secs(3), ttl));
     assert!(replay.accept("message-z", now + ttl, ttl));
+}
+
+#[test]
+fn voice_signal_binds_authenticated_sender_target_scope_and_payload_shape() {
+    let sender = peer();
+    let local = peer();
+    let attacker = peer();
+    let now = 5_000_000u64;
+    let base = VoiceSignal {
+        id: Uuid::new_v4().to_string(),
+        session_id: Uuid::new_v4().to_string(),
+        peer_id: sender.to_string(),
+        target_peer_id: local.to_string(),
+        nick: "Alice".into(),
+        nick_color: Some("#62E5FF".into()),
+        scope: VoiceScope::Private,
+        action: VoiceSignalAction::Invite,
+        sdp: None,
+        candidate: None,
+        room_intent: None,
+        muted: None,
+        timestamp: now,
+    };
+
+    assert!(
+        validate_voice_signal(&base, &sender, &local, Some("Alice"), Some("#62E5FF"), now,).is_ok()
+    );
+    assert!(validate_voice_signal(
+        &base,
+        &attacker,
+        &local,
+        Some("Alice"),
+        Some("#62E5FF"),
+        now,
+    )
+    .is_err());
+
+    let room = VoiceSignal {
+        scope: VoiceScope::Room {
+            room_id: "world".into(),
+        },
+        room_intent: Some(VoiceRoomIntent::Speak),
+        ..base.clone()
+    };
+    assert!(
+        validate_voice_signal(&room, &sender, &local, Some("Alice"), Some("#62E5FF"), now,).is_ok()
+    );
+
+    let private_with_room_intent = VoiceSignal {
+        room_intent: Some(VoiceRoomIntent::Listen),
+        ..base.clone()
+    };
+    assert!(validate_voice_signal(
+        &private_with_room_intent,
+        &sender,
+        &local,
+        Some("Alice"),
+        Some("#62E5FF"),
+        now,
+    )
+    .is_err());
+
+    let oversized_sdp = VoiceSignal {
+        action: VoiceSignalAction::Offer,
+        sdp: Some("x".repeat(VOICE_SIGNAL_MAX_SDP_BYTES + 1)),
+        ..base.clone()
+    };
+    assert!(validate_voice_signal(
+        &oversized_sdp,
+        &sender,
+        &local,
+        Some("Alice"),
+        Some("#62E5FF"),
+        now,
+    )
+    .is_err());
+
+    let oversized_candidate = VoiceSignal {
+        action: VoiceSignalAction::IceCandidate,
+        candidate: Some("x".repeat(VOICE_SIGNAL_MAX_CANDIDATE_BYTES + 1)),
+        ..base
+    };
+    assert!(validate_voice_signal(
+        &oversized_candidate,
+        &sender,
+        &local,
+        Some("Alice"),
+        Some("#62E5FF"),
+        now,
+    )
+    .is_err());
+}
+
+#[test]
+fn voice_debug_redacts_sdp_and_ice_payloads() {
+    let sender = peer();
+    let target = peer();
+    let request = ControlRequest::VoiceSignal(VoiceSignal {
+        id: Uuid::new_v4().to_string(),
+        session_id: Uuid::new_v4().to_string(),
+        peer_id: sender.to_string(),
+        target_peer_id: target.to_string(),
+        nick: "Alice".into(),
+        nick_color: None,
+        scope: VoiceScope::Private,
+        action: VoiceSignalAction::Offer,
+        sdp: Some("v=0 secret-sdp".into()),
+        candidate: None,
+        room_intent: None,
+        muted: None,
+        timestamp: 1,
+    });
+    let debug = format!("{request:?}");
+    assert!(debug.contains("<redacted>"));
+    assert!(!debug.contains("secret-sdp"));
 }

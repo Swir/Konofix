@@ -12,13 +12,14 @@ use std::time::Instant;
 use futures::io::Cursor;
 use libp2p::{request_response::Codec, PeerId, StreamProtocol};
 use secure_channels::{
-    ControlRequest, ControlResponse, PrivateDirectMessage, SecretString, CONTROL_PROTOCOL,
-    MAX_CONTROL_REQUEST_WIRE_BYTES, MAX_CONTROL_RESPONSE_WIRE_BYTES,
+    ControlRequest, ControlResponse, PrivateDirectMessage, SecretString, VoiceRoomIntent,
+    VoiceScope, VoiceSignalAction, CONTROL_PROTOCOL, MAX_CONTROL_REQUEST_WIRE_BYTES,
+    MAX_CONTROL_RESPONSE_WIRE_BYTES,
 };
 use secure_control_runtime::{PresenceIdentity, SecureControlRuntime};
 use secure_control_transport::{
     control_behaviour, control_codec, handle_inbound_control_request, private_message_request,
-    room_join_request,
+    room_join_request, voice_signal_request,
 };
 use uuid::Uuid;
 
@@ -301,4 +302,166 @@ fn malformed_private_id_never_echoes_unbounded_attacker_input() {
         }
         _ => panic!("private ack expected"),
     }
+}
+
+#[test]
+fn voice_builder_and_inbound_handler_keep_signaling_on_authenticated_control_channel() {
+    let sender = peer();
+    let receiver = peer();
+    let now_ms = 8_000_000u64;
+    let now = Instant::now();
+    let presence = PresenceIdentity {
+        nick: "Alice".into(),
+        nick_color: Some("#62E5FF".into()),
+    };
+    let session_id = Uuid::new_v4().to_string();
+    let request = voice_signal_request(
+        &sender,
+        &receiver,
+        "Alice",
+        Some("#62E5FF".into()),
+        session_id.clone(),
+        VoiceScope::Room {
+            room_id: "world".into(),
+        },
+        VoiceSignalAction::Invite,
+        None,
+        None,
+        Some(VoiceRoomIntent::Listen),
+        None,
+        now_ms,
+    )
+    .unwrap();
+
+    let mut runtime = SecureControlRuntime::default();
+    let outcome = handle_inbound_control_request(
+        &mut runtime,
+        request,
+        &sender,
+        &receiver,
+        Some(&presence),
+        now_ms,
+        now,
+    );
+    assert!(matches!(
+        outcome.response,
+        ControlResponse::VoiceAck {
+            accepted: true,
+            reason: None,
+            ..
+        }
+    ));
+    let signal = outcome
+        .voice_signal
+        .expect("accepted voice signal must be delivered");
+    assert_eq!(signal.session_id, session_id);
+    assert_eq!(
+        signal.scope,
+        VoiceScope::Room {
+            room_id: "world".into()
+        }
+    );
+    assert_eq!(signal.room_intent, Some(VoiceRoomIntent::Listen));
+    assert!(outcome.private_message.is_none());
+    assert!(outcome.room_grant.is_none());
+}
+
+#[test]
+fn voice_builder_rejects_self_target_and_malformed_media_payloads() {
+    let local = peer();
+    let remote = peer();
+    let session = Uuid::new_v4().to_string();
+    assert!(voice_signal_request(
+        &local,
+        &local,
+        "Alice",
+        None,
+        session.clone(),
+        VoiceScope::Private,
+        VoiceSignalAction::Invite,
+        None,
+        None,
+        None,
+        None,
+        1,
+    )
+    .is_err());
+    assert!(voice_signal_request(
+        &local,
+        &remote,
+        "Alice",
+        None,
+        session.clone(),
+        VoiceScope::Private,
+        VoiceSignalAction::Offer,
+        None,
+        None,
+        None,
+        None,
+        1,
+    )
+    .is_err());
+    assert!(voice_signal_request(
+        &local,
+        &remote,
+        "Alice",
+        None,
+        session,
+        VoiceScope::Private,
+        VoiceSignalAction::IceCandidate,
+        None,
+        Some("candidate:1 1 UDP 1 127.0.0.1 9 typ host".into()),
+        None,
+        None,
+        1,
+    )
+    .is_ok());
+}
+
+#[test]
+fn malformed_voice_id_never_echoes_unbounded_attacker_input() {
+    let sender = peer();
+    let receiver = peer();
+    let presence = PresenceIdentity {
+        nick: "Alice".into(),
+        nick_color: None,
+    };
+    let request = ControlRequest::VoiceSignal(secure_channels::VoiceSignal {
+        id: "A".repeat(16_000),
+        session_id: Uuid::new_v4().to_string(),
+        peer_id: sender.to_string(),
+        target_peer_id: receiver.to_string(),
+        nick: "Alice".into(),
+        nick_color: None,
+        scope: VoiceScope::Private,
+        action: VoiceSignalAction::Invite,
+        sdp: None,
+        candidate: None,
+        room_intent: None,
+        muted: None,
+        timestamp: 9_000_000,
+    });
+    let mut runtime = SecureControlRuntime::default();
+    let outcome = handle_inbound_control_request(
+        &mut runtime,
+        request,
+        &sender,
+        &receiver,
+        Some(&presence),
+        9_000_000,
+        Instant::now(),
+    );
+    match outcome.response {
+        ControlResponse::VoiceAck {
+            signal_id,
+            accepted,
+            reason,
+        } => {
+            assert_eq!(signal_id, Uuid::nil().to_string());
+            assert!(!accepted);
+            assert_eq!(reason.as_deref(), Some("voice_rejected"));
+        }
+        _ => panic!("voice ack expected"),
+    }
+    assert!(outcome.voice_signal.is_none());
 }

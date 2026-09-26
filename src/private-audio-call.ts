@@ -1,6 +1,7 @@
 import {
   AudioCaptureController,
   AudioMediaError,
+  DEFAULT_AUDIO_RTC_CONFIG,
   normalizeAudioMediaError,
   WebRtcAudioPeer,
   type AudioInputDevice,
@@ -121,7 +122,7 @@ export class PrivateAudioCallController {
     this.sessions = options.sessions ?? new VoiceSessionStore();
     this.events = options.events ?? {};
     this.captureFactory = options.captureFactory ?? (() => new AudioCaptureController());
-    const rtcConfig = options.rtcConfig ?? { iceServers: [] };
+    const rtcConfig = options.rtcConfig ?? DEFAULT_AUDIO_RTC_CONFIG;
     this.peerFactory = options.peerFactory ?? (callbacks => new WebRtcAudioPeer(rtcConfig, callbacks));
     this.sessionIdFactory = options.sessionIdFactory ?? defaultSessionId;
   }

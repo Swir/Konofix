@@ -2,6 +2,7 @@
 
 ## 0.6.0 — in development
 
+- enabled Internet/NAT WebRTC candidate discovery for 0.6 audio through a shared public STUN default while keeping private/WORLD/room signaling on Konofix's authenticated direct secure-control channel; restrictive networks that need TURN remain an explicit real-test gate,
 - started the authenticated P2P audio control plane for private 1:1 calls plus opt-in WORLD/room voice, with bounded invite/offer/answer/ICE/state signaling over the existing direct secure-control channel,
 - added explicit voice session states for calling/ringing/joining/connected/reconnecting/end/error plus independent microphone mute, incoming-audio deafening, chat/notification mute preferences and listen/speak room intent,
 - added per-peer voice signaling and invite-spam limits, replay protection and identity/presence binding before WebRTC media wiring,

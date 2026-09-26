@@ -39,6 +39,23 @@ try {
   const requireFromTemp = createRequire(pathToFileURL(path.join(tempDir, 'entry.cjs')));
   const media = requireFromTemp('./audio-media-engine.js');
   const calls = requireFromTemp('./private-audio-call.js');
+
+  const defaultIceServers = media.DEFAULT_AUDIO_RTC_CONFIG?.iceServers ?? [];
+  const defaultIceUrls = defaultIceServers.flatMap(server =>
+    Array.isArray(server.urls) ? server.urls : [server.urls],
+  );
+  if (!defaultIceUrls.includes('stun:stun.cloudflare.com:3478')) {
+    throw new Error('Default Internet audio ICE configuration must include the approved public STUN endpoint.');
+  }
+  const privateAudioSource = fs.readFileSync(path.resolve('src/private-audio-call.ts'), 'utf8');
+  const roomAudioSource = fs.readFileSync(path.resolve('src/room-audio-call.ts'), 'utf8');
+  if (
+    !privateAudioSource.includes('options.rtcConfig ?? DEFAULT_AUDIO_RTC_CONFIG') ||
+    !roomAudioSource.includes('options.rtcConfig ?? DEFAULT_AUDIO_RTC_CONFIG')
+  ) {
+    throw new Error('Private and room audio must share the Internet-capable default ICE configuration.');
+  }
+
   await testCaptureLifecycle(media);
 
   const makeTrack = deviceId => ({

@@ -61,6 +61,12 @@ export type WebRtcAudioPeerCallbacks = {
   onError?: (error: AudioMediaError) => void;
 };
 
+export const DEFAULT_AUDIO_RTC_CONFIG: RTCConfiguration = {
+  // Public STUN only assists ICE address discovery. Voice signaling remains on
+  // Konofix's authenticated direct secure-control channel and media stays P2P.
+  iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }],
+};
+
 function mediaDevicesOrThrow(): MediaDevicesLike {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
     throw new AudioMediaError('unsupported', 'Audio capture is not supported by this runtime.');
@@ -243,7 +249,7 @@ export class WebRtcAudioPeer {
   private closed = false;
 
   constructor(
-    config: RTCConfiguration = { iceServers: [] },
+    config: RTCConfiguration = DEFAULT_AUDIO_RTC_CONFIG,
     callbacks: WebRtcAudioPeerCallbacks = {},
     factory: (config: RTCConfiguration) => PeerConnectionLike = peerConnectionOrThrow,
   ) {

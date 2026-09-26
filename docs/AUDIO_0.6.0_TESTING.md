@@ -21,6 +21,8 @@ This document describes the active 0.6.0 development target. It is **not** a pub
 - WebRTC SDP and ICE payloads are size-bounded, replay-protected and bound to the authenticated peer identity and current presence.
 - No private voice signaling falls back to GossipSub/public chat.
 - WORLD/room participation is opt-in; joining a text room never starts a microphone or incoming audio.
+- Default WebRTC media ICE uses Cloudflare's public STUN endpoint `stun:stun.cloudflare.com:3478` so clients on different Internet connections can discover server-reflexive candidates; STUN does not carry Konofix signaling or relay voice media.
+- A successful STUN-assisted direct path is still network-dependent. If a restrictive NAT/firewall prevents direct ICE connectivity, record the failure as TURN-required rather than weakening authenticated signaling or claiming the Internet audio gate passed.
 - A room voice invite is accepted only when the receiving client explicitly joined the same voice scope.
 - Protected-room voice must preserve room authorization before media signaling is allowed.
 

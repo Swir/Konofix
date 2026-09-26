@@ -3,18 +3,19 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import ts from 'typescript';
+import { stripTypeScriptTypes } from 'node:module';
 
 // Exercise the real updater module in a real DOM. Only IPC and locale are
 // substituted: this must never query GitHub or install an update during tests.
 const sourcePath = process.env.KONOFIX_UPDATER_TEST_SOURCE
   || new URL('../src/test-updater-ui.ts', import.meta.url);
 const source = fs.readFileSync(sourcePath, 'utf8');
-const result = ts.transpileModule(source.replace(/^import .*;\r?\n/gm, ''), {
-  compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.None },
-  reportDiagnostics: true,
+// Node 22.13+ strips the erasable annotations without relying on the legacy
+// TypeScript compiler API (not exposed by TypeScript 7). The normal tsc/Vite
+// build remains the full production type/build gate; this gate tests the DOM.
+const outputText = stripTypeScriptTypes(source.replace(/^import .*;\r?\n/gm, ''), {
+  mode: 'strip',
 });
-assert.equal(result.diagnostics?.length ?? 0, 0, 'updater fixture must transpile');
 
 function findBrowser() {
   if (process.env.KONOFIX_TEST_BROWSER) {
@@ -272,7 +273,7 @@ try {
     await cdp('Runtime.evaluate', { expression: 'document.body.innerHTML = ' + JSON.stringify(html) }, sessionId);
     const localizedHarness = harness.replace("new URLSearchParams(location.search).get('locale') || 'en'", JSON.stringify(locale));
     const execution = await cdp('Runtime.evaluate', {
-      expression: '(async () => {' + localizedHarness + '\n' + result.outputText
+      expression: '(async () => {' + localizedHarness + '\n' + outputText
         + '\ntry { await test(); } catch(error) { finishFailure(error.stack || String(error)); }'
         + '\nreturn document.getElementById("result").textContent; })()',
       awaitPromise: true, returnByValue: true,

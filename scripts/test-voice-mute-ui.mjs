@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 
-const index = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const loader = fs.readFileSync(new URL('../src/startup-ui-loader.ts', import.meta.url), 'utf8');
 const source = fs.readFileSync(new URL('../src/voice-mute-ui.ts', import.meta.url), 'utf8');
 
-assert.match(index, /src\/voice-mute-ui\.ts/, 'quiet-mode UI must be loaded by the desktop shell');
+assert.match(loader, /import\('\.\/voice-mute-ui'\)/, 'quiet-mode UI must be loaded by the isolated desktop startup loader');
 assert.match(source, /konofix\.voiceChatMuted/, 'chat mute must persist locally');
 assert.match(source, /konofix\.voiceNotificationsMuted/, 'notification mute must persist locally');
 assert.match(source, /data-voice-chat-muted/, 'settings must expose an explicit chat-mute control');

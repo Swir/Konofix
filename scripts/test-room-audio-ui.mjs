@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 
-const index = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const loader = fs.readFileSync(new URL('../src/startup-ui-loader.ts', import.meta.url), 'utf8');
 const source = fs.readFileSync(new URL('../src/room-audio-ui.ts', import.meta.url), 'utf8');
 const css = fs.readFileSync(new URL('../src/room-audio-ui.css', import.meta.url), 'utf8');
 
-assert.match(index, /src\/room-audio-ui\.ts/, 'room audio UI must be loaded by the desktop shell');
+assert.match(loader, /import\('\.\/room-audio-ui'\)/, 'room audio UI must be loaded by the isolated desktop startup loader');
 assert.match(source, /RoomAudioCallController/, 'room audio UI must use the tested room controller');
 assert.match(source, /invoke\('send_voice_signal'/, 'room voice signaling must use the authenticated direct Tauri command');
 assert.match(source, /invoke\('set_voice_policy'/, 'room voice opt-out must synchronize to the network runtime');

@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 
-const index = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const loader = fs.readFileSync(new URL('../src/startup-ui-loader.ts', import.meta.url), 'utf8');
 const source = fs.readFileSync(new URL('../src/private-audio-ui.ts', import.meta.url), 'utf8');
 const css = fs.readFileSync(new URL('../src/private-audio-ui.css', import.meta.url), 'utf8');
 
-assert.match(index, /src\/private-audio-ui\.ts/, 'private audio UI must be loaded by the desktop shell');
+assert.match(loader, /import\('\.\/private-audio-ui'\)/, 'private audio UI must be loaded by the isolated desktop startup loader');
 assert.match(source, /PrivateAudioCallController/, 'private audio UI must use the tested call controller');
 assert.match(source, /invoke\('send_voice_signal'/, 'voice signaling must use the authenticated Tauri command');
 assert.match(source, /invoke\('set_voice_policy'/, 'voice opt-out must synchronize to the network runtime');

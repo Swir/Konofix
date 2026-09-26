@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 
-const index = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const loader = fs.readFileSync(new URL('../src/startup-ui-loader.ts', import.meta.url), 'utf8');
 const ui = fs.readFileSync(new URL('../src/test-updater-ui.ts', import.meta.url), 'utf8');
 const rust = fs.readFileSync(new URL('../src-tauri/src/test_updater.rs', import.meta.url), 'utf8');
 const lib = fs.readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
 
-assert.match(index, /src\/test-updater-ui\.ts/, 'desktop shell must load the test updater UI');
+assert.match(loader, /import\('\.\/test-updater-ui'\)/, 'isolated desktop startup loader must load the test updater UI');
 assert.match(ui, /invoke<TestUpdateInfo>\('check_test_update'\)/, 'UI must check updates through the trusted Tauri command');
 assert.match(ui, /invoke\('install_test_update'\)/, 'UI must install updates through the trusted Tauri command');
 assert.match(ui, /setInterval\([^]*10 \* 60 \* 1000\)/, 'test updater must re-check periodically');

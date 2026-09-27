@@ -1,4 +1,5 @@
 import './ui-layout.css';
+import './login-layout.css';
 
 type UiModule = {
   name: string;
@@ -11,6 +12,7 @@ const modules: UiModule[] = [
   { name: 'room-audio-ui', load: () => import('./room-audio-ui') },
   { name: 'voice-mute-ui', load: () => import('./voice-mute-ui') },
   { name: 'settings-ui', load: () => import('./settings-ui') },
+  { name: 'locale-settings-ui', load: () => import('./locale-settings-ui') },
   { name: 'test-updater-ui', load: () => import('./test-updater-ui') },
 ];
 

@@ -1,0 +1,48 @@
+/* The login page owns its scroll area, including while optional modules load.
+   Higher specificity than the late professional stylesheet, without !important. */
+body #app > .login-shell {
+  height: 100dvh;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  align-items: safe center;
+  align-content: safe center;
+  padding: 24px clamp(18px, 3vw, 40px) 44px;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+  scroll-padding-block: 16px 44px;
+}
+body #app > .login-shell > * { min-width: 0; }
+body #app > .login-shell .login-card { padding: 24px; }
+body #app > .login-shell .login-card h2 { margin: 12px 0 4px; font-size: 25px; }
+body #app > .login-shell .login-card .muted { margin-bottom: 12px; }
+body #app > .login-shell .nick-color-swatch { aspect-ratio: auto; height: 28px; min-height: 28px; }
+body #app > .login-shell .privacy-note { margin-top: 12px; }
+body #app > .login-shell .test-updater-card { flex-direction: row; flex-wrap: wrap; padding: 12px; }
+body #app > .login-shell .test-updater-card button { flex-shrink: 0; }
+body #app > .login-shell input { min-width: 0; }
+@media (max-height: 720px) {
+  body #app > .login-shell { padding-top: 12px; padding-bottom: 36px; }
+  body #app > .login-shell .login-card { padding: 18px 22px; }
+  body #app > .login-shell .login-card label { margin: 7px 0 5px; }
+  body #app > .login-shell .login-card input { padding: 10px 12px; }
+  body #app > .login-shell .login-card .primary { padding-block: 11px; margin-top: 8px; }
+  body #app > .login-shell .login-card .online-pill { padding-block: 5px; }
+}
+/* Keep the language preference global and discoverable above the settings tabs. */
+body #networkModal .modal > .modal-head:has([data-locale-settings]) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  align-items: start;
+}
+body .organized-settings > .modal-head > #closeModal { grid-column: 2; grid-row: 1; }
+body [data-locale-settings] { grid-column: 1 / -1; display: grid; gap: 7px; min-width: 0; }
+body .locale-settings-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+body .locale-settings-controls label { margin: 0; font-size: 12px; color: var(--kf-muted, #acbbcd); }
+body .locale-settings-controls select { flex: 1 1 170px; min-width: 0; max-width: 100%; min-height: 36px; padding: 6px 10px; }
+body .locale-settings-controls button { font-size: 12px; min-height: 36px; padding: 6px 10px; }
+body [data-locale-status] { margin: 0; color: var(--kf-muted, #acbbcd); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+@media (max-height: 520px) {
+  body #networkModal .organized-settings { height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; }
+  body #networkModal .settings-shell { flex: 0 0 auto; }
+}

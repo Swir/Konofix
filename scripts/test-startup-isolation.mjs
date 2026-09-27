@@ -10,6 +10,7 @@ const directOptionalScripts = [
   '/src/room-audio-ui.ts',
   '/src/voice-mute-ui.ts',
   '/src/settings-ui.ts',
+  '/src/locale-settings-ui.ts',
   '/src/test-updater-ui.ts',
 ];
 
@@ -35,6 +36,7 @@ for (const modulePath of [
   './room-audio-ui',
   './voice-mute-ui',
   './settings-ui',
+  './locale-settings-ui',
   './test-updater-ui',
 ]) {
   if (!loader.includes(`import('${modulePath}')`)) {
@@ -56,3 +58,4 @@ await import('./test-audio-sdp-layout.mjs');
 await import('./test-call-sounds.mjs');
 await import('./test-transfer-room-ui.mjs');
 await import('./test-professional-ui.mjs');
+await import('./test-login-locale.mjs');

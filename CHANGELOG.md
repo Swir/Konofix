@@ -1,8 +1,9 @@
 # Changelog
 
-## 0.6.0
+## 0.6.0 — in development
 
-- fixed misleading connectivity reporting for fresh installs: when no public bootstrap/relay is configured, the desktop now reports an explicit LAN-only state, shows active/configured bootstrap counts, and warns that global Internet discovery is unavailable instead of presenting local mDNS connectivity as global readiness; this does not claim that public infrastructure exists yet, — in development
+- added a short-timeout remote bootstrap-pool resolver backed by the canonical repository pool, merged ahead of saved custom contacts and still validated by the Rust multiaddr/Peer-ID parser; remote metadata failure is fail-open so LAN/manual operation remains available, while a verified public Konofix Node can be activated for clients without rebuilding the installer,
+- fixed misleading connectivity reporting for fresh installs: when no public bootstrap/relay is configured, the desktop now reports an explicit LAN-only state, shows active/configured bootstrap counts, and warns that global Internet discovery is unavailable instead of presenting local mDNS connectivity as global readiness; this does not claim that public infrastructure exists yet,
 
 - hardened 0.6 startup against blank/black UI failures by rendering the stable core before optional audio/updater modules, isolating module-load errors behind a post-first-paint loader, adding a visible startup diagnostic fallback, and requiring Windows installer smoke to observe the real core UI rather than only a top-level window handle,
 - enabled Internet/NAT WebRTC candidate discovery for 0.6 audio through a shared public STUN default while keeping private/WORLD/room signaling on Konofix's authenticated direct secure-control channel; restrictive networks that need TURN remain an explicit real-test gate,

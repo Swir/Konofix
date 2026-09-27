@@ -249,6 +249,7 @@ jobs:
           cp docs/NODE.md artifact-linux/docs/NODE.md
           cp docs/NODE_SOAK.md artifact-linux/docs/NODE_SOAK.md
           cp docs/NODE_LINUX.md artifact-linux/docs/NODE_LINUX.md
+          cp docs/PUBLIC_NODE_QUICKSTART.md artifact-linux/docs/PUBLIC_NODE_QUICKSTART.md
           version="$(python3 -c 'import json; print(json.load(open("package.json", encoding="utf-8"))["version"])')"
           python3 scripts/linux-bundle-provenance.py build-info \
             --root artifact-linux \

@@ -40,6 +40,8 @@ type NetworkStatus = {
   connected_peers: number;
   dht_peers: number;
   bootstrap_count: number;
+  bootstrap_active: number;
+  internet_discovery: string;
   nat: string;
   listen_addresses: string[];
   detail: string;
@@ -65,6 +67,7 @@ type FileTransfer = {
 
 const EMPTY_STATUS: NetworkStatus = {
   phase: 'offline', connected_peers: 0, dht_peers: 0, bootstrap_count: 0,
+  bootstrap_active: 0, internet_discovery: 'offline',
   nat: 'unknown', listen_addresses: [], detail: 'Disconnected'
 };
 
@@ -243,7 +246,7 @@ function renderChat() {
   const messages = state.messages.get(state.room) ?? [];
   const onlineCount = Math.max(1, state.peers.size + 1);
   const activeRoomCount = state.room === 'world' ? onlineCount : Math.max(0, Number(currentRoom.users) || 0);
-  const networkClass = state.status.phase === 'online' ? 'good' : state.status.phase === 'searching' ? 'searching' : 'off';
+  const networkClass = state.status.phase === 'online' ? 'good' : (state.status.phase === 'searching' || state.status.phase === 'lan_only') ? 'searching' : 'off';
   const transfers = [...state.transfers.values()].slice(-5).reverse();
 
   app.innerHTML = `
@@ -377,6 +380,7 @@ function renderChat() {
 
 function networkLabel(): string {
   if (state.status.phase === 'online') return t('network.online');
+  if (state.status.phase === 'lan_only') return t('network.lanOnly');
   if (state.status.phase === 'searching') return t('network.searching');
   return t('network.offline');
 }
@@ -817,10 +821,11 @@ function showNetworkModal() {
       <div class="stats-grid">
         <div><span>${esc(t('network.connections'))}</span><strong>${state.status.connected_peers}</strong></div>
         <div><span>${esc(t('network.dhtPeers'))}</span><strong>${state.status.dht_peers}</strong></div>
-        <div><span>${esc(t('network.bootstraps'))}</span><strong>${state.status.bootstrap_count || bootstraps.length}</strong></div>
+        <div><span>${esc(t('network.bootstraps'))}</span><strong>${state.status.bootstrap_active}/${state.status.bootstrap_count || bootstraps.length}</strong></div>
         <div><span>Relay</span><strong>${state.status.listen_addresses.filter(a => a.includes('/p2p-circuit')).length ? esc(t('common.active')) : esc(t('common.auto'))}</strong></div>
         <div><span>NAT</span><strong>${esc(state.status.nat)}</strong></div>
       </div>
+      ${state.status.internet_discovery === 'lan_only' ? `<p class="modal-note"><strong>⚠ ${esc(t('network.internetUnavailable'))}</strong></p>` : ''}
       <p class="modal-note">${esc(t('network.participantNode'))}</p>
       <label>${esc(t('network.bootstrapAddress'))}</label>
       <div class="inline-form"><input id="bootstrapInput" placeholder="/ip4/.../tcp/.../p2p/12D3KooW..."/><button id="addBootstrap" class="primary compact">${esc(t('common.add'))}</button></div>

@@ -258,6 +258,8 @@ struct NetworkStatus {
     connected_peers: usize,
     dht_peers: usize,
     bootstrap_count: usize,
+    bootstrap_active: usize,
+    internet_discovery: String,
     nat: String,
     listen_addresses: Vec<String>,
     detail: String,
@@ -2282,10 +2284,34 @@ fn classify_nick_presence(
     }
 }
 
+fn internet_discovery_state(configured: usize, active: usize) -> &'static str {
+    if configured == 0 {
+        "lan_only"
+    } else if active == 0 {
+        "bootstrap_connecting"
+    } else {
+        "bootstrap_online"
+    }
+}
+
+fn network_phase_for_status(
+    connected_peers: usize,
+    configured_bootstraps: usize,
+    active_bootstraps: usize,
+) -> &'static str {
+    if configured_bootstraps == 0 {
+        "lan_only"
+    } else if active_bootstraps > 0 && connected_peers > 0 {
+        "online"
+    } else {
+        "searching"
+    }
+}
+
 fn emit_status(
     app: &impl NetworkRuntime,
     swarm: &mut libp2p::Swarm<Behaviour>,
-    bootstrap_count: usize,
+    bootstrap_targets: &[BootstrapTarget],
     nat: &str,
     listen_addresses: &[String],
     detail: impl Into<String>,
@@ -2297,15 +2323,18 @@ fn emit_status(
         .kbuckets()
         .map(|b| b.num_entries())
         .sum();
+    let bootstrap_count = bootstrap_targets.len();
+    let bootstrap_active = bootstrap_targets
+        .iter()
+        .filter(|target| target.connected)
+        .count();
     let status = NetworkStatus {
-        phase: if connected_peers > 0 {
-            "online".into()
-        } else {
-            "searching".into()
-        },
+        phase: network_phase_for_status(connected_peers, bootstrap_count, bootstrap_active).into(),
         connected_peers,
         dht_peers,
         bootstrap_count,
+        bootstrap_active,
+        internet_discovery: internet_discovery_state(bootstrap_count, bootstrap_active).into(),
         nat: nat.to_string(),
         listen_addresses: {
             let mut addresses = listen_addresses.to_vec();
@@ -2527,9 +2556,13 @@ async fn network_task(
             }
         }
     }
-    let mut bootstrap_count = bootstrap_targets.len();
-    if bootstrap_count > 0 {
+    if !bootstrap_targets.is_empty() {
         let _ = swarm.behaviour_mut().kad.bootstrap();
+    } else {
+        let _ = app.emit_event(
+            "network-warning",
+            "Global Internet discovery is unavailable: no public bootstrap seed is configured. Automatic discovery is LAN-only until a reachable bootstrap/relay is added.",
+        );
     }
 
     let _ = swarm
@@ -2608,7 +2641,7 @@ async fn network_task(
     emit_status(
         &app,
         &mut swarm,
-        bootstrap_count,
+        &bootstrap_targets,
         &nat_status,
         &listen_addresses,
         "Warstwa P2P uruchomiona",
@@ -2636,7 +2669,7 @@ async fn network_task(
                 let _ = swarm.behaviour_mut().kad.bootstrap();
                 swarm.behaviour_mut().kad.get_providers(world_provider_key());
                 app.save_peers(&peer_cache);
-                emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Odświeżono discovery");
+                emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Odświeżono discovery");
             }
             _ = bootstrap_retry.tick() => {
                 let now = Instant::now();
@@ -3038,7 +3071,6 @@ async fn network_task(
                                         let _ = app.emit_event("network-log", err);
                                     }
                                     bootstrap_targets.push(target);
-                                    bootstrap_count = bootstrap_targets.len();
                                     let _ = swarm.behaviour_mut().kad.bootstrap();
                                     swarm.behaviour_mut().kad.get_providers(world_provider_key());
                                     Ok(())
@@ -3047,7 +3079,7 @@ async fn network_task(
                             }
                         };
                         let _ = reply.send(result);
-                        emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Zaktualizowano bootstrapy");
+                        emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Zaktualizowano bootstrapy");
                     }
                     NetworkCommand::RefreshDiscovery => {
                         let _ = swarm.behaviour_mut().kad.bootstrap();
@@ -3333,7 +3365,7 @@ async fn network_task(
                     if !listen_addresses.contains(&printable) {
                         listen_addresses.push(printable);
                     }
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Nasłuchiwanie aktywne");
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Nasłuchiwanie aktywne");
                 }
                 SwarmEvent::ConnectionEstablished { peer_id: remote, .. } => {
                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
@@ -3345,7 +3377,7 @@ async fn network_task(
                     }
                     publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
                     publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, session_age_ms(session_started));
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączono z peerem");
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Połączono z peerem");
                 }
                 SwarmEvent::ConnectionClosed { peer_id: remote, num_established, .. } => {
                     apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.connection_closed(&remote, num_established));
@@ -3427,7 +3459,7 @@ async fn network_task(
                 }
 
                     }
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączenie z peerem zamknięte");
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Połączenie z peerem zamknięte");
                 }
                 SwarmEvent::OutgoingConnectionError {
                     peer_id: Some(remote),
@@ -3496,12 +3528,12 @@ async fn network_task(
                     if let Some(address) = address_for_peer(address, local_peer) {
                         listen_addresses.retain(|current| current != &address.to_string());
                     }
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "P2P address expired");
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "P2P address expired");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Autonat(event)) => {
                     if let autonat::Event::StatusChanged { old: _, new } = event {
                         nat_status = format!("{new:?}").to_lowercase();
-                        emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Zmieniono status NAT");
+                        emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Zmieniono status NAT");
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Upnp(event)) => {
@@ -4711,6 +4743,30 @@ mod participant_network_tests {
                 }
             }
         }).await.expect("fresh signed resyncs must not be content-deduplicated");
+    }
+}
+
+#[cfg(test)]
+mod global_connectivity_status_tests {
+    use super::*;
+
+    #[test]
+    fn fresh_install_without_bootstrap_is_explicitly_lan_only() {
+        assert_eq!(internet_discovery_state(0, 0), "lan_only");
+        assert_eq!(network_phase_for_status(0, 0, 0), "lan_only");
+        assert_eq!(network_phase_for_status(3, 0, 0), "lan_only");
+    }
+
+    #[test]
+    fn configured_but_unreachable_bootstrap_is_not_reported_online() {
+        assert_eq!(internet_discovery_state(2, 0), "bootstrap_connecting");
+        assert_eq!(network_phase_for_status(1, 2, 0), "searching");
+    }
+
+    #[test]
+    fn reachable_bootstrap_unlocks_internet_online_state() {
+        assert_eq!(internet_discovery_state(2, 1), "bootstrap_online");
+        assert_eq!(network_phase_for_status(1, 2, 1), "online");
     }
 }
 

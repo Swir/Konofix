@@ -1,0 +1,15 @@
+/* Stable actions and explicit progress; no animations simulating a transfer. */
+.chat-header .room-return { min-height: 36px; flex: 0 0 auto; border-color: rgba(98,229,255,.36); }
+.room-return:focus-visible { outline: 2px solid #62e5ff; outline-offset: 3px; }
+.sidebar > .room, .sidebar > #newRoom, .sidebar-bottom, .network-card { flex-shrink: 0; }
+#rooms { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.transfer-title strong, .transfer-meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.transfer-meta > b { flex: 0 0 auto; }
+.transfer-progress-row { display: grid; grid-template-columns: minmax(0,1fr) 42px; gap: 8px; align-items: center; }
+.transfer-progress-row .progress { min-width: 0; }
+.transfer-progress-value { color: #9fdff0; font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+.transfer-card.completed .progress > i { background: #44e6a8; }
+@media (forced-colors: active) {
+  .room-return:focus-visible { outline-color: Highlight; }
+  .transfer-card.completed .progress > i { background: Highlight; }
+}

@@ -16,7 +16,7 @@ function harness() {
     messages: new Map(),
   };
   const context = vm.createContext({
-    state, sessionRevision: 1, roomChangePending: false,
+    state, sessionRevision: 1, roomChangePending: false, roomExitQueued: false,
     invoke: (command, args) => new Promise((resolve, reject) => pending.push({ command, args, resolve, reject })),
     renderChat() {}, prompt: () => 'new room', t: key => key,
     alert: message => alerts.push(message),

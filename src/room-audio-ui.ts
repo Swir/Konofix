@@ -194,6 +194,8 @@ let selectedDeviceId = '';
 let loadedDevicesForSession = '';
 let peerSyncQueued = false;
 let policySynced = false;
+let joinPending = false;
+let roomUiRevision = 0;
 const remoteStreams = new Map<string, MediaStream>();
 
 const signaler = {
@@ -279,6 +281,7 @@ function updateSettingsStatus(message: string): void {
 }
 
 function resetRoomVoiceUi(): void {
+  roomUiRevision += 1;
   controller.reset();
   latestSession = null;
   activeRoomId = '';
@@ -293,6 +296,7 @@ function resetRoomVoiceUi(): void {
 }
 
 async function joinCurrentRoom(): Promise<void> {
+  if (joinPending) return;
   if (!roomVoiceEnabled()) {
     alert(copy.disabled);
     return;
@@ -308,8 +312,9 @@ async function joinCurrentRoom(): Promise<void> {
     renderRoomVoicePanel();
     return;
   }
-  if (existing) await controller.leaveRoom();
+  if (existing) await leaveRoomVoice();
   if (latestSession && ['ended', 'error'].includes(latestSession.phase)) resetRoomVoiceUi();
+  if (currentRoomId() !== roomId) return;
 
   activeRoomId = roomId;
   activeRoomTitle = currentRoomTitle();
@@ -318,23 +323,28 @@ async function joinCurrentRoom(): Promise<void> {
   selectedDeviceId = '';
   loadedDevicesForSession = '';
   remoteStreams.clear();
+  const revision = roomUiRevision;
+  joinPending = true;
   try {
-    latestSession = await controller.joinRoom(roomId, collectPeers(), 'listen');
+    const joined = await controller.joinRoom(roomId, collectPeers(), 'listen');
+    if (revision !== roomUiRevision) return;
+    latestSession = joined;
     renderRoomVoicePanel();
   } catch (error) {
+    if (revision !== roomUiRevision) return;
     currentError = mediaErrorText(error);
     renderRoomVoicePanel();
+  } finally {
+    joinPending = false;
   }
 }
 
 async function leaveRoomVoice(): Promise<void> {
-  await controller.leaveRoom();
-  latestSession = latestSession && latestSession.phase === 'ended'
-    ? latestSession
-    : controller.activeSession() ?? latestSession;
-  remoteStreams.clear();
-  renderRoomVoicePanel();
-  augmentJoinButton();
+  // Controller releases capture/peers synchronously before waiting for delivery.
+  // Local leave must not wait for offline peers, nor later reset a new session.
+  const notification = controller.leaveRoom();
+  resetRoomVoiceUi();
+  void notification.catch(() => undefined);
 }
 
 async function toggleSpeakIntent(): Promise<void> {
@@ -551,7 +561,7 @@ function augmentRoomVoiceSettings(): void {
     setStoredBoolean(ROOM_VOICE_ENABLED_KEY, enabled);
     applyPreferences();
     if (!enabled) {
-      void controller.leaveRoom().finally(resetRoomVoiceUi);
+      void leaveRoomVoice();
     }
     void syncVoicePolicy(true);
     augmentJoinButton();
@@ -572,6 +582,12 @@ function queuePeerSync(): void {
 }
 
 function augmentUi(): void {
+  const selectedRoom = currentRoomId();
+  if (activeRoomId && selectedRoom && activeRoomId !== selectedRoom) {
+    // Core room selection changes only after authenticated backend acceptance.
+    // Leaving the text room also releases its microphone and incoming audio.
+    void leaveRoomVoice();
+  }
   augmentJoinButton();
   augmentRoomVoiceSettings();
 }
@@ -600,7 +616,7 @@ void listen('peer-offline', queuePeerSync);
 
 void listen<{ room_id: string }>('room-closed', event => {
   if (event.payload.room_id !== activeRoomId) return;
-  void controller.leaveRoom().finally(resetRoomVoiceUi);
+  void leaveRoomVoice();
 });
 
 void listen('network-error', () => {

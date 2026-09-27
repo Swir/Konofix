@@ -5,6 +5,7 @@ import { DEFAULT_NICK_COLOR, KONOFIX_EMOJI, NICK_COLORS, normalizeNickColor, ren
 import './style.css';
 import { mergeTransferSnapshot, transferPercent, roomExitLabel } from './chat-usability';
 import './chat-usability.css';
+import { loadRemoteBootstraps, mergeBootstrapSources } from './bootstrap-discovery';
 
 type PublicShareOffer = {
   offer_id: string;
@@ -211,10 +212,13 @@ async function connect() {
   btn.textContent = t('login.starting');
 
   try {
+    const remoteBootstraps = await loadRemoteBootstraps();
+    if (revision !== sessionRevision) return;
+    const bootstrapCandidates = mergeBootstrapSources(remoteBootstraps, loadBootstraps());
     const result = await invoke<{ peer_id: string; nick: string; nick_color: string; version: string }>('start_network', {
       nick,
       nickColor: state.nickColor,
-      bootstraps: loadBootstraps(),
+      bootstraps: bootstrapCandidates,
     });
     if (revision !== sessionRevision) return;
     connectPending = false;

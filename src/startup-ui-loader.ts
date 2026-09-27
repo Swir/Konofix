@@ -10,6 +10,7 @@ const modules: UiModule[] = [
   { name: 'private-audio-ui', load: () => import('./private-audio-ui') },
   { name: 'room-audio-ui', load: () => import('./room-audio-ui') },
   { name: 'voice-mute-ui', load: () => import('./voice-mute-ui') },
+  { name: 'settings-ui', load: () => import('./settings-ui') },
   { name: 'test-updater-ui', load: () => import('./test-updater-ui') },
 ];
 

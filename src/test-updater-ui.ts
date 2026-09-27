@@ -149,7 +149,10 @@ function renderAll(): void {
   if (login) ensureCard(login, 'login');
 
   const settings = document.querySelector<HTMLElement>('#networkModal .modal');
-  if (settings) ensureCard(settings, 'settings');
+  if (settings) {
+    ensureCard(settings, 'settings');
+    window.dispatchEvent(new CustomEvent('konofix-settings-present', { detail: settings }));
+  }
 }
 
 let renderQueued = false;

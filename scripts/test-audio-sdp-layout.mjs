@@ -31,7 +31,7 @@ try {
   const compile = spawnSync('npx', ['--no-install', 'tsc', '--project', config, '--pretty', 'false'], { cwd: root, encoding: 'utf8', shell: process.platform === 'win32', timeout: 60000 });
   assert.equal(compile.status, 0, `SDP fixture compilation failed: ${compile.error || ''}\n${compile.stdout}\n${compile.stderr}`);
   const engine = fs.readFileSync(path.join(temp, 'built/audio-media-engine.js'), 'utf8').replace(/^export /gm, '');
-  const css = ['style.css', 'secure-ui.css', 'private-audio-ui.css', 'room-audio-ui.css', 'ui-layout.css'].map(name => fs.readFileSync(path.join(root, 'src', name), 'utf8')).join('\n');
+  const css = ['style.css', 'secure-ui.css', 'private-audio-ui.css', 'room-audio-ui.css', 'ui-layout.css', 'professional-ui.css'].map(name => fs.readFileSync(path.join(root, 'src', name), 'utf8')).join('\n');
   const fixture = fs.readFileSync(path.join(root, 'scripts/fixtures/audio-sdp-layout.browser.js'), 'utf8');
   const args = ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--remote-debugging-pipe', `--user-data-dir=${path.join(temp, 'profile')}`];
   if (process.platform === 'linux') args.push('--no-sandbox'); // Isolated ephemeral CI browser only.

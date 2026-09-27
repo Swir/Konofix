@@ -58,7 +58,7 @@ const styles = document.createElement('style'); styles.textContent = REPOSITORY_
 const fixture = document.createElement('div'); document.body.append(fixture);
 fixture.innerHTML = `<main class="chat-shell">
   <aside class="sidebar glass"><div class="sidebar-bottom"><div class="me-info"><strong>${nick}</strong></div><button>⚙</button><button>⏻</button></div></aside>
-  <section class="chat-main glass"><header class="chat-header"><div><h2>${nick}</h2></div><div class="header-actions"><button data-room-audio-join class="ghost">Dołącz do głosu</button><span class="live">2 online</span><button class="ghost">Udostępnij plik</button><button class="ghost">Udostępnij obraz</button></div></header><div class="messages"></div><footer class="composer"><input><button class="send">➤</button></footer></section>
+  <section class="chat-main glass"><header class="chat-header"><div><h2>${nick}</h2></div><div class="header-actions"><button data-room-audio-join class="ghost">Dołącz do głosu</button><span class="live">2 online</span><button class="ghost">Udostępnij plik</button><button class="ghost">Udostępnij obraz</button><button id="leaveRoom" class="ghost">Opuść pokój</button></div></header><div class="messages"></div><footer class="composer"><input><button class="send">➤</button></footer></section>
   <aside class="users glass"><div id="peerList"><div class="user"><div class="avatar">L</div><div><strong>${nick}</strong><span>Online</span></div><button data-private-audio-peer="a" class="mini-private-audio">📞</button><button data-private-peer="a" class="mini-private">💬</button><button data-send-peer="a" class="mini-file">📎</button></div></div></aside>
 </main>`;
 const contained = (outer, inner) => inner.left >= outer.left - 1 && inner.right <= outer.right + 1 && inner.top >= outer.top - 1 && inner.bottom <= outer.bottom + 1;
@@ -70,6 +70,8 @@ for (const button of row.querySelectorAll('button')) {
 }
 const header = document.querySelector('.chat-header');
 for (const button of header.querySelectorAll('button')) check(contained(header.getBoundingClientRect(), button.getBoundingClientRect()), 'main header contains every action');
+const exit = document.querySelector('#leaveRoom'), exitRect = exit.getBoundingClientRect();
+check(document.elementFromPoint(exitRect.x + exitRect.width / 2, exitRect.y + exitRect.height / 2)?.closest('#leaveRoom') === exit, 'private room exit remains reachable by pointer');
 fixture.innerHTML = `<div class="private-chat-wrap"><section class="private-chat-modal"><header class="private-chat-head"><div><h3>${nick}</h3><span class="private-peer-status">Połączono</span></div><button data-private-audio-chat-call>📞</button><button data-private-close>✕</button></header><div class="private-messages"></div><footer></footer></section></div>`;
 const head = document.querySelector('.private-chat-head');
 for (const button of head.querySelectorAll('button')) check(contained(head.getBoundingClientRect(), button.getBoundingClientRect()), 'long private nickname preserves call and close buttons');

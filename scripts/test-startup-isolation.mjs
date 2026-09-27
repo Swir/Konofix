@@ -9,6 +9,7 @@ const directOptionalScripts = [
   '/src/private-audio-ui.ts',
   '/src/room-audio-ui.ts',
   '/src/voice-mute-ui.ts',
+  '/src/settings-ui.ts',
   '/src/test-updater-ui.ts',
 ];
 
@@ -33,6 +34,7 @@ for (const modulePath of [
   './private-audio-ui',
   './room-audio-ui',
   './voice-mute-ui',
+  './settings-ui',
   './test-updater-ui',
 ]) {
   if (!loader.includes(`import('${modulePath}')`)) {
@@ -53,3 +55,4 @@ if (!loader.includes("import './ui-layout.css'")) throw new Error('Integrated re
 await import('./test-audio-sdp-layout.mjs');
 await import('./test-call-sounds.mjs');
 await import('./test-transfer-room-ui.mjs');
+await import('./test-professional-ui.mjs');

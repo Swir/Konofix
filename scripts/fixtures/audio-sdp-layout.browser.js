@@ -69,6 +69,7 @@ for (const button of row.querySelectorAll('button')) {
   check(button.getBoundingClientRect().height >= 36, 'peer action keeps usable target size');
 }
 const header = document.querySelector('.chat-header');
+check(contained(document.querySelector('.chat-main').getBoundingClientRect(), header.getBoundingClientRect()), 'chat grid must contain the full header, not just its actions');
 for (const button of header.querySelectorAll('button')) check(contained(header.getBoundingClientRect(), button.getBoundingClientRect()), 'main header contains every action');
 const exit = document.querySelector('#leaveRoom'), exitRect = exit.getBoundingClientRect();
 check(document.elementFromPoint(exitRect.x + exitRect.width / 2, exitRect.y + exitRect.height / 2)?.closest('#leaveRoom') === exit, 'private room exit remains reachable by pointer');

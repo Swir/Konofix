@@ -35,3 +35,19 @@ Audio Beta prerelease. Do not mutate 0.5.1, merge to main, resume the paused
 hourly automation or claim new Internet audio evidence. The 56/67 Real Internet
 Test percentage remains unchanged. Room-owner kick/ban/unban remains the
 separate accepted NEXT package, not an implemented capability of this patch.
+
+## Windows #1063 correction
+
+The added pointer-reachability assertion failed with the complete stylesheet
+cascade. The chat container had an implicit `auto` grid column whose min-content
+width could exceed the visible panel with long headers; buttons were contained
+by the oversized header, but outside the clipped chat panel. Set the real chat
+column to `minmax(0, 1fr)`. Keep the pointer assertion and also assert the entire
+header is contained in the chat panel, rather than weakening the test.
+
+A local Chromium reproduction using the actual new stylesheet plus extracted
+base structural rules rejects the old implicit column at 1600/1280/1024/820px
+and passes the explicit-column fix at all four widths. This is a targeted layout
+reproduction, not a claim that all repository CSS was executed locally. The 276
+actual-settings/updater assertions were rerun and passed. Full-cascade native
+SDP/layout and complete application build remain the new exact-head CI gates.

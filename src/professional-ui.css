@@ -28,7 +28,7 @@ body .sidebar-bottom { margin-top:0; padding-top:14px; border-color:var(--kf-lin
 body .me-info strong { font-size:13px; }
 body .me-info span { font-size:10px; color:var(--kf-muted); }
 body .sidebar-bottom .icon-btn { width:34px; min-height:36px; color:var(--kf-muted); border-radius:8px; }
-body .chat-main { grid-template-rows:auto minmax(0,1fr) auto; }
+body .chat-main { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr) auto; }
 body .chat-header { min-height:80px; padding:16px 20px; border-color:var(--kf-line); gap:10px 16px; }
 body .chat-header h2 { font-size:18px; letter-spacing:-.02em; }
 body .chat-header span { color:var(--kf-muted); font-size:12px; }

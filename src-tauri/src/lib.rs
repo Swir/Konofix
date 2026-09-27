@@ -2247,6 +2247,41 @@ fn check_nick_conflict(
     remote_age > local_session_age_ms
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NickPresenceAdmission {
+    AdmitRemote,
+    LocalYields,
+    RejectRemoteDuplicate,
+}
+
+fn classify_nick_presence(
+    remote_peer: &str,
+    remote_canonical: &str,
+    remote_expires: u64,
+    remote_session_age_ms: Option<u64>,
+    local_peer: PeerId,
+    local_canonical: &str,
+    local_session_age_ms: u64,
+) -> NickPresenceAdmission {
+    if remote_canonical != local_canonical {
+        return NickPresenceAdmission::AdmitRemote;
+    }
+
+    if check_nick_conflict(
+        remote_peer,
+        remote_canonical,
+        remote_expires,
+        remote_session_age_ms,
+        local_peer,
+        local_canonical,
+        local_session_age_ms,
+    ) {
+        NickPresenceAdmission::LocalYields
+    } else {
+        NickPresenceAdmission::RejectRemoteDuplicate
+    }
+}
+
 fn emit_status(
     app: &impl NetworkRuntime,
     swarm: &mut libp2p::Swarm<Behaviour>,
@@ -3530,7 +3565,7 @@ async fn network_task(
                             } => {
                                 if remote_id != peer_id {
                                     let remote_canonical = canonical_nick(&remote_nick);
-                                    if check_nick_conflict(
+                                    match classify_nick_presence(
                                         &remote_id,
                                         &remote_canonical,
                                         now_ms() + 30_000,
@@ -3539,8 +3574,14 @@ async fn network_task(
                                         &canonical,
                                         session_age_ms(session_started),
                                     ) {
-                                        let _ = app.emit_event("nick-conflict", serde_json::json!({"nick": nick, "peer_id": remote_id}));
-                                        break 'network;
+                                        NickPresenceAdmission::LocalYields => {
+                                            let _ = app.emit_event("nick-conflict", serde_json::json!({"nick": nick, "peer_id": remote_id}));
+                                            break 'network;
+                                        }
+                                        NickPresenceAdmission::RejectRemoteDuplicate => {
+                                            continue;
+                                        }
+                                        NickPresenceAdmission::AdmitRemote => {}
                                     }
                                     let remote_color = normalize_nick_color(remote_color.as_deref());
                                     if let Ok(pid) = remote_id.parse::<PeerId>() {
@@ -5087,6 +5128,91 @@ mod nickname_conflict_tests {
         } else {
             (second, first)
         }
+    }
+
+    #[test]
+    fn established_presence_is_rejected_before_peer_ui_admission() {
+        let (lower, higher) = ordered_peers();
+        let expires = now_ms() + 10_000;
+        assert_eq!(
+            classify_nick_presence(
+                &lower.to_string(),
+                "swir",
+                expires,
+                Some(250),
+                higher,
+                "swir",
+                30_000,
+            ),
+            NickPresenceAdmission::RejectRemoteDuplicate,
+        );
+    }
+
+    #[test]
+    fn later_local_session_yields_to_established_remote_presence() {
+        let (lower, higher) = ordered_peers();
+        let expires = now_ms() + 10_000;
+        assert_eq!(
+            classify_nick_presence(
+                &higher.to_string(),
+                "swir",
+                expires,
+                Some(30_000),
+                lower,
+                "swir",
+                250,
+            ),
+            NickPresenceAdmission::LocalYields,
+        );
+    }
+
+    #[test]
+    fn different_nickname_presence_is_admitted_normally() {
+        let remote = test_peer();
+        let local = test_peer();
+        let expires = now_ms() + 10_000;
+        assert_eq!(
+            classify_nick_presence(
+                &remote.to_string(),
+                "alice",
+                expires,
+                Some(1_000),
+                local,
+                "swir",
+                1_000,
+            ),
+            NickPresenceAdmission::AdmitRemote,
+        );
+    }
+
+    #[test]
+    fn near_simultaneous_presence_admission_uses_same_deterministic_tie_break() {
+        let (lower, higher) = ordered_peers();
+        let expires = now_ms() + 10_000;
+        assert_eq!(
+            classify_nick_presence(
+                &lower.to_string(),
+                "swir",
+                expires,
+                Some(1_000),
+                higher,
+                "swir",
+                1_100,
+            ),
+            NickPresenceAdmission::LocalYields,
+        );
+        assert_eq!(
+            classify_nick_presence(
+                &higher.to_string(),
+                "swir",
+                expires,
+                Some(1_000),
+                lower,
+                "swir",
+                1_100,
+            ),
+            NickPresenceAdmission::RejectRemoteDuplicate,
+        );
     }
 
     #[test]

@@ -184,6 +184,8 @@ jobs:
           Copy-Item 'docs\GLOBAL_BETA.md' 'artifact\GLOBAL_BETA.md'
           New-Item -ItemType Directory -Path 'artifact\docs' | Out-Null
           Copy-Item 'docs\global-beta-evidence.template.json', 'docs\AUDIO_0.6.0_TESTING.md' 'artifact\docs'
+          Copy-Item 'docs\PUBLIC_NODE_WINDOWS_QUICKSTART.md' 'artifact\docs\PUBLIC_NODE_WINDOWS_QUICKSTART.md'
+          Copy-Item 'START-GLOBAL-NODE.cmd' 'artifact\START-GLOBAL-NODE.cmd'
           $package = Get-Content 'package.json' -Raw | ConvertFrom-Json
           & .\scripts\new-tester-handoff.ps1 -OutputPath 'artifact\TESTER_HANDOFF.md' -Version ([string]$package.version) -Commit ([string]$env:KONOFIX_SOURCE_SHA) -WorkflowRun ([string]$env:GITHUB_RUN_ID)
 
@@ -197,6 +199,7 @@ jobs:
             'validate-client-netprobe.ps1',
             'public-node.ps1',
             'install-public-node-task.ps1',
+            'setup-global-node-windows.ps1',
             'check-public-node-readiness.ps1',
             'new-network-test-session.ps1',
             'new-network-test-report.ps1',

@@ -87,6 +87,11 @@ updates:
           - "dirs"
         update-types:
           - "major"
+      kononexus-major:
+        patterns:
+          - "kononexus"
+        update-types:
+          - "major"
       libp2p-major:
         patterns:
           - "libp2p"

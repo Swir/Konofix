@@ -51,8 +51,6 @@ BUILD_WRAPPER_FORBIDDEN_DUPLICATES = (
     "fn emit_git_rerun_paths()",
 )
 
-DESKTOP_ONLY_DEPENDENCIES = frozenset({"kononexus"})
-
 
 @dataclass(frozen=True)
 class Inputs:
@@ -114,15 +112,7 @@ def validate_manifests(desktop: dict, linux: dict) -> None:
             nested(linux_package, field),
         )
 
-    desktop_dependencies = dict(nested(desktop, "dependencies"))
-    linux_dependencies = dict(nested(linux, "dependencies"))
-    for dependency in DESKTOP_ONLY_DEPENDENCIES:
-        if dependency not in desktop_dependencies:
-            raise ParityError(f"Desktop-only dependency is missing from production manifest: {dependency}")
-        if dependency in linux_dependencies:
-            raise ParityError(f"Desktop-only dependency leaked into isolated Linux Node manifest: {dependency}")
-        desktop_dependencies.pop(dependency)
-    assert_equal("shared dependencies", desktop_dependencies, linux_dependencies)
+    assert_equal("dependencies", nested(desktop, "dependencies"), nested(linux, "dependencies"))
     assert_equal(
         "windows dependencies",
         nested(desktop, "target", "cfg(windows)", "dependencies"),
@@ -246,22 +236,6 @@ def self_test(repo_root: pathlib.Path) -> None:
     changed_dependency = copy.deepcopy(linux)
     changed_dependency["dependencies"]["hex"] = "0.3"
     expect_failure("shared dependency drift", lambda: validate_manifests(desktop, changed_dependency))
-
-    leaked_desktop_dependency = copy.deepcopy(linux)
-    leaked_desktop_dependency["dependencies"]["kononexus"] = copy.deepcopy(
-        desktop["dependencies"]["kononexus"]
-    )
-    expect_failure(
-        "desktop-only dependency leaked into headless Node",
-        lambda: validate_manifests(desktop, leaked_desktop_dependency),
-    )
-
-    missing_desktop_dependency = copy.deepcopy(desktop)
-    missing_desktop_dependency["dependencies"].pop("kononexus")
-    expect_failure(
-        "required desktop-only dependency missing",
-        lambda: validate_manifests(missing_desktop_dependency, linux),
-    )
 
     changed_bin = copy.deepcopy(linux)
     changed_bin["bin"][0]["path"] = "src/other.rs"

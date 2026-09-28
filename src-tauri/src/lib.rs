@@ -2680,6 +2680,8 @@ async fn network_task(
 
     let mut knp_identities = kononexus_bridge::KnpIdentityBindings::default();
     let mut pending_knp_presence = HashMap::<String, u64>::new();
+    let mut pending_knp_world = HashMap::<(String, u64), String>::new();
+    let mut seen_world_messages = kononexus_bridge::BoundedMessageIds::new(4_096);
 
     publish_presence(
         &mut swarm,
@@ -2910,6 +2912,63 @@ async fn network_task(
                             text,
                             timestamp: now_ms(),
                         };
+                        if msg.room == "world" {
+                            seen_world_messages.observe(&msg.id);
+                            if let Some(runtime) = kononexus.as_ref() {
+                                match kononexus_bridge::encode_world_chat(
+                                    &msg.id,
+                                    &peer_id,
+                                    &msg.nick,
+                                    &nick_color,
+                                    &msg.text,
+                                    msg.timestamp,
+                                ) {
+                                    Ok(payload) => {
+                                        let mut queued = 0usize;
+                                        for target in knp_identities.authenticated_targets(16) {
+                                            if pending_knp_world.len() >= 256 {
+                                                break;
+                                            }
+                                            match runtime.send(target.clone(), payload.clone()).await {
+                                                Ok(message_id) => {
+                                                    pending_knp_world.insert(
+                                                        (target, message_id),
+                                                        msg.id.clone(),
+                                                    );
+                                                    queued += 1;
+                                                }
+                                                Err(error) => {
+                                                    let _ = app.emit_event(
+                                                        "network-log",
+                                                        format!(
+                                                            "KonoNexus WORLD send deferred to legacy fallback: {error}"
+                                                        ),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        if queued > 0 {
+                                            let _ = app.emit_event(
+                                                "kononexus-status",
+                                                serde_json::json!({
+                                                    "phase": "world_message_queued",
+                                                    "chat_id": msg.id,
+                                                    "target_count": queued,
+                                                    "authenticated_bindings": knp_identities.authenticated_count(),
+                                                    "internet_pass": false,
+                                                }),
+                                            );
+                                        }
+                                    }
+                                    Err(error) => {
+                                        let _ = app.emit_event(
+                                            "network-warning",
+                                            format!("KonoNexus WORLD envelope rejected locally: {error}"),
+                                        );
+                                    }
+                                }
+                            }
+                        }
                         let _ = app.emit_event("chat-message", msg.clone());
                         publish(&mut swarm, &world, &WireEvent::Chat(msg));
                         let _ = reply.send(Ok(()));
@@ -3459,8 +3518,8 @@ async fn network_task(
             knp_event = kononexus_transport::next_event_or_pending(&mut kononexus) => {
                 match knp_event {
                     kononexus::RelayAppEvent::Message(message) => {
-                        match kononexus_bridge::decode_presence(&message.data) {
-                            Ok(remote_presence) => {
+                        match kononexus_bridge::decode_application_message(&message.data) {
+                            Ok(kononexus_bridge::KnpApplicationMessage::Presence(remote_presence)) => {
                                 if remote_presence.peer_id == peer_id {
                                     continue;
                                 }
@@ -3549,9 +3608,87 @@ async fn network_task(
                                     "kononexus-status",
                                     serde_json::json!({
                                         "phase": "application_received",
+                                        "kind": "presence",
                                         "knp_node_id": message.peer_node_id,
                                         "libp2p_peer_id": remote_presence.peer_id,
                                         "message_id": message.message_id,
+                                        "authenticated_bindings": knp_identities.authenticated_count(),
+                                        "internet_pass": false,
+                                    }),
+                                );
+                            }
+                            Ok(kononexus_bridge::KnpApplicationMessage::WorldChat(remote_chat)) => {
+                                if remote_chat.peer_id == peer_id {
+                                    continue;
+                                }
+                                let Ok(remote_peer) = remote_chat.peer_id.parse::<PeerId>() else {
+                                    continue;
+                                };
+                                if !knp_identities.is_authenticated_source(
+                                    &message.peer_node_id,
+                                    &remote_peer,
+                                ) {
+                                    let _ = app.emit_event(
+                                        "network-warning",
+                                        format!(
+                                            "Dropped KonoNexus WORLD chat before authenticated presence binding from {}.",
+                                            message.peer_node_id
+                                        ),
+                                    );
+                                    continue;
+                                }
+
+                                let normalized_color =
+                                    normalize_nick_color(remote_chat.nick_color.as_deref());
+                                let admitted_presence = peers.get(&remote_peer).is_some_and(|presence| {
+                                    presence.nick == remote_chat.nick
+                                        && presence.nick_color == normalized_color
+                                });
+                                if !admitted_presence {
+                                    let _ = app.emit_event(
+                                        "network-warning",
+                                        format!(
+                                            "Dropped KonoNexus WORLD chat whose nickname/color does not match admitted presence from {}.",
+                                            message.peer_node_id
+                                        ),
+                                    );
+                                    continue;
+                                }
+
+                                let chat = ChatMessage {
+                                    id: remote_chat.id,
+                                    kind: "chat".into(),
+                                    peer_id: Some(remote_chat.peer_id.clone()),
+                                    nick: remote_chat.nick,
+                                    nick_color: Some(normalized_color),
+                                    room: "world".into(),
+                                    text: remote_chat.text,
+                                    timestamp: remote_chat.timestamp,
+                                };
+                                if !wire_event_is_well_formed(&WireEvent::Chat(chat.clone())) {
+                                    let _ = app.emit_event(
+                                        "network-warning",
+                                        format!(
+                                            "Dropped malformed authenticated KonoNexus WORLD chat from {}.",
+                                            message.peer_node_id
+                                        ),
+                                    );
+                                    continue;
+                                }
+                                if let Some(presence) = peers.get_mut(&remote_peer) {
+                                    presence.last_seen = Instant::now();
+                                }
+                                if seen_world_messages.observe(&chat.id) {
+                                    let _ = app.emit_event("chat-message", chat.clone());
+                                }
+                                let _ = app.emit_event(
+                                    "kononexus-status",
+                                    serde_json::json!({
+                                        "phase": "world_message_received",
+                                        "knp_node_id": message.peer_node_id,
+                                        "libp2p_peer_id": remote_chat.peer_id,
+                                        "message_id": message.message_id,
+                                        "chat_id": chat.id,
                                         "authenticated_bindings": knp_identities.authenticated_count(),
                                         "internet_pass": false,
                                     }),
@@ -3569,36 +3706,53 @@ async fn network_task(
                         }
                     }
                     kononexus::RelayAppEvent::Delivered(receipt) => {
-                        if pending_knp_presence
+                        let was_presence = pending_knp_presence
                             .get(&receipt.peer_node_id)
-                            .is_some_and(|message_id| *message_id == receipt.message_id)
-                        {
+                            .is_some_and(|message_id| *message_id == receipt.message_id);
+                        if was_presence {
                             pending_knp_presence.remove(&receipt.peer_node_id);
                         }
+                        let chat_id = pending_knp_world.remove(&(
+                            receipt.peer_node_id.clone(),
+                            receipt.message_id,
+                        ));
+                        let phase = if chat_id.is_some() {
+                            "world_message_delivered"
+                        } else {
+                            "application_delivered"
+                        };
                         let _ = app.emit_event(
                             "kononexus-status",
                             serde_json::json!({
-                                "phase": "application_delivered",
+                                "phase": phase,
+                                "kind": if chat_id.is_some() { "world_chat" } else if was_presence { "presence" } else { "unknown" },
                                 "knp_node_id": receipt.peer_node_id,
                                 "message_id": receipt.message_id,
+                                "chat_id": chat_id,
                                 "authenticated_bindings": knp_identities.authenticated_count(),
                                 "internet_pass": false,
                             }),
                         );
                     }
                     kononexus::RelayAppEvent::Failed(failure) => {
-                        if pending_knp_presence
+                        let was_presence = pending_knp_presence
                             .get(&failure.peer_node_id)
-                            .is_some_and(|message_id| *message_id == failure.message_id)
-                        {
+                            .is_some_and(|message_id| *message_id == failure.message_id);
+                        if was_presence {
                             pending_knp_presence.remove(&failure.peer_node_id);
                         }
+                        let chat_id = pending_knp_world.remove(&(
+                            failure.peer_node_id.clone(),
+                            failure.message_id,
+                        ));
                         let _ = app.emit_event(
                             "kononexus-status",
                             serde_json::json!({
-                                "phase": "application_failed",
+                                "phase": if chat_id.is_some() { "world_message_failed" } else { "application_failed" },
+                                "kind": if chat_id.is_some() { "world_chat" } else if was_presence { "presence" } else { "unknown" },
                                 "knp_node_id": failure.peer_node_id,
                                 "message_id": failure.message_id,
+                                "chat_id": chat_id,
                                 "reason": format!("{:?}", failure.reason),
                                 "authenticated_bindings": knp_identities.authenticated_count(),
                                 "internet_pass": false,
@@ -3955,6 +4109,9 @@ async fn network_task(
                                 }
                             }
                             WireEvent::Chat(msg) => {
+                                if msg.room == "world" && !seen_world_messages.observe(&msg.id) {
+                                    continue;
+                                }
                                 let unauthorized_protected_chat = msg.room != "world"
                                     && owned_rooms
                                         .get(&msg.room)

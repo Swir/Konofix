@@ -40,6 +40,24 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
+      - name: Generate pinned Tauri 2.11 lockfile witness
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo update --manifest-path src-tauri/Cargo.toml -p tauri --precise 2.11.5
+          cargo update --manifest-path src-tauri/Cargo.toml -p tauri-build --precise 2.6.3
+          cargo metadata --locked --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 | Out-Null
+          New-Item -ItemType Directory -Force -Path 'lock-witness' | Out-Null
+          Copy-Item 'src-tauri\Cargo.lock' 'lock-witness\Cargo.lock'
+
+      - name: Upload pinned Tauri 2.11 lockfile witness
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Konofix-Tauri211-lock-${{ env.KONOFIX_SOURCE_SHA }}
+          path: lock-witness/Cargo.lock
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Release metadata gate
         shell: pwsh
         run: .\scripts\release-gate.ps1

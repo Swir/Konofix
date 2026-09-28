@@ -25,8 +25,8 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 mod desktop_identity;
-mod kononexus_transport;
 mod incoming_file;
+mod kononexus_transport;
 #[cfg(test)]
 mod messaging_runtime_tests;
 mod room_membership;
@@ -2529,7 +2529,9 @@ async fn network_task(
         Err(error) => {
             let _ = app.emit_event(
                 "network-warning",
-                format!("KonoNexus underlay unavailable; legacy P2P fallback remains active: {error}"),
+                format!(
+                    "KonoNexus underlay unavailable; legacy P2P fallback remains active: {error}"
+                ),
             );
             None
         }

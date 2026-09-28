@@ -18,7 +18,9 @@ fn state_paths(root: &Path) -> (PathBuf, PathBuf) {
 fn default_state_root() -> Result<PathBuf, String> {
     dirs::data_local_dir()
         .map(|base| base.join("Konofix Chat").join("KonoNexus"))
-        .ok_or_else(|| "Unable to resolve local application-data directory for KonoNexus.".to_string())
+        .ok_or_else(|| {
+            "Unable to resolve local application-data directory for KonoNexus.".to_string()
+        })
 }
 
 impl KonoNexusRuntime {

@@ -78,10 +78,9 @@ pub(crate) fn decode_presence(data: &[u8]) -> Result<KnpPresence, String> {
     }
     match envelope.payload {
         KnpPayload::Presence(presence) => {
-            presence
-                .peer_id
-                .parse::<PeerId>()
-                .map_err(|_| "KonoNexus presence contains an invalid libp2p Peer ID.".to_string())?;
+            presence.peer_id.parse::<PeerId>().map_err(|_| {
+                "KonoNexus presence contains an invalid libp2p Peer ID.".to_string()
+            })?;
             Ok(presence)
         }
     }
@@ -105,12 +104,16 @@ impl KnpIdentityBindings {
         }
         if let Some(existing) = self.hints_by_knp.get(knp_node_id) {
             if existing != &peer_id {
-                return Err("KonoNexus NodeID hint conflicts with an existing Peer ID binding.".into());
+                return Err(
+                    "KonoNexus NodeID hint conflicts with an existing Peer ID binding.".into(),
+                );
             }
         }
         if let Some(existing) = self.hints_by_peer.get(&peer_id) {
             if existing != knp_node_id {
-                return Err("libp2p Peer ID hint conflicts with an existing KonoNexus NodeID.".into());
+                return Err(
+                    "libp2p Peer ID hint conflicts with an existing KonoNexus NodeID.".into(),
+                );
             }
         }
         if self.hints_by_knp.contains_key(knp_node_id) {
@@ -119,10 +122,8 @@ impl KnpIdentityBindings {
         if self.hints_by_knp.len() >= MAX_KNP_IDENTITY_HINTS {
             return Err("KonoNexus identity hint table is full.".into());
         }
-        self.hints_by_knp
-            .insert(knp_node_id.to_string(), peer_id);
-        self.hints_by_peer
-            .insert(peer_id, knp_node_id.to_string());
+        self.hints_by_knp.insert(knp_node_id.to_string(), peer_id);
+        self.hints_by_peer.insert(peer_id, knp_node_id.to_string());
         Ok(true)
     }
 
@@ -138,21 +139,21 @@ impl KnpIdentityBindings {
             Some(expected) if expected == &peer_id => {}
             Some(_) => {
                 return Err(
-                    "Authenticated KonoNexus NodeID does not match its libp2p identity hint.".into(),
-                )
-            }
-            None => {
-                return Err(
-                    "Authenticated KonoNexus source has no source-authenticated libp2p identity hint."
+                    "Authenticated KonoNexus NodeID does not match its libp2p identity hint."
                         .into(),
                 )
             }
+            None => return Err(
+                "Authenticated KonoNexus source has no source-authenticated libp2p identity hint."
+                    .into(),
+            ),
         }
         match self.hints_by_peer.get(&peer_id) {
             Some(expected) if expected == knp_node_id => {}
             _ => {
                 return Err(
-                    "libp2p identity does not map back to the authenticated KonoNexus NodeID.".into(),
+                    "libp2p identity does not map back to the authenticated KonoNexus NodeID."
+                        .into(),
                 )
             }
         }
@@ -212,7 +213,10 @@ mod tests {
     fn oversized_or_malformed_envelopes_fail_closed() {
         assert!(decode_presence(&[]).is_err());
         assert!(decode_presence(&vec![b'x'; MAX_KNP_APP_BYTES + 1]).is_err());
-        assert!(decode_presence(br#"{"schema":1,"payload":{"kind":"presence","peer_id":"bad"}}"#).is_err());
+        assert!(
+            decode_presence(br#"{"schema":1,"payload":{"kind":"presence","peer_id":"bad"}}"#)
+                .is_err()
+        );
     }
 
     #[test]

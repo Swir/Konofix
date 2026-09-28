@@ -473,10 +473,7 @@ fn wire_event_is_well_formed(event: &WireEvent) -> bool {
         WireEvent::KonoNexusHint {
             peer_id,
             knp_node_id,
-        } => {
-            peer_id.parse::<PeerId>().is_ok()
-                && kononexus_bridge::valid_knp_node_id(knp_node_id)
-        }
+        } => peer_id.parse::<PeerId>().is_ok() && kononexus_bridge::valid_knp_node_id(knp_node_id),
         WireEvent::Goodbye { peer_id } => peer_id.parse::<PeerId>().is_ok(),
         WireEvent::MembershipSnapshot(snapshot) => snapshot.is_well_formed(),
         WireEvent::NickClaim {
@@ -2700,12 +2697,7 @@ async fn network_task(
         &canonical,
         session_age_ms(session_started),
     );
-    publish_knp_hint(
-        &mut swarm,
-        &world,
-        &peer_id,
-        local_knp_node_id.as_deref(),
-    );
+    publish_knp_hint(&mut swarm, &world, &peer_id, local_knp_node_id.as_deref());
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
     let mut discovery = tokio::time::interval(Duration::from_secs(25));

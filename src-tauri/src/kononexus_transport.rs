@@ -89,9 +89,7 @@ mod tests {
 }
 
 
-pub(crate) async fn next_event_or_pending(
-    runtime: &mut Option<KonoNexusRuntime>,
-) -> RelayAppEvent {
+pub(crate) async fn next_event_or_pending(runtime: &mut Option<KonoNexusRuntime>) -> RelayAppEvent {
     if let Some(runtime) = runtime.as_mut() {
         if let Some(event) = runtime.next_event().await {
             return event;

@@ -1,4 +1,4 @@
-// First-contact protocol candidate, NOT wired into the desktop or deployed.
+// Contact-lease protocol. Startup lookup is wired; registration/deployment are not.
 // Only signed, short-lived contact hints live here. No chat/file/audio payloads.
 const DOMAIN = 'konofix/participant-contact/1';
 const PROTOCOL = '/konofix/control/1.0.0';

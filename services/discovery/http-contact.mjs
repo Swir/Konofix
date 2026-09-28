@@ -43,9 +43,9 @@ function json(status, value) {
 // Hosting adapter must supply the trusted observed address. This function does
 // NOT trust X-Forwarded-For, CF-Connecting-IP or any other client-supplied header.
 // The hosting boundary and shared-state adapter still need deployment qualification.
-export function contactHandler(directory) {
+export function contactHandler(directory, { allowedOrigins = [] } = {}) {
   if (!(directory instanceof ParticipantDirectory)) throw new TypeError('directory_required');
-  return async (request, { observedIp } = {}) => {
+  const handle = async (request, { observedIp } = {}) => {
     try {
       const url = new URL(request.url);
       if (url.origin !== directory.origin) return json(421, { error: 'wrong_origin' });
@@ -74,6 +74,53 @@ export function contactHandler(directory) {
       return json(throttled ? 429 : timedOut ? 408 : 400,
         { error: throttled ? 'capacity_or_rate_limit' : timedOut ? 'request_timeout' : 'invalid_contact' });
     }
+  };
+  return withContactCors(handle, directory.origin, allowedOrigins);
+}
+
+// CORS is a browser read boundary, NOT peer authentication. Native callers can
+// omit/spoof Origin; signed leases, trusted source IP and rate limits still apply.
+// The hosting adapter explicitly supplies the packaged WebView origin(s).
+function withContactCors(handle, serviceOrigin, allowedOrigins) {
+  if (!Array.isArray(allowedOrigins) || allowedOrigins.length > 8) throw new TypeError('invalid_cors_origins');
+  const allowed = new Set();
+  for (const origin of allowedOrigins) {
+    if (typeof origin !== 'string' || origin.length > 256 || origin === 'null') throw new TypeError('invalid_cors_origin');
+    const url = new URL(origin);
+    if (origin !== 'tauri://localhost' &&
+        (!['http:', 'https:'].includes(url.protocol) || url.origin !== origin)) throw new TypeError('invalid_cors_origin');
+    if (allowed.has(origin)) throw new TypeError('duplicate_cors_origin');
+    allowed.add(origin);
+  }
+  return async (request, context) => {
+    const origin = request.headers.get('origin');
+    if (origin === null) return handle(request, context);
+    if (!allowed.has(origin)) { cancel(request.body); return json(403, { error: 'origin_not_allowed' }); }
+    let response;
+    if (request.method === 'OPTIONS') {
+      cancel(request.body);
+      const url = new URL(request.url);
+      const method = request.headers.get('access-control-request-method');
+      const rawHeaders = request.headers.get('access-control-request-headers') ?? '';
+      const requestedHeaders = rawHeaders.toLowerCase().split(',').map(value => value.trim()).filter(Boolean);
+      const permitted = method === 'POST' && url.pathname === '/v1/contact' && !url.search ||
+        method === 'GET' && ['/v1/contacts', '/v1/observe'].includes(url.pathname);
+      if (url.origin !== serviceOrigin || !permitted || rawHeaders.length > 256 ||
+          requestedHeaders.some(name => !['content-type', 'accept'].includes(name))) {
+        cancel(request.body); response = json(403, { error: 'preflight_not_allowed' });
+      } else {
+        response = new Response(null, { status: 204, headers: {
+          'Access-Control-Allow-Methods': method,
+          'Access-Control-Allow-Headers': 'Content-Type, Accept',
+          'Cache-Control': 'no-store',
+        } });
+      }
+    } else response = await handle(request, context);
+    const headers = new Headers(response.headers);
+    headers.set('Access-Control-Allow-Origin', origin);
+    headers.append('Vary', request.method === 'OPTIONS'
+      ? 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers' : 'Origin');
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   };
 }
 

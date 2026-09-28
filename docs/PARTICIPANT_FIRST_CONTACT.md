@@ -1,6 +1,6 @@
 # Participant first contact: executable protocol candidate
 
-Status: **local/component implementation, not a deployed service or desktop integration**.
+Status: **startup lookup integrated in source; native registration and public deployment incomplete**.
 The two-PC field failures remain unresolved. Real Internet Test stays 56/67; no
 Audio 0.6.0 acceptance item is credited. Do not issue another installer as an
 Internet repair because these modules exist.
@@ -45,7 +45,7 @@ unbounded bodies are rejected. Keys, chat, nicknames, room names/passwords,
 file descriptions and audio signaling are not accepted directory fields.
 
 The hosting adapter must supply a trustworthy observed source IP; request
-headers alone are NOT authoritative. The candidate now provides a bounded
+headers alone are NOT authoritative. The candidate provides a bounded
 `GET /v1/observe` step so a fresh participant can learn the address seen by
 trusted ingress before creating a lease. A registrant still cannot claim an
 unrelated public IP. This is **not proof of an externally reachable listening port**.
@@ -60,12 +60,51 @@ for reachable participants but cannot become an available relay merely by
 registering. If no usable direct path or reachable relay exists, discovery alone
 cannot make the two applications communicate. Circuit Relay is not WebRTC media.
 
+## Desktop startup lookup integration
+
+The existing `src/main.ts` connect flow calls `loadRemoteBootstraps`, merges its
+result with saved custom contacts and passes it to the native `start_network`
+command after checking the current session revision. That production resolver now
+also consumes an optional `contact_origins` array from the same schema-1 GitHub
+pool. It accepts at most two distinct canonical HTTPS origins. The existing pool
+is not changed: no origin, provider or live contact is introduced by this commit.
+Only add origins after operator approval and endpoint qualification.
+
+The resolver invokes the shared verified HTTPS lookup client, validates every
+returned lease, converts only verified records to TCP/QUIC multiaddresses and
+hands those hints to the existing native path. This lookup does not register the
+current user, send nicknames, expose keys, restart an active session or open audio.
+The existing total limit of 16 remote addresses is preserved, static seeds retain
+priority, duplicate addresses are removed and origins contribute in round-robin
+order. An unavailable/invalid directory does not suppress another completed source
+or static/manual contacts. The original 1.8-second whole-operation deadline also
+covers directory lookups; stalled operations are cancelled and cannot write late
+results. Lease freshness is rechecked at the actual handoff boundary.
+
+Only operator-managed static seeds enter the existing 15-minute recovery cache.
+Short-lived signed leases and the origin list never enter that cache. This does
+not erase subsequently authenticated native peer-cache entries or undo established
+P2P connections. A valid empty origin list withdraws future directory requests;
+there is no implicit fallback to an unrelated service. Per-source failures are
+caught at startup to preserve the manual/LAN path, not reported as an Internet
+success. Per-source UI diagnostics and ongoing session-owned refresh remain open.
+
+`contactHandler(directory, { allowedOrigins })` now provides exact-origin CORS for
+the browser/WebView consumer and bounded GET/JSON-POST preflight handling. The
+hosting adapter must supply the exact packaged application origin(s), verified on
+the target WebView. The default empty allowlist denies requests carrying Origin;
+non-browser requests without Origin still go through all original validation.
+There is no wildcard or credentialed CORS, reflected lookalike origin, or trust in
+forwarding headers. CORS is not peer authentication: native clients can omit or
+spoof Origin, so signature/source-IP/rate checks remain mandatory. TLS, actual
+browser CORS enforcement and hosted ingress configuration still need qualification.
+
 ## Source, privacy, failure and cold start
 
 No real provider or URL has been selected, embedded or activated. The constructor
 requires an explicitly supplied HTTPS origin. `.invalid` origins and public-looking
-IP literals occur only in tests; the tests never contact those hosts. The existing
-production GitHub bootstrap pool/resolver and default endpoints remain unchanged.
+IP literals occur only in injected tests; the tests never contact those hosts.
+The production GitHub bootstrap pool and default endpoints remain unchanged.
 
 A future service operator and querying participants can see registered public IPs,
 ports, public keys/Peer IDs and lease timing. TLS ingress may retain access logs;
@@ -80,9 +119,11 @@ Native cryptographic verification is used; no client API secret is needed.
 
 When all participants leave, their leases expire and lookup returns an empty list.
 Once new participants register with a live directory, it can again return contacts
-without saved participant addresses. An unavailable service is reported as an error,
-not empty success. Independent directories require separately origin-bound leases;
-automatic multi-source retry/failover must be integrated into the desktop session.
+without saved participant addresses. This requires the still-missing native desktop
+registration/signing integration. At the HTTP-client level an unavailable service
+throws instead of being represented as an empty successful snapshot. Independent
+directories require separately origin-bound leases; ongoing refresh/retry/failover
+must still be integrated with ownership of the actual native network session.
 
 The current directory is process-local state. A service restart loses leases and
 sequence floors; participants must re-register, and an otherwise valid signed lease
@@ -99,9 +140,10 @@ purchased or configured; any provider activation remains an explicit owner decis
    Bound the signer to session ownership and never add a general arbitrary-sign IPC.
 2. Select and authorize the real discovery service and its ingress/state/abuse policy.
    Verify endpoint bytes and independent reachability before listing it on GitHub.
-3. Connect session-owned register/refresh/lookup, bounded retry, source failover,
+3. Connect session-owned registration/refresh and ongoing lookup, bounded retry,
    contact insertion and complete cancellation to the existing native network task.
-   Do not reset nickname/session ownership or reopen microphone capture to refresh.
+   Startup lookup alone does not close that lifecycle. Do not reset nickname/session
+   ownership or reopen microphone capture to refresh.
 4. Advertise only appropriate observed/confirmed addresses. Keep first contact,
    observed transport, relay reservation, authenticated presence and successful
    application exchange separate in the status model. An HTTP 200 is not Internet PASS.
@@ -115,14 +157,16 @@ and the existing sole hourly schedule are unchanged.
 
 ## Verification
 
-Run `node --test scripts/test-participant-rendezvous.mjs` with Node 22.16 or newer.
-There are 28 controlled cases: actual Ed25519 signatures, two fresh protocol clients,
-expiry/empty/repopulation, alternate-directory scope, replay, capacity/rotation,
-forged identity/source IP, malformed bytes, HTTP handling and cancellation/deadlines.
-The existing remote-bootstrap test entry point also imports these cases; its original
-20 regression cases are preserved byte-for-byte in a sibling test file.
+Run `node --experimental-strip-types scripts/test-remote-bootstrap-discovery.mjs`
+with Node 22.16 or newer. The original 20 production-resolver cases remain unchanged;
+the protocol suite still tests real Ed25519 signatures, expiry, replay, admission,
+identity/source-IP validation, observation and deadlines. The startup-consumer suite
+adds 16 cases, exact-origin CORS adds eight and the existing production `connect`
+function has three injected DOM/IPC argument/lifecycle cases. These are component
+and source-integration tests, not installed Windows or Internet evidence.
 
-Negative controls that remove signature verification, ingress-IP binding or expiry
-cleanup must each make the suite fail. These are component evidence, not real network
-or Windows runtime evidence. Native signer interoperability and hosting deployment
-remain unverified.
+The previous resolver must fail the signed-snapshot consumer case. Removing the
+CORS boundary must fail the allowed-origin/preflight cases. Protocol negative
+controls for signature verification, ingress-IP binding and expiry remain required.
+The full TypeScript/Vite build and installed WebView checks belong to exact-head
+Windows CI; native signer interoperability and hosting deployment remain unverified.

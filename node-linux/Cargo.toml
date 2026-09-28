@@ -15,7 +15,7 @@ name = "konofix-netprobe"
 path = "src/netprobe.rs"
 
 [target.'cfg(windows)'.build-dependencies]
-tauri-build = { version = "=2.6.3", features = [] }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -51,5 +51,5 @@ libp2p = { version = "0.57", features = [
 ] }
 
 [target.'cfg(windows)'.dependencies]
-tauri = { version = "=2.11.5", features = [] }
+tauri = { version = "2", features = [] }
 rfd = "0.17.2"

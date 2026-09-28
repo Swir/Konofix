@@ -25,6 +25,7 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 mod desktop_identity;
+mod kononexus_transport;
 mod incoming_file;
 #[cfg(test)]
 mod messaging_runtime_tests;
@@ -2509,6 +2510,31 @@ async fn network_task(
 
     let local_peer = swarm.local_peer_id().to_owned();
     let peer_id = local_peer.to_string();
+
+    let mut kononexus = match kononexus_transport::KonoNexusRuntime::spawn(Vec::new()).await {
+        Ok(runtime) => {
+            let _ = app.emit_event(
+                "kononexus-status",
+                serde_json::json!({
+                    "phase": "started",
+                    "knp_node_id": runtime.node_id(),
+                    "libp2p_peer_id": peer_id,
+                    "local_addr": runtime.local_addr().to_string(),
+                    "seed_count": 0,
+                    "internet_pass": false,
+                }),
+            );
+            Some(runtime)
+        }
+        Err(error) => {
+            let _ = app.emit_event(
+                "network-warning",
+                format!("KonoNexus underlay unavailable; legacy P2P fallback remains active: {error}"),
+            );
+            None
+        }
+    };
+
     let canonical = canonical_nick(&nick);
     let session_started = Instant::now();
     let world = gossipsub::IdentTopic::new(WORLD_TOPIC);
@@ -4547,6 +4573,10 @@ async fn network_task(
                 _ => {}
             }
         }
+    }
+
+    if let Some(runtime) = kononexus.take() {
+        runtime.shutdown().await;
     }
 
     Ok(())

@@ -26,6 +26,7 @@ use uuid::Uuid;
 
 mod desktop_identity;
 mod incoming_file;
+mod kononexus_bridge;
 mod kononexus_transport;
 #[cfg(test)]
 mod messaging_runtime_tests;
@@ -403,6 +404,10 @@ enum WireEvent {
         #[serde(default)]
         session_age_ms: Option<u64>,
     },
+    KonoNexusHint {
+        peer_id: String,
+        knp_node_id: String,
+    },
     Goodbye {
         peer_id: String,
     },
@@ -427,6 +432,7 @@ enum WireEvent {
 fn wire_event_claimed_peer_id(event: &WireEvent) -> Option<&str> {
     match event {
         WireEvent::Presence { peer_id, .. }
+        | WireEvent::KonoNexusHint { peer_id, .. }
         | WireEvent::Goodbye { peer_id }
         | WireEvent::NickClaim { peer_id, .. } => Some(peer_id.as_str()),
         WireEvent::Chat(message) => message.peer_id.as_deref(),
@@ -463,6 +469,13 @@ fn wire_event_is_well_formed(event: &WireEvent) -> bool {
             peer_id.parse::<PeerId>().is_ok()
                 && validate_nick(nick).is_ok()
                 && optional_nick_color_is_valid(nick_color.as_deref())
+        }
+        WireEvent::KonoNexusHint {
+            peer_id,
+            knp_node_id,
+        } => {
+            peer_id.parse::<PeerId>().is_ok()
+                && kononexus_bridge::valid_knp_node_id(knp_node_id)
         }
         WireEvent::Goodbye { peer_id } => peer_id.parse::<PeerId>().is_ok(),
         WireEvent::MembershipSnapshot(snapshot) => snapshot.is_well_formed(),
@@ -2158,6 +2171,24 @@ fn publish_presence(
     );
 }
 
+fn publish_knp_hint(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    topic: &gossipsub::IdentTopic,
+    peer_id: &str,
+    knp_node_id: Option<&str>,
+) {
+    if let Some(knp_node_id) = knp_node_id {
+        publish(
+            swarm,
+            topic,
+            &WireEvent::KonoNexusHint {
+                peer_id: peer_id.to_string(),
+                knp_node_id: knp_node_id.to_string(),
+            },
+        );
+    }
+}
+
 fn publish_nick_lease(
     swarm: &mut libp2p::Swarm<Behaviour>,
     topic: &gossipsub::IdentTopic,
@@ -2537,6 +2568,10 @@ async fn network_task(
         }
     };
 
+    let local_knp_node_id = kononexus
+        .as_ref()
+        .map(|runtime| runtime.node_id().to_string());
+
     let canonical = canonical_nick(&nick);
     let session_started = Instant::now();
     let world = gossipsub::IdentTopic::new(WORLD_TOPIC);
@@ -2646,6 +2681,9 @@ async fn network_task(
     let mut outbound_requests: HashMap<request_response::OutboundRequestId, OutboundMeta> =
         HashMap::new();
 
+    let mut knp_identities = kononexus_bridge::KnpIdentityBindings::default();
+    let mut pending_knp_presence = HashMap::<String, u64>::new();
+
     publish_presence(
         &mut swarm,
         &world,
@@ -2661,6 +2699,12 @@ async fn network_task(
         &nick,
         &canonical,
         session_age_ms(session_started),
+    );
+    publish_knp_hint(
+        &mut swarm,
+        &world,
+        &peer_id,
+        local_knp_node_id.as_deref(),
     );
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
@@ -2685,8 +2729,35 @@ async fn network_task(
     'network: loop {
         tokio::select! {
             _ = heartbeat.tick() => {
-                publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
-                publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, session_age_ms(session_started));
+                let current_session_age = session_age_ms(session_started);
+                publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, current_session_age);
+                publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, current_session_age);
+                publish_knp_hint(&mut swarm, &world, &peer_id, local_knp_node_id.as_deref());
+                if let Some(runtime) = kononexus.as_ref() {
+                    if let Ok(payload) = kononexus_bridge::encode_presence(
+                        &peer_id,
+                        &nick,
+                        &nick_color,
+                        current_session_age,
+                    ) {
+                        for target in knp_identities.targets(8) {
+                            if pending_knp_presence.contains_key(&target) {
+                                continue;
+                            }
+                            match runtime.send(target.clone(), payload.clone()).await {
+                                Ok(message_id) => {
+                                    pending_knp_presence.insert(target, message_id);
+                                }
+                                Err(error) => {
+                                    let _ = app.emit_event(
+                                        "network-log",
+                                        format!("KonoNexus presence send deferred: {error}"),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 for room in owned_rooms.values() {
                     publish(&mut swarm, &world, &WireEvent::RoomCreate(room.clone()));
                 }
@@ -3393,6 +3464,157 @@ async fn network_task(
                     }
                 }
             }
+            knp_event = kononexus_transport::next_event_or_pending(&mut kononexus) => {
+                match knp_event {
+                    kononexus::RelayAppEvent::Message(message) => {
+                        match kononexus_bridge::decode_presence(&message.data) {
+                            Ok(remote_presence) => {
+                                if remote_presence.peer_id == peer_id {
+                                    continue;
+                                }
+                                let Ok(remote_peer) = remote_presence.peer_id.parse::<PeerId>() else {
+                                    continue;
+                                };
+                                if validate_nick(&remote_presence.nick).is_err()
+                                    || !optional_nick_color_is_valid(remote_presence.nick_color.as_deref())
+                                {
+                                    let _ = app.emit_event(
+                                        "network-warning",
+                                        format!(
+                                            "Dropped malformed KonoNexus presence from {}.",
+                                            message.peer_node_id
+                                        ),
+                                    );
+                                    continue;
+                                }
+                                if let Err(error) = knp_identities.authenticate_source(
+                                    &message.peer_node_id,
+                                    remote_peer,
+                                ) {
+                                    let _ = app.emit_event(
+                                        "network-warning",
+                                        format!(
+                                            "Dropped unbound KonoNexus application message from {}: {error}",
+                                            message.peer_node_id
+                                        ),
+                                    );
+                                    continue;
+                                }
+
+                                let remote_canonical = canonical_nick(&remote_presence.nick);
+                                match classify_nick_presence(
+                                    &remote_presence.peer_id,
+                                    &remote_canonical,
+                                    now_ms() + 30_000,
+                                    remote_presence.session_age_ms,
+                                    local_peer,
+                                    &canonical,
+                                    session_age_ms(session_started),
+                                ) {
+                                    NickPresenceAdmission::LocalYields => {
+                                        let _ = app.emit_event(
+                                            "nick-conflict",
+                                            serde_json::json!({
+                                                "nick": nick,
+                                                "peer_id": remote_presence.peer_id,
+                                            }),
+                                        );
+                                        break 'network;
+                                    }
+                                    NickPresenceAdmission::RejectRemoteDuplicate => {
+                                        continue;
+                                    }
+                                    NickPresenceAdmission::AdmitRemote => {}
+                                }
+
+                                let remote_color =
+                                    normalize_nick_color(remote_presence.nick_color.as_deref());
+                                let should_emit = peers
+                                    .get(&remote_peer)
+                                    .is_none_or(|existing| {
+                                        existing.nick != remote_presence.nick
+                                            || existing.nick_color != remote_color
+                                    });
+                                peers.insert(
+                                    remote_peer,
+                                    PeerPresence {
+                                        nick: remote_presence.nick.clone(),
+                                        nick_color: remote_color.clone(),
+                                        last_seen: Instant::now(),
+                                    },
+                                );
+                                if should_emit {
+                                    let _ = app.emit_event(
+                                        "peer-online",
+                                        PeerInfo {
+                                            peer_id: remote_presence.peer_id.clone(),
+                                            nick: remote_presence.nick,
+                                            nick_color: Some(remote_color),
+                                        },
+                                    );
+                                }
+                                let _ = app.emit_event(
+                                    "kononexus-status",
+                                    serde_json::json!({
+                                        "phase": "application_received",
+                                        "knp_node_id": message.peer_node_id,
+                                        "libp2p_peer_id": remote_presence.peer_id,
+                                        "message_id": message.message_id,
+                                        "authenticated_bindings": knp_identities.authenticated_count(),
+                                        "internet_pass": false,
+                                    }),
+                                );
+                            }
+                            Err(error) => {
+                                let _ = app.emit_event(
+                                    "network-warning",
+                                    format!(
+                                        "Dropped invalid KonoNexus application envelope from {}: {error}",
+                                        message.peer_node_id
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    kononexus::RelayAppEvent::Delivered(receipt) => {
+                        if pending_knp_presence
+                            .get(&receipt.peer_node_id)
+                            .is_some_and(|message_id| *message_id == receipt.message_id)
+                        {
+                            pending_knp_presence.remove(&receipt.peer_node_id);
+                        }
+                        let _ = app.emit_event(
+                            "kononexus-status",
+                            serde_json::json!({
+                                "phase": "application_delivered",
+                                "knp_node_id": receipt.peer_node_id,
+                                "message_id": receipt.message_id,
+                                "authenticated_bindings": knp_identities.authenticated_count(),
+                                "internet_pass": false,
+                            }),
+                        );
+                    }
+                    kononexus::RelayAppEvent::Failed(failure) => {
+                        if pending_knp_presence
+                            .get(&failure.peer_node_id)
+                            .is_some_and(|message_id| *message_id == failure.message_id)
+                        {
+                            pending_knp_presence.remove(&failure.peer_node_id);
+                        }
+                        let _ = app.emit_event(
+                            "kononexus-status",
+                            serde_json::json!({
+                                "phase": "application_failed",
+                                "knp_node_id": failure.peer_node_id,
+                                "message_id": failure.message_id,
+                                "reason": format!("{:?}", failure.reason),
+                                "authenticated_bindings": knp_identities.authenticated_count(),
+                                "internet_pass": false,
+                            }),
+                        );
+                    }
+                }
+            }
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { address, .. } => {
                     let Some(address) = address_for_peer(address, local_peer) else { continue; };
@@ -3410,8 +3632,10 @@ async fn network_task(
                             format!("Bootstrap aktywny: {remote}"),
                         );
                     }
-                    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
-                    publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, session_age_ms(session_started));
+                    let current_session_age = session_age_ms(session_started);
+                    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, current_session_age);
+                    publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, current_session_age);
+                    publish_knp_hint(&mut swarm, &world, &peer_id, local_knp_node_id.as_deref());
                     emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Połączono z peerem");
                 }
                 SwarmEvent::ConnectionClosed { peer_id: remote, num_established, .. } => {
@@ -3666,6 +3890,37 @@ async fn network_task(
                                             nick_color: Some(remote_color),
                                         },
                                     );
+                                }
+                            }
+                            WireEvent::KonoNexusHint {
+                                peer_id: remote_id,
+                                knp_node_id,
+                            } => {
+                                if remote_id != peer_id {
+                                    match knp_identities.observe_legacy_hint(
+                                        &knp_node_id,
+                                        *authenticated_source,
+                                    ) {
+                                        Ok(true) => {
+                                            let _ = app.emit_event(
+                                                "kononexus-status",
+                                                serde_json::json!({
+                                                    "phase": "identity_hint",
+                                                    "knp_node_id": knp_node_id,
+                                                    "libp2p_peer_id": remote_id,
+                                                    "authenticated_bindings": knp_identities.authenticated_count(),
+                                                    "internet_pass": false,
+                                                }),
+                                            );
+                                        }
+                                        Ok(false) => {}
+                                        Err(error) => {
+                                            let _ = app.emit_event(
+                                                "network-warning",
+                                                format!("Dropped conflicting KonoNexus identity hint: {error}"),
+                                            );
+                                        }
+                                    }
                                 }
                             }
                             WireEvent::Goodbye { peer_id: remote_id } => {

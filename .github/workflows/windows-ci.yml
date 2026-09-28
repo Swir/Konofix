@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   check-windows:
@@ -39,26 +39,6 @@ jobs:
           targets: x86_64-pc-windows-msvc
           toolchain: stable
           components: rustfmt, clippy
-
-      - name: Refresh pinned KonoNexus lockfile
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
-          git diff --quiet -- 'src-tauri/Cargo.lock'
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host 'Cargo.lock already matches the pinned KonoNexus dependency.'
-          } else {
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add -- 'src-tauri/Cargo.lock'
-            git commit -m 'build: lock pinned KonoNexus dependency'
-            $remote = "https://x-access-token:$env:GH_TOKEN@github.com/$env:GITHUB_REPOSITORY.git"
-            git push $remote "HEAD:$env:GITHUB_HEAD_REF"
-          }
 
       - name: Release metadata gate
         shell: pwsh

@@ -1361,6 +1361,7 @@ async fn start_network(
             app.clone(),
             rx,
             ready_tx,
+            None,
         )
         .await;
         let app_state = app.state::<AppState>();
@@ -2429,8 +2430,12 @@ async fn network_task(
     app: impl NetworkRuntime,
     mut rx: mpsc::Receiver<NetworkCommand>,
     ready: oneshot::Sender<Result<String, String>>,
+    identity_override: Option<libp2p::identity::Keypair>,
 ) -> Result<(), String> {
-    let identity = desktop_identity::load_default_identity()?;
+    let identity = match identity_override {
+        Some(identity) => identity,
+        None => desktop_identity::load_default_identity()?,
+    };
     let mut swarm = SwarmBuilder::with_existing_identity(identity)
         .with_tokio()
         .with_tcp(

@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   check-windows:
@@ -39,24 +39,6 @@ jobs:
           targets: x86_64-pc-windows-msvc
           toolchain: stable
           components: rustfmt, clippy
-
-      - name: Format KonoNexus integration once
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          cargo fmt --manifest-path src-tauri/Cargo.toml --all
-          git diff --quiet -- 'src-tauri/src'
-          if ($LASTEXITCODE -ne 0) {
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add -- 'src-tauri/src'
-            git commit -m 'style: format KonoNexus integration'
-            $remote = "https://x-access-token:$env:GH_TOKEN@github.com/$env:GITHUB_REPOSITORY.git"
-            git push $remote "HEAD:$env:GITHUB_HEAD_REF"
-          }
 
       - name: Release metadata gate
         shell: pwsh

@@ -45,8 +45,10 @@ unbounded bodies are rejected. Keys, chat, nicknames, room names/passwords,
 file descriptions and audio signaling are not accepted directory fields.
 
 The hosting adapter must supply a trustworthy observed source IP; request
-headers alone are NOT authoritative. A registrant cannot claim an unrelated
-public IP. This is still **not proof of an externally reachable listening port**.
+headers alone are NOT authoritative. The candidate now provides a bounded
+`GET /v1/observe` step so a fresh participant can learn the address seen by
+trusted ingress before creating a lease. A registrant still cannot claim an
+unrelated public IP. This is **not proof of an externally reachable listening port**.
 Only a subsequent authenticated libp2p connection and successful protocol
 negotiation can establish identity, compatibility and reachability at that port.
 Snapshot-to-multiaddress conversion requires a lease verified in this module.

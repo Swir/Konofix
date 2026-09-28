@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { LIMITS, ParticipantDirectory, hex, peerIdFromPublicKey, publicIp,
   signingBytes, verifyLease, verifySnapshot, leaseAddresses } from '../services/discovery/participant-directory.mjs';
-import { contactHandler, exchangeContact } from '../services/discovery/http-contact.mjs';
+import { contactHandler, exchangeContact, observeContactSource } from '../services/discovery/http-contact.mjs';
 
 // Controlled protocol/Request/Response fixtures ONLY. No DNS lookup, public
 // registration, Internet socket, Windows app or libp2p application test occurs.
@@ -83,6 +83,34 @@ test('size, strict UTF-8, unknown shape and missing signature are rejected', asy
     await assert.rejects(verifyLease(raw, { origin, now: epoch }));
   const a = await lease(); delete a.signature; await assert.rejects(verify(a));
 });
+test('trusted source observation ignores forwarding headers', async () => {
+  const { directory } = setup();
+  const handler = contactHandler(directory);
+  const response = await handler(new Request(`${origin}/v1/observe`, {
+    headers: { 'X-Forwarded-For': '9.9.9.9', 'CF-Connecting-IP': '9.9.9.9' },
+  }), { observedIp: '8.8.8.8' });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { schema: 1, origin, ip: '8.8.8.8' });
+});
+
+test('fresh client learns trusted public source before registration', async () => {
+  const { directory } = setup();
+  const fetchImpl = transport(directory, '8.8.8.8');
+  assert.equal(await observeContactSource(origin, { fetchImpl }), '8.8.8.8');
+});
+
+test('source observation rejects malformed and non-public replies', async () => {
+  for (const payload of [
+    { schema: 1, origin: otherOrigin, ip: '8.8.8.8' },
+    { schema: 1, origin, ip: '192.168.1.2' },
+    { schema: 1, origin, ip: '8.8.8.8', extra: true },
+  ]) {
+    await assert.rejects(observeContactSource(origin, {
+      fetchImpl: async () => new Response(JSON.stringify(payload)),
+    }));
+  }
+});
+
 test('registration cannot publish another ingress IP', async () => {
   const { directory } = setup(); const a = await lease();
   await assert.rejects(directory.register(bytes(a), '1.1.1.1'), /source_ip_mismatch/);

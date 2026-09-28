@@ -1,4 +1,4 @@
-import { LIMITS, ParticipantDirectory, canonicalOrigin, verifyLease, verifySnapshot } from './participant-directory.mjs';
+import { LIMITS, ParticipantDirectory, canonicalOrigin, publicIp, verifyLease, verifySnapshot } from './participant-directory.mjs';
 
 const cancel = body => { try { void body?.cancel().catch(() => {}); } catch { /* best effort */ } };
 async function readBounded(body, max, signal) {
@@ -49,6 +49,10 @@ export function contactHandler(directory) {
     try {
       const url = new URL(request.url);
       if (url.origin !== directory.origin) return json(421, { error: 'wrong_origin' });
+      if (request.method === 'GET' && url.pathname === '/v1/observe') {
+        if (url.search) return json(400, { error: 'invalid_query' });
+        return json(200, { schema: 1, origin: directory.origin, ip: publicIp(observedIp).ip });
+      }
       if (request.method === 'GET' && url.pathname === '/v1/contacts') {
         if ([...url.searchParams.keys()].some(k => k !== 'exclude') || url.searchParams.getAll('exclude').length > 1) return json(400, { error: 'invalid_query' });
         const bytes = directory.snapshot(observedIp, { exclude: url.searchParams.get('exclude') ?? '' });
@@ -71,6 +75,25 @@ export function contactHandler(directory) {
         { error: throttled ? 'capacity_or_rate_limit' : timedOut ? 'request_timeout' : 'invalid_contact' });
     }
   };
+}
+
+export async function observeContactSource(origin, { fetchImpl = fetch, timeoutMs = 1800,
+  signal: parentSignal } = {}) {
+  canonicalOrigin(origin);
+  return deadline(async signal => {
+    const response = await fetchImpl(`${origin}/v1/observe`, {
+      headers: { Accept: 'application/json' }, credentials: 'omit',
+      redirect: 'error', cache: 'no-store', signal,
+    });
+    if (!response.ok) { cancel(response.body); throw new Error(`observation_http_${response.status}`); }
+    const raw = await readBounded(response.body, LIMITS.observationBytes, signal);
+    let value;
+    try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw)); }
+    catch { throw new Error('invalid_observation'); }
+    if (!value || Object.keys(value).length !== 3 || value.schema !== 1 ||
+        value.origin !== origin || typeof value.ip !== 'string') throw new Error('invalid_observation');
+    return publicIp(value.ip).ip;
+  }, timeoutMs, parentSignal);
 }
 
 // Caller supplies an explicitly approved HTTPS origin. No provider, token,

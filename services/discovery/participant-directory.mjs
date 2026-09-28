@@ -2,7 +2,7 @@
 // Only signed, short-lived contact hints live here. No chat/file/audio payloads.
 const DOMAIN = 'konofix/participant-contact/1';
 const PROTOCOL = '/konofix/control/1.0.0';
-export const LIMITS = Object.freeze({ leaseBytes: 2048, snapshotBytes: 64 * 1024,
+export const LIMITS = Object.freeze({ leaseBytes: 2048, observationBytes: 1024, snapshotBytes: 64 * 1024,
   ttlMs: 120000, skewMs: 10000, contacts: 16, entries: 512,
   sourceEntries: 128, requestsPerMinute: 120, sourceBuckets: 2048, inFlight: 16 });
 const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';

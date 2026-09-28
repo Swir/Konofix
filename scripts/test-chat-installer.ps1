@@ -39,7 +39,12 @@ $msis = @(Get-ChildItem -LiteralPath (Join-Path $releaseRoot 'bundle\msi') -Filt
 if ($installers.Count -ne 1 -or $msis.Count -ne 1) { throw 'Expected exactly one NSIS and one MSI installer.' }
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Konofix Chat.lnk'
 if (Test-Path -LiteralPath $shortcutPath) { throw 'Refusing to replace an existing Chat shortcut.' }
-if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Konofix Chat')) {
+$defaultInstallRoot = Join-Path $env:LOCALAPPDATA 'Konofix Chat'
+$defaultInstallArtifacts = @(
+    (Join-Path $defaultInstallRoot 'konofix-chat.exe'),
+    (Join-Path $defaultInstallRoot 'uninstall.exe')
+)
+if ($defaultInstallArtifacts | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }) {
     throw 'Refusing to replace an existing Chat installation.'
 }
 

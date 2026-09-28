@@ -14,7 +14,10 @@ const DESKTOP_IDENTITY_FILE: &str = "desktop-identity.key";
 pub(crate) fn default_identity_path() -> Result<PathBuf, String> {
     dirs::data_local_dir()
         .map(|base| base.join("Konofix Chat").join(DESKTOP_IDENTITY_FILE))
-        .ok_or_else(|| "Unable to resolve the local application-data directory for the Konofix identity.".to_string())
+        .ok_or_else(|| {
+            "Unable to resolve the local application-data directory for the Konofix identity."
+                .to_string()
+        })
 }
 
 #[cfg(unix)]
@@ -96,7 +99,10 @@ pub(crate) fn load_or_create_identity(path: &Path) -> Result<identity::Keypair, 
         }
     }
 
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent).map_err(|error| {
             format!(
                 "Failed to create Konofix desktop identity directory {}: {error}",
@@ -175,7 +181,10 @@ mod tests {
 
         let second = load_or_create_identity(&path).expect("reload identity");
         assert_eq!(second.public().to_peer_id(), first_peer);
-        assert_eq!(std::fs::read(&path).expect("read reloaded bytes"), first_bytes);
+        assert_eq!(
+            std::fs::read(&path).expect("read reloaded bytes"),
+            first_bytes
+        );
         cleanup(&path);
     }
 

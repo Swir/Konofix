@@ -2,6 +2,7 @@
 
 ## 0.6.0 — in development
 
+- persisted the desktop application's libp2p Ed25519 identity in per-user local application data and switched the production swarm from a new key on every launch to that existing identity; corrupt key material now fails closed instead of silently rotating the Peer ID, providing the stable identity required for signed participant discovery and reconnect without exposing private key bytes to the WebView,
 - added a short-timeout remote bootstrap-pool resolver backed by the canonical repository pool, merged ahead of saved custom contacts and still validated by the Rust multiaddr/Peer-ID parser; remote metadata failure is fail-open so LAN/manual operation remains available, while a verified public Konofix Node can be activated for clients without rebuilding the installer,
 - fixed misleading connectivity reporting for fresh installs: when no public bootstrap/relay is configured, the desktop now reports an explicit LAN-only state, shows active/configured bootstrap counts, and warns that global Internet discovery is unavailable instead of presenting local mDNS connectivity as global readiness; this does not claim that public infrastructure exists yet,
 

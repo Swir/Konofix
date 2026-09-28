@@ -24,6 +24,7 @@ use tokio::{
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
+mod desktop_identity;
 mod incoming_file;
 #[cfg(test)]
 mod messaging_runtime_tests;
@@ -2429,7 +2430,8 @@ async fn network_task(
     mut rx: mpsc::Receiver<NetworkCommand>,
     ready: oneshot::Sender<Result<String, String>>,
 ) -> Result<(), String> {
-    let mut swarm = SwarmBuilder::with_new_identity()
+    let identity = desktop_identity::load_default_identity()?;
+    let mut swarm = SwarmBuilder::with_existing_identity(identity)
         .with_tokio()
         .with_tcp(
             tcp::Config::default(),

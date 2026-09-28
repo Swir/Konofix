@@ -135,9 +135,11 @@ purchased or configured; any provider activation remains an explicit owner decis
 
 ## Required next integration, not completed claims
 
-1. Persist the desktop's existing native libp2p identity safely; reuse that exact key
-   to sign this fixed lease domain without exposing private keys to JavaScript.
-   Bound the signer to session ownership and never add a general arbitrary-sign IPC.
+1. The desktop now persists its native Ed25519 libp2p identity in per-user local
+   application data and the production swarm reuses that exact key after restart. Corrupt
+   identity bytes fail closed rather than silently rotating the Peer ID. The remaining
+   identity task is a narrow native contact-lease signer bound to this fixed domain and
+   session ownership; never expose private key bytes or add a general arbitrary-sign IPC.
 2. Select and authorize the real discovery service and its ingress/state/abuse policy.
    Verify endpoint bytes and independent reachability before listing it on GitHub.
 3. Connect session-owned registration/refresh and ongoing lookup, bounded retry,

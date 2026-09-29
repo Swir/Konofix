@@ -56,7 +56,7 @@ use secure_control_client::{ObservedRoomSecurity, SecureControlClient, SecureRes
 use secure_control_runtime::{PresenceIdentity, SecureControlRuntime};
 use secure_control_transport::{
     control_behaviour, handle_inbound_control_request, private_message_request, room_join_request,
-    voice_signal_request,
+    voice_signal_request, CONTROL_REQUEST_TIMEOUT_SECS,
 };
 use test_updater::{check_test_update, install_test_update};
 
@@ -97,6 +97,7 @@ const BOOTSTRAP_RETRY_BASE_SECS: u64 = 3;
 const BOOTSTRAP_RETRY_MAX_SECS: u64 = 60;
 const BOOTSTRAP_PENDING_RETRY_SECS: u64 = 20;
 const MAX_PARTICIPANT_RELAYS: usize = 3;
+const MAX_PENDING_KNP_CONTROL: usize = 1_024;
 const BUILTIN_BOOTSTRAP_POOL_JSON: &str = include_str!("../bootstrap-pool.json");
 
 #[derive(Debug, Deserialize)]
@@ -158,6 +159,13 @@ fn bootstrap_retry_delay(failures: u32) -> Duration {
         .saturating_mul(1u64 << shift)
         .min(BOOTSTRAP_RETRY_MAX_SECS);
     Duration::from_secs(seconds)
+}
+
+#[derive(Debug, Clone)]
+struct PendingKnpControl {
+    correlation: String,
+    kind: &'static str,
+    created_at: Instant,
 }
 
 #[derive(Default)]
@@ -2681,6 +2689,8 @@ async fn network_task(
     let mut knp_identities = kononexus_bridge::KnpIdentityBindings::default();
     let mut pending_knp_presence = HashMap::<String, u64>::new();
     let mut pending_knp_world = HashMap::<(String, u64), String>::new();
+    let mut pending_knp_control =
+        HashMap::<(String, u64), PendingKnpControl>::new();
     let mut seen_world_messages = kononexus_bridge::BoundedMessageIds::new(4_096);
 
     publish_presence(
@@ -2794,6 +2804,39 @@ async fn network_task(
             }
             _ = cleanup.tick() => {
                 secure_runtime.prune(now_ms(), Instant::now());
+
+                let expired_knp_control: Vec<(String, u64)> = pending_knp_control
+                    .iter()
+                    .filter(|(_, pending)| {
+                        pending.created_at.elapsed()
+                            > Duration::from_secs(CONTROL_REQUEST_TIMEOUT_SECS)
+                    })
+                    .map(|(key, _)| key.clone())
+                    .collect();
+                for key in expired_knp_control {
+                    if let Some(pending) = pending_knp_control.remove(&key) {
+                        secure_client.cancel_pending(&pending.correlation);
+                        if let Some(reply) =
+                            pending_private_messages.remove(&pending.correlation)
+                        {
+                            let _ = reply.send(Err(
+                                "KonoNexus private secure-control request timed out.".into(),
+                            ));
+                        }
+                        let _ = app.emit_event(
+                            "kononexus-status",
+                            serde_json::json!({
+                                "phase": "secure_control_timeout",
+                                "kind": pending.kind,
+                                "knp_node_id": key.0,
+                                "message_id": key.1,
+                                "correlation_id": pending.correlation,
+                                "internet_pass": false,
+                            }),
+                        );
+                    }
+                }
+
                 let expired_memberships: Vec<PeerId> = membership_seen.iter()
                     .filter(|(_, seen)| seen.elapsed() > Duration::from_secs(PRESENCE_TTL_SECS))
                     .map(|(peer, _)| *peer).collect();
@@ -3105,12 +3148,92 @@ async fn network_task(
                         })();
                         match result {
                             Ok((target, request, correlation)) => {
-                                let outbound = swarm
-                                    .behaviour_mut()
-                                    .secure_control
-                                    .send_request(&target, request);
-                                secure_outbound_requests.insert(outbound, correlation.clone());
-                                pending_private_messages.insert(correlation, reply);
+                                let knp_target = knp_identities
+                                    .authenticated_node_for_peer(&target)
+                                    .map(str::to_owned);
+                                let knp_queued = if pending_knp_control.len()
+                                    < MAX_PENDING_KNP_CONTROL
+                                {
+                                    if let (Some(runtime), Some(knp_node_id)) =
+                                        (kononexus.as_ref(), knp_target)
+                                    {
+                                        match kononexus_bridge::encode_private_control_request(
+                                            &request,
+                                        ) {
+                                            Ok(payload) => {
+                                                match runtime
+                                                    .send(knp_node_id.clone(), payload)
+                                                    .await
+                                                {
+                                                    Ok(message_id) => {
+                                                        Some((knp_node_id, message_id))
+                                                    }
+                                                    Err(error) => {
+                                                        let _ = app.emit_event(
+                                                            "network-log",
+                                                            format!(
+                                                                "KonoNexus private send fell back to legacy secure-control: {error}"
+                                                            ),
+                                                        );
+                                                        None
+                                                    }
+                                                }
+                                            }
+                                            Err(error) => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    format!(
+                                                        "KonoNexus private envelope rejected locally; using legacy secure-control: {error}"
+                                                    ),
+                                                );
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    let _ = app.emit_event(
+                                        "network-log",
+                                        "KonoNexus secure-control pending limit reached; using legacy secure-control.",
+                                    );
+                                    None
+                                };
+
+                                match knp_queued {
+                                    Some((knp_node_id, message_id)) => {
+                                        pending_knp_control.insert(
+                                            (knp_node_id.clone(), message_id),
+                                            PendingKnpControl {
+                                                correlation: correlation.clone(),
+                                                kind: "private_message",
+                                                created_at: Instant::now(),
+                                            },
+                                        );
+                                        pending_private_messages
+                                            .insert(correlation.clone(), reply);
+                                        let _ = app.emit_event(
+                                            "kononexus-status",
+                                            serde_json::json!({
+                                                "phase": "secure_control_queued",
+                                                "kind": "private_message",
+                                                "knp_node_id": knp_node_id,
+                                                "message_id": message_id,
+                                                "correlation_id": correlation,
+                                                "internet_pass": false,
+                                            }),
+                                        );
+                                    }
+                                    None => {
+                                        let outbound = swarm
+                                            .behaviour_mut()
+                                            .secure_control
+                                            .send_request(&target, request);
+                                        secure_outbound_requests
+                                            .insert(outbound, correlation.clone());
+                                        pending_private_messages.insert(correlation, reply);
+                                    }
+                                }
                             }
                             Err(error) => {
                                 let _ = reply.send(Err(error));
@@ -3694,18 +3817,224 @@ async fn network_task(
                                     }),
                                 );
                             }
-                            Err(error) => {
-                                let _ = app.emit_event(
-                                    "network-warning",
-                                    format!(
-                                        "Dropped invalid KonoNexus application envelope from {}: {error}",
-                                        message.peer_node_id
-                                    ),
-                                );
+                            Err(application_error) => {
+                                match kononexus_bridge::decode_private_control_message(
+                                    &message.data,
+                                ) {
+                                    Ok(kononexus_bridge::KnpPrivateControlMessage::Request(
+                                        ControlRequest::PrivateMessage(private_message),
+                                    )) => {
+                                        let Some(authenticated_source) = knp_identities
+                                            .authenticated_peer_for_node(&message.peer_node_id)
+                                        else {
+                                            let _ = app.emit_event(
+                                                "network-warning",
+                                                format!(
+                                                    "Dropped KonoNexus private message without authenticated identity binding from {}.",
+                                                    message.peer_node_id
+                                                ),
+                                            );
+                                            continue;
+                                        };
+
+                                        let response = if !private_messages_enabled {
+                                            ControlResponse::PrivateAck {
+                                                message_id: private_message.id.clone(),
+                                                accepted: false,
+                                                reason: Some("private_disabled".into()),
+                                            }
+                                        } else {
+                                            let expected_presence = peers
+                                                .get(&authenticated_source)
+                                                .map(|presence| PresenceIdentity {
+                                                    nick: presence.nick.clone(),
+                                                    nick_color: Some(
+                                                        presence.nick_color.clone(),
+                                                    ),
+                                                });
+                                            let outcome = handle_inbound_control_request(
+                                                &mut secure_runtime,
+                                                ControlRequest::PrivateMessage(private_message),
+                                                &authenticated_source,
+                                                &local_peer,
+                                                expected_presence.as_ref(),
+                                                now_ms(),
+                                                Instant::now(),
+                                            );
+                                            if let Some(private_message) =
+                                                outcome.private_message
+                                            {
+                                                let _ = app.emit_event(
+                                                    "private-message",
+                                                    private_message,
+                                                );
+                                            }
+                                            outcome.response
+                                        };
+
+                                        match kononexus_bridge::encode_private_control_response(
+                                            &response,
+                                        ) {
+                                            Ok(payload) => {
+                                                if let Some(runtime) = kononexus.as_ref() {
+                                                    match runtime
+                                                        .send(
+                                                            message.peer_node_id.clone(),
+                                                            payload,
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(response_message_id) => {
+                                                            let _ = app.emit_event(
+                                                                "kononexus-status",
+                                                                serde_json::json!({
+                                                                    "phase": "secure_control_response_queued",
+                                                                    "kind": "private_ack",
+                                                                    "knp_node_id": message.peer_node_id,
+                                                                    "message_id": response_message_id,
+                                                                    "internet_pass": false,
+                                                                }),
+                                                            );
+                                                        }
+                                                        Err(error) => {
+                                                            let _ = app.emit_event(
+                                                                "network-warning",
+                                                                format!(
+                                                                    "KonoNexus private acknowledgement send failed: {error}"
+                                                                ),
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Err(error) => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    format!(
+                                                        "KonoNexus private acknowledgement encoding failed: {error}"
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Ok(kononexus_bridge::KnpPrivateControlMessage::Response(
+                                        response @ ControlResponse::PrivateAck { .. },
+                                    )) => {
+                                        let Some(authenticated_source) = knp_identities
+                                            .authenticated_peer_for_node(&message.peer_node_id)
+                                        else {
+                                            let _ = app.emit_event(
+                                                "network-warning",
+                                                format!(
+                                                    "Dropped KonoNexus private acknowledgement without authenticated identity binding from {}.",
+                                                    message.peer_node_id
+                                                ),
+                                            );
+                                            continue;
+                                        };
+                                        let correlation = match &response {
+                                            ControlResponse::PrivateAck { message_id, .. } => {
+                                                message_id.clone()
+                                            }
+                                            _ => unreachable!(),
+                                        };
+                                        pending_knp_control.retain(|_, pending| {
+                                            pending.correlation != correlation
+                                        });
+                                        let outcome = secure_client.handle_response(
+                                            &authenticated_source,
+                                            response,
+                                        );
+                                        match outcome {
+                                            SecureResponseOutcome::PrivateDelivered {
+                                                message,
+                                            } => {
+                                                if let Some(reply) =
+                                                    pending_private_messages
+                                                        .remove(&correlation)
+                                                {
+                                                    let _ = reply.send(Ok(message));
+                                                }
+                                            }
+                                            SecureResponseOutcome::PrivateRejected {
+                                                reason,
+                                                ..
+                                            } => {
+                                                if let Some(reply) =
+                                                    pending_private_messages
+                                                        .remove(&correlation)
+                                                {
+                                                    let _ = reply.send(Err(reason));
+                                                }
+                                            }
+                                            SecureResponseOutcome::Ignored => {
+                                                secure_client
+                                                    .cancel_pending(&correlation);
+                                                if let Some(reply) =
+                                                    pending_private_messages
+                                                        .remove(&correlation)
+                                                {
+                                                    let _ = reply.send(Err(
+                                                        "KonoNexus private acknowledgement failed identity binding.".into(),
+                                                    ));
+                                                }
+                                            }
+                                            _ => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    "Dropped mismatched KonoNexus secure-control response.",
+                                                );
+                                            }
+                                        }
+                                        let _ = app.emit_event(
+                                            "kononexus-status",
+                                            serde_json::json!({
+                                                "phase": "secure_control_response_received",
+                                                "kind": "private_ack",
+                                                "knp_node_id": message.peer_node_id,
+                                                "message_id": message.message_id,
+                                                "correlation_id": correlation,
+                                                "internet_pass": false,
+                                            }),
+                                        );
+                                    }
+                                    Ok(_) => {
+                                        let _ = app.emit_event(
+                                            "network-log",
+                                            "KonoNexus secure-control payload is valid but not migrated in this runtime slice yet.",
+                                        );
+                                    }
+                                    Err(control_error) => {
+                                        let _ = app.emit_event(
+                                            "network-warning",
+                                            format!(
+                                                "Dropped invalid KonoNexus envelope from {}: application={application_error}; secure-control={control_error}",
+                                                message.peer_node_id
+                                            ),
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
                     kononexus::RelayAppEvent::Delivered(receipt) => {
+                        if let Some(pending) = pending_knp_control.get(&(
+                            receipt.peer_node_id.clone(),
+                            receipt.message_id,
+                        )) {
+                            let _ = app.emit_event(
+                                "kononexus-status",
+                                serde_json::json!({
+                                    "phase": "secure_control_delivered",
+                                    "kind": pending.kind,
+                                    "knp_node_id": receipt.peer_node_id,
+                                    "message_id": receipt.message_id,
+                                    "correlation_id": pending.correlation,
+                                    "internet_pass": false,
+                                }),
+                            );
+                            continue;
+                        }
                         let was_presence = pending_knp_presence
                             .get(&receipt.peer_node_id)
                             .is_some_and(|message_id| *message_id == receipt.message_id);
@@ -3735,6 +4064,34 @@ async fn network_task(
                         );
                     }
                     kononexus::RelayAppEvent::Failed(failure) => {
+                        if let Some(pending) = pending_knp_control.remove(&(
+                            failure.peer_node_id.clone(),
+                            failure.message_id,
+                        )) {
+                            secure_client.cancel_pending(&pending.correlation);
+                            let reason = format!(
+                                "KonoNexus private secure-control delivery failed: {:?}",
+                                failure.reason
+                            );
+                            if let Some(reply) =
+                                pending_private_messages.remove(&pending.correlation)
+                            {
+                                let _ = reply.send(Err(reason.clone()));
+                            }
+                            let _ = app.emit_event(
+                                "kononexus-status",
+                                serde_json::json!({
+                                    "phase": "secure_control_failed",
+                                    "kind": pending.kind,
+                                    "knp_node_id": failure.peer_node_id,
+                                    "message_id": failure.message_id,
+                                    "correlation_id": pending.correlation,
+                                    "reason": reason,
+                                    "internet_pass": false,
+                                }),
+                            );
+                            continue;
+                        }
                         let was_presence = pending_knp_presence
                             .get(&failure.peer_node_id)
                             .is_some_and(|message_id| *message_id == failure.message_id);

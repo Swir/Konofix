@@ -1,4 +1,4 @@
-use crate::kononexus_bridge::valid_knp_node_id;
+use crate::kononexus_bridge::{valid_knp_node_id, KnpIdentityBindings};
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -219,11 +219,32 @@ pub(crate) fn decode_file_message(data: &[u8]) -> Result<KnpFileEnvelope, String
     Ok(envelope)
 }
 
+pub(crate) fn decode_authenticated_file_message(
+    source_node_id: &str,
+    data: &[u8],
+    identities: &KnpIdentityBindings,
+) -> Result<KnpFileEnvelope, String> {
+    if !valid_knp_node_id(source_node_id) {
+        return Err("KonoNexus file source NodeID is invalid.".into());
+    }
+    let envelope = decode_file_message(data)?;
+    let sender = envelope
+        .sender_peer_id
+        .parse::<PeerId>()
+        .map_err(|_| "KonoNexus file envelope sender Peer ID is invalid.".to_string())?;
+    if !identities.is_authenticated_source(source_node_id, &sender) {
+        return Err(
+            "KonoNexus file source is not bound to the envelope libp2p Peer ID.".into(),
+        );
+    }
+    Ok(envelope)
+}
+
 #[derive(Debug)]
 pub(crate) struct KnpFileReplayGuard {
     capacity: usize,
-    seen: HashSet<String>,
-    order: VecDeque<String>,
+    seen: HashSet<(String, String)>,
+    order: VecDeque<(String, String)>,
 }
 
 impl Default for KnpFileReplayGuard {
@@ -241,19 +262,26 @@ impl KnpFileReplayGuard {
         }
     }
 
-    pub(crate) fn observe(&mut self, request_id: &str) -> bool {
-        if self.seen.contains(request_id) {
-            return false;
+    pub(crate) fn observe(
+        &mut self,
+        source_node_id: &str,
+        request_id: &str,
+    ) -> Result<bool, String> {
+        if !valid_knp_node_id(source_node_id) || !valid_uuid(request_id) {
+            return Err("KonoNexus file replay key is invalid.".into());
+        }
+        let key = (source_node_id.to_string(), request_id.to_string());
+        if self.seen.contains(&key) {
+            return Ok(false);
         }
         while self.order.len() >= self.capacity {
             if let Some(oldest) = self.order.pop_front() {
                 self.seen.remove(&oldest);
             }
         }
-        let owned = request_id.to_string();
-        self.seen.insert(owned.clone());
-        self.order.push_back(owned);
-        true
+        self.seen.insert(key.clone());
+        self.order.push_back(key);
+        Ok(true)
     }
 
     pub(crate) fn clear(&mut self) {
@@ -364,14 +392,32 @@ impl KnpFileDeliveryTracker {
         Some(delivery)
     }
 
-    pub(crate) fn resolve(&mut self, request_id: &str) -> Option<KnpFileDelivery> {
-        let mut delivery = self.by_request.remove(request_id)?;
+    pub(crate) fn resolve_response(
+        &mut self,
+        peer_node_id: &str,
+        request_id: &str,
+        transfer_id: &str,
+    ) -> Result<KnpFileDelivery, String> {
+        let pending = self
+            .by_request
+            .get(request_id)
+            .ok_or_else(|| "KonoNexus file response does not match a pending request.".to_string())?;
+        if pending.peer_node_id != peer_node_id || pending.transfer_id != transfer_id {
+            return Err(
+                "KonoNexus file response does not match the authenticated target/correlation."
+                    .into(),
+            );
+        }
+        let mut delivery = self
+            .by_request
+            .remove(request_id)
+            .ok_or_else(|| "KonoNexus file response disappeared while resolving.".to_string())?;
         self.by_transport.remove(&(
             delivery.peer_node_id.clone(),
             delivery.transport_message_id,
         ));
         delivery.state = KnpFileDeliveryState::Resolved;
-        Some(delivery)
+        Ok(delivery)
     }
 
     pub(crate) fn cancel_transfer(&mut self, transfer_id: &str) -> usize {
@@ -452,7 +498,7 @@ mod tests {
         assert_eq!(decoded.request_id, request_id);
         assert_eq!(decoded.transfer_id, transfer_id);
 
-        for bad_name in ["../secret.txt", "..\\secret.txt", "C:secret.txt", ".", ""] {
+        for bad_name in ["../secret.txt", "..\\secret.txt", "C:secret.txt", "/tmp/file", ".", ""] {
             assert!(encode_file_message(
                 &peer(),
                 &Uuid::new_v4().to_string(),
@@ -540,22 +586,75 @@ mod tests {
             },
         )
         .is_err());
+        assert!(encode_file_message(
+            &sender,
+            &Uuid::new_v4().to_string(),
+            &transfer_id,
+            KnpFileBody::Offer {
+                file_name: "private.txt".into(),
+                size: 1,
+                room_id: Some("world".into()),
+            },
+        )
+        .is_err());
     }
 
     #[test]
-    fn replay_guard_is_duplicate_safe_and_bounded() {
+    fn replay_guard_is_source_scoped_duplicate_safe_and_bounded() {
         let mut guard = KnpFileReplayGuard::new(2);
+        let source_a = node('a');
+        let source_b = node('b');
         let first = Uuid::new_v4().to_string();
         let second = Uuid::new_v4().to_string();
-        let third = Uuid::new_v4().to_string();
 
-        assert!(guard.observe(&first));
-        assert!(!guard.observe(&first));
-        assert!(guard.observe(&second));
-        assert!(guard.observe(&third));
-        assert!(guard.observe(&first));
+        assert!(guard.observe(&source_a, &first).unwrap());
+        assert!(!guard.observe(&source_a, &first).unwrap());
+        assert!(guard.observe(&source_b, &first).unwrap());
+        assert!(guard.observe(&source_a, &second).unwrap());
+        assert!(guard.observe(&source_a, &first).unwrap());
+        assert!(guard.observe("bad-node", &first).is_err());
         guard.clear();
-        assert!(guard.observe(&third));
+        assert!(guard.observe(&source_b, &first).unwrap());
+    }
+
+    #[test]
+    fn authenticated_decode_requires_exact_knponexus_to_peer_binding() {
+        let sender = peer();
+        let sender_peer = sender.parse::<PeerId>().unwrap();
+        let source = node('c');
+        let other_source = node('d');
+        let mut identities = KnpIdentityBindings::default();
+        identities
+            .observe_legacy_hint(&source, sender_peer)
+            .unwrap();
+        identities
+            .authenticate_source(&source, sender_peer)
+            .unwrap();
+
+        let bytes = encode_file_message(
+            &sender,
+            &Uuid::new_v4().to_string(),
+            &Uuid::new_v4().to_string(),
+            KnpFileBody::Offer {
+                file_name: "safe.bin".into(),
+                size: 9,
+                room_id: None,
+            },
+        )
+        .unwrap();
+
+        assert!(decode_authenticated_file_message(&source, &bytes, &identities).is_ok());
+        assert!(decode_authenticated_file_message(&other_source, &bytes, &identities).is_err());
+
+        let impostor = peer();
+        let forged = encode_file_message(
+            &impostor,
+            &Uuid::new_v4().to_string(),
+            &Uuid::new_v4().to_string(),
+            KnpFileBody::Cancel,
+        )
+        .unwrap();
+        assert!(decode_authenticated_file_message(&source, &forged, &identities).is_err());
     }
 
     #[test]
@@ -578,7 +677,12 @@ mod tests {
 
         let delivered = tracker.mark_transport_delivered(&node_a, 7).unwrap();
         assert_eq!(delivered.state, KnpFileDeliveryState::TransportDelivered);
-        let resolved = tracker.resolve(&request_a).unwrap();
+        assert!(tracker
+            .resolve_response(&node_b, &request_a, &transfer_a)
+            .is_err());
+        let resolved = tracker
+            .resolve_response(&node_a, &request_a, &transfer_a)
+            .unwrap();
         assert_eq!(resolved.state, KnpFileDeliveryState::Resolved);
 
         let failed = tracker.mark_transport_failed(&node_b, 8).unwrap();

@@ -155,7 +155,9 @@ fn validate_ack(id: &str, accepted: bool, reason: Option<&str>) -> Result<(), St
     Uuid::parse_str(id)
         .map_err(|_| "KonoNexus private-control acknowledgement ID is invalid.".to_string())?;
     if accepted && reason.is_some() {
-        return Err("Accepted KonoNexus private-control acknowledgement cannot carry a reason.".into());
+        return Err(
+            "Accepted KonoNexus private-control acknowledgement cannot carry a reason.".into(),
+        );
     }
     if reason.is_some_and(|value| value.len() > 128 || value.chars().any(char::is_control)) {
         return Err("KonoNexus private-control acknowledgement reason is invalid.".into());
@@ -312,25 +314,29 @@ pub(crate) fn decode_private_control_message(
         }
         KnpPayload::PrivateAck(ack) => {
             validate_ack(&ack.message_id, ack.accepted, ack.reason.as_deref())?;
-            Ok(KnpPrivateControlMessage::Response(ControlResponse::PrivateAck {
-                message_id: ack.message_id,
-                accepted: ack.accepted,
-                reason: ack.reason,
-            }))
+            Ok(KnpPrivateControlMessage::Response(
+                ControlResponse::PrivateAck {
+                    message_id: ack.message_id,
+                    accepted: ack.accepted,
+                    reason: ack.reason,
+                },
+            ))
         }
         KnpPayload::PrivateVoice(signal) => {
             validate_private_voice_shape(&signal)?;
-            Ok(KnpPrivateControlMessage::Request(ControlRequest::VoiceSignal(
-                signal,
-            )))
+            Ok(KnpPrivateControlMessage::Request(
+                ControlRequest::VoiceSignal(signal),
+            ))
         }
         KnpPayload::VoiceAck(ack) => {
             validate_ack(&ack.signal_id, ack.accepted, ack.reason.as_deref())?;
-            Ok(KnpPrivateControlMessage::Response(ControlResponse::VoiceAck {
-                signal_id: ack.signal_id,
-                accepted: ack.accepted,
-                reason: ack.reason,
-            }))
+            Ok(KnpPrivateControlMessage::Response(
+                ControlResponse::VoiceAck {
+                    signal_id: ack.signal_id,
+                    accepted: ack.accepted,
+                    reason: ack.reason,
+                },
+            ))
         }
         KnpPayload::Presence(_) | KnpPayload::WorldChat(_) => {
             Err("KonoNexus envelope is not private secure-control.".into())
@@ -655,9 +661,7 @@ mod tests {
             muted: None,
             timestamp: 1234,
         };
-        assert!(
-            encode_private_control_request(&ControlRequest::VoiceSignal(room_signal)).is_err()
-        );
+        assert!(encode_private_control_request(&ControlRequest::VoiceSignal(room_signal)).is_err());
 
         let message_id = Uuid::new_v4().to_string();
         let accepted = ControlResponse::PrivateAck {
@@ -676,12 +680,14 @@ mod tests {
         };
         assert_eq!(decoded_id, message_id);
 
-        assert!(encode_private_control_response(&ControlResponse::PrivateAck {
-            message_id,
-            accepted: false,
-            reason: Some("x".repeat(129)),
-        })
-        .is_err());
+        assert!(
+            encode_private_control_response(&ControlResponse::PrivateAck {
+                message_id,
+                accepted: false,
+                reason: Some("x".repeat(129)),
+            })
+            .is_err()
+        );
     }
 
     #[test]

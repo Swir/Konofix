@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 pub(crate) const KNP_APP_SCHEMA: u8 = 1;
 pub(crate) const MAX_KNP_APP_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_KNP_CONTROL_BYTES: usize = 32 * 1024;
 const MAX_KNP_IDENTITY_HINTS: usize = 256;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -205,12 +206,12 @@ fn validate_ack(id: &str, accepted: bool, reason: Option<&str>) -> Result<(), St
     Ok(())
 }
 
-fn decode_envelope(data: &[u8]) -> Result<KnpEnvelope, String> {
-    if data.is_empty() || data.len() > MAX_KNP_APP_BYTES {
-        return Err("KonoNexus application envelope size is invalid.".into());
+fn decode_envelope(data: &[u8], max_bytes: usize, scope: &str) -> Result<KnpEnvelope, String> {
+    if data.is_empty() || data.len() > max_bytes {
+        return Err(format!("KonoNexus {scope} envelope size is invalid."));
     }
     let envelope: KnpEnvelope = serde_json::from_slice(data)
-        .map_err(|error| format!("Invalid KonoNexus application envelope: {error}"))?;
+        .map_err(|error| format!("Invalid KonoNexus {scope} envelope: {error}"))?;
     if envelope.schema != KNP_APP_SCHEMA {
         return Err(format!(
             "Unsupported KonoNexus application envelope schema {}.",
@@ -220,14 +221,16 @@ fn decode_envelope(data: &[u8]) -> Result<KnpEnvelope, String> {
     Ok(envelope)
 }
 
-fn serialize(payload: KnpPayload) -> Result<Vec<u8>, String> {
+fn serialize(payload: KnpPayload, max_bytes: usize, scope: &str) -> Result<Vec<u8>, String> {
     let bytes = serde_json::to_vec(&KnpEnvelope {
         schema: KNP_APP_SCHEMA,
         payload,
     })
-    .map_err(|error| format!("Failed to serialize KonoNexus application envelope: {error}"))?;
-    if bytes.len() > MAX_KNP_APP_BYTES {
-        return Err("KonoNexus application envelope exceeds the 16 KiB Konofix limit.".into());
+    .map_err(|error| format!("Failed to serialize KonoNexus {scope} envelope: {error}"))?;
+    if bytes.len() > max_bytes {
+        return Err(format!(
+            "KonoNexus {scope} envelope exceeds the {max_bytes}-byte Konofix limit."
+        ));
     }
     Ok(bytes)
 }
@@ -241,12 +244,16 @@ pub(crate) fn encode_presence(
     peer_id
         .parse::<PeerId>()
         .map_err(|_| "KonoNexus presence contains an invalid libp2p Peer ID.".to_string())?;
-    serialize(KnpPayload::Presence(KnpPresence {
+    serialize(
+        KnpPayload::Presence(KnpPresence {
         peer_id: peer_id.to_string(),
         nick: nick.to_string(),
         nick_color: Some(nick_color.to_string()),
         session_age_ms: Some(session_age_ms),
-    }))
+        }),
+        MAX_KNP_APP_BYTES,
+        "application",
+    )
 }
 
 pub(crate) fn encode_world_chat(
@@ -266,7 +273,7 @@ pub(crate) fn encode_world_chat(
         timestamp,
     };
     validate_world_chat_shape(&chat)?;
-    serialize(KnpPayload::WorldChat(chat))
+    serialize(KnpPayload::WorldChat(chat), MAX_KNP_APP_BYTES, "application")
 }
 
 fn validate_world_chat_shape(chat: &KnpWorldChat) -> Result<(), String> {
@@ -295,11 +302,19 @@ pub(crate) fn encode_private_control_request(request: &ControlRequest) -> Result
     match request {
         ControlRequest::PrivateMessage(message) => {
             validate_private_message_shape(message)?;
-            serialize(KnpPayload::PrivateMessage(message.clone()))
+            serialize(
+                KnpPayload::PrivateMessage(message.clone()),
+                MAX_KNP_CONTROL_BYTES,
+                "secure-control",
+            )
         }
         ControlRequest::VoiceSignal(signal) => {
             validate_private_voice_shape(signal)?;
-            serialize(KnpPayload::PrivateVoice(signal.clone()))
+            serialize(
+                KnpPayload::PrivateVoice(signal.clone()),
+                MAX_KNP_CONTROL_BYTES,
+                "secure-control",
+            )
         }
         ControlRequest::RoomJoin { .. } => {
             Err("Room control is not part of the KonoNexus private-control slice.".into())
@@ -317,11 +332,15 @@ pub(crate) fn encode_private_control_response(
             reason,
         } => {
             validate_ack(message_id, *accepted, reason.as_deref())?;
-            serialize(KnpPayload::PrivateAck(KnpPrivateAck {
-                message_id: message_id.clone(),
-                accepted: *accepted,
-                reason: reason.clone(),
-            }))
+            serialize(
+                KnpPayload::PrivateAck(KnpPrivateAck {
+                    message_id: message_id.clone(),
+                    accepted: *accepted,
+                    reason: reason.clone(),
+                }),
+                MAX_KNP_CONTROL_BYTES,
+                "secure-control",
+            )
         }
         ControlResponse::VoiceAck {
             signal_id,
@@ -329,11 +348,15 @@ pub(crate) fn encode_private_control_response(
             reason,
         } => {
             validate_ack(signal_id, *accepted, reason.as_deref())?;
-            serialize(KnpPayload::VoiceAck(KnpVoiceAck {
-                signal_id: signal_id.clone(),
-                accepted: *accepted,
-                reason: reason.clone(),
-            }))
+            serialize(
+                KnpPayload::VoiceAck(KnpVoiceAck {
+                    signal_id: signal_id.clone(),
+                    accepted: *accepted,
+                    reason: reason.clone(),
+                }),
+                MAX_KNP_CONTROL_BYTES,
+                "secure-control",
+            )
         }
         ControlResponse::RoomJoin { .. } => {
             Err("Room control is not part of the KonoNexus private-control slice.".into())
@@ -356,7 +379,11 @@ pub(crate) fn encode_room_control_request(request: &ControlRequest) -> Result<Ve
         password: password.clone(),
     };
     validate_room_join_shape(&join)?;
-    serialize(KnpPayload::RoomJoin(join))
+    serialize(
+        KnpPayload::RoomJoin(join),
+        MAX_KNP_CONTROL_BYTES,
+        "secure-control",
+    )
 }
 
 pub(crate) fn encode_room_control_response(response: &ControlResponse) -> Result<Vec<u8>, String> {
@@ -371,15 +398,19 @@ pub(crate) fn encode_room_control_response(response: &ControlResponse) -> Result
         );
     };
     validate_ack(request_id, *granted, reason.as_deref())?;
-    serialize(KnpPayload::RoomAck(KnpRoomAck {
-        request_id: request_id.clone(),
-        granted: *granted,
-        reason: reason.clone(),
-    }))
+    serialize(
+        KnpPayload::RoomAck(KnpRoomAck {
+            request_id: request_id.clone(),
+            granted: *granted,
+            reason: reason.clone(),
+        }),
+        MAX_KNP_CONTROL_BYTES,
+        "secure-control",
+    )
 }
 
 pub(crate) fn decode_room_control_message(data: &[u8]) -> Result<KnpPrivateControlMessage, String> {
-    let envelope = decode_envelope(data)?;
+    let envelope = decode_envelope(data, MAX_KNP_CONTROL_BYTES, "secure-control")?;
     match envelope.payload {
         KnpPayload::RoomJoin(join) => {
             validate_room_join_shape(&join)?;
@@ -413,7 +444,7 @@ pub(crate) fn decode_room_control_message(data: &[u8]) -> Result<KnpPrivateContr
 pub(crate) fn decode_private_control_message(
     data: &[u8],
 ) -> Result<KnpPrivateControlMessage, String> {
-    let envelope = decode_envelope(data)?;
+    let envelope = decode_envelope(data, MAX_KNP_CONTROL_BYTES, "secure-control")?;
     match envelope.payload {
         KnpPayload::PrivateMessage(message) => {
             validate_private_message_shape(&message)?;
@@ -455,7 +486,7 @@ pub(crate) fn decode_private_control_message(
 }
 
 pub(crate) fn decode_application_message(data: &[u8]) -> Result<KnpApplicationMessage, String> {
-    let envelope = decode_envelope(data)?;
+    let envelope = decode_envelope(data, MAX_KNP_APP_BYTES, "application")?;
     match envelope.payload {
         KnpPayload::Presence(presence) => {
             presence.peer_id.parse::<PeerId>().map_err(|_| {
@@ -764,6 +795,38 @@ mod tests {
             panic!("wrong private voice payload");
         };
         assert_eq!(decoded, signal);
+    }
+
+    #[test]
+    fn private_voice_control_allows_sdp_larger_than_world_envelope() {
+        let local = peer();
+        let remote = peer();
+        let signal = VoiceSignal {
+            id: Uuid::new_v4().to_string(),
+            session_id: Uuid::new_v4().to_string(),
+            peer_id: local.to_string(),
+            target_peer_id: remote.to_string(),
+            nick: "Alice".into(),
+            nick_color: Some("#62E5FF".into()),
+            scope: VoiceScope::Private,
+            action: crate::secure_channels::VoiceSignalAction::Offer,
+            sdp: Some("s".repeat(20 * 1024)),
+            candidate: None,
+            room_intent: None,
+            muted: None,
+            timestamp: 1234,
+        };
+        let encoded =
+            encode_private_control_request(&ControlRequest::VoiceSignal(signal.clone())).unwrap();
+        assert!(encoded.len() > MAX_KNP_APP_BYTES);
+        assert!(encoded.len() <= MAX_KNP_CONTROL_BYTES);
+        let KnpPrivateControlMessage::Request(ControlRequest::VoiceSignal(decoded)) =
+            decode_private_control_message(&encoded).unwrap()
+        else {
+            panic!("wrong private voice payload");
+        };
+        assert_eq!(decoded, signal);
+        assert!(decode_application_message(&encoded).is_err());
     }
 
     #[test]

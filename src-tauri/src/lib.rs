@@ -2691,6 +2691,7 @@ async fn network_task(
     let mut pending_knp_world = HashMap::<(String, u64), String>::new();
     let mut pending_knp_control = HashMap::<(String, u64), PendingKnpControl>::new();
     let mut seen_world_messages = kononexus_bridge::BoundedMessageIds::new(4_096);
+    let mut seen_room_control_requests = kononexus_bridge::BoundedMessageIds::new(2_048);
 
     publish_presence(
         &mut swarm,
@@ -4257,13 +4258,92 @@ async fn network_task(
                                         );
                                     }
                                     Err(control_error) => {
-                                        let _ = app.emit_event(
-                                            "network-warning",
-                                            format!(
-                                                "Dropped invalid KonoNexus envelope from {}: application={application_error}; secure-control={control_error}",
-                                                message.peer_node_id
-                                            ),
-                                        );
+                                        match kononexus_bridge::decode_room_control_message(&message.data) {
+                                            Ok(kononexus_bridge::KnpPrivateControlMessage::Request(
+                                                request @ ControlRequest::RoomJoin { .. },
+                                            )) => {
+                                                let Some(authenticated_source) = knp_identities
+                                                    .authenticated_peer_for_node(&message.peer_node_id)
+                                                else {
+                                                    let _ = app.emit_event(
+                                                        "network-warning",
+                                                        format!(
+                                                            "Dropped KonoNexus room-control request without authenticated identity binding from {}.",
+                                                            message.peer_node_id
+                                                        ),
+                                                    );
+                                                    continue;
+                                                };
+                                                let request_id = match &request {
+                                                    ControlRequest::RoomJoin { request_id, .. } => request_id.clone(),
+                                                    _ => unreachable!(),
+                                                };
+                                                let response = if !seen_room_control_requests.observe(&request_id) {
+                                                    ControlResponse::RoomJoin {
+                                                        request_id,
+                                                        granted: false,
+                                                        reason: Some("replay_rejected".into()),
+                                                    }
+                                                } else {
+                                                    handle_inbound_control_request(
+                                                        &mut secure_runtime,
+                                                        request,
+                                                        &authenticated_source,
+                                                        &local_peer,
+                                                        None,
+                                                        now_ms(),
+                                                        Instant::now(),
+                                                    ).response
+                                                };
+                                                match kononexus_bridge::encode_room_control_response(&response) {
+                                                    Ok(payload) => {
+                                                        if let Some(runtime) = kononexus.as_ref() {
+                                                            match runtime.send(message.peer_node_id.clone(), payload).await {
+                                                                Ok(response_message_id) => {
+                                                                    let _ = app.emit_event(
+                                                                        "kononexus-status",
+                                                                        serde_json::json!({
+                                                                            "phase": "secure_control_response_queued",
+                                                                            "kind": "room_ack",
+                                                                            "knp_node_id": message.peer_node_id,
+                                                                            "message_id": response_message_id,
+                                                                            "internet_pass": false,
+                                                                        }),
+                                                                    );
+                                                                }
+                                                                Err(error) => {
+                                                                    let _ = app.emit_event(
+                                                                        "network-warning",
+                                                                        format!("KonoNexus room acknowledgement send failed: {error}"),
+                                                                    );
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(error) => {
+                                                        let _ = app.emit_event(
+                                                            "network-warning",
+                                                            format!("KonoNexus room acknowledgement encoding failed: {error}"),
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            Ok(_) => {
+                                                let _ = app.emit_event(
+                                                    "network-log",
+                                                    "KonoNexus room-control response is awaiting the outbound room-control slice.",
+                                                );
+                                            }
+                                            Err(room_control_error) => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    format!(
+                                                        "Dropped invalid KonoNexus envelope from {}: application={application_error}; private_control={control_error}; room_control={room_control_error}",
+                                                        message.peer_node_id
+                                                    ),
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                             }

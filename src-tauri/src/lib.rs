@@ -27,6 +27,7 @@ use uuid::Uuid;
 mod desktop_identity;
 mod incoming_file;
 mod kononexus_bridge;
+mod kononexus_file;
 mod kononexus_transport;
 #[cfg(test)]
 mod messaging_runtime_tests;

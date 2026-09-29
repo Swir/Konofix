@@ -2689,8 +2689,7 @@ async fn network_task(
     let mut knp_identities = kononexus_bridge::KnpIdentityBindings::default();
     let mut pending_knp_presence = HashMap::<String, u64>::new();
     let mut pending_knp_world = HashMap::<(String, u64), String>::new();
-    let mut pending_knp_control =
-        HashMap::<(String, u64), PendingKnpControl>::new();
+    let mut pending_knp_control = HashMap::<(String, u64), PendingKnpControl>::new();
     let mut seen_world_messages = kononexus_bridge::BoundedMessageIds::new(4_096);
 
     publish_presence(

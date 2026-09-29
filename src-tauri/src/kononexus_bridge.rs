@@ -1,6 +1,6 @@
 use crate::secure_channels::{
-    validate_private_message, validate_voice_signal, ControlRequest, ControlResponse,
-    PrivateDirectMessage, VoiceScope, VoiceSignal,
+    validate_private_message, validate_room_password, validate_voice_signal, ControlRequest,
+    ControlResponse, PrivateDirectMessage, SecretString, VoiceScope, VoiceSignal,
 };
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,8 @@ enum KnpPayload {
     PrivateAck(KnpPrivateAck),
     PrivateVoice(VoiceSignal),
     VoiceAck(KnpVoiceAck),
+    RoomJoin(KnpRoomJoin),
+    RoomAck(KnpRoomAck),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -66,6 +68,23 @@ pub(crate) struct KnpPrivateAck {
 pub(crate) struct KnpVoiceAck {
     pub signal_id: String,
     pub accepted: bool,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct KnpRoomJoin {
+    pub request_id: String,
+    pub room_id: String,
+    pub password: SecretString,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct KnpRoomAck {
+    pub request_id: String,
+    pub granted: bool,
     #[serde(default)]
     pub reason: Option<String>,
 }
@@ -149,6 +168,27 @@ fn validate_private_voice_shape(signal: &VoiceSignal) -> Result<(), String> {
         signal.timestamp,
     )
     .map_err(str::to_string)
+}
+
+fn valid_room_control_id(room_id: &str) -> bool {
+    !room_id.is_empty()
+        && room_id != "world"
+        && room_id.chars().count() <= 64
+        && room_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+}
+
+fn validate_room_join_shape(join: &KnpRoomJoin) -> Result<(), String> {
+    Uuid::parse_str(&join.request_id)
+        .map_err(|_| "KonoNexus room-control request ID is invalid.".to_string())?;
+    if !valid_room_control_id(&join.room_id) {
+        return Err("KonoNexus room-control room ID is invalid.".into());
+    }
+    if validate_room_password(Some(join.password.expose()))?.is_none() {
+        return Err("KonoNexus protected-room request requires a password.".into());
+    }
+    Ok(())
 }
 
 fn validate_ack(id: &str, accepted: bool, reason: Option<&str>) -> Result<(), String> {
@@ -301,6 +341,75 @@ pub(crate) fn encode_private_control_response(
     }
 }
 
+pub(crate) fn encode_room_control_request(request: &ControlRequest) -> Result<Vec<u8>, String> {
+    let ControlRequest::RoomJoin {
+        request_id,
+        room_id,
+        password,
+    } = request
+    else {
+        return Err("Only protected-room join belongs to the KonoNexus room-control slice.".into());
+    };
+    let join = KnpRoomJoin {
+        request_id: request_id.clone(),
+        room_id: room_id.clone(),
+        password: password.clone(),
+    };
+    validate_room_join_shape(&join)?;
+    serialize(KnpPayload::RoomJoin(join))
+}
+
+pub(crate) fn encode_room_control_response(
+    response: &ControlResponse,
+) -> Result<Vec<u8>, String> {
+    let ControlResponse::RoomJoin {
+        request_id,
+        granted,
+        reason,
+    } = response
+    else {
+        return Err("Only protected-room acknowledgement belongs to KonoNexus room control.".into());
+    };
+    validate_ack(request_id, *granted, reason.as_deref())?;
+    serialize(KnpPayload::RoomAck(KnpRoomAck {
+        request_id: request_id.clone(),
+        granted: *granted,
+        reason: reason.clone(),
+    }))
+}
+
+pub(crate) fn decode_room_control_message(
+    data: &[u8],
+) -> Result<KnpPrivateControlMessage, String> {
+    let envelope = decode_envelope(data)?;
+    match envelope.payload {
+        KnpPayload::RoomJoin(join) => {
+            validate_room_join_shape(&join)?;
+            Ok(KnpPrivateControlMessage::Request(ControlRequest::RoomJoin {
+                request_id: join.request_id,
+                room_id: join.room_id,
+                password: join.password,
+            }))
+        }
+        KnpPayload::RoomAck(ack) => {
+            validate_ack(&ack.request_id, ack.granted, ack.reason.as_deref())?;
+            Ok(KnpPrivateControlMessage::Response(ControlResponse::RoomJoin {
+                request_id: ack.request_id,
+                granted: ack.granted,
+                reason: ack.reason,
+            }))
+        }
+        KnpPayload::Presence(_)
+        | KnpPayload::WorldChat(_)
+        | KnpPayload::PrivateMessage(_)
+        | KnpPayload::PrivateAck(_)
+        | KnpPayload::PrivateVoice(_)
+        | KnpPayload::VoiceAck(_) => {
+            Err("KonoNexus envelope is not room secure-control.".into())
+        }
+    }
+}
+
 pub(crate) fn decode_private_control_message(
     data: &[u8],
 ) -> Result<KnpPrivateControlMessage, String> {
@@ -338,7 +447,10 @@ pub(crate) fn decode_private_control_message(
                 },
             ))
         }
-        KnpPayload::Presence(_) | KnpPayload::WorldChat(_) => {
+        KnpPayload::Presence(_)
+        | KnpPayload::WorldChat(_)
+        | KnpPayload::RoomJoin(_)
+        | KnpPayload::RoomAck(_) => {
             Err("KonoNexus envelope is not private secure-control.".into())
         }
     }
@@ -360,8 +472,10 @@ pub(crate) fn decode_application_message(data: &[u8]) -> Result<KnpApplicationMe
         KnpPayload::PrivateMessage(_)
         | KnpPayload::PrivateAck(_)
         | KnpPayload::PrivateVoice(_)
-        | KnpPayload::VoiceAck(_) => {
-            Err("KonoNexus private secure-control requires the private-control decoder.".into())
+        | KnpPayload::VoiceAck(_)
+        | KnpPayload::RoomJoin(_)
+        | KnpPayload::RoomAck(_) => {
+            Err("KonoNexus secure-control requires a control decoder.".into())
         }
     }
 }
@@ -458,6 +572,20 @@ impl KnpIdentityBindings {
         targets.sort();
         targets.truncate(limit.min(MAX_KNP_IDENTITY_HINTS));
         targets
+    }
+
+    pub(crate) fn authenticated_node_for_peer(&self, peer_id: &PeerId) -> Option<&str> {
+        let knp_node_id = self.hints_by_peer.get(peer_id)?;
+        self.authenticated_knp
+            .contains(knp_node_id)
+            .then_some(knp_node_id.as_str())
+    }
+
+    pub(crate) fn authenticated_peer_for_node(&self, knp_node_id: &str) -> Option<PeerId> {
+        if !self.authenticated_knp.contains(knp_node_id) {
+            return None;
+        }
+        self.hints_by_knp.get(knp_node_id).cloned()
     }
 
     pub(crate) fn authenticated_count(&self) -> usize {
@@ -691,6 +819,72 @@ mod tests {
     }
 
     #[test]
+    fn protected_room_control_round_trips_and_redacts_password_debug() {
+        let request_id = Uuid::new_v4().to_string();
+        let request = ControlRequest::RoomJoin {
+            request_id: request_id.clone(),
+            room_id: "secret-room".into(),
+            password: SecretString::new("correct horse".into()),
+        };
+        let encoded = encode_room_control_request(&request).unwrap();
+        let decoded = decode_room_control_message(&encoded).unwrap();
+        let KnpPrivateControlMessage::Request(ControlRequest::RoomJoin {
+            request_id: decoded_id,
+            room_id,
+            password,
+        }) = decoded
+        else {
+            panic!("wrong room-control request");
+        };
+        assert_eq!(decoded_id, request_id);
+        assert_eq!(room_id, "secret-room");
+        assert_eq!(password.expose(), "correct horse");
+        assert!(!format!("{request:?}").contains("correct horse"));
+        assert!(decode_application_message(&encoded).is_err());
+        assert!(decode_private_control_message(&encoded).is_err());
+
+        let response = ControlResponse::RoomJoin {
+            request_id: request_id.clone(),
+            granted: true,
+            reason: None,
+        };
+        let encoded = encode_room_control_response(&response).unwrap();
+        let KnpPrivateControlMessage::Response(ControlResponse::RoomJoin {
+            request_id: decoded_id,
+            granted: true,
+            reason: None,
+        }) = decode_room_control_message(&encoded).unwrap()
+        else {
+            panic!("wrong room-control acknowledgement");
+        };
+        assert_eq!(decoded_id, request_id);
+    }
+
+    #[test]
+    fn room_control_rejects_world_invalid_password_and_unbounded_reason() {
+        let request_id = Uuid::new_v4().to_string();
+        for (room_id, password) in [
+            ("world", "correct horse"),
+            ("secret-room", "x"),
+            ("bad room", "correct horse"),
+        ] {
+            let request = ControlRequest::RoomJoin {
+                request_id: request_id.clone(),
+                room_id: room_id.into(),
+                password: SecretString::new(password.into()),
+            };
+            assert!(encode_room_control_request(&request).is_err());
+        }
+
+        assert!(encode_room_control_response(&ControlResponse::RoomJoin {
+            request_id,
+            granted: false,
+            reason: Some("x".repeat(129)),
+        })
+        .is_err());
+    }
+
+    #[test]
     fn knp_source_requires_matching_authenticated_legacy_hint() {
         let peer_a = peer();
         let peer_b = peer();
@@ -705,6 +899,14 @@ mod tests {
         assert!(bindings.authenticate_source(&node_a, peer_a).unwrap());
         assert!(bindings.is_authenticated_source(&node_a, &peer_a));
         assert_eq!(bindings.authenticated_targets(8), vec![node_a.clone()]);
+        assert_eq!(
+            bindings.authenticated_node_for_peer(&peer_a),
+            Some(node_a.as_str())
+        );
+        assert_eq!(
+            bindings.authenticated_peer_for_node(&node_a),
+            Some(peer_a)
+        );
         assert!(!bindings.authenticate_source(&node_a, peer_a).unwrap());
 
         assert!(bindings.observe_legacy_hint(&node_a, peer_b).is_err());

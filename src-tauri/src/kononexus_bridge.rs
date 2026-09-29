@@ -246,10 +246,10 @@ pub(crate) fn encode_presence(
         .map_err(|_| "KonoNexus presence contains an invalid libp2p Peer ID.".to_string())?;
     serialize(
         KnpPayload::Presence(KnpPresence {
-        peer_id: peer_id.to_string(),
-        nick: nick.to_string(),
-        nick_color: Some(nick_color.to_string()),
-        session_age_ms: Some(session_age_ms),
+            peer_id: peer_id.to_string(),
+            nick: nick.to_string(),
+            nick_color: Some(nick_color.to_string()),
+            session_age_ms: Some(session_age_ms),
         }),
         MAX_KNP_APP_BYTES,
         "application",
@@ -273,7 +273,11 @@ pub(crate) fn encode_world_chat(
         timestamp,
     };
     validate_world_chat_shape(&chat)?;
-    serialize(KnpPayload::WorldChat(chat), MAX_KNP_APP_BYTES, "application")
+    serialize(
+        KnpPayload::WorldChat(chat),
+        MAX_KNP_APP_BYTES,
+        "application",
+    )
 }
 
 fn validate_world_chat_shape(chat: &KnpWorldChat) -> Result<(), String> {

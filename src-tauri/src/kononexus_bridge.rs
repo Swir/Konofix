@@ -119,7 +119,11 @@ fn validate_world_chat_shape(chat: &KnpWorldChat) -> Result<(), String> {
     if !(3..=24).contains(&chat.nick.chars().count()) {
         return Err("KonoNexus WORLD chat nickname length is invalid.".into());
     }
-    if chat.nick_color.as_deref().is_some_and(|color| color.len() > 16) {
+    if chat
+        .nick_color
+        .as_deref()
+        .is_some_and(|color| color.len() > 16)
+    {
         return Err("KonoNexus WORLD chat nickname color is too long.".into());
     }
     Ok(())
@@ -341,12 +345,10 @@ mod tests {
     fn malformed_or_oversized_application_envelopes_fail_closed() {
         assert!(decode_application_message(&[]).is_err());
         assert!(decode_application_message(&vec![b'x'; MAX_KNP_APP_BYTES + 1]).is_err());
-        assert!(
-            decode_application_message(
-                br#"{"schema":1,"payload":{"kind":"presence","peer_id":"bad"}}"#
-            )
-            .is_err()
-        );
+        assert!(decode_application_message(
+            br#"{"schema":1,"payload":{"kind":"presence","peer_id":"bad"}}"#
+        )
+        .is_err());
 
         let peer = peer();
         let bad_chat = serde_json::json!({
@@ -368,17 +370,15 @@ mod tests {
         let peer = peer();
         let id = Uuid::new_v4().to_string();
         assert!(encode_world_chat(&id, &peer.to_string(), "Alice", "#62E5FF", "", 1).is_err());
-        assert!(
-            encode_world_chat(
-                &id,
-                &peer.to_string(),
-                "Alice",
-                "#62E5FF",
-                &"x".repeat(4001),
-                1
-            )
-            .is_err()
-        );
+        assert!(encode_world_chat(
+            &id,
+            &peer.to_string(),
+            "Alice",
+            "#62E5FF",
+            &"x".repeat(4001),
+            1
+        )
+        .is_err());
     }
 
     #[test]

@@ -2815,12 +2815,17 @@ async fn network_task(
                 for key in expired_knp_control {
                     if let Some(pending) = pending_knp_control.remove(&key) {
                         secure_client.cancel_pending(&pending.correlation);
+                        let timeout_reason =
+                            "KonoNexus private secure-control request timed out.".to_string();
                         if let Some(reply) =
                             pending_private_messages.remove(&pending.correlation)
                         {
-                            let _ = reply.send(Err(
-                                "KonoNexus private secure-control request timed out.".into(),
-                            ));
+                            let _ = reply.send(Err(timeout_reason.clone()));
+                        }
+                        if let Some(reply) =
+                            pending_voice_signals.remove(&pending.correlation)
+                        {
+                            let _ = reply.send(Err(timeout_reason));
                         }
                         let _ = app.emit_event(
                             "kononexus-status",
@@ -3125,7 +3130,8 @@ async fn network_task(
                         }
                     }
                     NetworkCommand::SendPrivateMessage { peer_id: target_raw, text, reply } => {
-                        let result = (|| -> Result<(PeerId, ControlRequest, String), String> {
+                        let result =
+                            (|| -> Result<(PeerId, ControlRequest, String, bool), String> {
                             let target: PeerId = target_raw
                                 .parse()
                                 .map_err(|_| "Invalid private-chat Peer ID.")?;
@@ -3261,6 +3267,7 @@ async fn network_task(
                             if !peers.contains_key(&target) {
                                 return Err("Voice peer is not currently authenticated online.".into());
                             }
+                            let prefer_knp = matches!(&scope, VoiceScope::Private);
                             if let VoiceScope::Room { room_id } = &scope {
                                 if room_id != "world" && !rooms.contains_key(room_id) {
                                     return Err("Voice room is not known in this session.".into());
@@ -3288,16 +3295,91 @@ async fn network_task(
                             let correlation = secure_client
                                 .track_voice_signal(&request, target)
                                 .map_err(str::to_string)?;
-                            Ok((target, request, correlation))
+                            Ok((target, request, correlation, prefer_knp))
                         })();
                         match result {
-                            Ok((target, request, correlation)) => {
-                                let outbound = swarm
-                                    .behaviour_mut()
-                                    .secure_control
-                                    .send_request(&target, request);
-                                secure_outbound_requests.insert(outbound, correlation.clone());
-                                pending_voice_signals.insert(correlation, reply);
+                            Ok((target, request, correlation, prefer_knp)) => {
+                                let knp_target = knp_identities
+                                    .authenticated_node_for_peer(&target)
+                                    .map(str::to_owned);
+                                let knp_queued = if prefer_knp
+                                    && pending_knp_control.len() < MAX_PENDING_KNP_CONTROL
+                                {
+                                    if let (Some(runtime), Some(knp_node_id)) =
+                                        (kononexus.as_ref(), knp_target)
+                                    {
+                                        match kononexus_bridge::encode_private_control_request(
+                                            &request,
+                                        ) {
+                                            Ok(payload) => {
+                                                match runtime
+                                                    .send(knp_node_id.clone(), payload)
+                                                    .await
+                                                {
+                                                    Ok(message_id) => {
+                                                        Some((knp_node_id, message_id))
+                                                    }
+                                                    Err(error) => {
+                                                        let _ = app.emit_event(
+                                                            "network-log",
+                                                            format!(
+                                                                "KonoNexus private voice send fell back to legacy secure-control: {error}"
+                                                            ),
+                                                        );
+                                                        None
+                                                    }
+                                                }
+                                            }
+                                            Err(error) => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    format!(
+                                                        "KonoNexus private voice envelope rejected locally; using legacy secure-control: {error}"
+                                                    ),
+                                                );
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+
+                                match knp_queued {
+                                    Some((knp_node_id, message_id)) => {
+                                        pending_knp_control.insert(
+                                            (knp_node_id.clone(), message_id),
+                                            PendingKnpControl {
+                                                correlation: correlation.clone(),
+                                                kind: "private_voice",
+                                                created_at: Instant::now(),
+                                            },
+                                        );
+                                        pending_voice_signals.insert(correlation.clone(), reply);
+                                        let _ = app.emit_event(
+                                            "kononexus-status",
+                                            serde_json::json!({
+                                                "phase": "secure_control_queued",
+                                                "kind": "private_voice",
+                                                "knp_node_id": knp_node_id,
+                                                "message_id": message_id,
+                                                "correlation_id": correlation,
+                                                "internet_pass": false,
+                                            }),
+                                        );
+                                    }
+                                    None => {
+                                        let outbound = swarm
+                                            .behaviour_mut()
+                                            .secure_control
+                                            .send_request(&target, request);
+                                        secure_outbound_requests
+                                            .insert(outbound, correlation.clone());
+                                        pending_voice_signals.insert(correlation, reply);
+                                    }
+                                }
                             }
                             Err(error) => {
                                 let _ = reply.send(Err(error));
@@ -3916,6 +3998,102 @@ async fn network_task(
                                             }
                                         }
                                     }
+                                    Ok(kononexus_bridge::KnpPrivateControlMessage::Request(
+                                        ControlRequest::VoiceSignal(signal),
+                                    )) => {
+                                        let Some(authenticated_source) = knp_identities
+                                            .authenticated_peer_for_node(&message.peer_node_id)
+                                        else {
+                                            let _ = app.emit_event(
+                                                "network-warning",
+                                                format!(
+                                                    "Dropped KonoNexus private voice signal without authenticated identity binding from {}.",
+                                                    message.peer_node_id
+                                                ),
+                                            );
+                                            continue;
+                                        };
+
+                                        let response = if !private_calls_enabled {
+                                            ControlResponse::VoiceAck {
+                                                signal_id: signal.id.clone(),
+                                                accepted: false,
+                                                reason: Some(
+                                                    "voice_private_disabled".into(),
+                                                ),
+                                            }
+                                        } else {
+                                            let expected_presence = peers
+                                                .get(&authenticated_source)
+                                                .map(|presence| PresenceIdentity {
+                                                    nick: presence.nick.clone(),
+                                                    nick_color: Some(
+                                                        presence.nick_color.clone(),
+                                                    ),
+                                                });
+                                            let outcome = handle_inbound_control_request(
+                                                &mut secure_runtime,
+                                                ControlRequest::VoiceSignal(signal),
+                                                &authenticated_source,
+                                                &local_peer,
+                                                expected_presence.as_ref(),
+                                                now_ms(),
+                                                Instant::now(),
+                                            );
+                                            if let Some(signal) = outcome.voice_signal {
+                                                let _ = app.emit_event(
+                                                    "voice-signal",
+                                                    signal,
+                                                );
+                                            }
+                                            outcome.response
+                                        };
+
+                                        match kononexus_bridge::encode_private_control_response(
+                                            &response,
+                                        ) {
+                                            Ok(payload) => {
+                                                if let Some(runtime) = kononexus.as_ref() {
+                                                    match runtime
+                                                        .send(
+                                                            message.peer_node_id.clone(),
+                                                            payload,
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(response_message_id) => {
+                                                            let _ = app.emit_event(
+                                                                "kononexus-status",
+                                                                serde_json::json!({
+                                                                    "phase": "secure_control_response_queued",
+                                                                    "kind": "voice_ack",
+                                                                    "knp_node_id": message.peer_node_id,
+                                                                    "message_id": response_message_id,
+                                                                    "internet_pass": false,
+                                                                }),
+                                                            );
+                                                        }
+                                                        Err(error) => {
+                                                            let _ = app.emit_event(
+                                                                "network-warning",
+                                                                format!(
+                                                                    "KonoNexus private voice acknowledgement send failed: {error}"
+                                                                ),
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Err(error) => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    format!(
+                                                        "KonoNexus private voice acknowledgement encoding failed: {error}"
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    }
                                     Ok(kononexus_bridge::KnpPrivateControlMessage::Response(
                                         response @ ControlResponse::PrivateAck { .. },
                                     )) => {
@@ -3990,6 +4168,81 @@ async fn network_task(
                                             serde_json::json!({
                                                 "phase": "secure_control_response_received",
                                                 "kind": "private_ack",
+                                                "knp_node_id": message.peer_node_id,
+                                                "message_id": message.message_id,
+                                                "correlation_id": correlation,
+                                                "internet_pass": false,
+                                            }),
+                                        );
+                                    }
+                                    Ok(kononexus_bridge::KnpPrivateControlMessage::Response(
+                                        response @ ControlResponse::VoiceAck { .. },
+                                    )) => {
+                                        let Some(authenticated_source) = knp_identities
+                                            .authenticated_peer_for_node(&message.peer_node_id)
+                                        else {
+                                            let _ = app.emit_event(
+                                                "network-warning",
+                                                format!(
+                                                    "Dropped KonoNexus private voice acknowledgement without authenticated identity binding from {}.",
+                                                    message.peer_node_id
+                                                ),
+                                            );
+                                            continue;
+                                        };
+                                        let correlation = match &response {
+                                            ControlResponse::VoiceAck { signal_id, .. } => {
+                                                signal_id.clone()
+                                            }
+                                            _ => unreachable!(),
+                                        };
+                                        pending_knp_control.retain(|_, pending| {
+                                            pending.correlation != correlation
+                                        });
+                                        let outcome = secure_client.handle_response(
+                                            &authenticated_source,
+                                            response,
+                                        );
+                                        match outcome {
+                                            SecureResponseOutcome::VoiceAccepted { signal } => {
+                                                if let Some(reply) =
+                                                    pending_voice_signals.remove(&correlation)
+                                                {
+                                                    let _ = reply.send(Ok(signal));
+                                                }
+                                            }
+                                            SecureResponseOutcome::VoiceRejected {
+                                                reason,
+                                                ..
+                                            } => {
+                                                if let Some(reply) =
+                                                    pending_voice_signals.remove(&correlation)
+                                                {
+                                                    let _ = reply.send(Err(reason));
+                                                }
+                                            }
+                                            SecureResponseOutcome::Ignored => {
+                                                secure_client.cancel_pending(&correlation);
+                                                if let Some(reply) =
+                                                    pending_voice_signals.remove(&correlation)
+                                                {
+                                                    let _ = reply.send(Err(
+                                                        "KonoNexus private voice acknowledgement failed identity binding.".into(),
+                                                    ));
+                                                }
+                                            }
+                                            _ => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    "Dropped mismatched KonoNexus voice secure-control response.",
+                                                );
+                                            }
+                                        }
+                                        let _ = app.emit_event(
+                                            "kononexus-status",
+                                            serde_json::json!({
+                                                "phase": "secure_control_response_received",
+                                                "kind": "voice_ack",
                                                 "knp_node_id": message.peer_node_id,
                                                 "message_id": message.message_id,
                                                 "correlation_id": correlation,
@@ -4074,6 +4327,11 @@ async fn network_task(
                             );
                             if let Some(reply) =
                                 pending_private_messages.remove(&pending.correlation)
+                            {
+                                let _ = reply.send(Err(reason.clone()));
+                            }
+                            if let Some(reply) =
+                                pending_voice_signals.remove(&pending.correlation)
                             {
                                 let _ = reply.send(Err(reason.clone()));
                             }

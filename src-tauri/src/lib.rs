@@ -3130,8 +3130,7 @@ async fn network_task(
                         }
                     }
                     NetworkCommand::SendPrivateMessage { peer_id: target_raw, text, reply } => {
-                        let result =
-                            (|| -> Result<(PeerId, ControlRequest, String, bool), String> {
+                        let result = (|| -> Result<(PeerId, ControlRequest, String), String> {
                             let target: PeerId = target_raw
                                 .parse()
                                 .map_err(|_| "Invalid private-chat Peer ID.")?;
@@ -3260,7 +3259,8 @@ async fn network_task(
                         muted,
                         reply,
                     } => {
-                        let result = (|| -> Result<(PeerId, ControlRequest, String), String> {
+                        let result =
+                            (|| -> Result<(PeerId, ControlRequest, String, bool), String> {
                             let target: PeerId = target_raw
                                 .parse()
                                 .map_err(|_| "Invalid voice Peer ID.")?;

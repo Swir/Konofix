@@ -6644,13 +6644,10 @@ mod knp_file_runtime_tests {
         assert!(!fresh);
 
         let other_source = test_node('b');
-        assert!(admit_authenticated_knp_file(
-            &other_source,
-            &payload,
-            &identities,
-            &mut replay
-        )
-        .is_err());
+        assert!(
+            admit_authenticated_knp_file(&other_source, &payload, &identities, &mut replay)
+                .is_err()
+        );
     }
 }
 

@@ -678,8 +678,12 @@ mod tests {
         assert_eq!(failed.state, KnpFileDeliveryState::Failed);
         assert_eq!(tracker.pending(), 0);
 
-        tracker.queue(&Uuid::new_v4().to_string(), &transfer_a, &node_a, 10).unwrap();
-        tracker.queue(&Uuid::new_v4().to_string(), &transfer_b, &node_b, 11).unwrap();
+        tracker
+            .queue(&Uuid::new_v4().to_string(), &transfer_a, &node_a, 10)
+            .unwrap();
+        tracker
+            .queue(&Uuid::new_v4().to_string(), &transfer_b, &node_b, 11)
+            .unwrap();
         let cancelled = tracker.shutdown();
         assert_eq!(cancelled.len(), 2);
         assert_eq!(tracker.pending(), 0);
@@ -691,8 +695,12 @@ mod tests {
         let transfer_a = Uuid::new_v4().to_string();
         let transfer_b = Uuid::new_v4().to_string();
         let node = node('c');
-        tracker.queue(&Uuid::new_v4().to_string(), &transfer_a, &node, 1).unwrap();
-        tracker.queue(&Uuid::new_v4().to_string(), &transfer_b, &node, 2).unwrap();
+        tracker
+            .queue(&Uuid::new_v4().to_string(), &transfer_a, &node, 1)
+            .unwrap();
+        tracker
+            .queue(&Uuid::new_v4().to_string(), &transfer_b, &node, 2)
+            .unwrap();
 
         assert_eq!(tracker.cancel_transfer(&transfer_a), 1);
         assert_eq!(tracker.pending(), 1);

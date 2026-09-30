@@ -100,15 +100,8 @@ fn validate_room_id(room_id: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_bounded_text(
-    value: &str,
-    max_bytes: usize,
-    field: &'static str,
-) -> Result<(), String> {
-    if value.trim().is_empty()
-        || value.len() > max_bytes
-        || value.chars().any(char::is_control)
-    {
+fn validate_bounded_text(value: &str, max_bytes: usize, field: &'static str) -> Result<(), String> {
+    if value.trim().is_empty() || value.len() > max_bytes || value.chars().any(char::is_control) {
         return Err(format!("KonoNexus file {field} is invalid."));
     }
     Ok(())
@@ -233,9 +226,7 @@ pub(crate) fn decode_authenticated_file_message(
         .parse::<PeerId>()
         .map_err(|_| "KonoNexus file envelope sender Peer ID is invalid.".to_string())?;
     if !identities.is_authenticated_source(source_node_id, &sender) {
-        return Err(
-            "KonoNexus file source is not bound to the envelope libp2p Peer ID.".into(),
-        );
+        return Err("KonoNexus file source is not bound to the envelope libp2p Peer ID.".into());
     }
     Ok(envelope)
 }
@@ -398,10 +389,9 @@ impl KnpFileDeliveryTracker {
         request_id: &str,
         transfer_id: &str,
     ) -> Result<KnpFileDelivery, String> {
-        let pending = self
-            .by_request
-            .get(request_id)
-            .ok_or_else(|| "KonoNexus file response does not match a pending request.".to_string())?;
+        let pending = self.by_request.get(request_id).ok_or_else(|| {
+            "KonoNexus file response does not match a pending request.".to_string()
+        })?;
         if pending.peer_node_id != peer_node_id || pending.transfer_id != transfer_id {
             return Err(
                 "KonoNexus file response does not match the authenticated target/correlation."
@@ -412,10 +402,8 @@ impl KnpFileDeliveryTracker {
             .by_request
             .remove(request_id)
             .ok_or_else(|| "KonoNexus file response disappeared while resolving.".to_string())?;
-        self.by_transport.remove(&(
-            delivery.peer_node_id.clone(),
-            delivery.transport_message_id,
-        ));
+        self.by_transport
+            .remove(&(delivery.peer_node_id.clone(), delivery.transport_message_id));
         delivery.state = KnpFileDeliveryState::Resolved;
         Ok(delivery)
     }
@@ -430,10 +418,8 @@ impl KnpFileDeliveryTracker {
         let count = request_ids.len();
         for request_id in request_ids {
             if let Some(mut delivery) = self.by_request.remove(&request_id) {
-                self.by_transport.remove(&(
-                    delivery.peer_node_id.clone(),
-                    delivery.transport_message_id,
-                ));
+                self.by_transport
+                    .remove(&(delivery.peer_node_id.clone(), delivery.transport_message_id));
                 delivery.state = KnpFileDeliveryState::Cancelled;
             }
         }
@@ -498,7 +484,14 @@ mod tests {
         assert_eq!(decoded.request_id, request_id);
         assert_eq!(decoded.transfer_id, transfer_id);
 
-        for bad_name in ["../secret.txt", "..\\secret.txt", "C:secret.txt", "/tmp/file", ".", ""] {
+        for bad_name in [
+            "../secret.txt",
+            "..\\secret.txt",
+            "C:secret.txt",
+            "/tmp/file",
+            ".",
+            "",
+        ] {
             assert!(encode_file_message(
                 &peer(),
                 &Uuid::new_v4().to_string(),
@@ -667,12 +660,8 @@ mod tests {
         let node_a = node('a');
         let node_b = node('b');
 
-        tracker
-            .queue(&request_a, &transfer_a, &node_a, 7)
-            .unwrap();
-        tracker
-            .queue(&request_b, &transfer_b, &node_b, 8)
-            .unwrap();
+        tracker.queue(&request_a, &transfer_a, &node_a, 7).unwrap();
+        tracker.queue(&request_b, &transfer_b, &node_b, 8).unwrap();
         assert!(tracker.queue(&request_a, &transfer_a, &node_a, 9).is_err());
 
         let delivered = tracker.mark_transport_delivered(&node_a, 7).unwrap();
@@ -689,22 +678,8 @@ mod tests {
         assert_eq!(failed.state, KnpFileDeliveryState::Failed);
         assert_eq!(tracker.pending(), 0);
 
-        tracker
-            .queue(
-                &Uuid::new_v4().to_string(),
-                &transfer_a,
-                &node_a,
-                10,
-            )
-            .unwrap();
-        tracker
-            .queue(
-                &Uuid::new_v4().to_string(),
-                &transfer_b,
-                &node_b,
-                11,
-            )
-            .unwrap();
+        tracker.queue(&Uuid::new_v4().to_string(), &transfer_a, &node_a, 10).unwrap();
+        tracker.queue(&Uuid::new_v4().to_string(), &transfer_b, &node_b, 11).unwrap();
         let cancelled = tracker.shutdown();
         assert_eq!(cancelled.len(), 2);
         assert_eq!(tracker.pending(), 0);
@@ -716,22 +691,8 @@ mod tests {
         let transfer_a = Uuid::new_v4().to_string();
         let transfer_b = Uuid::new_v4().to_string();
         let node = node('c');
-        tracker
-            .queue(
-                &Uuid::new_v4().to_string(),
-                &transfer_a,
-                &node,
-                1,
-            )
-            .unwrap();
-        tracker
-            .queue(
-                &Uuid::new_v4().to_string(),
-                &transfer_b,
-                &node,
-                2,
-            )
-            .unwrap();
+        tracker.queue(&Uuid::new_v4().to_string(), &transfer_a, &node, 1).unwrap();
+        tracker.queue(&Uuid::new_v4().to_string(), &transfer_b, &node, 2).unwrap();
 
         assert_eq!(tracker.cancel_transfer(&transfer_a), 1);
         assert_eq!(tracker.pending(), 1);

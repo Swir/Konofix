@@ -169,6 +169,32 @@ struct PendingKnpControl {
     created_at: Instant,
 }
 
+fn knp_file_kind(body: &kononexus_file::KnpFileBody) -> &'static str {
+    match body {
+        kononexus_file::KnpFileBody::Offer { .. } => "offer",
+        kononexus_file::KnpFileBody::Accept => "accept",
+        kononexus_file::KnpFileBody::Reject { .. } => "reject",
+        kononexus_file::KnpFileBody::Chunk { .. } => "chunk",
+        kononexus_file::KnpFileBody::Ack { .. } => "ack",
+        kononexus_file::KnpFileBody::Complete { .. } => "complete",
+        kononexus_file::KnpFileBody::Completed { .. } => "completed",
+        kononexus_file::KnpFileBody::Cancel => "cancel",
+        kononexus_file::KnpFileBody::Error { .. } => "error",
+    }
+}
+
+fn admit_authenticated_knp_file(
+    source_node_id: &str,
+    data: &[u8],
+    identities: &kononexus_bridge::KnpIdentityBindings,
+    replay: &mut kononexus_file::KnpFileReplayGuard,
+) -> Result<(kononexus_file::KnpFileEnvelope, bool), String> {
+    let envelope =
+        kononexus_file::decode_authenticated_file_message(source_node_id, data, identities)?;
+    let fresh = replay.observe(source_node_id, &envelope.request_id)?;
+    Ok((envelope, fresh))
+}
+
 #[derive(Default)]
 struct AppState {
     tx: Mutex<Option<mpsc::Sender<NetworkCommand>>>,
@@ -2693,6 +2719,7 @@ async fn network_task(
     let mut pending_knp_control = HashMap::<(String, u64), PendingKnpControl>::new();
     let mut seen_world_messages = kononexus_bridge::BoundedMessageIds::new(4_096);
     let mut seen_room_control_requests = kononexus_bridge::BoundedMessageIds::new(2_048);
+    let mut seen_file_control_requests = kononexus_file::KnpFileReplayGuard::new(2_048);
 
     publish_presence(
         &mut swarm,
@@ -4336,13 +4363,53 @@ async fn network_task(
                                                 );
                                             }
                                             Err(room_control_error) => {
-                                                let _ = app.emit_event(
-                                                    "network-warning",
-                                                    format!(
-                                                        "Dropped invalid KonoNexus envelope from {}: application={application_error}; private_control={control_error}; room_control={room_control_error}",
-                                                        message.peer_node_id
-                                                    ),
-                                                );
+                                                match admit_authenticated_knp_file(
+                                                    &message.peer_node_id,
+                                                    &message.data,
+                                                    &knp_identities,
+                                                    &mut seen_file_control_requests,
+                                                ) {
+                                                    Ok((file_envelope, true)) => {
+                                                        if file_envelope.sender_peer_id == peer_id {
+                                                            continue;
+                                                        }
+                                                        let _ = app.emit_event(
+                                                            "kononexus-status",
+                                                            serde_json::json!({
+                                                                "phase": "file_control_admitted",
+                                                                "kind": knp_file_kind(&file_envelope.body),
+                                                                "knp_node_id": message.peer_node_id,
+                                                                "message_id": message.message_id,
+                                                                "request_id": file_envelope.request_id,
+                                                                "transfer_id": file_envelope.transfer_id,
+                                                                "internet_pass": false,
+                                                            }),
+                                                        );
+                                                        let _ = app.emit_event(
+                                                            "network-log",
+                                                            "Authenticated KonoNexus FILE control admitted; legacy signed libp2p remains authoritative until FILE runtime delivery is fully qualified.",
+                                                        );
+                                                    }
+                                                    Ok((file_envelope, false)) => {
+                                                        let _ = app.emit_event(
+                                                            "network-warning",
+                                                            format!(
+                                                                "Dropped replayed KonoNexus FILE control request {} from {}.",
+                                                                file_envelope.request_id,
+                                                                message.peer_node_id
+                                                            ),
+                                                        );
+                                                    }
+                                                    Err(file_control_error) => {
+                                                        let _ = app.emit_event(
+                                                            "network-warning",
+                                                            format!(
+                                                                "Dropped invalid KonoNexus envelope from {}: application={application_error}; private_control={control_error}; room_control={room_control_error}; file_control={file_control_error}",
+                                                                message.peer_node_id
+                                                            ),
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -6530,6 +6597,60 @@ mod nickname_lease_hint_tests {
             now + ((NICK_LEASE_SECS + NICK_LEASE_CLOCK_SKEW_SECS + 1) as u64 * 1000),
         );
         assert!(!nick_lease_hint_is_well_formed(&too_far, &key, now));
+    }
+}
+
+#[cfg(test)]
+mod knp_file_runtime_tests {
+    use super::*;
+
+    fn test_peer() -> PeerId {
+        libp2p::identity::Keypair::generate_ed25519()
+            .public()
+            .to_peer_id()
+    }
+
+    fn test_node(hex: char) -> String {
+        format!("knp1{}", hex.to_string().repeat(40))
+    }
+
+    #[test]
+    fn file_runtime_admission_requires_authenticated_binding_and_rejects_replay() {
+        let peer = test_peer();
+        let source = test_node('a');
+        let mut identities = kononexus_bridge::KnpIdentityBindings::default();
+        identities.observe_legacy_hint(&source, peer).unwrap();
+        identities.authenticate_source(&source, peer).unwrap();
+
+        let request_id = Uuid::new_v4().to_string();
+        let transfer_id = Uuid::new_v4().to_string();
+        let payload = kononexus_file::encode_file_message(
+            &peer.to_string(),
+            &request_id,
+            &transfer_id,
+            kononexus_file::KnpFileBody::Cancel,
+        )
+        .unwrap();
+        let mut replay = kononexus_file::KnpFileReplayGuard::new(8);
+
+        let (first, fresh) =
+            admit_authenticated_knp_file(&source, &payload, &identities, &mut replay).unwrap();
+        assert!(fresh);
+        assert_eq!(first.request_id, request_id);
+        assert_eq!(knp_file_kind(&first.body), "cancel");
+
+        let (_, fresh) =
+            admit_authenticated_knp_file(&source, &payload, &identities, &mut replay).unwrap();
+        assert!(!fresh);
+
+        let other_source = test_node('b');
+        assert!(admit_authenticated_knp_file(
+            &other_source,
+            &payload,
+            &identities,
+            &mut replay
+        )
+        .is_err());
     }
 }
 

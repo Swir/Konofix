@@ -19,6 +19,7 @@ EXPECTED_FILES = (
     "docs/NODE.md",
     "docs/NODE_SOAK.md",
     "docs/NODE_LINUX.md",
+    "docs/PUBLIC_NODE_QUICKSTART.md",
 )
 EXPECTED_DIRS = {"scripts", "docs"}
 METADATA_NAME = "NODE_BUILD_INFO.json"
@@ -33,6 +34,7 @@ FILE_SIZE_LIMITS = {
     "docs/NODE.md": 4 * 1024 * 1024,
     "docs/NODE_SOAK.md": 4 * 1024 * 1024,
     "docs/NODE_LINUX.md": 4 * 1024 * 1024,
+    "docs/PUBLIC_NODE_QUICKSTART.md": 4 * 1024 * 1024,
 }
 MAX_UNCOMPRESSED_BYTES = sum(FILE_SIZE_LIMITS.values()) + MAX_METADATA_BYTES
 
@@ -316,6 +318,7 @@ def make_fixture(root: Path, commit: str, version: str) -> tuple[Path, Path, Pat
         "docs/NODE.md": b"node docs\n",
         "docs/NODE_SOAK.md": b"soak docs\n",
         "docs/NODE_LINUX.md": b"linux docs\n",
+        "docs/PUBLIC_NODE_QUICKSTART.md": b"quickstart docs\n",
     }
     for relative, data in payloads.items():
         path = stage / relative

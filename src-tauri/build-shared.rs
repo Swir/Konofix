@@ -20,6 +20,12 @@ fn git_stdout(args: &[&str]) -> Option<String> {
 }
 
 fn source_commit() -> String {
+    if let Ok(value) = env::var("KONOFIX_SOURCE_SHA") {
+        if let Some(commit) = canonical_commit(&value) {
+            return commit;
+        }
+    }
+
     if let Ok(value) = env::var("GITHUB_SHA") {
         if let Some(commit) = canonical_commit(&value) {
             return commit;
@@ -52,6 +58,7 @@ fn emit_git_rerun_paths() {
 }
 
 fn emit_build_provenance() {
+    println!("cargo:rerun-if-env-changed=KONOFIX_SOURCE_SHA");
     println!("cargo:rerun-if-env-changed=GITHUB_SHA");
     emit_git_rerun_paths();
     println!("cargo:rustc-env=KONOFIX_SOURCE_COMMIT={}", source_commit());

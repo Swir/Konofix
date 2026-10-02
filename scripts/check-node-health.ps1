@@ -1,5 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
+    [Alias('HealthPath')]
     [string]$Path,
 
     [int]$MaxAgeSeconds = 120,

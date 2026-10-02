@@ -178,6 +178,7 @@ impl TestPeer {
             },
             rx,
             ready_tx,
+            Some(libp2p::identity::Keypair::generate_ed25519()),
         ));
         let id = tokio::time::timeout(Duration::from_secs(15), ready_rx)
             .await

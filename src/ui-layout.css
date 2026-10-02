@@ -1,0 +1,113 @@
+/* 0.6 integration layout: keep actions reachable when optional UI is inserted. */
+body { min-width: 320px; }
+body .chat-shell {
+  grid-template-columns: minmax(156px, .72fr) minmax(280px, 2fr) minmax(224px, .9fr);
+  min-height: 0;
+  height: 100dvh;
+}
+body .sidebar, body .chat-main, body .users { min-width: 0; min-height: 0; }
+body .users { display: block; overflow-y: auto; scrollbar-width: thin; }
+body #peerList .user, body .users .user.self {
+  display: grid;
+  grid-template-columns: 32px repeat(3, minmax(0, 1fr));
+  gap: 6px 8px;
+  align-items: center;
+  padding: 10px 6px;
+}
+body .users .user > .avatar { grid-column: 1; grid-row: 1; }
+body .users .user > div:nth-child(2) {
+  grid-column: 2 / -1;
+  grid-row: 1;
+  display: grid;
+  min-width: 0;
+}
+body .users .user strong, body .users .user > div:nth-child(2) > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body #peerList .user > button {
+  grid-row: 2;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  height: 36px;
+  margin: 0;
+  opacity: 1;
+  border: 1px solid rgba(98, 229, 255, .24);
+  border-radius: 9px;
+}
+body #peerList .user > [data-private-audio-peer] { grid-column: 2; }
+body #peerList .user > [data-private-peer] { grid-column: 3; }
+body #peerList .user > [data-send-peer] { grid-column: 4; }
+body .chat-header {
+  height: auto;
+  min-height: 72px;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+}
+body .chat-header > div:first-child { flex: 1 1 120px; min-width: 0; }
+body .chat-header h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body .chat-header .header-actions {
+  flex: 1 1 280px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+body .header-actions button { min-height: 36px; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+body .header-actions .live { flex-shrink: 0; }
+body .composer { min-width: 0; }
+body .composer input { min-width: 0; }
+body .composer > button, body .sidebar-bottom > button { flex-shrink: 0; }
+body .me-info strong { white-space: nowrap; }
+body .private-chat-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px 40px;
+  gap: 8px;
+  align-items: start;
+}
+body .private-chat-head > div { grid-column: 1; min-width: 0; }
+body .private-chat-head > button { min-width: 40px; width: 40px; height: 40px; margin: 0; grid-row: 1; }
+body .private-chat-head > [data-private-audio-chat-call] { grid-column: 2; }
+body .private-chat-head > [data-private-close] { grid-column: 3; }
+body .private-chat-head h3 { overflow-wrap: anywhere; max-height: 3em; overflow: auto; line-height: 1.5; }
+body .private-peer-status { max-width: 100%; overflow-wrap: anywhere; }
+body .private-audio-heading, body .room-audio-head > div { min-width: 0; }
+body .private-audio-heading { flex: 1; }
+body .room-audio-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+body .room-audio-count { white-space: nowrap; }
+body .private-audio-controls, body .room-audio-controls {
+  display: grid;
+  grid-template-columns: 44px 44px minmax(0, 1fr);
+  gap: 8px;
+}
+body .private-audio-controls button, body .room-audio-controls button { min-width: 0; min-height: 44px; overflow-wrap: anywhere; }
+body .private-audio-device select, body .room-audio-device select { min-width: 0; max-width: 100%; }
+body .private-audio-panel, body .room-audio-panel { max-height: calc(100dvh - 32px); overflow-y: auto; }
+body .private-audio-incoming h3, body .private-audio-error, body .room-audio-error { overflow-wrap: anywhere; }
+body .test-updater-card { flex-wrap: wrap; }
+body .test-updater-copy { flex: 1 1 170px; }
+body .test-updater-card button { min-height: 40px; max-width: 100%; white-space: normal; }
+body .login-shell { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); padding: clamp(20px, 4vw, 60px); gap: 32px; }
+body .login-card { min-width: 0; }
+@media (max-width: 900px) {
+  body .chat-shell { grid-template-columns: 168px minmax(0, 1fr); grid-template-rows: minmax(280px, 1fr) minmax(120px, .35fr); }
+  body .chat-shell > .users { grid-column: 1 / -1; grid-row: 2; }
+  body #peerList { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
+  body .login-shell { grid-template-columns: minmax(0, 1fr); max-width: 600px; gap: 20px; overflow-y: auto; height: 100dvh; }
+  body .login-card { padding: 24px; }
+}
+@media (max-width: 580px) {
+  body { overflow: auto; }
+  body .chat-shell { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(420px, 70dvh) auto; }
+  body .chat-shell > .users { grid-column: 1; grid-row: 3; }
+  body .chat-header .header-actions { justify-content: flex-start; }
+  body .private-chat-head { padding: 12px; }
+}

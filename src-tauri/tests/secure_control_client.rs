@@ -4,7 +4,10 @@ mod secure_channels;
 mod secure_control_client;
 
 use libp2p::PeerId;
-use secure_channels::{ControlRequest, ControlResponse, PrivateDirectMessage, SecretString};
+use secure_channels::{
+    ControlRequest, ControlResponse, PrivateDirectMessage, SecretString, VoiceScope, VoiceSignal,
+    VoiceSignalAction,
+};
 use secure_control_client::{ObservedRoomSecurity, SecureControlClient, SecureResponseOutcome};
 use secure_control_transport_helpers::{private_request, room_request};
 use uuid::Uuid;
@@ -213,4 +216,53 @@ fn response_reasons_are_bounded_before_reaching_ui() {
         }
     );
     assert!(client.room_requires_authorization("friends", &local));
+}
+
+#[test]
+fn voice_ack_is_bound_to_expected_peer_and_signal_id() {
+    let sender = PeerId::random();
+    let target = PeerId::random();
+    let attacker = PeerId::random();
+    let signal = VoiceSignal {
+        id: Uuid::new_v4().to_string(),
+        session_id: Uuid::new_v4().to_string(),
+        peer_id: sender.to_string(),
+        target_peer_id: target.to_string(),
+        nick: "Alice".into(),
+        nick_color: Some("#62E5FF".into()),
+        scope: VoiceScope::Private,
+        action: VoiceSignalAction::Invite,
+        sdp: None,
+        candidate: None,
+        room_intent: None,
+        muted: None,
+        timestamp: 1_000,
+    };
+    let request = ControlRequest::VoiceSignal(signal.clone());
+    let mut client = SecureControlClient::default();
+    client.track_voice_signal(&request, target).unwrap();
+
+    assert_eq!(
+        client.handle_response(
+            &attacker,
+            ControlResponse::VoiceAck {
+                signal_id: signal.id.clone(),
+                accepted: true,
+                reason: None,
+            },
+        ),
+        SecureResponseOutcome::Ignored
+    );
+
+    assert_eq!(
+        client.handle_response(
+            &target,
+            ControlResponse::VoiceAck {
+                signal_id: signal.id.clone(),
+                accepted: true,
+                reason: None,
+            },
+        ),
+        SecureResponseOutcome::VoiceAccepted { signal }
+    );
 }

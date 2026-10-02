@@ -24,7 +24,11 @@ use tokio::{
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
+mod desktop_identity;
 mod incoming_file;
+mod kononexus_bridge;
+mod kononexus_file;
+mod kononexus_transport;
 #[cfg(test)]
 mod messaging_runtime_tests;
 mod room_membership;
@@ -40,18 +44,22 @@ mod secure_channels;
 mod secure_control_client;
 mod secure_control_runtime;
 mod secure_control_transport;
+mod test_updater;
 
 use incoming_file::{commit_reserved_file, reserve_incoming_file};
 use room_membership_application::{ApplicationMembershipEffects, MembershipSnapshotPayload};
 use room_membership_production::RoomMembershipProductionBridge;
 use secure_channels::{
     validate_room_password, ControlRequest, ControlResponse, PrivateDirectMessage, SecretString,
+    VoiceRoomIntent, VoiceScope, VoiceSignal, VoiceSignalAction,
 };
 use secure_control_client::{ObservedRoomSecurity, SecureControlClient, SecureResponseOutcome};
 use secure_control_runtime::{PresenceIdentity, SecureControlRuntime};
 use secure_control_transport::{
     control_behaviour, handle_inbound_control_request, private_message_request, room_join_request,
+    voice_signal_request, CONTROL_REQUEST_TIMEOUT_SECS,
 };
+use test_updater::{check_test_update, install_test_update};
 
 const WORLD_TOPIC: &str = "konofix/world/v3";
 const KAD_PROTOCOL: &str = "/konofix/kad/1.0.0";
@@ -90,6 +98,7 @@ const BOOTSTRAP_RETRY_BASE_SECS: u64 = 3;
 const BOOTSTRAP_RETRY_MAX_SECS: u64 = 60;
 const BOOTSTRAP_PENDING_RETRY_SECS: u64 = 20;
 const MAX_PARTICIPANT_RELAYS: usize = 3;
+const MAX_PENDING_KNP_CONTROL: usize = 1_024;
 const BUILTIN_BOOTSTRAP_POOL_JSON: &str = include_str!("../bootstrap-pool.json");
 
 #[derive(Debug, Deserialize)]
@@ -151,6 +160,39 @@ fn bootstrap_retry_delay(failures: u32) -> Duration {
         .saturating_mul(1u64 << shift)
         .min(BOOTSTRAP_RETRY_MAX_SECS);
     Duration::from_secs(seconds)
+}
+
+#[derive(Debug, Clone)]
+struct PendingKnpControl {
+    correlation: String,
+    kind: &'static str,
+    created_at: Instant,
+}
+
+fn knp_file_kind(body: &kononexus_file::KnpFileBody) -> &'static str {
+    match body {
+        kononexus_file::KnpFileBody::Offer { .. } => "offer",
+        kononexus_file::KnpFileBody::Accept => "accept",
+        kononexus_file::KnpFileBody::Reject { .. } => "reject",
+        kononexus_file::KnpFileBody::Chunk { .. } => "chunk",
+        kononexus_file::KnpFileBody::Ack { .. } => "ack",
+        kononexus_file::KnpFileBody::Complete { .. } => "complete",
+        kononexus_file::KnpFileBody::Completed { .. } => "completed",
+        kononexus_file::KnpFileBody::Cancel => "cancel",
+        kononexus_file::KnpFileBody::Error { .. } => "error",
+    }
+}
+
+fn admit_authenticated_knp_file(
+    source_node_id: &str,
+    data: &[u8],
+    identities: &kononexus_bridge::KnpIdentityBindings,
+    replay: &mut kononexus_file::KnpFileReplayGuard,
+) -> Result<(kononexus_file::KnpFileEnvelope, bool), String> {
+    let envelope =
+        kononexus_file::decode_authenticated_file_message(source_node_id, data, identities)?;
+    let fresh = replay.observe(source_node_id, &envelope.request_id)?;
+    Ok((envelope, fresh))
 }
 
 #[derive(Default)]
@@ -254,6 +296,8 @@ struct NetworkStatus {
     connected_peers: usize,
     dht_peers: usize,
     bootstrap_count: usize,
+    bootstrap_active: usize,
+    internet_discovery: String,
     nat: String,
     listen_addresses: Vec<String>,
     detail: String,
@@ -395,6 +439,10 @@ enum WireEvent {
         #[serde(default)]
         session_age_ms: Option<u64>,
     },
+    KonoNexusHint {
+        peer_id: String,
+        knp_node_id: String,
+    },
     Goodbye {
         peer_id: String,
     },
@@ -419,6 +467,7 @@ enum WireEvent {
 fn wire_event_claimed_peer_id(event: &WireEvent) -> Option<&str> {
     match event {
         WireEvent::Presence { peer_id, .. }
+        | WireEvent::KonoNexusHint { peer_id, .. }
         | WireEvent::Goodbye { peer_id }
         | WireEvent::NickClaim { peer_id, .. } => Some(peer_id.as_str()),
         WireEvent::Chat(message) => message.peer_id.as_deref(),
@@ -456,6 +505,10 @@ fn wire_event_is_well_formed(event: &WireEvent) -> bool {
                 && validate_nick(nick).is_ok()
                 && optional_nick_color_is_valid(nick_color.as_deref())
         }
+        WireEvent::KonoNexusHint {
+            peer_id,
+            knp_node_id,
+        } => peer_id.parse::<PeerId>().is_ok() && kononexus_bridge::valid_knp_node_id(knp_node_id),
         WireEvent::Goodbye { peer_id } => peer_id.parse::<PeerId>().is_ok(),
         WireEvent::MembershipSnapshot(snapshot) => snapshot.is_well_formed(),
         WireEvent::NickClaim {
@@ -841,6 +894,22 @@ enum NetworkCommand {
     },
     SetPrivateMessagesEnabled {
         enabled: bool,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    SendVoiceSignal {
+        peer_id: String,
+        session_id: String,
+        scope: VoiceScope,
+        action: VoiceSignalAction,
+        sdp: Option<String>,
+        candidate: Option<String>,
+        room_intent: Option<VoiceRoomIntent>,
+        muted: Option<bool>,
+        reply: oneshot::Sender<Result<VoiceSignal, String>>,
+    },
+    SetVoicePolicy {
+        private_calls_enabled: bool,
+        room_voice_enabled: bool,
         reply: oneshot::Sender<Result<(), String>>,
     },
     EnterRoom {
@@ -1338,6 +1407,7 @@ async fn start_network(
             app.clone(),
             rx,
             ready_tx,
+            None,
         )
         .await;
         let app_state = app.state::<AppState>();
@@ -1350,11 +1420,16 @@ async fn start_network(
         }
     });
 
-    let ready_result = match ready_rx.await {
-        Ok(result) => result,
-        Err(_) => {
+    let ready_result = match tokio::time::timeout(Duration::from_secs(15), ready_rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => {
             let _ = clear_network_sender_if_current(state.inner(), &startup_tx);
             return Err("Nie udało się uruchomić warstwy P2P.".to_string());
+        }
+        Err(_) => {
+            let _ = startup_tx.send(NetworkCommand::Stop).await;
+            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);
+            return Err("Uruchamianie sieci P2P przekroczyło 15 sekund. Spróbuj ponownie lub sprawdź zaporę/VPN.".to_string());
         }
     };
 
@@ -1576,6 +1651,68 @@ async fn set_private_messages_enabled(
     response
         .await
         .map_err(|_| "Private-message policy update interrupted.".to_string())?
+}
+
+#[tauri::command]
+async fn send_voice_signal(
+    peer_id: String,
+    session_id: String,
+    scope: VoiceScope,
+    action: VoiceSignalAction,
+    sdp: Option<String>,
+    candidate: Option<String>,
+    room_intent: Option<VoiceRoomIntent>,
+    muted: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<VoiceSignal, String> {
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "State lock failed.")?
+        .clone()
+        .ok_or("No P2P connection.")?;
+    let (reply, response) = oneshot::channel();
+    tx.send(NetworkCommand::SendVoiceSignal {
+        peer_id,
+        session_id,
+        scope,
+        action,
+        sdp,
+        candidate,
+        room_intent,
+        muted,
+        reply,
+    })
+    .await
+    .map_err(|_| "P2P network stopped.".to_string())?;
+    response
+        .await
+        .map_err(|_| "Voice signaling delivery interrupted.".to_string())?
+}
+
+#[tauri::command]
+async fn set_voice_policy(
+    private_calls_enabled: bool,
+    room_voice_enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let tx = state
+        .tx
+        .lock()
+        .map_err(|_| "State lock failed.")?
+        .clone()
+        .ok_or("No P2P connection.")?;
+    let (reply, response) = oneshot::channel();
+    tx.send(NetworkCommand::SetVoicePolicy {
+        private_calls_enabled,
+        room_voice_enabled,
+        reply,
+    })
+    .await
+    .map_err(|_| "P2P network stopped.".to_string())?;
+    response
+        .await
+        .map_err(|_| "Voice policy update interrupted.".to_string())?
 }
 
 #[tauri::command]
@@ -2066,6 +2203,24 @@ fn publish_presence(
     );
 }
 
+fn publish_knp_hint(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    topic: &gossipsub::IdentTopic,
+    peer_id: &str,
+    knp_node_id: Option<&str>,
+) {
+    if let Some(knp_node_id) = knp_node_id {
+        publish(
+            swarm,
+            topic,
+            &WireEvent::KonoNexusHint {
+                peer_id: peer_id.to_string(),
+                knp_node_id: knp_node_id.to_string(),
+            },
+        );
+    }
+}
+
 fn publish_nick_lease(
     swarm: &mut libp2p::Swarm<Behaviour>,
     topic: &gossipsub::IdentTopic,
@@ -2160,10 +2315,69 @@ fn check_nick_conflict(
     remote_age > local_session_age_ms
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NickPresenceAdmission {
+    AdmitRemote,
+    LocalYields,
+    RejectRemoteDuplicate,
+}
+
+fn classify_nick_presence(
+    remote_peer: &str,
+    remote_canonical: &str,
+    remote_expires: u64,
+    remote_session_age_ms: Option<u64>,
+    local_peer: PeerId,
+    local_canonical: &str,
+    local_session_age_ms: u64,
+) -> NickPresenceAdmission {
+    if remote_canonical != local_canonical {
+        return NickPresenceAdmission::AdmitRemote;
+    }
+
+    if check_nick_conflict(
+        remote_peer,
+        remote_canonical,
+        remote_expires,
+        remote_session_age_ms,
+        local_peer,
+        local_canonical,
+        local_session_age_ms,
+    ) {
+        NickPresenceAdmission::LocalYields
+    } else {
+        NickPresenceAdmission::RejectRemoteDuplicate
+    }
+}
+
+fn internet_discovery_state(configured: usize, active: usize) -> &'static str {
+    if configured == 0 {
+        "lan_only"
+    } else if active == 0 {
+        "bootstrap_connecting"
+    } else {
+        "bootstrap_online"
+    }
+}
+
+fn network_phase_for_status(
+    connected_peers: usize,
+    configured_bootstraps: usize,
+    active_bootstraps: usize,
+) -> &'static str {
+    if configured_bootstraps == 0 {
+        "lan_only"
+    } else if active_bootstraps > 0 && connected_peers > 0 {
+        "online"
+    } else {
+        "searching"
+    }
+}
+
 fn emit_status(
     app: &impl NetworkRuntime,
     swarm: &mut libp2p::Swarm<Behaviour>,
-    bootstrap_count: usize,
+    bootstrap_targets: &[BootstrapTarget],
     nat: &str,
     listen_addresses: &[String],
     detail: impl Into<String>,
@@ -2175,15 +2389,18 @@ fn emit_status(
         .kbuckets()
         .map(|b| b.num_entries())
         .sum();
+    let bootstrap_count = bootstrap_targets.len();
+    let bootstrap_active = bootstrap_targets
+        .iter()
+        .filter(|target| target.connected)
+        .count();
     let status = NetworkStatus {
-        phase: if connected_peers > 0 {
-            "online".into()
-        } else {
-            "searching".into()
-        },
+        phase: network_phase_for_status(connected_peers, bootstrap_count, bootstrap_active).into(),
         connected_peers,
         dht_peers,
         bootstrap_count,
+        bootstrap_active,
+        internet_discovery: internet_discovery_state(bootstrap_count, bootstrap_active).into(),
         nat: nat.to_string(),
         listen_addresses: {
             let mut addresses = listen_addresses.to_vec();
@@ -2277,8 +2494,13 @@ async fn network_task(
     app: impl NetworkRuntime,
     mut rx: mpsc::Receiver<NetworkCommand>,
     ready: oneshot::Sender<Result<String, String>>,
+    identity_override: Option<libp2p::identity::Keypair>,
 ) -> Result<(), String> {
-    let mut swarm = SwarmBuilder::with_new_identity()
+    let identity = match identity_override {
+        Some(identity) => identity,
+        None => desktop_identity::load_default_identity()?,
+    };
+    let mut swarm = SwarmBuilder::with_existing_identity(identity)
         .with_tokio()
         .with_tcp(
             tcp::Config::default(),
@@ -2351,6 +2573,37 @@ async fn network_task(
 
     let local_peer = swarm.local_peer_id().to_owned();
     let peer_id = local_peer.to_string();
+
+    let mut kononexus = match kononexus_transport::KonoNexusRuntime::spawn(Vec::new()).await {
+        Ok(runtime) => {
+            let _ = app.emit_event(
+                "kononexus-status",
+                serde_json::json!({
+                    "phase": "started",
+                    "knp_node_id": runtime.node_id(),
+                    "libp2p_peer_id": peer_id,
+                    "local_addr": runtime.local_addr().to_string(),
+                    "seed_count": 0,
+                    "internet_pass": false,
+                }),
+            );
+            Some(runtime)
+        }
+        Err(error) => {
+            let _ = app.emit_event(
+                "network-warning",
+                format!(
+                    "KonoNexus underlay unavailable; legacy P2P fallback remains active: {error}"
+                ),
+            );
+            None
+        }
+    };
+
+    let local_knp_node_id = kononexus
+        .as_ref()
+        .map(|runtime| runtime.node_id().to_string());
+
     let canonical = canonical_nick(&nick);
     let session_started = Instant::now();
     let world = gossipsub::IdentTopic::new(WORLD_TOPIC);
@@ -2405,9 +2658,13 @@ async fn network_task(
             }
         }
     }
-    let mut bootstrap_count = bootstrap_targets.len();
-    if bootstrap_count > 0 {
+    if !bootstrap_targets.is_empty() {
         let _ = swarm.behaviour_mut().kad.bootstrap();
+    } else {
+        let _ = app.emit_event(
+            "network-warning",
+            "Global Internet discovery is unavailable: no public bootstrap seed is configured. Automatic discovery is LAN-only until a reachable bootstrap/relay is added.",
+        );
     }
 
     let _ = swarm
@@ -2441,7 +2698,11 @@ async fn network_task(
         HashMap::<String, oneshot::Sender<Result<(), String>>>::new();
     let mut pending_private_messages =
         HashMap::<String, oneshot::Sender<Result<PrivateDirectMessage, String>>>::new();
+    let mut pending_voice_signals =
+        HashMap::<String, oneshot::Sender<Result<VoiceSignal, String>>>::new();
     let mut private_messages_enabled = true;
+    let mut private_calls_enabled = true;
+    let mut room_voice_enabled = true;
 
     let mut outgoing: HashMap<String, OutgoingTransfer> = HashMap::new();
     let mut pending_incoming: HashMap<String, PendingIncomingOffer> = HashMap::new();
@@ -2451,6 +2712,14 @@ async fn network_task(
     let mut public_claims: HashMap<String, PendingPublicClaim> = HashMap::new();
     let mut outbound_requests: HashMap<request_response::OutboundRequestId, OutboundMeta> =
         HashMap::new();
+
+    let mut knp_identities = kononexus_bridge::KnpIdentityBindings::default();
+    let mut pending_knp_presence = HashMap::<String, u64>::new();
+    let mut pending_knp_world = HashMap::<(String, u64), String>::new();
+    let mut pending_knp_control = HashMap::<(String, u64), PendingKnpControl>::new();
+    let mut seen_world_messages = kononexus_bridge::BoundedMessageIds::new(4_096);
+    let mut seen_room_control_requests = kononexus_bridge::BoundedMessageIds::new(2_048);
+    let mut seen_file_control_requests = kononexus_file::KnpFileReplayGuard::new(2_048);
 
     publish_presence(
         &mut swarm,
@@ -2468,6 +2737,7 @@ async fn network_task(
         &canonical,
         session_age_ms(session_started),
     );
+    publish_knp_hint(&mut swarm, &world, &peer_id, local_knp_node_id.as_deref());
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
     let mut discovery = tokio::time::interval(Duration::from_secs(25));
@@ -2482,7 +2752,7 @@ async fn network_task(
     emit_status(
         &app,
         &mut swarm,
-        bootstrap_count,
+        &bootstrap_targets,
         &nat_status,
         &listen_addresses,
         "Warstwa P2P uruchomiona",
@@ -2491,8 +2761,35 @@ async fn network_task(
     'network: loop {
         tokio::select! {
             _ = heartbeat.tick() => {
-                publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
-                publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, session_age_ms(session_started));
+                let current_session_age = session_age_ms(session_started);
+                publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, current_session_age);
+                publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, current_session_age);
+                publish_knp_hint(&mut swarm, &world, &peer_id, local_knp_node_id.as_deref());
+                if let Some(runtime) = kononexus.as_ref() {
+                    if let Ok(payload) = kononexus_bridge::encode_presence(
+                        &peer_id,
+                        &nick,
+                        &nick_color,
+                        current_session_age,
+                    ) {
+                        for target in knp_identities.targets(8) {
+                            if pending_knp_presence.contains_key(&target) {
+                                continue;
+                            }
+                            match runtime.send(target.clone(), payload.clone()).await {
+                                Ok(message_id) => {
+                                    pending_knp_presence.insert(target, message_id);
+                                }
+                                Err(error) => {
+                                    let _ = app.emit_event(
+                                        "network-log",
+                                        format!("KonoNexus presence send deferred: {error}"),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 for room in owned_rooms.values() {
                     publish(&mut swarm, &world, &WireEvent::RoomCreate(room.clone()));
                 }
@@ -2510,7 +2807,7 @@ async fn network_task(
                 let _ = swarm.behaviour_mut().kad.bootstrap();
                 swarm.behaviour_mut().kad.get_providers(world_provider_key());
                 app.save_peers(&peer_cache);
-                emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Odświeżono discovery");
+                emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Odświeżono discovery");
             }
             _ = bootstrap_retry.tick() => {
                 let now = Instant::now();
@@ -2535,6 +2832,44 @@ async fn network_task(
             }
             _ = cleanup.tick() => {
                 secure_runtime.prune(now_ms(), Instant::now());
+
+                let expired_knp_control: Vec<(String, u64)> = pending_knp_control
+                    .iter()
+                    .filter(|(_, pending)| {
+                        pending.created_at.elapsed()
+                            > Duration::from_secs(CONTROL_REQUEST_TIMEOUT_SECS)
+                    })
+                    .map(|(key, _)| key.clone())
+                    .collect();
+                for key in expired_knp_control {
+                    if let Some(pending) = pending_knp_control.remove(&key) {
+                        secure_client.cancel_pending(&pending.correlation);
+                        let timeout_reason =
+                            "KonoNexus private secure-control request timed out.".to_string();
+                        if let Some(reply) =
+                            pending_private_messages.remove(&pending.correlation)
+                        {
+                            let _ = reply.send(Err(timeout_reason.clone()));
+                        }
+                        if let Some(reply) =
+                            pending_voice_signals.remove(&pending.correlation)
+                        {
+                            let _ = reply.send(Err(timeout_reason));
+                        }
+                        let _ = app.emit_event(
+                            "kononexus-status",
+                            serde_json::json!({
+                                "phase": "secure_control_timeout",
+                                "kind": pending.kind,
+                                "knp_node_id": key.0,
+                                "message_id": key.1,
+                                "correlation_id": pending.correlation,
+                                "internet_pass": false,
+                            }),
+                        );
+                    }
+                }
+
                 let expired_memberships: Vec<PeerId> = membership_seen.iter()
                     .filter(|(_, seen)| seen.elapsed() > Duration::from_secs(PRESENCE_TTL_SECS))
                     .map(|(peer, _)| *peer).collect();
@@ -2653,6 +2988,63 @@ async fn network_task(
                             text,
                             timestamp: now_ms(),
                         };
+                        if msg.room == "world" {
+                            seen_world_messages.observe(&msg.id);
+                            if let Some(runtime) = kononexus.as_ref() {
+                                match kononexus_bridge::encode_world_chat(
+                                    &msg.id,
+                                    &peer_id,
+                                    &msg.nick,
+                                    &nick_color,
+                                    &msg.text,
+                                    msg.timestamp,
+                                ) {
+                                    Ok(payload) => {
+                                        let mut queued = 0usize;
+                                        for target in knp_identities.authenticated_targets(16) {
+                                            if pending_knp_world.len() >= 256 {
+                                                break;
+                                            }
+                                            match runtime.send(target.clone(), payload.clone()).await {
+                                                Ok(message_id) => {
+                                                    pending_knp_world.insert(
+                                                        (target, message_id),
+                                                        msg.id.clone(),
+                                                    );
+                                                    queued += 1;
+                                                }
+                                                Err(error) => {
+                                                    let _ = app.emit_event(
+                                                        "network-log",
+                                                        format!(
+                                                            "KonoNexus WORLD send deferred to legacy fallback: {error}"
+                                                        ),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        if queued > 0 {
+                                            let _ = app.emit_event(
+                                                "kononexus-status",
+                                                serde_json::json!({
+                                                    "phase": "world_message_queued",
+                                                    "chat_id": msg.id,
+                                                    "target_count": queued,
+                                                    "authenticated_bindings": knp_identities.authenticated_count(),
+                                                    "internet_pass": false,
+                                                }),
+                                            );
+                                        }
+                                    }
+                                    Err(error) => {
+                                        let _ = app.emit_event(
+                                            "network-warning",
+                                            format!("KonoNexus WORLD envelope rejected locally: {error}"),
+                                        );
+                                    }
+                                }
+                            }
+                        }
                         let _ = app.emit_event("chat-message", msg.clone());
                         publish(&mut swarm, &world, &WireEvent::Chat(msg));
                         let _ = reply.send(Ok(()));
@@ -2789,12 +3181,92 @@ async fn network_task(
                         })();
                         match result {
                             Ok((target, request, correlation)) => {
-                                let outbound = swarm
-                                    .behaviour_mut()
-                                    .secure_control
-                                    .send_request(&target, request);
-                                secure_outbound_requests.insert(outbound, correlation.clone());
-                                pending_private_messages.insert(correlation, reply);
+                                let knp_target = knp_identities
+                                    .authenticated_node_for_peer(&target)
+                                    .map(str::to_owned);
+                                let knp_queued = if pending_knp_control.len()
+                                    < MAX_PENDING_KNP_CONTROL
+                                {
+                                    if let (Some(runtime), Some(knp_node_id)) =
+                                        (kononexus.as_ref(), knp_target)
+                                    {
+                                        match kononexus_bridge::encode_private_control_request(
+                                            &request,
+                                        ) {
+                                            Ok(payload) => {
+                                                match runtime
+                                                    .send(knp_node_id.clone(), payload)
+                                                    .await
+                                                {
+                                                    Ok(message_id) => {
+                                                        Some((knp_node_id, message_id))
+                                                    }
+                                                    Err(error) => {
+                                                        let _ = app.emit_event(
+                                                            "network-log",
+                                                            format!(
+                                                                "KonoNexus private send fell back to legacy secure-control: {error}"
+                                                            ),
+                                                        );
+                                                        None
+                                                    }
+                                                }
+                                            }
+                                            Err(error) => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    format!(
+                                                        "KonoNexus private envelope rejected locally; using legacy secure-control: {error}"
+                                                    ),
+                                                );
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    let _ = app.emit_event(
+                                        "network-log",
+                                        "KonoNexus secure-control pending limit reached; using legacy secure-control.",
+                                    );
+                                    None
+                                };
+
+                                match knp_queued {
+                                    Some((knp_node_id, message_id)) => {
+                                        pending_knp_control.insert(
+                                            (knp_node_id.clone(), message_id),
+                                            PendingKnpControl {
+                                                correlation: correlation.clone(),
+                                                kind: "private_message",
+                                                created_at: Instant::now(),
+                                            },
+                                        );
+                                        pending_private_messages
+                                            .insert(correlation.clone(), reply);
+                                        let _ = app.emit_event(
+                                            "kononexus-status",
+                                            serde_json::json!({
+                                                "phase": "secure_control_queued",
+                                                "kind": "private_message",
+                                                "knp_node_id": knp_node_id,
+                                                "message_id": message_id,
+                                                "correlation_id": correlation,
+                                                "internet_pass": false,
+                                            }),
+                                        );
+                                    }
+                                    None => {
+                                        let outbound = swarm
+                                            .behaviour_mut()
+                                            .secure_control
+                                            .send_request(&target, request);
+                                        secure_outbound_requests
+                                            .insert(outbound, correlation.clone());
+                                        pending_private_messages.insert(correlation, reply);
+                                    }
+                                }
                             }
                             Err(error) => {
                                 let _ = reply.send(Err(error));
@@ -2803,6 +3275,153 @@ async fn network_task(
                     }
                     NetworkCommand::SetPrivateMessagesEnabled { enabled, reply } => {
                         private_messages_enabled = enabled;
+                        let _ = reply.send(Ok(()));
+                    }
+                    NetworkCommand::SendVoiceSignal {
+                        peer_id: target_raw,
+                        session_id,
+                        scope,
+                        action,
+                        sdp,
+                        candidate,
+                        room_intent,
+                        muted,
+                        reply,
+                    } => {
+                        let result =
+                            (|| -> Result<(PeerId, ControlRequest, String, bool), String> {
+                            let target: PeerId = target_raw
+                                .parse()
+                                .map_err(|_| "Invalid voice Peer ID.")?;
+                            if !peers.contains_key(&target) {
+                                return Err("Voice peer is not currently authenticated online.".into());
+                            }
+                            let prefer_knp = matches!(&scope, VoiceScope::Private);
+                            if let VoiceScope::Room { room_id } = &scope {
+                                if room_id != "world" && !rooms.contains_key(room_id) {
+                                    return Err("Voice room is not known in this session.".into());
+                                }
+                                if room_id != "world"
+                                    && !secure_client.room_authorized(room_id, &local_peer)
+                                {
+                                    return Err("Protected room authorization is required for voice.".into());
+                                }
+                            }
+                            let request = voice_signal_request(
+                                &local_peer,
+                                &target,
+                                &nick,
+                                Some(nick_color.clone()),
+                                session_id,
+                                scope,
+                                action,
+                                sdp,
+                                candidate,
+                                room_intent,
+                                muted,
+                                now_ms(),
+                            )?;
+                            let correlation = secure_client
+                                .track_voice_signal(&request, target)
+                                .map_err(str::to_string)?;
+                            Ok((target, request, correlation, prefer_knp))
+                        })();
+                        match result {
+                            Ok((target, request, correlation, prefer_knp)) => {
+                                let knp_target = knp_identities
+                                    .authenticated_node_for_peer(&target)
+                                    .map(str::to_owned);
+                                let knp_queued = if prefer_knp
+                                    && pending_knp_control.len() < MAX_PENDING_KNP_CONTROL
+                                {
+                                    if let (Some(runtime), Some(knp_node_id)) =
+                                        (kononexus.as_ref(), knp_target)
+                                    {
+                                        match kononexus_bridge::encode_private_control_request(
+                                            &request,
+                                        ) {
+                                            Ok(payload) => {
+                                                match runtime
+                                                    .send(knp_node_id.clone(), payload)
+                                                    .await
+                                                {
+                                                    Ok(message_id) => {
+                                                        Some((knp_node_id, message_id))
+                                                    }
+                                                    Err(error) => {
+                                                        let _ = app.emit_event(
+                                                            "network-log",
+                                                            format!(
+                                                                "KonoNexus private voice send fell back to legacy secure-control: {error}"
+                                                            ),
+                                                        );
+                                                        None
+                                                    }
+                                                }
+                                            }
+                                            Err(error) => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    format!(
+                                                        "KonoNexus private voice envelope rejected locally; using legacy secure-control: {error}"
+                                                    ),
+                                                );
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+
+                                match knp_queued {
+                                    Some((knp_node_id, message_id)) => {
+                                        pending_knp_control.insert(
+                                            (knp_node_id.clone(), message_id),
+                                            PendingKnpControl {
+                                                correlation: correlation.clone(),
+                                                kind: "private_voice",
+                                                created_at: Instant::now(),
+                                            },
+                                        );
+                                        pending_voice_signals.insert(correlation.clone(), reply);
+                                        let _ = app.emit_event(
+                                            "kononexus-status",
+                                            serde_json::json!({
+                                                "phase": "secure_control_queued",
+                                                "kind": "private_voice",
+                                                "knp_node_id": knp_node_id,
+                                                "message_id": message_id,
+                                                "correlation_id": correlation,
+                                                "internet_pass": false,
+                                            }),
+                                        );
+                                    }
+                                    None => {
+                                        let outbound = swarm
+                                            .behaviour_mut()
+                                            .secure_control
+                                            .send_request(&target, request);
+                                        secure_outbound_requests
+                                            .insert(outbound, correlation.clone());
+                                        pending_voice_signals.insert(correlation, reply);
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                let _ = reply.send(Err(error));
+                            }
+                        }
+                    }
+                    NetworkCommand::SetVoicePolicy {
+                        private_calls_enabled: private_enabled,
+                        room_voice_enabled: room_enabled,
+                        reply,
+                    } => {
+                        private_calls_enabled = private_enabled;
+                        room_voice_enabled = room_enabled;
                         let _ = reply.send(Ok(()));
                     }
                     NetworkCommand::EnterRoom { room_id, reply } => {
@@ -2842,7 +3461,6 @@ async fn network_task(
                                         let _ = app.emit_event("network-log", err);
                                     }
                                     bootstrap_targets.push(target);
-                                    bootstrap_count = bootstrap_targets.len();
                                     let _ = swarm.behaviour_mut().kad.bootstrap();
                                     swarm.behaviour_mut().kad.get_providers(world_provider_key());
                                     Ok(())
@@ -2851,7 +3469,7 @@ async fn network_task(
                             }
                         };
                         let _ = reply.send(result);
-                        emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Zaktualizowano bootstrapy");
+                        emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Zaktualizowano bootstrapy");
                     }
                     NetworkCommand::RefreshDiscovery => {
                         let _ = swarm.behaviour_mut().kad.bootstrap();
@@ -3130,6 +3748,781 @@ async fn network_task(
                     }
                 }
             }
+            knp_event = kononexus_transport::next_event_or_pending(&mut kononexus) => {
+                match knp_event {
+                    kononexus::RelayAppEvent::Message(message) => {
+                        match kononexus_bridge::decode_application_message(&message.data) {
+                            Ok(kononexus_bridge::KnpApplicationMessage::Presence(remote_presence)) => {
+                                if remote_presence.peer_id == peer_id {
+                                    continue;
+                                }
+                                let Ok(remote_peer) = remote_presence.peer_id.parse::<PeerId>() else {
+                                    continue;
+                                };
+                                if validate_nick(&remote_presence.nick).is_err()
+                                    || !optional_nick_color_is_valid(remote_presence.nick_color.as_deref())
+                                {
+                                    let _ = app.emit_event(
+                                        "network-warning",
+                                        format!(
+                                            "Dropped malformed KonoNexus presence from {}.",
+                                            message.peer_node_id
+                                        ),
+                                    );
+                                    continue;
+                                }
+                                if let Err(error) = knp_identities.authenticate_source(
+                                    &message.peer_node_id,
+                                    remote_peer,
+                                ) {
+                                    let _ = app.emit_event(
+                                        "network-warning",
+                                        format!(
+                                            "Dropped unbound KonoNexus application message from {}: {error}",
+                                            message.peer_node_id
+                                        ),
+                                    );
+                                    continue;
+                                }
+
+                                let remote_canonical = canonical_nick(&remote_presence.nick);
+                                match classify_nick_presence(
+                                    &remote_presence.peer_id,
+                                    &remote_canonical,
+                                    now_ms() + 30_000,
+                                    remote_presence.session_age_ms,
+                                    local_peer,
+                                    &canonical,
+                                    session_age_ms(session_started),
+                                ) {
+                                    NickPresenceAdmission::LocalYields => {
+                                        let _ = app.emit_event(
+                                            "nick-conflict",
+                                            serde_json::json!({
+                                                "nick": nick,
+                                                "peer_id": remote_presence.peer_id,
+                                            }),
+                                        );
+                                        break 'network;
+                                    }
+                                    NickPresenceAdmission::RejectRemoteDuplicate => {
+                                        continue;
+                                    }
+                                    NickPresenceAdmission::AdmitRemote => {}
+                                }
+
+                                let remote_color =
+                                    normalize_nick_color(remote_presence.nick_color.as_deref());
+                                let should_emit = peers
+                                    .get(&remote_peer)
+                                    .is_none_or(|existing| {
+                                        existing.nick != remote_presence.nick
+                                            || existing.nick_color != remote_color
+                                    });
+                                peers.insert(
+                                    remote_peer,
+                                    PeerPresence {
+                                        nick: remote_presence.nick.clone(),
+                                        nick_color: remote_color.clone(),
+                                        last_seen: Instant::now(),
+                                    },
+                                );
+                                if should_emit {
+                                    let _ = app.emit_event(
+                                        "peer-online",
+                                        PeerInfo {
+                                            peer_id: remote_presence.peer_id.clone(),
+                                            nick: remote_presence.nick,
+                                            nick_color: Some(remote_color),
+                                        },
+                                    );
+                                }
+                                let _ = app.emit_event(
+                                    "kononexus-status",
+                                    serde_json::json!({
+                                        "phase": "application_received",
+                                        "kind": "presence",
+                                        "knp_node_id": message.peer_node_id,
+                                        "libp2p_peer_id": remote_presence.peer_id,
+                                        "message_id": message.message_id,
+                                        "authenticated_bindings": knp_identities.authenticated_count(),
+                                        "internet_pass": false,
+                                    }),
+                                );
+                            }
+                            Ok(kononexus_bridge::KnpApplicationMessage::WorldChat(remote_chat)) => {
+                                if remote_chat.peer_id == peer_id {
+                                    continue;
+                                }
+                                let Ok(remote_peer) = remote_chat.peer_id.parse::<PeerId>() else {
+                                    continue;
+                                };
+                                if !knp_identities.is_authenticated_source(
+                                    &message.peer_node_id,
+                                    &remote_peer,
+                                ) {
+                                    let _ = app.emit_event(
+                                        "network-warning",
+                                        format!(
+                                            "Dropped KonoNexus WORLD chat before authenticated presence binding from {}.",
+                                            message.peer_node_id
+                                        ),
+                                    );
+                                    continue;
+                                }
+
+                                let normalized_color =
+                                    normalize_nick_color(remote_chat.nick_color.as_deref());
+                                let admitted_presence = peers.get(&remote_peer).is_some_and(|presence| {
+                                    presence.nick == remote_chat.nick
+                                        && presence.nick_color == normalized_color
+                                });
+                                if !admitted_presence {
+                                    let _ = app.emit_event(
+                                        "network-warning",
+                                        format!(
+                                            "Dropped KonoNexus WORLD chat whose nickname/color does not match admitted presence from {}.",
+                                            message.peer_node_id
+                                        ),
+                                    );
+                                    continue;
+                                }
+
+                                let chat = ChatMessage {
+                                    id: remote_chat.id,
+                                    kind: "chat".into(),
+                                    peer_id: Some(remote_chat.peer_id.clone()),
+                                    nick: remote_chat.nick,
+                                    nick_color: Some(normalized_color),
+                                    room: "world".into(),
+                                    text: remote_chat.text,
+                                    timestamp: remote_chat.timestamp,
+                                };
+                                if !wire_event_is_well_formed(&WireEvent::Chat(chat.clone())) {
+                                    let _ = app.emit_event(
+                                        "network-warning",
+                                        format!(
+                                            "Dropped malformed authenticated KonoNexus WORLD chat from {}.",
+                                            message.peer_node_id
+                                        ),
+                                    );
+                                    continue;
+                                }
+                                if let Some(presence) = peers.get_mut(&remote_peer) {
+                                    presence.last_seen = Instant::now();
+                                }
+                                if seen_world_messages.observe(&chat.id) {
+                                    let _ = app.emit_event("chat-message", chat.clone());
+                                }
+                                let _ = app.emit_event(
+                                    "kononexus-status",
+                                    serde_json::json!({
+                                        "phase": "world_message_received",
+                                        "knp_node_id": message.peer_node_id,
+                                        "libp2p_peer_id": remote_chat.peer_id,
+                                        "message_id": message.message_id,
+                                        "chat_id": chat.id,
+                                        "authenticated_bindings": knp_identities.authenticated_count(),
+                                        "internet_pass": false,
+                                    }),
+                                );
+                            }
+                            Err(application_error) => {
+                                match kononexus_bridge::decode_private_control_message(
+                                    &message.data,
+                                ) {
+                                    Ok(kononexus_bridge::KnpPrivateControlMessage::Request(
+                                        ControlRequest::PrivateMessage(private_message),
+                                    )) => {
+                                        let Some(authenticated_source) = knp_identities
+                                            .authenticated_peer_for_node(&message.peer_node_id)
+                                        else {
+                                            let _ = app.emit_event(
+                                                "network-warning",
+                                                format!(
+                                                    "Dropped KonoNexus private message without authenticated identity binding from {}.",
+                                                    message.peer_node_id
+                                                ),
+                                            );
+                                            continue;
+                                        };
+
+                                        let response = if !private_messages_enabled {
+                                            ControlResponse::PrivateAck {
+                                                message_id: private_message.id.clone(),
+                                                accepted: false,
+                                                reason: Some("private_disabled".into()),
+                                            }
+                                        } else {
+                                            let expected_presence = peers
+                                                .get(&authenticated_source)
+                                                .map(|presence| PresenceIdentity {
+                                                    nick: presence.nick.clone(),
+                                                    nick_color: Some(
+                                                        presence.nick_color.clone(),
+                                                    ),
+                                                });
+                                            let outcome = handle_inbound_control_request(
+                                                &mut secure_runtime,
+                                                ControlRequest::PrivateMessage(private_message),
+                                                &authenticated_source,
+                                                &local_peer,
+                                                expected_presence.as_ref(),
+                                                now_ms(),
+                                                Instant::now(),
+                                            );
+                                            if let Some(private_message) =
+                                                outcome.private_message
+                                            {
+                                                let _ = app.emit_event(
+                                                    "private-message",
+                                                    private_message,
+                                                );
+                                            }
+                                            outcome.response
+                                        };
+
+                                        match kononexus_bridge::encode_private_control_response(
+                                            &response,
+                                        ) {
+                                            Ok(payload) => {
+                                                if let Some(runtime) = kononexus.as_ref() {
+                                                    match runtime
+                                                        .send(
+                                                            message.peer_node_id.clone(),
+                                                            payload,
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(response_message_id) => {
+                                                            let _ = app.emit_event(
+                                                                "kononexus-status",
+                                                                serde_json::json!({
+                                                                    "phase": "secure_control_response_queued",
+                                                                    "kind": "private_ack",
+                                                                    "knp_node_id": message.peer_node_id,
+                                                                    "message_id": response_message_id,
+                                                                    "internet_pass": false,
+                                                                }),
+                                                            );
+                                                        }
+                                                        Err(error) => {
+                                                            let _ = app.emit_event(
+                                                                "network-warning",
+                                                                format!(
+                                                                    "KonoNexus private acknowledgement send failed: {error}"
+                                                                ),
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Err(error) => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    format!(
+                                                        "KonoNexus private acknowledgement encoding failed: {error}"
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Ok(kononexus_bridge::KnpPrivateControlMessage::Request(
+                                        ControlRequest::VoiceSignal(signal),
+                                    )) => {
+                                        let Some(authenticated_source) = knp_identities
+                                            .authenticated_peer_for_node(&message.peer_node_id)
+                                        else {
+                                            let _ = app.emit_event(
+                                                "network-warning",
+                                                format!(
+                                                    "Dropped KonoNexus private voice signal without authenticated identity binding from {}.",
+                                                    message.peer_node_id
+                                                ),
+                                            );
+                                            continue;
+                                        };
+
+                                        let response = if !private_calls_enabled {
+                                            ControlResponse::VoiceAck {
+                                                signal_id: signal.id.clone(),
+                                                accepted: false,
+                                                reason: Some(
+                                                    "voice_private_disabled".into(),
+                                                ),
+                                            }
+                                        } else {
+                                            let expected_presence = peers
+                                                .get(&authenticated_source)
+                                                .map(|presence| PresenceIdentity {
+                                                    nick: presence.nick.clone(),
+                                                    nick_color: Some(
+                                                        presence.nick_color.clone(),
+                                                    ),
+                                                });
+                                            let outcome = handle_inbound_control_request(
+                                                &mut secure_runtime,
+                                                ControlRequest::VoiceSignal(signal),
+                                                &authenticated_source,
+                                                &local_peer,
+                                                expected_presence.as_ref(),
+                                                now_ms(),
+                                                Instant::now(),
+                                            );
+                                            if let Some(signal) = outcome.voice_signal {
+                                                let _ = app.emit_event(
+                                                    "voice-signal",
+                                                    signal,
+                                                );
+                                            }
+                                            outcome.response
+                                        };
+
+                                        match kononexus_bridge::encode_private_control_response(
+                                            &response,
+                                        ) {
+                                            Ok(payload) => {
+                                                if let Some(runtime) = kononexus.as_ref() {
+                                                    match runtime
+                                                        .send(
+                                                            message.peer_node_id.clone(),
+                                                            payload,
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(response_message_id) => {
+                                                            let _ = app.emit_event(
+                                                                "kononexus-status",
+                                                                serde_json::json!({
+                                                                    "phase": "secure_control_response_queued",
+                                                                    "kind": "voice_ack",
+                                                                    "knp_node_id": message.peer_node_id,
+                                                                    "message_id": response_message_id,
+                                                                    "internet_pass": false,
+                                                                }),
+                                                            );
+                                                        }
+                                                        Err(error) => {
+                                                            let _ = app.emit_event(
+                                                                "network-warning",
+                                                                format!(
+                                                                    "KonoNexus private voice acknowledgement send failed: {error}"
+                                                                ),
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Err(error) => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    format!(
+                                                        "KonoNexus private voice acknowledgement encoding failed: {error}"
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Ok(kononexus_bridge::KnpPrivateControlMessage::Response(
+                                        response @ ControlResponse::PrivateAck { .. },
+                                    )) => {
+                                        let Some(authenticated_source) = knp_identities
+                                            .authenticated_peer_for_node(&message.peer_node_id)
+                                        else {
+                                            let _ = app.emit_event(
+                                                "network-warning",
+                                                format!(
+                                                    "Dropped KonoNexus private acknowledgement without authenticated identity binding from {}.",
+                                                    message.peer_node_id
+                                                ),
+                                            );
+                                            continue;
+                                        };
+                                        let correlation = match &response {
+                                            ControlResponse::PrivateAck { message_id, .. } => {
+                                                message_id.clone()
+                                            }
+                                            _ => unreachable!(),
+                                        };
+                                        pending_knp_control.retain(|_, pending| {
+                                            pending.correlation != correlation
+                                        });
+                                        let outcome = secure_client.handle_response(
+                                            &authenticated_source,
+                                            response,
+                                        );
+                                        match outcome {
+                                            SecureResponseOutcome::PrivateDelivered {
+                                                message,
+                                            } => {
+                                                if let Some(reply) =
+                                                    pending_private_messages
+                                                        .remove(&correlation)
+                                                {
+                                                    let _ = reply.send(Ok(message));
+                                                }
+                                            }
+                                            SecureResponseOutcome::PrivateRejected {
+                                                reason,
+                                                ..
+                                            } => {
+                                                if let Some(reply) =
+                                                    pending_private_messages
+                                                        .remove(&correlation)
+                                                {
+                                                    let _ = reply.send(Err(reason));
+                                                }
+                                            }
+                                            SecureResponseOutcome::Ignored => {
+                                                secure_client
+                                                    .cancel_pending(&correlation);
+                                                if let Some(reply) =
+                                                    pending_private_messages
+                                                        .remove(&correlation)
+                                                {
+                                                    let _ = reply.send(Err(
+                                                        "KonoNexus private acknowledgement failed identity binding.".into(),
+                                                    ));
+                                                }
+                                            }
+                                            _ => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    "Dropped mismatched KonoNexus secure-control response.",
+                                                );
+                                            }
+                                        }
+                                        let _ = app.emit_event(
+                                            "kononexus-status",
+                                            serde_json::json!({
+                                                "phase": "secure_control_response_received",
+                                                "kind": "private_ack",
+                                                "knp_node_id": message.peer_node_id,
+                                                "message_id": message.message_id,
+                                                "correlation_id": correlation,
+                                                "internet_pass": false,
+                                            }),
+                                        );
+                                    }
+                                    Ok(kononexus_bridge::KnpPrivateControlMessage::Response(
+                                        response @ ControlResponse::VoiceAck { .. },
+                                    )) => {
+                                        let Some(authenticated_source) = knp_identities
+                                            .authenticated_peer_for_node(&message.peer_node_id)
+                                        else {
+                                            let _ = app.emit_event(
+                                                "network-warning",
+                                                format!(
+                                                    "Dropped KonoNexus private voice acknowledgement without authenticated identity binding from {}.",
+                                                    message.peer_node_id
+                                                ),
+                                            );
+                                            continue;
+                                        };
+                                        let correlation = match &response {
+                                            ControlResponse::VoiceAck { signal_id, .. } => {
+                                                signal_id.clone()
+                                            }
+                                            _ => unreachable!(),
+                                        };
+                                        pending_knp_control.retain(|_, pending| {
+                                            pending.correlation != correlation
+                                        });
+                                        let outcome = secure_client.handle_response(
+                                            &authenticated_source,
+                                            response,
+                                        );
+                                        match outcome {
+                                            SecureResponseOutcome::VoiceAccepted { signal } => {
+                                                if let Some(reply) =
+                                                    pending_voice_signals.remove(&correlation)
+                                                {
+                                                    let _ = reply.send(Ok(signal));
+                                                }
+                                            }
+                                            SecureResponseOutcome::VoiceRejected {
+                                                reason,
+                                                ..
+                                            } => {
+                                                if let Some(reply) =
+                                                    pending_voice_signals.remove(&correlation)
+                                                {
+                                                    let _ = reply.send(Err(reason));
+                                                }
+                                            }
+                                            SecureResponseOutcome::Ignored => {
+                                                secure_client.cancel_pending(&correlation);
+                                                if let Some(reply) =
+                                                    pending_voice_signals.remove(&correlation)
+                                                {
+                                                    let _ = reply.send(Err(
+                                                        "KonoNexus private voice acknowledgement failed identity binding.".into(),
+                                                    ));
+                                                }
+                                            }
+                                            _ => {
+                                                let _ = app.emit_event(
+                                                    "network-warning",
+                                                    "Dropped mismatched KonoNexus voice secure-control response.",
+                                                );
+                                            }
+                                        }
+                                        let _ = app.emit_event(
+                                            "kononexus-status",
+                                            serde_json::json!({
+                                                "phase": "secure_control_response_received",
+                                                "kind": "voice_ack",
+                                                "knp_node_id": message.peer_node_id,
+                                                "message_id": message.message_id,
+                                                "correlation_id": correlation,
+                                                "internet_pass": false,
+                                            }),
+                                        );
+                                    }
+                                    Ok(_) => {
+                                        let _ = app.emit_event(
+                                            "network-log",
+                                            "KonoNexus secure-control payload is valid but not migrated in this runtime slice yet.",
+                                        );
+                                    }
+                                    Err(control_error) => {
+                                        match kononexus_bridge::decode_room_control_message(&message.data) {
+                                            Ok(kononexus_bridge::KnpPrivateControlMessage::Request(
+                                                request @ ControlRequest::RoomJoin { .. },
+                                            )) => {
+                                                let Some(authenticated_source) = knp_identities
+                                                    .authenticated_peer_for_node(&message.peer_node_id)
+                                                else {
+                                                    let _ = app.emit_event(
+                                                        "network-warning",
+                                                        format!(
+                                                            "Dropped KonoNexus room-control request without authenticated identity binding from {}.",
+                                                            message.peer_node_id
+                                                        ),
+                                                    );
+                                                    continue;
+                                                };
+                                                let request_id = match &request {
+                                                    ControlRequest::RoomJoin { request_id, .. } => request_id.clone(),
+                                                    _ => unreachable!(),
+                                                };
+                                                let response = if !seen_room_control_requests.observe(&request_id) {
+                                                    ControlResponse::RoomJoin {
+                                                        request_id,
+                                                        granted: false,
+                                                        reason: Some("replay_rejected".into()),
+                                                    }
+                                                } else {
+                                                    handle_inbound_control_request(
+                                                        &mut secure_runtime,
+                                                        request,
+                                                        &authenticated_source,
+                                                        &local_peer,
+                                                        None,
+                                                        now_ms(),
+                                                        Instant::now(),
+                                                    ).response
+                                                };
+                                                match kononexus_bridge::encode_room_control_response(&response) {
+                                                    Ok(payload) => {
+                                                        if let Some(runtime) = kononexus.as_ref() {
+                                                            match runtime.send(message.peer_node_id.clone(), payload).await {
+                                                                Ok(response_message_id) => {
+                                                                    let _ = app.emit_event(
+                                                                        "kononexus-status",
+                                                                        serde_json::json!({
+                                                                            "phase": "secure_control_response_queued",
+                                                                            "kind": "room_ack",
+                                                                            "knp_node_id": message.peer_node_id,
+                                                                            "message_id": response_message_id,
+                                                                            "internet_pass": false,
+                                                                        }),
+                                                                    );
+                                                                }
+                                                                Err(error) => {
+                                                                    let _ = app.emit_event(
+                                                                        "network-warning",
+                                                                        format!("KonoNexus room acknowledgement send failed: {error}"),
+                                                                    );
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(error) => {
+                                                        let _ = app.emit_event(
+                                                            "network-warning",
+                                                            format!("KonoNexus room acknowledgement encoding failed: {error}"),
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            Ok(_) => {
+                                                let _ = app.emit_event(
+                                                    "network-log",
+                                                    "KonoNexus room-control response is awaiting the outbound room-control slice.",
+                                                );
+                                            }
+                                            Err(room_control_error) => {
+                                                match admit_authenticated_knp_file(
+                                                    &message.peer_node_id,
+                                                    &message.data,
+                                                    &knp_identities,
+                                                    &mut seen_file_control_requests,
+                                                ) {
+                                                    Ok((file_envelope, true)) => {
+                                                        if file_envelope.sender_peer_id == peer_id {
+                                                            continue;
+                                                        }
+                                                        let _ = app.emit_event(
+                                                            "kononexus-status",
+                                                            serde_json::json!({
+                                                                "phase": "file_control_admitted",
+                                                                "kind": knp_file_kind(&file_envelope.body),
+                                                                "knp_node_id": message.peer_node_id,
+                                                                "message_id": message.message_id,
+                                                                "request_id": file_envelope.request_id,
+                                                                "transfer_id": file_envelope.transfer_id,
+                                                                "internet_pass": false,
+                                                            }),
+                                                        );
+                                                        let _ = app.emit_event(
+                                                            "network-log",
+                                                            "Authenticated KonoNexus FILE control admitted; legacy signed libp2p remains authoritative until FILE runtime delivery is fully qualified.",
+                                                        );
+                                                    }
+                                                    Ok((file_envelope, false)) => {
+                                                        let _ = app.emit_event(
+                                                            "network-warning",
+                                                            format!(
+                                                                "Dropped replayed KonoNexus FILE control request {} from {}.",
+                                                                file_envelope.request_id,
+                                                                message.peer_node_id
+                                                            ),
+                                                        );
+                                                    }
+                                                    Err(file_control_error) => {
+                                                        let _ = app.emit_event(
+                                                            "network-warning",
+                                                            format!(
+                                                                "Dropped invalid KonoNexus envelope from {}: application={application_error}; private_control={control_error}; room_control={room_control_error}; file_control={file_control_error}",
+                                                                message.peer_node_id
+                                                            ),
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    kononexus::RelayAppEvent::Delivered(receipt) => {
+                        if let Some(pending) = pending_knp_control.get(&(
+                            receipt.peer_node_id.clone(),
+                            receipt.message_id,
+                        )) {
+                            let _ = app.emit_event(
+                                "kononexus-status",
+                                serde_json::json!({
+                                    "phase": "secure_control_delivered",
+                                    "kind": pending.kind,
+                                    "knp_node_id": receipt.peer_node_id,
+                                    "message_id": receipt.message_id,
+                                    "correlation_id": pending.correlation,
+                                    "internet_pass": false,
+                                }),
+                            );
+                            continue;
+                        }
+                        let was_presence = pending_knp_presence
+                            .get(&receipt.peer_node_id)
+                            .is_some_and(|message_id| *message_id == receipt.message_id);
+                        if was_presence {
+                            pending_knp_presence.remove(&receipt.peer_node_id);
+                        }
+                        let chat_id = pending_knp_world.remove(&(
+                            receipt.peer_node_id.clone(),
+                            receipt.message_id,
+                        ));
+                        let phase = if chat_id.is_some() {
+                            "world_message_delivered"
+                        } else {
+                            "application_delivered"
+                        };
+                        let _ = app.emit_event(
+                            "kononexus-status",
+                            serde_json::json!({
+                                "phase": phase,
+                                "kind": if chat_id.is_some() { "world_chat" } else if was_presence { "presence" } else { "unknown" },
+                                "knp_node_id": receipt.peer_node_id,
+                                "message_id": receipt.message_id,
+                                "chat_id": chat_id,
+                                "authenticated_bindings": knp_identities.authenticated_count(),
+                                "internet_pass": false,
+                            }),
+                        );
+                    }
+                    kononexus::RelayAppEvent::Failed(failure) => {
+                        if let Some(pending) = pending_knp_control.remove(&(
+                            failure.peer_node_id.clone(),
+                            failure.message_id,
+                        )) {
+                            secure_client.cancel_pending(&pending.correlation);
+                            let reason = format!(
+                                "KonoNexus private secure-control delivery failed: {:?}",
+                                failure.reason
+                            );
+                            if let Some(reply) =
+                                pending_private_messages.remove(&pending.correlation)
+                            {
+                                let _ = reply.send(Err(reason.clone()));
+                            }
+                            if let Some(reply) =
+                                pending_voice_signals.remove(&pending.correlation)
+                            {
+                                let _ = reply.send(Err(reason.clone()));
+                            }
+                            let _ = app.emit_event(
+                                "kononexus-status",
+                                serde_json::json!({
+                                    "phase": "secure_control_failed",
+                                    "kind": pending.kind,
+                                    "knp_node_id": failure.peer_node_id,
+                                    "message_id": failure.message_id,
+                                    "correlation_id": pending.correlation,
+                                    "reason": reason,
+                                    "internet_pass": false,
+                                }),
+                            );
+                            continue;
+                        }
+                        let was_presence = pending_knp_presence
+                            .get(&failure.peer_node_id)
+                            .is_some_and(|message_id| *message_id == failure.message_id);
+                        if was_presence {
+                            pending_knp_presence.remove(&failure.peer_node_id);
+                        }
+                        let chat_id = pending_knp_world.remove(&(
+                            failure.peer_node_id.clone(),
+                            failure.message_id,
+                        ));
+                        let _ = app.emit_event(
+                            "kononexus-status",
+                            serde_json::json!({
+                                "phase": if chat_id.is_some() { "world_message_failed" } else { "application_failed" },
+                                "kind": if chat_id.is_some() { "world_chat" } else if was_presence { "presence" } else { "unknown" },
+                                "knp_node_id": failure.peer_node_id,
+                                "message_id": failure.message_id,
+                                "chat_id": chat_id,
+                                "reason": format!("{:?}", failure.reason),
+                                "authenticated_bindings": knp_identities.authenticated_count(),
+                                "internet_pass": false,
+                            }),
+                        );
+                    }
+                }
+            }
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { address, .. } => {
                     let Some(address) = address_for_peer(address, local_peer) else { continue; };
@@ -3137,7 +4530,7 @@ async fn network_task(
                     if !listen_addresses.contains(&printable) {
                         listen_addresses.push(printable);
                     }
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Nasłuchiwanie aktywne");
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Nasłuchiwanie aktywne");
                 }
                 SwarmEvent::ConnectionEstablished { peer_id: remote, .. } => {
                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
@@ -3147,9 +4540,11 @@ async fn network_task(
                             format!("Bootstrap aktywny: {remote}"),
                         );
                     }
-                    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
-                    publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, session_age_ms(session_started));
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączono z peerem");
+                    let current_session_age = session_age_ms(session_started);
+                    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, current_session_age);
+                    publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, current_session_age);
+                    publish_knp_hint(&mut swarm, &world, &peer_id, local_knp_node_id.as_deref());
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Połączono z peerem");
                 }
                 SwarmEvent::ConnectionClosed { peer_id: remote, num_established, .. } => {
                     apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.connection_closed(&remote, num_established));
@@ -3231,7 +4626,7 @@ async fn network_task(
                 }
 
                     }
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączenie z peerem zamknięte");
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Połączenie z peerem zamknięte");
                 }
                 SwarmEvent::OutgoingConnectionError {
                     peer_id: Some(remote),
@@ -3300,12 +4695,12 @@ async fn network_task(
                     if let Some(address) = address_for_peer(address, local_peer) {
                         listen_addresses.retain(|current| current != &address.to_string());
                     }
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "P2P address expired");
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "P2P address expired");
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Autonat(event)) => {
                     if let autonat::Event::StatusChanged { old: _, new } = event {
                         nat_status = format!("{new:?}").to_lowercase();
-                        emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Zmieniono status NAT");
+                        emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Zmieniono status NAT");
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Upnp(event)) => {
@@ -3369,7 +4764,7 @@ async fn network_task(
                             } => {
                                 if remote_id != peer_id {
                                     let remote_canonical = canonical_nick(&remote_nick);
-                                    if check_nick_conflict(
+                                    match classify_nick_presence(
                                         &remote_id,
                                         &remote_canonical,
                                         now_ms() + 30_000,
@@ -3378,8 +4773,14 @@ async fn network_task(
                                         &canonical,
                                         session_age_ms(session_started),
                                     ) {
-                                        let _ = app.emit_event("nick-conflict", serde_json::json!({"nick": nick, "peer_id": remote_id}));
-                                        break 'network;
+                                        NickPresenceAdmission::LocalYields => {
+                                            let _ = app.emit_event("nick-conflict", serde_json::json!({"nick": nick, "peer_id": remote_id}));
+                                            break 'network;
+                                        }
+                                        NickPresenceAdmission::RejectRemoteDuplicate => {
+                                            continue;
+                                        }
+                                        NickPresenceAdmission::AdmitRemote => {}
                                     }
                                     let remote_color = normalize_nick_color(remote_color.as_deref());
                                     if let Ok(pid) = remote_id.parse::<PeerId>() {
@@ -3397,6 +4798,37 @@ async fn network_task(
                                             nick_color: Some(remote_color),
                                         },
                                     );
+                                }
+                            }
+                            WireEvent::KonoNexusHint {
+                                peer_id: remote_id,
+                                knp_node_id,
+                            } => {
+                                if remote_id != peer_id {
+                                    match knp_identities.observe_legacy_hint(
+                                        &knp_node_id,
+                                        *authenticated_source,
+                                    ) {
+                                        Ok(true) => {
+                                            let _ = app.emit_event(
+                                                "kononexus-status",
+                                                serde_json::json!({
+                                                    "phase": "identity_hint",
+                                                    "knp_node_id": knp_node_id,
+                                                    "libp2p_peer_id": remote_id,
+                                                    "authenticated_bindings": knp_identities.authenticated_count(),
+                                                    "internet_pass": false,
+                                                }),
+                                            );
+                                        }
+                                        Ok(false) => {}
+                                        Err(error) => {
+                                            let _ = app.emit_event(
+                                                "network-warning",
+                                                format!("Dropped conflicting KonoNexus identity hint: {error}"),
+                                            );
+                                        }
+                                    }
                                 }
                             }
                             WireEvent::Goodbye { peer_id: remote_id } => {
@@ -3439,6 +4871,9 @@ async fn network_task(
                                 }
                             }
                             WireEvent::Chat(msg) => {
+                                if msg.room == "world" && !seen_world_messages.observe(&msg.id) {
+                                    continue;
+                                }
                                 let unauthorized_protected_chat = msg.room != "world"
                                     && owned_rooms
                                         .get(&msg.room)
@@ -3587,6 +5022,32 @@ async fn network_task(
                                             continue;
                                         }
                                     }
+                                    if let ControlRequest::VoiceSignal(signal) = &request {
+                                        let disabled_reason = match &signal.scope {
+                                            VoiceScope::Private if !private_calls_enabled => {
+                                                Some("voice_private_disabled")
+                                            }
+                                            VoiceScope::Room { .. } if !room_voice_enabled => {
+                                                Some("voice_room_disabled")
+                                            }
+                                            _ => None,
+                                        };
+                                        if let Some(reason) = disabled_reason {
+                                            let signal_id = Uuid::parse_str(&signal.id)
+                                                .map(|id| id.to_string())
+                                                .unwrap_or_else(|_| Uuid::nil().to_string());
+                                            let response = ControlResponse::VoiceAck {
+                                                signal_id,
+                                                accepted: false,
+                                                reason: Some(reason.into()),
+                                            };
+                                            let _ = swarm
+                                                .behaviour_mut()
+                                                .secure_control
+                                                .send_response(channel, response);
+                                            continue;
+                                        }
+                                    }
                                     let expected_presence = peers.get(&peer).map(|presence| PresenceIdentity {
                                         nick: presence.nick.clone(),
                                         nick_color: Some(presence.nick_color.clone()),
@@ -3602,6 +5063,9 @@ async fn network_task(
                                     );
                                     if let Some(message) = outcome.private_message {
                                         let _ = app.emit_event("private-message", message);
+                                    }
+                                    if let Some(signal) = outcome.voice_signal {
+                                        let _ = app.emit_event("voice-signal", signal);
                                     }
                                     let _ = swarm
                                         .behaviour_mut()
@@ -3640,6 +5104,20 @@ async fn network_task(
                                                 }
                                             }
                                         }
+                                        SecureResponseOutcome::VoiceAccepted { signal } => {
+                                            if let Some(correlation) = correlation {
+                                                if let Some(reply) = pending_voice_signals.remove(&correlation) {
+                                                    let _ = reply.send(Ok(signal));
+                                                }
+                                            }
+                                        }
+                                        SecureResponseOutcome::VoiceRejected { reason, .. } => {
+                                            if let Some(correlation) = correlation {
+                                                if let Some(reply) = pending_voice_signals.remove(&correlation) {
+                                                    let _ = reply.send(Err(reason));
+                                                }
+                                            }
+                                        }
                                         SecureResponseOutcome::Ignored => {
                                             if let Some(correlation) = correlation {
                                                 secure_client.cancel_pending(&correlation);
@@ -3647,6 +5125,9 @@ async fn network_task(
                                                     let _ = reply.send(Err("Secure-control response failed identity binding.".into()));
                                                 }
                                                 if let Some(reply) = pending_private_messages.remove(&correlation) {
+                                                    let _ = reply.send(Err("Secure-control response failed identity binding.".into()));
+                                                }
+                                                if let Some(reply) = pending_voice_signals.remove(&correlation) {
                                                     let _ = reply.send(Err("Secure-control response failed identity binding.".into()));
                                                 }
                                             }
@@ -3663,6 +5144,9 @@ async fn network_task(
                                     let _ = reply.send(Err(reason.clone()));
                                 }
                                 if let Some(reply) = pending_private_messages.remove(&correlation) {
+                                    let _ = reply.send(Err(reason.clone()));
+                                }
+                                if let Some(reply) = pending_voice_signals.remove(&correlation) {
                                     let _ = reply.send(Err(reason));
                                 }
                             }
@@ -4259,6 +5743,10 @@ async fn network_task(
         }
     }
 
+    if let Some(runtime) = kononexus.take() {
+        runtime.shutdown().await;
+    }
+
     Ok(())
 }
 
@@ -4460,6 +5948,30 @@ mod participant_network_tests {
                 }
             }
         }).await.expect("fresh signed resyncs must not be content-deduplicated");
+    }
+}
+
+#[cfg(test)]
+mod global_connectivity_status_tests {
+    use super::*;
+
+    #[test]
+    fn fresh_install_without_bootstrap_is_explicitly_lan_only() {
+        assert_eq!(internet_discovery_state(0, 0), "lan_only");
+        assert_eq!(network_phase_for_status(0, 0, 0), "lan_only");
+        assert_eq!(network_phase_for_status(3, 0, 0), "lan_only");
+    }
+
+    #[test]
+    fn configured_but_unreachable_bootstrap_is_not_reported_online() {
+        assert_eq!(internet_discovery_state(2, 0), "bootstrap_connecting");
+        assert_eq!(network_phase_for_status(1, 2, 0), "searching");
+    }
+
+    #[test]
+    fn reachable_bootstrap_unlocks_internet_online_state() {
+        assert_eq!(internet_discovery_state(2, 1), "bootstrap_online");
+        assert_eq!(network_phase_for_status(1, 2, 1), "online");
     }
 }
 
@@ -4880,6 +6392,91 @@ mod nickname_conflict_tests {
     }
 
     #[test]
+    fn established_presence_is_rejected_before_peer_ui_admission() {
+        let (lower, higher) = ordered_peers();
+        let expires = now_ms() + 10_000;
+        assert_eq!(
+            classify_nick_presence(
+                &lower.to_string(),
+                "swir",
+                expires,
+                Some(250),
+                higher,
+                "swir",
+                30_000,
+            ),
+            NickPresenceAdmission::RejectRemoteDuplicate,
+        );
+    }
+
+    #[test]
+    fn later_local_session_yields_to_established_remote_presence() {
+        let (lower, higher) = ordered_peers();
+        let expires = now_ms() + 10_000;
+        assert_eq!(
+            classify_nick_presence(
+                &higher.to_string(),
+                "swir",
+                expires,
+                Some(30_000),
+                lower,
+                "swir",
+                250,
+            ),
+            NickPresenceAdmission::LocalYields,
+        );
+    }
+
+    #[test]
+    fn different_nickname_presence_is_admitted_normally() {
+        let remote = test_peer();
+        let local = test_peer();
+        let expires = now_ms() + 10_000;
+        assert_eq!(
+            classify_nick_presence(
+                &remote.to_string(),
+                "alice",
+                expires,
+                Some(1_000),
+                local,
+                "swir",
+                1_000,
+            ),
+            NickPresenceAdmission::AdmitRemote,
+        );
+    }
+
+    #[test]
+    fn near_simultaneous_presence_admission_uses_same_deterministic_tie_break() {
+        let (lower, higher) = ordered_peers();
+        let expires = now_ms() + 10_000;
+        assert_eq!(
+            classify_nick_presence(
+                &lower.to_string(),
+                "swir",
+                expires,
+                Some(1_000),
+                higher,
+                "swir",
+                1_100,
+            ),
+            NickPresenceAdmission::LocalYields,
+        );
+        assert_eq!(
+            classify_nick_presence(
+                &higher.to_string(),
+                "swir",
+                expires,
+                Some(1_000),
+                lower,
+                "swir",
+                1_100,
+            ),
+            NickPresenceAdmission::RejectRemoteDuplicate,
+        );
+    }
+
+    #[test]
     fn established_session_keeps_nick_even_when_new_peer_id_would_have_won_old_tie_break() {
         let (lower, higher) = ordered_peers();
         let expires = now_ms() + 10_000;
@@ -5000,6 +6597,57 @@ mod nickname_lease_hint_tests {
             now + ((NICK_LEASE_SECS + NICK_LEASE_CLOCK_SKEW_SECS + 1) as u64 * 1000),
         );
         assert!(!nick_lease_hint_is_well_formed(&too_far, &key, now));
+    }
+}
+
+#[cfg(test)]
+mod knp_file_runtime_tests {
+    use super::*;
+
+    fn test_peer() -> PeerId {
+        libp2p::identity::Keypair::generate_ed25519()
+            .public()
+            .to_peer_id()
+    }
+
+    fn test_node(hex: char) -> String {
+        format!("knp1{}", hex.to_string().repeat(40))
+    }
+
+    #[test]
+    fn file_runtime_admission_requires_authenticated_binding_and_rejects_replay() {
+        let peer = test_peer();
+        let source = test_node('a');
+        let mut identities = kononexus_bridge::KnpIdentityBindings::default();
+        identities.observe_legacy_hint(&source, peer).unwrap();
+        identities.authenticate_source(&source, peer).unwrap();
+
+        let request_id = Uuid::new_v4().to_string();
+        let transfer_id = Uuid::new_v4().to_string();
+        let payload = kononexus_file::encode_file_message(
+            &peer.to_string(),
+            &request_id,
+            &transfer_id,
+            kononexus_file::KnpFileBody::Cancel,
+        )
+        .unwrap();
+        let mut replay = kononexus_file::KnpFileReplayGuard::new(8);
+
+        let (first, fresh) =
+            admit_authenticated_knp_file(&source, &payload, &identities, &mut replay).unwrap();
+        assert!(fresh);
+        assert_eq!(first.request_id, request_id);
+        assert_eq!(knp_file_kind(&first.body), "cancel");
+
+        let (_, fresh) =
+            admit_authenticated_knp_file(&source, &payload, &identities, &mut replay).unwrap();
+        assert!(!fresh);
+
+        let other_source = test_node('b');
+        assert!(
+            admit_authenticated_knp_file(&other_source, &payload, &identities, &mut replay)
+                .is_err()
+        );
     }
 }
 
@@ -5181,6 +6829,8 @@ pub fn run() {
             authorize_room_entry,
             send_private_message,
             set_private_messages_enabled,
+            send_voice_signal,
+            set_voice_policy,
             enter_room,
             add_bootstrap,
             refresh_discovery,
@@ -5192,6 +6842,8 @@ pub fn run() {
             reject_file,
             cancel_file,
             disconnect_network,
+            check_test_update,
+            install_test_update,
             open_github
         ])
         .run(tauri::generate_context!())

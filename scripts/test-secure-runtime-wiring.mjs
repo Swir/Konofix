@@ -19,6 +19,17 @@ const mutateOnce = (source, from, to) => {
   }
   return source.slice(0, first) + to + source.slice(first + from.length);
 };
+const mutateWithin = (source, startMarker, endMarker, from, to) => {
+  const start = source.indexOf(startMarker);
+  const end = start < 0 ? -1 : source.indexOf(endMarker, start);
+  if (start < 0 || end < 0) {
+    throw new Error(`Mutation block not found: ${startMarker} -> ${endMarker}`);
+  }
+  const blockEnd = end + endMarker.length;
+  const block = source.slice(start, blockEnd);
+  const mutated = mutateOnce(block, from, to);
+  return source.slice(0, start) + mutated + source.slice(blockEnd);
+};
 const expectRejected = (name, source, expected) => {
   const result = run(source);
   const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
@@ -43,8 +54,25 @@ expectRejected(
 );
 expectRejected(
   'private route redirected',
-  mutateOnce(canonical, 'send_request(&target, request);', 'send_request(&owner, request);'),
+  mutateWithin(
+    canonical,
+    'NetworkCommand::SendPrivateMessage { peer_id: target_raw',
+    'pending_private_messages.insert(correlation, reply);',
+    '.send_request(&target, request);',
+    '.send_request(&owner, request);',
+  ),
   'Private chat is not routed directly',
+);
+expectRejected(
+  'voice route redirected',
+  mutateWithin(
+    canonical,
+    'NetworkCommand::SendVoiceSignal {\n                        peer_id: target_raw,',
+    'pending_voice_signals.insert(correlation, reply);',
+    '.send_request(&target, request);',
+    '.send_request(&owner, request);',
+  ),
+  'Voice signaling is not routed directly',
 );
 expectRejected(
   'private message exposed to public wire',
@@ -53,7 +81,7 @@ expectRejected(
     'Chat(ChatMessage),',
     'Chat(ChatMessage),\n    PrivateMessage(PrivateDirectMessage),',
   ),
-  'Private messages must never be represented',
+  'must never be represented as public GossipSub WireEvent data',
 );
 expectRejected(
   'protected room guard removed',
@@ -68,6 +96,11 @@ expectRejected(
   mutateOnce(canonical, '            send_private_message,', ''),
   'Tauri secure feature command is not registered',
 );
+expectRejected(
+  'voice Tauri command unregistered',
+  mutateOnce(canonical, '            send_voice_signal,', ''),
+  'Tauri secure feature command is not registered',
+);
 
 fs.rmSync(dir, { recursive: true, force: true });
-console.log('Secure runtime wiring adversarial tests passed (5 mutations rejected).');
+console.log('Secure runtime wiring adversarial tests passed (7 mutations rejected).');

@@ -81,8 +81,18 @@ if (taskResultIndex < 0 || taskCleanupIndex < 0 || taskErrorIndex < 0 || !(taskR
 }
 requireText(
   rust,
-  'Err(_) => {\n            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);\n            return Err("Nie udało się uruchomić warstwy P2P.".to_string());\n        }',
+  'let ready_result = match tokio::time::timeout(Duration::from_secs(15), ready_rx).await {',
+  'startup handshake must be bounded so login cannot hang indefinitely.',
+);
+requireText(
+  rust,
+  'Ok(Err(_)) => {\n            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);\n            return Err("Nie udało się uruchomić warstwy P2P.".to_string());\n        }',
   'cancelled ready handshake must clear only its own startup session.',
+);
+requireText(
+  rust,
+  'Err(_) => {\n            let _ = startup_tx.send(NetworkCommand::Stop).await;\n            let _ = clear_network_sender_if_current(state.inner(), &startup_tx);',
+  'timed-out startup must stop its own network task and clear only its own session.',
 );
 requireText(
   rust,

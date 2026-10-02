@@ -1,6 +1,6 @@
 [package]
 name = "konofix-chat"
-version = "0.5.1"
+version = "0.6.0"
 description = "Ephemeral global peer-to-peer chat for Windows"
 authors = ["Swir"]
 edition = "2021"
@@ -28,6 +28,7 @@ unicode-normalization = "0.1"
 sha2 = "0.11"
 hex = "0.4"
 dirs = "7"
+kononexus = { git = "https://github.com/Swir/KonoNexus.git", rev = "704f97dd7c52d82914eb305240dbe8f26820a90d" }
 libp2p = { version = "0.57", features = [
   "tokio",
   "tcp",

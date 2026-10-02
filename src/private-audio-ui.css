@@ -1,0 +1,286 @@
+.mini-private-audio,
+.private-audio-chat-call {
+  border: 1px solid rgba(98, 229, 255, 0.22);
+  background: rgba(8, 21, 34, 0.72);
+  color: #dff8ff;
+  border-radius: 10px;
+  min-width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.mini-private-audio:hover,
+.private-audio-chat-call:hover {
+  border-color: rgba(98, 229, 255, 0.7);
+  background: rgba(0, 136, 255, 0.18);
+  transform: translateY(-1px);
+}
+
+.private-audio-chat-call {
+  margin-left: auto;
+  margin-right: 6px;
+}
+
+.private-audio-incoming-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 5, 12, 0.72);
+  backdrop-filter: blur(12px);
+}
+
+.private-audio-incoming {
+  width: min(420px, calc(100vw - 32px));
+  padding: 28px;
+  text-align: center;
+  border: 1px solid rgba(98, 229, 255, 0.28);
+  border-radius: 22px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5), 0 0 42px rgba(0, 136, 255, 0.12);
+}
+
+.private-audio-incoming h3 {
+  margin: 8px 0 10px;
+  font-size: 1.35rem;
+}
+
+.private-audio-incoming p {
+  margin: 0 auto 20px;
+  max-width: 32rem;
+  color: #9fb6c6;
+  line-height: 1.5;
+}
+
+.private-audio-pulse {
+  width: 66px;
+  height: 66px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  font-size: 1.7rem;
+  background: radial-gradient(circle at 35% 30%, rgba(98, 229, 255, 0.24), rgba(0, 136, 255, 0.08));
+  border: 1px solid rgba(98, 229, 255, 0.34);
+  box-shadow: 0 0 0 0 rgba(98, 229, 255, 0.18);
+  animation: konofix-call-pulse 1.8s ease-out infinite;
+}
+
+.private-audio-incoming-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+#privateAudioPanel {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1250;
+  width: min(380px, calc(100vw - 32px));
+}
+
+.private-audio-panel {
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(98, 229, 255, 0.24);
+  box-shadow: 0 20px 62px rgba(0, 0, 0, 0.48), 0 0 34px rgba(0, 136, 255, 0.1);
+  background: linear-gradient(145deg, rgba(3, 10, 18, 0.96), rgba(6, 18, 30, 0.95));
+}
+
+.private-audio-panel header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.private-audio-avatar {
+  --voice-color: #62e5ff;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: #02050a;
+  background: var(--voice-color);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--voice-color) 28%, transparent);
+}
+
+.private-audio-heading {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.private-audio-heading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.private-audio-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #9fb6c6;
+  font-size: 0.82rem;
+}
+
+.private-audio-phase i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7d8d98;
+}
+
+.private-audio-phase.phase-connected i {
+  background: #44e6a8;
+  box-shadow: 0 0 12px rgba(68, 230, 168, 0.7);
+}
+
+.private-audio-phase.phase-calling i,
+.private-audio-phase.phase-joining i,
+.private-audio-phase.phase-reconnecting i {
+  background: #62e5ff;
+  box-shadow: 0 0 12px rgba(98, 229, 255, 0.65);
+}
+
+.private-audio-phase.phase-error i {
+  background: #ff6b81;
+  box-shadow: 0 0 12px rgba(255, 107, 129, 0.55);
+}
+
+.private-audio-participant {
+  margin: 14px 0 12px;
+  padding: 9px 11px;
+  border-radius: 11px;
+  color: #9fb6c6;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  font-size: 0.8rem;
+}
+
+.private-audio-device {
+  display: grid;
+  gap: 6px;
+  color: #8da8b8;
+  font-size: 0.76rem;
+}
+
+.private-audio-device select {
+  width: 100%;
+  min-height: 38px;
+  border-radius: 10px;
+  border: 1px solid rgba(98, 229, 255, 0.17);
+  background: #07111c;
+  color: #f4faff;
+  padding: 0 10px;
+}
+
+.private-audio-device select:disabled {
+  opacity: 0.58;
+}
+
+.private-audio-controls {
+  display: grid;
+  grid-template-columns: 46px 46px 1fr;
+  gap: 9px;
+  margin-top: 13px;
+}
+
+.private-audio-controls button {
+  min-height: 42px;
+  border-radius: 11px;
+  border: 1px solid rgba(98, 229, 255, 0.18);
+  background: rgba(6, 18, 30, 0.9);
+  color: #f4faff;
+  cursor: pointer;
+}
+
+.private-audio-controls button:hover:not(:disabled) {
+  border-color: rgba(98, 229, 255, 0.58);
+  background: rgba(0, 136, 255, 0.14);
+}
+
+.private-audio-controls button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.private-audio-controls button.is-active {
+  border-color: rgba(255, 209, 102, 0.55);
+  background: rgba(255, 209, 102, 0.1);
+}
+
+.private-audio-controls .private-audio-end {
+  background: rgba(255, 75, 104, 0.12);
+  border-color: rgba(255, 75, 104, 0.36);
+}
+
+.private-audio-controls .private-audio-close {
+  font-weight: 700;
+}
+
+.private-audio-error {
+  min-height: 18px;
+  margin-top: 10px;
+  color: #ff9aad;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.private-audio-settings-card {
+  margin-top: 12px;
+}
+
+.private-audio-settings-status {
+  display: block;
+  min-height: 18px;
+  color: #ff9aad;
+}
+
+@keyframes konofix-call-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(98, 229, 255, 0.2); }
+  70% { box-shadow: 0 0 0 16px rgba(98, 229, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(98, 229, 255, 0); }
+}
+
+@media (max-width: 680px) {
+  #privateAudioPanel {
+    left: 12px;
+    right: 12px;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    width: auto;
+  }
+
+  .private-audio-incoming-wrap {
+    padding: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .private-audio-pulse {
+    animation: none;
+  }
+
+  .mini-private-audio,
+  .private-audio-chat-call {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .private-audio-incoming,
+  .private-audio-panel,
+  .mini-private-audio,
+  .private-audio-chat-call,
+  .private-audio-controls button {
+    border: 1px solid CanvasText;
+  }
+}

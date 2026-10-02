@@ -44,6 +44,18 @@ for (const [needle, label] of [
   ["state.transfers.delete(`claim:${event.payload.public_offer_id}`);", 'claim placeholder reconciliation'],
 ]) requireText(frontend, needle, label);
 
+const sharePublicStart = frontend.indexOf("async function sharePublic(kind: 'file' | 'image', roomId: string | null = null) {");
+const sharePublicEnd = frontend.indexOf('\n}', sharePublicStart);
+if (sharePublicStart < 0 || sharePublicEnd < 0) {
+  throw new Error('Public-sharing contract missing: sharePublic room-scope boundary');
+}
+const sharePublicBlock = frontend.slice(sharePublicStart, sharePublicEnd);
+for (const [needle, label] of [
+  ["if (roomId === null && state.room !== 'world') return;", 'WORLD-only publish guard'],
+  ["if (roomId !== null && (state.room === 'world' || state.room !== roomId)) return;", 'room-scoped publish guard'],
+  ["invoke<PublicShareOffer | null>('publish_public_file', { kind, roomId })", 'explicit room-context publish invocation'],
+]) requireText(sharePublicBlock, needle, label);
+
 const listenerStart = frontend.indexOf("listen<PublicShareOffer>('public-file-offer'");
 const listenerEnd = frontend.indexOf("listen<{ offer_id: string }>('public-offer-expired'", listenerStart);
 const listener = frontend.slice(listenerStart, listenerEnd);

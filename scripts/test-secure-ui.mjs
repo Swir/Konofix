@@ -6,7 +6,7 @@ function read(path) {
 
 const ui = read('src/secure-ui.ts');
 const css = read('src/secure-ui.css');
-const index = read('index.html');
+const loader = read('src/startup-ui-loader.ts');
 const rust = read('src-tauri/src/lib.rs');
 
 function requireText(text, message) {
@@ -101,8 +101,8 @@ if (/innerHTML\s*=.*message\.text/.test(ui)) {
 }
 if (!rust.includes('SetPrivateMessagesEnabled') || !rust.includes('private_messages_enabled = enabled')) throw new Error('Rust runtime must expose incoming-private policy');
 if (!rust.includes('reason: Some("private_disabled".into())')) throw new Error('disabled private conversations must fail closed');
-if (!index.includes('/src/secure-ui.ts')) {
-  throw new Error('secure UI module must be loaded by the application shell');
+if (!loader.includes("import('./secure-ui')")) {
+  throw new Error('secure UI module must be loaded by the isolated application startup loader');
 }
 
 console.log('secure room/private-chat UI contract: OK');

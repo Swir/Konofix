@@ -70,6 +70,15 @@ requireOrdered(remoteCancel, [
   '"file-offer-cancelled",',
 ], 'authenticated pending-offer cancellation event must remain peer-owned and ordered after state removal');
 requireOrdered(remoteCancel, [
+  'if incoming_matches {',
+  'if let Some(transfer) = incoming.remove(&transfer_id) {',
+  'let _ = tokio::fs::remove_file(&transfer.temp_path).await;',
+  'emit_transfer(&app, &file_view_incoming(&transfer_id, &transfer, "cancelled",',
+], 'remote incoming cancel must remove authenticated transfer state before deleting only its owned temp path and emitting terminal state');
+if (remoteCancel.includes('incoming.clear()') || remoteCancel.includes('remove_dir_all(')) {
+  fail('remote incoming cancel must not clear unrelated transfer state or delete broader directories.');
+}
+requireOrdered(remoteCancel, [
   'if outgoing_matches {',
   'outbound_requests.retain(|_, meta| meta.transfer_id != transfer_id);',
   'if let Some(transfer) = outgoing.remove(&transfer_id) {',

@@ -17,6 +17,8 @@ const cases = [
   ['helper renamed', 'fn file_response_matches_outbound_kind(kind: OutboundKind, response: &FileResponse) -> bool {', 'fn disabled_file_response_matches_outbound_kind(kind: OutboundKind, response: &FileResponse) -> bool {', 'Offer response policy is missing'],
   ['protocol failure removed', 'Nieoczekiwana odpowiedź P2P dla bieżącego etapu transferu.', 'ignored wrong phase', 'deterministic protocol failure'],
   ['cancel no longer terminal', 'OutboundKind::Cancel => true,', 'OutboundKind::Cancel => false,', 'Cancel must remain terminal/idempotent'],
+  ['broad outgoing cleanup', 'if !file_response_matches_outbound_kind(meta.kind, &response) {', 'if !file_response_matches_outbound_kind(meta.kind, &response) {\\n                                        outgoing.clear();', 'Wrong-phase cleanup must preserve unrelated state.'],
+  ['broad request cleanup', 'if !file_response_matches_outbound_kind(meta.kind, &response) {', 'if !file_response_matches_outbound_kind(meta.kind, &response) {\\n                                        outbound_requests.clear();', 'Wrong-phase cleanup must preserve unrelated state.'],
 ];
 for (const [name, from, to, expected] of cases) {
   const result = run(mutateOnce(canonical, from, to));

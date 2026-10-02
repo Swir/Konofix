@@ -85,6 +85,7 @@ try {
       this.switched.push(deviceId);
       this.stream.getTracks().forEach(track => track.stop());
       this.stream = makeStream(deviceId);
+      this.stream.getAudioTracks().forEach(track => { track.enabled = !this.muted; });
       this.active = true;
       return this.stream;
     }
@@ -239,6 +240,9 @@ try {
   if (aliceCapture.switched.at(-1) !== 'usb-mic') {
     throw new Error('Active room voice must switch the selected microphone.');
   }
+  if (!aliceCapture.muted || aliceCapture.stream.getAudioTracks().some(track => track.enabled)) {
+    throw new Error('Switching microphone while muted must keep the replacement room audio track disabled.');
+  }
 
   await bob.setDeafened(true);
   if (!bob.activeSession()?.deafened) {
@@ -272,6 +276,21 @@ try {
   if (alice.activeSession()?.phase !== 'connected' || bob.activeSession()?.phase !== 'connected') {
     throw new Error('WORLD voice must recover both peers from reconnecting to connected after renegotiation succeeds.');
   }
+  if (!bob.activeSession()?.deafened) {
+    throw new Error('Local deafen state must survive room voice reconnect.');
+  }
+
+  const aliceEndBeforeSync = aliceOutbound.filter(signal => signal.action === 'end').length;
+  const alicePeerBeforeSync = alicePeers.at(-1);
+  await alice.syncPeers([]);
+  if (
+    !alicePeerBeforeSync?.closed ||
+    alice.activeSession()?.participants.has('peer-bob') ||
+    bob.activeSession()?.participants.has('peer-alice') ||
+    aliceOutbound.filter(signal => signal.action === 'end').length !== aliceEndBeforeSync + 1
+  ) {
+    throw new Error('syncPeers departure must close the removed peer, clear both participant views and send one best-effort end.');
+  }
 
   await alice.leaveRoom();
   if (
@@ -287,6 +306,46 @@ try {
   }
   await bob.leaveRoom();
 
+  {
+    const resetSignals = [];
+    const resetCapture = new FakeCapture('reset-room');
+    const resetPeers = [];
+    const resetRoom = new RoomAudioCallController(
+      { send: async signal => { resetSignals.push(signal); } },
+      {
+        captureFactory: () => resetCapture,
+        peerFactory: callbacks => {
+          const peer = new FakePeer(callbacks, 'reset-room');
+          resetPeers.push(peer);
+          return peer;
+        },
+        sessionIdFactory: (() => {
+          let value = 0;
+          return () => `reset-room-session-${++value}`;
+        })(),
+      },
+    );
+    await resetRoom.joinRoom('world', [{ peerId: 'peer-reset', nick: 'Reset peer' }], 'speak');
+    const resetInvite = resetSignals.find(signal => signal.action === 'invite');
+    if (!resetInvite) throw new Error('Reset cleanup precondition must emit a room invite.');
+    await resetRoom.handleSignal({
+      id: 'reset-room-accept',
+      session_id: resetInvite.sessionId,
+      peer_id: 'peer-reset',
+      target_peer_id: 'peer-local',
+      nick: 'Reset peer',
+      scope: { kind: 'room', room_id: 'world' },
+      action: 'accept',
+      timestamp: Date.now(),
+    });
+    if (resetCapture.started !== 1 || resetPeers.length !== 1) {
+      throw new Error('Reset cleanup precondition must have active capture and a room peer.');
+    }
+    resetRoom.reset();
+    if (resetRoom.activeSession() !== undefined || resetCapture.stopped !== 1 || !resetPeers[0].closed) {
+      throw new Error('Room reset must clear voice state and release microphone/WebRTC resources.');
+    }
+  }
 
   {
     let releaseEnd;

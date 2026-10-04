@@ -81,10 +81,6 @@ const cases = [
   {
     name: 'clean task exit cleanup becomes error-only',
     target: 'rust',
-    source: [
-      'let owned_session =\n            clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);',
-      'let (owned_session, knp_runtime) =\n            clear_network_session_if_current(app_state.inner(), &task_tx).unwrap_or((false, None));',
-    ],
     taskCleanup: true,
     replacement: 'if let Err(err) = task_result {\n            let owned_session = false;',
     expected: 'after every network task return',

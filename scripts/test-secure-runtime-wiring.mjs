@@ -19,6 +19,12 @@ const mutateOnce = (source, from, to) => {
   }
   return source.slice(0, first) + to + source.slice(first + from.length);
 };
+const mutateAll = (source, from, to) => {
+  if (!source.includes(from)) {
+    throw new Error(`Mutation target must exist at least once: ${from}`);
+  }
+  return source.replaceAll(from, to);
+};
 const expectRejected = (name, source, expected) => {
   const result = run(source);
   const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
@@ -65,7 +71,7 @@ expectRejected(
 );
 expectRejected(
   'private Tauri command unregistered',
-  mutateOnce(canonical, '            send_private_message,', ''),
+  mutateAll(canonical, '        send_private_message,', ''),
   'Tauri secure feature command is not registered',
 );
 

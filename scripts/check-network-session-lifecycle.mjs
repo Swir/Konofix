@@ -32,7 +32,9 @@ requireText(rust, 'fn install_network_sender(', 'active network sender must be i
 requireText(rust, 'let mut guard = state.tx.lock().map_err(|_| "Błąd blokady stanu")?;', 'sender installation/cleanup must remain lock-protected.');
 requireText(rust, 'if guard.is_some() {', 'atomic sender installation must reject an overlapping start while holding the state lock.');
 requireText(rust, '*guard = Some(tx);', 'atomic sender installation must store the new sender under the same lock.');
-requireText(rust, 'fn clear_network_sender_if_current(', 'task-owned cleanup helper is missing.');
+if (!rust.includes('fn clear_network_sender_if_current(') && !rust.includes('fn clear_network_session_if_current(')) {
+  fail('task-owned cleanup helper is missing.');
+}
 requireText(rust, 'current.same_channel(task_tx)', 'task cleanup must prove ownership with Tokio Sender::same_channel.');
 requireText(rust, 'if owns_current_session {\n        guard.take();', 'a task may clear AppState only after proving sender ownership.');
 requireText(rust, 'install_network_sender(state.inner(), tx.clone())?;', 'start_network must use the atomic install helper.');
@@ -70,11 +72,19 @@ requireText(
   ')\n        .await;',
   'captured network task must be awaited before task-owned cleanup.',
 );
-requireText(rust, 'let owned_session =\n            clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);', 'network task cleanup must run after every network task return, including clean exits.');
-requireText(rust, 'if let Err(err) = task_result {\n            if owned_session {\n                let _ = app.emit("network-error", err);', 'terminal network-error must be emitted only for an owned fatal exit.');
+if (!/let (?:owned_session|\(owned_session, knp_runtime\))\s*=\s*[\s\S]{0,220}clear_network_(?:sender|session)_if_current\(app_state\.inner\(\), &task_tx\)/m.test(rust)) {
+  fail('network task cleanup must run after every network task return, including clean exits.');
+}
+if (!/if let Err\(err\) = task_result \{\s+if owned_session \{\s+let _ = app(?:_for_task)?\.emit\("network-error", err\);/m.test(rust)) {
+  fail('terminal network-error must be emitted only for an owned fatal exit.');
+}
 requireText(rust, 'fn owned_clean_exit_cleanup_allows_reconnect()', 'clean task exit/reconnect regression test is missing.');
 const taskResultIndex = rust.indexOf('let task_result =');
-const taskCleanupIndex = rust.indexOf('let owned_session =', taskResultIndex);
+const taskCleanupIndex = Math.min(
+  ...['let owned_session =', 'let (owned_session, knp_runtime) =']
+    .map((marker) => rust.indexOf(marker, taskResultIndex))
+    .filter((index) => index >= 0),
+);
 const taskErrorIndex = rust.indexOf('if let Err(err) = task_result', taskResultIndex);
 if (taskResultIndex < 0 || taskCleanupIndex < 0 || taskErrorIndex < 0 || !(taskResultIndex < taskCleanupIndex && taskCleanupIndex < taskErrorIndex)) {
   fail('task-owned sender cleanup must occur after every network task return and before error-only handling.');

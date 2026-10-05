@@ -25,7 +25,7 @@ On LAN, mDNS must work without manual addresses. If guest-Wi-Fi isolation, VLAN 
 
 Use **Network settings → Established peer connections** to record observed peer IDs and direct TCP/QUIC or circuit routes. The window is a snapshot; reopen it after connection changes. The sidebar counts connections, so one peer may contribute more than one. These observations do not identify the route of an individual GossipSub message.
 
-A relay reservation only means a circuit can be requested; it is not evidence that a message travelled over relay. Existing retries and relay selection are bounded. Do not confuse a direct connection to the relay participant with a direct end-to-end connection to the intended recipient. Use the existing network evidence tools and attach actual observations; do not fabricate route evidence from UI labels.
+A relay reservation only means a circuit can be requested; it is not evidence that a message travelled over relay. Remembered reconnects try known direct addresses before up to three saved circuit candidates. A competing discovery dial is not direct failure, and success cancels remaining fallback attempts. This covers cache-driven attempts; existing DHT discovery and DCUtR retain their libp2p policies. It does not forcibly terminate active streams when a second route appears. Existing retries and relay selection are bounded. Do not confuse a direct connection to the relay participant with a direct end-to-end connection to the intended recipient. Use the existing network evidence tools and attach actual observations; do not fabricate route evidence from UI labels.
 
 ## Optional KNP alongside the primary network
 

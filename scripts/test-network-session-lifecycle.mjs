@@ -27,6 +27,24 @@ const mutateOnce = (text, from, to) => {
   }
   return text.slice(0, first) + to + text.slice(first + from.length);
 };
+const mutateFirst = (text, candidates, to) => {
+  const from = candidates.find((candidate) => text.includes(candidate));
+  if (!from) throw new Error(`Test fixture source not found: ${candidates.join(' OR ')}`);
+  return mutateOnce(text, from, to);
+};
+const mutateAll = (text, from, to) => {
+  if (!text.includes(from)) throw new Error(`Test fixture source not found: ${from}`);
+  return text.replaceAll(from, to);
+};
+const mutateTaskCleanup = (text, replacement) => {
+  const start = text.indexOf('tauri::async_runtime::spawn(async move {');
+  const end = text.indexOf('\n    });', start);
+  if (start < 0 || end < 0) throw new Error('Task cleanup fixture block not found.');
+  const task = text.slice(start, end);
+  const pattern = /        #\[cfg\(windows\)\]\n        let \(owned_session, knp_runtime\) =\n            clear_network_session_if_current\(app_state\.inner\(\), &task_tx\)\.unwrap_or\(\(false, None\)\);\n        #\[cfg\(not\(windows\)\)\]\n        let owned_session =\n            clear_network_sender_if_current\(app_state\.inner\(\), &task_tx\)\.unwrap_or\(false\);/;
+  if (!pattern.test(task)) throw new Error('Platform-split task cleanup fixture not found.');
+  return text.slice(0, start) + task.replace(pattern, replacement) + text.slice(end);
+};
 
 const baseline = run(rustSource, uiSource);
 if (baseline.status !== 0) {
@@ -57,19 +75,23 @@ const cases = [
     target: 'rust',
     source: 'current.same_channel(task_tx)',
     replacement: 'true /* stale task can clear anything */',
+    all: true,
     expected: 'same_channel',
   },
   {
     name: 'clean task exit cleanup becomes error-only',
     target: 'rust',
-    source: 'let owned_session =\n            clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);\n        if let Err(err) = task_result {',
-    replacement: 'if let Err(err) = task_result {\n            let owned_session =\n                clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);',
+    taskCleanup: true,
+    replacement: 'if let Err(err) = task_result {\n            let owned_session = false;',
     expected: 'after every network task return',
   },
   {
     name: 'fatal task emits terminal error without owning active session',
     target: 'rust',
-    source: 'if let Err(err) = task_result {\n            if owned_session {\n                let _ = app.emit("network-error", err);',
+    source: [
+      'if let Err(err) = task_result {\n            if owned_session {\n                let _ = app.emit("network-error", err);',
+      'if let Err(err) = task_result {\n            if owned_session {\n                let _ = app_for_task.emit("network-error", err);',
+    ],
     replacement: 'if let Err(err) = task_result {\n            if true {\n                let _ = app.emit("network-error", err);',
     expected: 'owned fatal exit',
   },
@@ -161,7 +183,13 @@ const cases = [
 
 for (const testCase of cases) {
   const rust = testCase.target === 'rust'
-    ? mutateOnce(rustSource, testCase.source, testCase.replacement)
+    ? (testCase.taskCleanup
+      ? mutateTaskCleanup(rustSource, testCase.replacement)
+      : testCase.all
+      ? mutateAll(rustSource, testCase.source, testCase.replacement)
+      : Array.isArray(testCase.source)
+      ? mutateFirst(rustSource, testCase.source, testCase.replacement)
+      : mutateOnce(rustSource, testCase.source, testCase.replacement))
     : rustSource;
   const ui = testCase.target === 'ui'
     ? mutateOnce(uiSource, testCase.source, testCase.replacement)

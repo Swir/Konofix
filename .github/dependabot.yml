@@ -107,6 +107,11 @@ updates:
           - "rfd"
         update-types:
           - "major"
+      kononexus-major:
+        patterns:
+          - "kononexus"
+        update-types:
+          - "major"
 
   - package-ecosystem: "github-actions"
     directory: "/"

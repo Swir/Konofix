@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -25,6 +26,8 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 mod incoming_file;
+#[cfg(windows)]
+mod kononexus_transport;
 #[cfg(test)]
 mod messaging_runtime_tests;
 mod room_membership;
@@ -153,9 +156,18 @@ fn bootstrap_retry_delay(failures: u32) -> Duration {
     Duration::from_secs(seconds)
 }
 
+#[cfg(windows)]
+#[derive(Clone)]
+struct KonoNexusSession {
+    owner: mpsc::Sender<NetworkCommand>,
+    runtime: kononexus_transport::KonoNexusRuntime,
+}
+
 #[derive(Default)]
 struct AppState {
     tx: Mutex<Option<mpsc::Sender<NetworkCommand>>>,
+    #[cfg(windows)]
+    kononexus: Mutex<Option<KonoNexusSession>>,
 }
 
 fn install_network_sender(
@@ -184,6 +196,87 @@ fn clear_network_sender_if_current(
     Ok(owns_current_session)
 }
 
+#[cfg(windows)]
+enum KonoNexusInstall {
+    Installed(Option<kononexus_transport::KonoNexusRuntime>),
+    NotCurrent(kononexus_transport::KonoNexusRuntime),
+}
+
+#[cfg(windows)]
+fn install_kononexus_if_current(
+    state: &AppState,
+    owner: &mpsc::Sender<NetworkCommand>,
+    runtime: kononexus_transport::KonoNexusRuntime,
+) -> Result<KonoNexusInstall, (String, kononexus_transport::KonoNexusRuntime)> {
+    let tx_guard = match state.tx.lock() {
+        Ok(guard) => guard,
+        Err(_) => return Err(("Błąd blokady stanu sieci.".to_string(), runtime)),
+    };
+    let owns_current_session = tx_guard
+        .as_ref()
+        .is_some_and(|current| current.same_channel(owner));
+    if !owns_current_session {
+        return Ok(KonoNexusInstall::NotCurrent(runtime));
+    }
+    let mut kononexus_guard = match state.kononexus.lock() {
+        Ok(guard) => guard,
+        Err(_) => return Err(("KonoNexus runtime state lock failed.".to_string(), runtime)),
+    };
+    let replaced = kononexus_guard
+        .replace(KonoNexusSession {
+            owner: owner.clone(),
+            runtime,
+        })
+        .map(|session| session.runtime);
+    Ok(KonoNexusInstall::Installed(replaced))
+}
+
+#[cfg(windows)]
+fn clear_network_session_if_current(
+    state: &AppState,
+    task_tx: &mpsc::Sender<NetworkCommand>,
+) -> Result<(bool, Option<kononexus_transport::KonoNexusRuntime>), String> {
+    let mut tx_guard = state.tx.lock().map_err(|_| "Błąd blokady stanu")?;
+    let owns_current_session = tx_guard
+        .as_ref()
+        .is_some_and(|current| current.same_channel(task_tx));
+    if !owns_current_session {
+        return Ok((false, None));
+    }
+    let mut kononexus_guard = state
+        .kononexus
+        .lock()
+        .map_err(|_| "KonoNexus runtime state lock failed.")?;
+    tx_guard.take();
+    let runtime = kononexus_guard
+        .as_ref()
+        .is_some_and(|session| session.owner.same_channel(task_tx))
+        .then(|| kononexus_guard.take().map(|session| session.runtime))
+        .flatten();
+    Ok((true, runtime))
+}
+
+#[cfg(windows)]
+fn take_network_session(
+    state: &AppState,
+) -> Result<
+    (
+        Option<mpsc::Sender<NetworkCommand>>,
+        Option<kononexus_transport::KonoNexusRuntime>,
+    ),
+    String,
+> {
+    let mut tx_guard = state.tx.lock().map_err(|_| "Błąd blokady stanu")?;
+    let mut kononexus_guard = state
+        .kononexus
+        .lock()
+        .map_err(|_| "KonoNexus runtime state lock failed.")?;
+    Ok((
+        tx_guard.take(),
+        kononexus_guard.take().map(|session| session.runtime),
+    ))
+}
+
 fn take_network_sender(state: &AppState) -> Result<Option<mpsc::Sender<NetworkCommand>>, String> {
     Ok(state.tx.lock().map_err(|_| "Błąd blokady stanu")?.take())
 }
@@ -191,6 +284,10 @@ fn take_network_sender(state: &AppState) -> Result<Option<mpsc::Sender<NetworkCo
 #[derive(Debug, Clone, Serialize)]
 struct StartResult {
     peer_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    knp_node_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    knp_local_addr: Option<String>,
     nick: String,
     nick_color: String,
     version: String,
@@ -1330,22 +1427,31 @@ async fn start_network(
     let (ready_tx, ready_rx) = oneshot::channel();
     let nick_for_task = nick.clone();
     let nick_color_for_task = nick_color.clone();
+    let app_for_task = app.clone();
     tauri::async_runtime::spawn(async move {
         let task_result = network_task(
             nick_for_task,
             nick_color_for_task,
             bootstrap_list,
-            app.clone(),
+            app_for_task.clone(),
             rx,
             ready_tx,
         )
         .await;
-        let app_state = app.state::<AppState>();
+        let app_state = app_for_task.state::<AppState>();
+        #[cfg(windows)]
+        let (owned_session, knp_runtime) =
+            clear_network_session_if_current(app_state.inner(), &task_tx).unwrap_or((false, None));
+        #[cfg(not(windows))]
         let owned_session =
             clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);
+        #[cfg(windows)]
+        if let Some(runtime) = knp_runtime {
+            runtime.shutdown().await;
+        }
         if let Err(err) = task_result {
             if owned_session {
-                let _ = app.emit("network-error", err);
+                let _ = app_for_task.emit("network-error", err);
             }
         }
     });
@@ -1359,17 +1465,134 @@ async fn start_network(
     };
 
     match ready_result {
-        Ok(peer_id) => Ok(StartResult {
-            peer_id,
-            nick,
-            nick_color,
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        }),
+        Ok(peer_id) => {
+            #[cfg(windows)]
+            let (knp_node_id, knp_local_addr) =
+                match kononexus_transport::KonoNexusRuntime::spawn_default(app.clone()).await {
+                    Ok((runtime, node_id, local_addr)) => {
+                        match install_kononexus_if_current(state.inner(), &startup_tx, runtime) {
+                            Ok(KonoNexusInstall::Installed(replaced)) => {
+                                if let Some(previous) = replaced {
+                                    previous.shutdown().await;
+                                }
+                                let _ = app.emit(
+                                    "kononexus-status",
+                                    serde_json::json!({
+                                        "phase": "started",
+                                        "node_id": node_id,
+                                        "local_addr": local_addr,
+                                    }),
+                                );
+                                (Some(node_id), Some(local_addr))
+                            }
+                            Ok(KonoNexusInstall::NotCurrent(runtime)) => {
+                                runtime.shutdown().await;
+                                let _ = app.emit(
+                                    "kononexus-status",
+                                    serde_json::json!({
+                                        "phase": "unavailable",
+                                        "detail": "The network session ended before KonoNexus startup completed.",
+                                    }),
+                                );
+                                (None, None)
+                            }
+                            Err((error, runtime)) => {
+                                runtime.shutdown().await;
+                                let _ = app.emit(
+                                    "kononexus-status",
+                                    serde_json::json!({
+                                        "phase": "unavailable",
+                                        "detail": error,
+                                    }),
+                                );
+                                (None, None)
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        let _ = app.emit(
+                            "kononexus-status",
+                            serde_json::json!({
+                                "phase": "unavailable",
+                                "detail": error,
+                            }),
+                        );
+                        (None, None)
+                    }
+                };
+            #[cfg(not(windows))]
+            let (knp_node_id, knp_local_addr) = (None, None);
+            Ok(StartResult {
+                peer_id,
+                knp_node_id,
+                knp_local_addr,
+                nick,
+                nick_color,
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            })
+        }
         Err(err) => {
             let _ = clear_network_sender_if_current(state.inner(), &startup_tx);
             Err(err)
         }
     }
+}
+
+#[cfg(windows)]
+fn kononexus_runtime(state: &AppState) -> Result<kononexus_transport::KonoNexusRuntime, String> {
+    state
+        .kononexus
+        .lock()
+        .map_err(|_| "KonoNexus runtime state lock failed.".to_string())?
+        .as_ref()
+        .map(|session| session.runtime.clone())
+        .ok_or_else(|| "KonoNexus transport is unavailable.".to_string())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+async fn connect_kononexus_peer(
+    expected_node_id: String,
+    endpoints: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if endpoints.is_empty() || endpoints.len() > 8 {
+        return Err("Provide between one and eight exact KonoNexus endpoints.".into());
+    }
+    let endpoints = endpoints
+        .into_iter()
+        .map(|endpoint| {
+            endpoint
+                .parse::<SocketAddr>()
+                .map_err(|error| format!("Invalid KonoNexus endpoint: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    kononexus_runtime(state.inner())?
+        .connect(expected_node_id, endpoints)
+        .await
+}
+
+#[cfg(windows)]
+#[tauri::command]
+async fn connect_kononexus_invite(
+    invite_code: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    kononexus_runtime(state.inner())?
+        .connect_invite(invite_code)
+        .await
+}
+
+#[cfg(windows)]
+#[tauri::command]
+async fn send_kononexus_message(
+    peer_node_id: String,
+    data: Vec<u8>,
+    state: State<'_, AppState>,
+) -> Result<u64, String> {
+    kononexus_runtime(state.inner())?
+        .send(peer_node_id, data)
+        .await
 }
 
 #[tauri::command]
@@ -1886,9 +2109,16 @@ async fn cancel_file(transfer_id: String, state: State<'_, AppState>) -> Result<
 
 #[tauri::command]
 async fn disconnect_network(state: State<'_, AppState>) -> Result<(), String> {
+    #[cfg(windows)]
+    let (tx, knp_runtime) = take_network_session(state.inner())?;
+    #[cfg(not(windows))]
     let tx = take_network_sender(state.inner())?;
     if let Some(tx) = tx {
         let _ = tx.send(NetworkCommand::Stop).await;
+    }
+    #[cfg(windows)]
+    if let Some(runtime) = knp_runtime {
+        runtime.shutdown().await;
     }
     Ok(())
 }
@@ -5170,30 +5400,57 @@ mod authenticated_event_tests {
 }
 
 pub fn run() {
-    tauri::Builder::default()
-        .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![
-            start_network,
-            send_message,
-            create_room,
-            create_secure_room,
-            update_room_password,
-            authorize_room_entry,
-            send_private_message,
-            set_private_messages_enabled,
-            enter_room,
-            add_bootstrap,
-            refresh_discovery,
-            offer_file,
-            publish_public_file,
-            claim_public_file,
-            load_image_preview,
-            accept_file,
-            reject_file,
-            cancel_file,
-            disconnect_network,
-            open_github
-        ])
+    let builder = tauri::Builder::default().manage(AppState::default());
+    #[cfg(windows)]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        start_network,
+        connect_kononexus_peer,
+        connect_kononexus_invite,
+        send_kononexus_message,
+        send_message,
+        create_room,
+        create_secure_room,
+        update_room_password,
+        authorize_room_entry,
+        send_private_message,
+        set_private_messages_enabled,
+        enter_room,
+        add_bootstrap,
+        refresh_discovery,
+        offer_file,
+        publish_public_file,
+        claim_public_file,
+        load_image_preview,
+        accept_file,
+        reject_file,
+        cancel_file,
+        disconnect_network,
+        open_github
+    ]);
+    #[cfg(not(windows))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        start_network,
+        send_message,
+        create_room,
+        create_secure_room,
+        update_room_password,
+        authorize_room_entry,
+        send_private_message,
+        set_private_messages_enabled,
+        enter_room,
+        add_bootstrap,
+        refresh_discovery,
+        offer_file,
+        publish_public_file,
+        claim_public_file,
+        load_image_preview,
+        accept_file,
+        reject_file,
+        cancel_file,
+        disconnect_network,
+        open_github
+    ]);
+    builder
         .run(tauri::generate_context!())
         .expect("error while running Konofix Chat");
 }

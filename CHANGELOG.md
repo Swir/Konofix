@@ -5,6 +5,7 @@
 - fixed receiver-side room/WORLD offer downloads so the Transfers panel immediately shows a requesting state, then reconciles to the real incoming P2P transfer and live progress instead of appearing only after completion,
 - added a prominent file-offer-style private-message notification with explicit Open and Ignore actions; Ignore lasts for the current session and manual opening restores notifications,
 - added a Private conversations setting that rejects new incoming private messages at the authenticated direct P2P control channel with a clear sender-side error,
+- added a Windows-only KonoNexus SDK transport surface with persisted KNP identity, exact-endpoint or verified-invite connection commands, authenticated transport-level message/delivery events, and bounded two-node live coverage for encrypted delivery and wrong-identity rejection; this is integration groundwork and does not claim UI chat-policy migration, WAN reachability or Global Beta credit,
 - preserved 0.5.0 room-scoped sharing, private attachments, SHA-256/no-clobber/cancel safety and safe rendering; Global Beta evidence remains 56/67 = 83.6%.
 
 ## 0.5.0

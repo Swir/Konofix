@@ -1,3 +1,6 @@
+#app .login-shell { height:100vh; min-height:0; overflow-y:auto; align-items:start; padding-block:32px; }
+#app .login-shell .brand-panel { align-self:center; }
+#app .login-shell .login-card { padding:24px; }
 .knp-chat .chat-main { grid-template-rows: auto 1fr auto auto; }
 .knp-chat #knpPeerIdentity { display:block; overflow-wrap:anywhere; font-size:10px; }
 .knp-chat .network-card small { display:block; margin-top:8px; line-height:1.5; }

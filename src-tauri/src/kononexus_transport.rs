@@ -49,6 +49,7 @@ fn default_state_root() -> Result<PathBuf, String> {
 }
 
 impl KonoNexusRuntime {
+    #[cfg(windows)]
     pub(crate) async fn spawn_default(
         app: tauri::AppHandle,
     ) -> Result<(Self, String, String), String> {
@@ -205,26 +206,33 @@ async fn run_transport(
     mut commands: mpsc::Receiver<RuntimeCommand>,
     events: mpsc::Sender<RelayAppEvent>,
 ) {
-    enum Wake {
-        Event(Option<RelayAppEvent>),
+    enum Wake<'a> {
+        Event(Option<(mpsc::Permit<'a, RelayAppEvent>, Option<RelayAppEvent>)>),
         Command(Option<RuntimeCommand>),
+        ConsumerClosed,
     }
 
     let mut shutdown_reply = None;
     loop {
         let wake = tokio::select! {
-            event = transport.next_event() => Wake::Event(event),
+            // Reserve output space before receiving an SDK event. Both waits are
+            // cancellation-safe: control commands remain available under backpressure,
+            // and an event is never dequeued without space to forward it immediately.
+            event = async {
+                let permit = events.reserve().await.ok()?;
+                Some((permit, transport.next_event().await))
+            } => Wake::Event(event),
             command = commands.recv() => Wake::Command(command),
+            _ = events.closed() => Wake::ConsumerClosed,
         };
         match wake {
             Wake::Event(event) => match event {
-                Some(event) => {
-                    if events.send(event).await.is_err() {
-                        break;
-                    }
+                Some((permit, Some(event))) => {
+                    permit.send(event);
                 }
-                None => break,
+                None | Some((_, None)) => break,
             },
+            Wake::ConsumerClosed => break,
             Wake::Command(command) => match command {
                 Some(RuntimeCommand::Connect {
                     expected_node_id,
@@ -288,6 +296,7 @@ async fn run_transport(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::{task::JoinHandle, time};
 
     #[test]
     fn identity_and_routing_cache_stay_in_one_kononexus_state_root() {
@@ -295,5 +304,140 @@ mod tests {
         let (identity, routing) = state_paths(&root);
         assert_eq!(identity, root.join("identity.key"));
         assert_eq!(routing, root.join("routing-cache.json"));
+    }
+
+    struct TestState(PathBuf);
+
+    impl TestState {
+        fn new() -> Self {
+            let root =
+                std::env::temp_dir().join(format!("konofix-knp-flow-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            Self(root)
+        }
+    }
+
+    impl Drop for TestState {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn test_runtime(
+        root: &Path,
+        name: &str,
+    ) -> (
+        KonoNexusRuntime,
+        mpsc::Receiver<RelayAppEvent>,
+        JoinHandle<()>,
+    ) {
+        let config = KonofixSdkConfig::new(root.join(format!("{name}.key")))
+            .with_bind("127.0.0.1:0".parse().unwrap())
+            .with_routing_cache(root.join(format!("{name}-routing.json")))
+            .with_local_test_mode(true)
+            .with_hello_interval(Duration::from_millis(100));
+        let transport = KonofixTransport::spawn(config).await.unwrap();
+        let (command_tx, command_rx) = mpsc::channel(8);
+        // A one-event output queue makes backpressure reachable with three real messages.
+        let (event_tx, event_rx) = mpsc::channel(1);
+        let runtime = KonoNexusRuntime {
+            node_id: transport.node_id().to_owned(),
+            local_addr: transport.local_addr(),
+            command_tx,
+        };
+        let task = tokio::spawn(run_transport(transport, command_rx, event_tx));
+        (runtime, event_rx, task)
+    }
+
+    async fn send_and_wait_for_receipt(
+        runtime: &KonoNexusRuntime,
+        events: &mut mpsc::Receiver<RelayAppEvent>,
+        peer: &str,
+        payload: Vec<u8>,
+    ) {
+        time::timeout(Duration::from_secs(15), async {
+            let id = runtime.send(peer.to_owned(), payload).await.unwrap();
+            match events.recv().await.expect("receipt stream is open") {
+                RelayAppEvent::Delivered(receipt) => {
+                    assert_eq!(receipt.message_id, id);
+                    assert_eq!(receipt.peer_node_id, peer);
+                }
+                other => panic!("expected an authenticated receipt, got {other:?}"),
+            }
+        })
+        .await
+        .expect("local KNP delivery must finish");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn event_backpressure_preserves_control_delivery_order_and_shutdown() {
+        let root = TestState::new();
+        let (a, mut a_events, a_task) = test_runtime(&root.0, "a").await;
+        let (b, mut b_events, b_task) = test_runtime(&root.0, "b").await;
+        a.connect(b.node_id().to_owned(), vec![b.local_addr()])
+            .await
+            .unwrap();
+
+        for n in 0..3 {
+            send_and_wait_for_receipt(&a, &mut a_events, b.node_id(), vec![n]).await;
+        }
+        assert_eq!(
+            b_events.len(),
+            1,
+            "consumer has deliberately not drained events"
+        );
+        // Commands must work while the output queue remains full; they must not
+        // discard a message or require the frontend to resume consuming first.
+        time::timeout(Duration::from_secs(3), async {
+            for _ in 0..10 {
+                let _ = b.authenticated_peer_count().await.unwrap();
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("diagnostics must remain responsive under event backpressure");
+
+        time::timeout(Duration::from_secs(3), async {
+            for n in 0..3 {
+                match b_events.recv().await.expect("message stream is open") {
+                    RelayAppEvent::Message(message) => {
+                        assert_eq!(message.peer_node_id, a.node_id());
+                        assert_eq!(message.data, vec![n]);
+                    }
+                    other => panic!("expected ordered message, got {other:?}"),
+                }
+            }
+        })
+        .await
+        .expect("all accepted messages must remain available in order");
+
+        // Fill the queue again and close without consuming any more events.
+        for n in 3..6 {
+            send_and_wait_for_receipt(&a, &mut a_events, b.node_id(), vec![n]).await;
+        }
+        let b_addr = b.local_addr();
+        time::timeout(Duration::from_secs(3), b.shutdown())
+            .await
+            .expect("shutdown must not wait for the frontend to drain events");
+        b_task.await.unwrap();
+        let _released_socket = tokio::net::UdpSocket::bind(b_addr).await.unwrap();
+        time::timeout(Duration::from_secs(3), a.shutdown())
+            .await
+            .unwrap();
+        a_task.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn idle_runtime_stops_when_event_consumer_is_dropped() {
+        let root = TestState::new();
+        let (runtime, events, task) = test_runtime(&root.0, "idle").await;
+        let addr = runtime.local_addr();
+        drop(events);
+        time::timeout(Duration::from_secs(3), task)
+            .await
+            .expect("a closed frontend must release even an idle runtime")
+            .unwrap();
+        assert!(runtime.authenticated_peer_count().await.is_err());
+        let _released_socket = tokio::net::UdpSocket::bind(addr).await.unwrap();
     }
 }

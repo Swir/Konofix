@@ -141,7 +141,7 @@ requireOrdered([
   'tokio::fs::remove_file(&temp_path).await',
 ], 'periodic cleanup must reclaim stalled incoming transfers and remove only their owned temp path.');
 
-const connectionStart = text.indexOf('SwarmEvent::ConnectionClosed { peer_id: remote, num_established, .. } => {');
+const connectionStart = text.indexOf('SwarmEvent::ConnectionClosed { peer_id: remote, connection_id, num_established, .. } => {');
 if (connectionStart < 0) {
   fail('ConnectionClosed handler is missing.');
 } else {

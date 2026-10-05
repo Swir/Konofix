@@ -6,6 +6,13 @@ const STORAGE_KEY = 'konofix.locale';
 type Params = Record<string, string | number>;
 
 const EN = {
+  "network.directCount": "Direct {count}",
+  "network.relayCount": "Relay {count}",
+  "network.directRoutes": "Direct connections",
+  "network.relayRoutes": "Relayed connections",
+  "network.relayReservations": "Relay listen addresses",
+  "network.observedRoutes": "Established peer connections",
+  "network.routeHelp": "Addresses were observed at connection establishment. Reopen this window to refresh its snapshot. They are not per-message delivery proofs or necessarily dialable addresses. Relay listen addresses are reservations, not relayed connections. Multiple connections may belong to one peer.",
   "knp.openOptional": "Optional KNP contacts (beta)",
   "knp.coexistence": "WORLD, rooms, files and private libp2p chat keep running. This optional panel addresses verified KNP NodeIDs separately; it does not map them to libp2p PeerIDs or change existing discovery and relay paths.",
   "knp.backToWorld": "Back to WORLD (keep KNP running)",
@@ -167,6 +174,13 @@ export type MessageKey = keyof typeof EN;
 type Dictionary = Partial<Record<MessageKey, string>>;
 
 const PL: Dictionary = {
+  "network.directCount": "Direct {count}",
+  "network.relayCount": "Relay {count}",
+  "network.directRoutes": "Połączenia bezpośrednie",
+  "network.relayRoutes": "Połączenia przez relay",
+  "network.relayReservations": "Adresy nasłuchu relay",
+  "network.observedRoutes": "Zestawione połączenia z peerami",
+  "network.routeHelp": "Adresy zaobserwowano przy zestawianiu połączeń. Otwórz to okno ponownie, aby odświeżyć stan. Nie dowodzą trasy konkretnej wiadomości i nie zawsze służą do ponownego połączenia. Adresy nasłuchu relay oznaczają rezerwacje, nie połączenia przez relay. Jeden peer może mieć wiele połączeń.",
   "knp.openOptional": "Opcjonalne kontakty KNP (beta)",
   "knp.coexistence": "WORLD, pokoje, pliki i prywatny czat libp2p nadal działają. Ten opcjonalny panel adresuje osobno zweryfikowane NodeID KNP; nie utożsamia ich z PeerID libp2p ani nie zmienia discovery i ścieżek relay.",
   "knp.backToWorld": "Wróć do WORLD (KNP pozostaje aktywne)",

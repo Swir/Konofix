@@ -25,6 +25,7 @@ use tokio::{
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
+mod connection_routes;
 mod incoming_file;
 #[cfg(windows)]
 mod knp_chat;
@@ -377,6 +378,7 @@ struct PublicShareOffer {
 struct NetworkStatus {
     phase: String,
     connected_peers: usize,
+    routes: Vec<connection_routes::ConnectionRoute>,
     dht_peers: usize,
     bootstrap_count: usize,
     nat: String,
@@ -2445,6 +2447,7 @@ fn emit_status(
     nat: &str,
     listen_addresses: &[String],
     detail: impl Into<String>,
+    routes: &connection_routes::ConnectionRoutes,
 ) {
     let connected_peers = swarm.connected_peers().count();
     let dht_peers = swarm
@@ -2460,6 +2463,7 @@ fn emit_status(
             "searching".into()
         },
         connected_peers,
+        routes: routes.snapshot(),
         dht_peers,
         bootstrap_count,
         nat: nat.to_string(),
@@ -2710,6 +2714,7 @@ async fn network_task(
     let mut membership_seen: HashMap<PeerId, Instant> = HashMap::new();
     let mut participant_relays = HashMap::new();
     let mut listen_addresses: Vec<String> = Vec::new();
+    let mut connection_routes = connection_routes::ConnectionRoutes::default();
     let mut nat_status = "unknown".to_string();
     let mut secure_runtime = SecureControlRuntime::default();
     let mut secure_client = SecureControlClient::default();
@@ -2764,6 +2769,7 @@ async fn network_task(
         &nat_status,
         &listen_addresses,
         "Warstwa P2P uruchomiona",
+        &connection_routes,
     );
 
     'network: loop {
@@ -2788,7 +2794,7 @@ async fn network_task(
                 let _ = swarm.behaviour_mut().kad.bootstrap();
                 swarm.behaviour_mut().kad.get_providers(world_provider_key());
                 app.save_peers(&peer_cache);
-                emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Odświeżono discovery");
+                emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Odświeżono discovery", &connection_routes);
             }
             _ = bootstrap_retry.tick() => {
                 let now = Instant::now();
@@ -3129,7 +3135,7 @@ async fn network_task(
                             }
                         };
                         let _ = reply.send(result);
-                        emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Zaktualizowano bootstrapy");
+                        emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Zaktualizowano bootstrapy", &connection_routes);
                     }
                     NetworkCommand::RefreshDiscovery => {
                         let _ = swarm.behaviour_mut().kad.bootstrap();
@@ -3415,9 +3421,10 @@ async fn network_task(
                     if !listen_addresses.contains(&printable) {
                         listen_addresses.push(printable);
                     }
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Nasłuchiwanie aktywne");
+                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Nasłuchiwanie aktywne", &connection_routes);
                 }
-                SwarmEvent::ConnectionEstablished { peer_id: remote, .. } => {
+                SwarmEvent::ConnectionEstablished { peer_id: remote, connection_id, endpoint, .. } => {
+                    connection_routes.established(connection_id, remote, &endpoint);
                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
                     if mark_bootstrap_connected(&mut bootstrap_targets, &remote) {
                         let _ = app.emit_event(
@@ -3427,9 +3434,10 @@ async fn network_task(
                     }
                     publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
                     publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, session_age_ms(session_started));
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączono z peerem");
+                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączono z peerem", &connection_routes);
                 }
-                SwarmEvent::ConnectionClosed { peer_id: remote, num_established, .. } => {
+                SwarmEvent::ConnectionClosed { peer_id: remote, connection_id, num_established, .. } => {
+                    connection_routes.closed(connection_id);
                     apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.connection_closed(&remote, num_established));
                     if num_established == 0 {
                         membership_seen.remove(&remote);
@@ -3509,7 +3517,7 @@ async fn network_task(
                 }
 
                     }
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączenie z peerem zamknięte");
+                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączenie z peerem zamknięte", &connection_routes);
                 }
                 SwarmEvent::OutgoingConnectionError {
                     peer_id: Some(remote),
@@ -3578,12 +3586,12 @@ async fn network_task(
                     if let Some(address) = address_for_peer(address, local_peer) {
                         listen_addresses.retain(|current| current != &address.to_string());
                     }
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "P2P address expired");
+                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "P2P address expired", &connection_routes);
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Autonat(event)) => {
                     if let autonat::Event::StatusChanged { old: _, new } = event {
                         nat_status = format!("{new:?}").to_lowercase();
-                        emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Zmieniono status NAT");
+                        emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Zmieniono status NAT", &connection_routes);
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Upnp(event)) => {

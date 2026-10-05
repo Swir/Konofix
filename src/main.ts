@@ -37,6 +37,7 @@ type RoomUserCountUpdate = { room_id: string; users: number };
 type NetworkStatus = {
   phase: string;
   connected_peers: number;
+  routes: { peer_id: string; connection_id: string; path: 'direct' | 'relay'; transport: string; remote_address: string }[];
   dht_peers: number;
   bootstrap_count: number;
   nat: string;
@@ -64,7 +65,7 @@ type FileTransfer = {
 
 const EMPTY_STATUS: NetworkStatus = {
   phase: 'offline', connected_peers: 0, dht_peers: 0, bootstrap_count: 0,
-  nat: 'unknown', listen_addresses: [], detail: 'Disconnected'
+  nat: 'unknown', listen_addresses: [], routes: [], detail: 'Disconnected'
 };
 
 const state = {
@@ -370,6 +371,8 @@ function networkLabel(): string {
 
 function networkSubtitle(): string {
   const parts = [t('network.connectionsCount', { count: state.status.connected_peers }), `DHT ${state.status.dht_peers}`];
+  parts.push(t('network.directCount', { count: state.status.routes.filter(r => r.path === 'direct').length }));
+  parts.push(t('network.relayCount', { count: state.status.routes.filter(r => r.path === 'relay').length }));
   if (state.status.nat && state.status.nat !== 'unknown') parts.push(`NAT ${state.status.nat}`);
   return parts.join(' · ');
 }
@@ -767,9 +770,13 @@ function showNetworkModal() {
         <div><span>${esc(t('network.connections'))}</span><strong>${state.status.connected_peers}</strong></div>
         <div><span>${esc(t('network.dhtPeers'))}</span><strong>${state.status.dht_peers}</strong></div>
         <div><span>${esc(t('network.bootstraps'))}</span><strong>${state.status.bootstrap_count || bootstraps.length}</strong></div>
-        <div><span>Relay</span><strong>${state.status.listen_addresses.filter(a => a.includes('/p2p-circuit')).length ? esc(t('common.active')) : esc(t('common.auto'))}</strong></div>
+        <div><span>${esc(t('network.directRoutes'))}</span><strong>${state.status.routes.filter(r => r.path === 'direct').length}</strong></div>
+        <div><span>${esc(t('network.relayRoutes'))}</span><strong>${state.status.routes.filter(r => r.path === 'relay').length}</strong></div>
+        <div><span>${esc(t('network.relayReservations'))}</span><strong>${state.status.listen_addresses.filter(a => a.includes('/p2p-circuit')).length}</strong></div>
         <div><span>NAT</span><strong>${esc(state.status.nat)}</strong></div>
       </div>
+      <div class="listen-block" id="observedRoutes"><span>${esc(t('network.observedRoutes'))}</span>${state.status.routes.map(r => `<div data-route-peer="${esc(r.peer_id)}" data-route-path="${r.path}"><code>${esc(r.peer_id)} · ${esc(r.path)} / ${esc(r.transport)} · ${esc(r.remote_address)}</code></div>`).join('')}</div>
+      <p class="modal-note">${esc(t('network.routeHelp'))}</p>
       <p class="modal-note">${esc(t('network.participantNode'))}</p>
       <label>${esc(t('network.bootstrapAddress'))}</label>
       <div class="inline-form"><input id="bootstrapInput" placeholder="/ip4/.../tcp/.../p2p/12D3KooW..."/><button id="addBootstrap" class="primary compact">${esc(t('common.add'))}</button></div>

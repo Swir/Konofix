@@ -27,6 +27,10 @@ use uuid::Uuid;
 
 mod incoming_file;
 #[cfg(windows)]
+mod knp_chat;
+#[cfg(windows)]
+mod knp_chat_commands;
+#[cfg(windows)]
 mod kononexus_transport;
 #[cfg(test)]
 mod messaging_runtime_tests;
@@ -166,6 +170,10 @@ struct KonoNexusSession {
 #[derive(Default)]
 struct AppState {
     tx: Mutex<Option<mpsc::Sender<NetworkCommand>>>,
+    #[cfg(windows)]
+    session_gate: tokio::sync::Mutex<()>,
+    #[cfg(windows)]
+    knp_chat: Mutex<Option<knp_chat::KnpChat>>,
     #[cfg(windows)]
     kononexus: Mutex<Option<KonoNexusSession>>,
 }
@@ -1416,6 +1424,17 @@ async fn start_network(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<StartResult, String> {
+    #[cfg(windows)]
+    let _gate = state.session_gate.lock().await;
+    #[cfg(windows)]
+    if state
+        .knp_chat
+        .lock()
+        .map_err(|_| "Chat state lock failed.")?
+        .is_some()
+    {
+        return Err("Disconnect KNP chat before starting the legacy network.".into());
+    }
     let nick = validate_nick(&nick)?;
     let nick_color = normalize_nick_color(nick_color.as_deref());
     let bootstrap_list = bootstrap_sources(bootstraps.unwrap_or_default())?;
@@ -2109,6 +2128,8 @@ async fn cancel_file(transfer_id: String, state: State<'_, AppState>) -> Result<
 
 #[tauri::command]
 async fn disconnect_network(state: State<'_, AppState>) -> Result<(), String> {
+    #[cfg(windows)]
+    let _gate = state.session_gate.lock().await;
     #[cfg(windows)]
     let (tx, knp_runtime) = take_network_session(state.inner())?;
     #[cfg(not(windows))]
@@ -5404,6 +5425,11 @@ pub fn run() {
     #[cfg(windows)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         start_network,
+        knp_chat_commands::start_knp_chat,
+        knp_chat_commands::knp_chat_snapshot,
+        knp_chat_commands::add_knp_chat_contact,
+        knp_chat_commands::send_knp_chat_message,
+        knp_chat_commands::stop_knp_chat,
         connect_kononexus_peer,
         connect_kononexus_invite,
         send_kononexus_message,

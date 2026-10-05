@@ -99,7 +99,6 @@ function queueAugment(): void {
 }
 
 function augmentMainUi(): void {
-  if (document.querySelector<HTMLElement>('#app')?.dataset.transport === 'knp') return;
   document.querySelectorAll<HTMLButtonElement>('button[data-room]').forEach(button => {
     const roomId = button.dataset.room ?? '';
     if (!roomId || roomId === 'world') return;
@@ -510,7 +509,6 @@ async function sendPrivateMessage(): Promise<void> {
 
 function installCaptureRouter(): void {
   document.addEventListener('click', event => {
-    if (document.querySelector<HTMLElement>('#app')?.dataset.transport === 'knp') return;
     const target = event.target as HTMLElement | null;
     if (!target) return;
 
@@ -571,7 +569,6 @@ async function wireSecureEvents(): Promise<void> {
     queueAugment();
   });
   await listen<PrivateChatMessage>('private-message', event => {
-    if (document.querySelector<HTMLElement>('#app')?.dataset.transport === 'knp') return;
     const message = event.payload;
     localPeerId = localPeerId || message.target_peer_id;
     const result = conversations.push(message, localPeerId);

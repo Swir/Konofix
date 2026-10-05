@@ -6,43 +6,87 @@ import './knp-chat.css';
 
 const escape = (s: string) => s.replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[c]!));
 
-export async function startKnpChatUi(nick: string, profile: string, onDisconnected: () => void): Promise<void> {
-  const app = document.querySelector<HTMLDivElement>('#app')!;
+let activePanel: HTMLElement | null = null;
+let activeSession: KnpChatSession | null = null;
+let disposePanel: (() => void) | null = null;
+
+export function closeKnpChatUi(): void {
+  document.querySelector('#knpLauncher')?.remove();
+  disposePanel?.();
+  disposePanel = null;
+  const previous = activeSession;
+  activeSession = null;
+  activePanel = null;
+  // The owning primary session also shuts down this exact native child.
+  void previous?.stop().catch(() => {});
+}
+
+export function openKnpChatUi(nick: string): void {
+  if (activePanel) { activePanel.hidden = false; return; }
+  if (document.querySelector('#knpLauncher')) return;
+  const launcher = document.createElement('div');
+  launcher.id = 'knpLauncher'; launcher.className = 'modal-wrap';
+  launcher.innerHTML = `<form class="modal glass"><h3>${escape(t('knp.openOptional'))}</h3>
+    <p>${escape(t('knp.coexistence'))}</p><label for="knpProfile">${escape(t('knp.profile'))}</label>
+    <input id="knpProfile" value="default" maxlength="32" pattern="[a-z0-9-]{1,32}" required />
+    <div id="knpStartError" class="error" role="alert"></div>
+    <button id="knpStart" class="primary" type="submit">${escape(t('knp.openOptional'))}</button>
+    <button id="knpCancelStart" type="button" class="ghost">${escape(t('common.cancel'))}</button></form>`;
+  document.body.appendChild(launcher);
+  launcher.querySelector('#knpCancelStart')!.addEventListener('click', closeKnpChatUi);
+  launcher.querySelector('form')!.addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = launcher.querySelector<HTMLButtonElement>('#knpStart')!;
+    button.disabled = true;
+    try { await startKnpChatUi(nick, launcher.querySelector<HTMLInputElement>('#knpProfile')!.value.trim()); launcher.remove(); }
+    catch (error) { launcher.querySelector('#knpStartError')!.textContent = String(error); button.disabled = false; }
+  });
+}
+
+async function startKnpChatUi(nick: string, profile: string): Promise<void> {
+  if (activeSession) throw new Error('KNP contacts are already starting or active.');
+  const app = document.createElement('div');
+  app.id = 'knpChatOverlay';
+  app.className = 'knp-overlay';
   let selected = '';
   let mounted = false;
   let stopped = false;
   let sending = false;
   const drafts = new Map<string, string>();
   const session = new KnpChatSession(invoke, snapshot => { if (mounted) render(snapshot); });
-  await session.start(nick, profile);
+  activeSession = session;
+  try { await session.start(nick, profile); } catch (error) { if (activeSession === session) activeSession = null; throw error; }
   if (!session.snapshot) return;
+  activePanel = app;
   app.dataset.transport = 'knp';
+  document.body.appendChild(app);
   app.innerHTML = `<main class="chat-shell knp-chat" data-session-id="${escape(session.snapshot.session_id)}">
     <aside class="sidebar glass">
       <div class="logo-row"><div class="brand-mark small">K</div><div><strong>Konofix Chat</strong><span>KonoNexus · KNP beta</span></div></div>
+      <button id="knpBack" class="ghost wide" type="button">${escape(t('knp.backToWorld'))}</button>
       <button id="knpContacts" class="primary">${escape(t('knp.contacts'))}</button>
       <div class="section-title">${escape(t('knp.directChats'))}</div><div id="knpContactList"></div>
       <div class="network-card"><strong>KNP</strong><small>${escape(t('knp.scope'))}</small></div>
       <div class="sidebar-bottom"><div class="me-info"><strong>${escape(nick)}</strong><span>${escape(profile)}</span></div>
-      <button id="disconnect" class="icon-btn danger" title="${escape(t('network.disconnect'))}">⏻</button></div>
+      <button id="knpStop" class="icon-btn danger" title="${escape(t('knp.stopOptional'))}">⏻</button></div>
     </aside>
     <section class="chat-main glass">
       <header class="chat-header"><div><h2 id="knpTitle">${escape(t('knp.chooseContact'))}</h2><span id="knpPeerIdentity"></span></div></header>
-      <div id="messages" class="messages" aria-live="polite"></div>
+      <div id="knpMessages" class="messages" aria-live="polite"></div>
       <div id="knpError" class="error" role="alert"></div>
       <footer class="composer">
-        <div class="emoji-wrap"><button id="emojiToggle" class="emoji-toggle" title="${escape(t('chat.emoji'))}">☺</button><div id="emojiPanel" class="emoji-panel" hidden>
+        <div class="emoji-wrap"><button id="knpEmojiToggle" class="emoji-toggle" title="${escape(t('chat.emoji'))}">☺</button><div id="knpEmojiPanel" class="emoji-panel" hidden>
           ${KONOFIX_EMOJI.filter((v, i, a) => a.findIndex(x => x.glyph === v.glyph) === i).map(e => `<button data-knp-emoji="${escape(e.glyph)}" title="${escape(e.label)}">${e.glyph}</button>`).join('')}
         </div></div>
-        <input id="msg" maxlength="4000" autocomplete="off" aria-label="${escape(t('common.send'))}" placeholder="${escape(t('knp.chooseContact'))}" disabled />
-        <button id="send" class="send" title="${escape(t('common.send'))}" disabled>➤</button>
+        <input id="knpMsg" maxlength="4000" autocomplete="off" aria-label="${escape(t('common.send'))}" placeholder="${escape(t('knp.chooseContact'))}" disabled />
+        <button id="knpSend" class="send" title="${escape(t('common.send'))}" disabled>➤</button>
       </footer>
     </section>
     <aside class="users glass"><strong>${escape(t('knp.betaTitle'))}</strong><p class="muted">${escape(t('knp.betaHelp'))}</p><p class="muted">${escape(t('knp.receiptHelp'))}</p><p class="muted">${escape(t('knp.historyHelp'))}</p></aside>
   </main>`;
   mounted = true;
-  const input = app.querySelector<HTMLInputElement>('#msg')!;
-  const sendButton = app.querySelector<HTMLButtonElement>('#send')!;
+  const input = app.querySelector<HTMLInputElement>('#knpMsg')!;
+  const sendButton = app.querySelector<HTMLButtonElement>('#knpSend')!;
   const error = app.querySelector<HTMLElement>('#knpError')!;
   function showError(value: unknown) { if (!stopped) error.textContent = String(value); }
 
@@ -63,7 +107,7 @@ export async function startKnpChatUi(nick: string, profile: string, onDisconnect
     input.disabled = !contact;
     sendButton.disabled = !contact || sending;
     input.placeholder = contact ? t('chat.messageTo', { room: contact.label }) : t('knp.chooseContact');
-    const messages = app.querySelector<HTMLElement>('#messages')!;
+    const messages = app.querySelector<HTMLElement>('#knpMessages')!;
     const follow = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
     messages.innerHTML = snapshot.messages.filter(m => m.peer_node_id === selected).map(m => `<article class="message ${m.outgoing ? 'mine' : ''}" data-knp-message="${escape(m.id)}" data-delivery="${m.delivery}">
       <div class="bubble"><strong>${escape(m.outgoing ? snapshot.nick : contact?.label ?? m.peer_node_id)}</strong>
@@ -92,8 +136,8 @@ export async function startKnpChatUi(nick: string, profile: string, onDisconnect
   input.addEventListener('input', () => drafts.set(selected, input.value));
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) void send(); });
   sendButton.addEventListener('click', () => void send());
-  app.querySelector('#emojiToggle')!.addEventListener('click', () => {
-    const panel = app.querySelector<HTMLElement>('#emojiPanel')!; panel.hidden = !panel.hidden;
+  app.querySelector('#knpEmojiToggle')!.addEventListener('click', () => {
+    const panel = app.querySelector<HTMLElement>('#knpEmojiPanel')!; panel.hidden = !panel.hidden;
   });
   app.querySelectorAll<HTMLButtonElement>('[data-knp-emoji]').forEach(button => button.addEventListener('click', () => {
     if (input.disabled) return;
@@ -138,9 +182,11 @@ export async function startKnpChatUi(nick: string, profile: string, onDisconnect
       finally { button.disabled = false; }
     });
   });
+  app.querySelector('#knpBack')!.addEventListener('click', () => { app.hidden = true; });
   const timer = window.setInterval(() => { void session.refresh().catch(showError); }, 500);
-  app.querySelector('#disconnect')!.addEventListener('click', async () => {
-    const button = app.querySelector<HTMLButtonElement>('#disconnect')!;
+  disposePanel = () => { stopped = true; window.clearInterval(timer); document.querySelector('#knpContactModal')?.remove(); app.remove(); drafts.clear(); };
+  app.querySelector('#knpStop')!.addEventListener('click', async () => {
+    const button = app.querySelector<HTMLButtonElement>('#knpStop')!;
     if (button.disabled) return;
     button.disabled = true;
     try {
@@ -149,7 +195,10 @@ export async function startKnpChatUi(nick: string, profile: string, onDisconnect
       window.clearInterval(timer);
       document.querySelector('#knpContactModal')?.remove();
       drafts.clear();
-      onDisconnected();
+      app.remove();
+      activePanel = null;
+      activeSession = null;
+      disposePanel = null;
     } catch (e) { showError(e); button.disabled = false; }
   });
   render(session.snapshot);

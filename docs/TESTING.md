@@ -2,7 +2,7 @@
 
 This document defines the minimum test set required before closing the first release stage intended for communication between different countries and independent networks.
 
-For the new **KNP direct-contact text beta**, use [KNP_CHAT_BETA.md](KNP_CHAT_BETA.md). The scenarios below describe the legacy WORLD/libp2p network. KNP now defaults on the login screen; explicitly select Legacy WORLD to run these older scenarios. The installed-app CI additionally drives two KNP application processes over real loopback UDP, including application acknowledgements, profile exclusivity and reconnect. This does not replace a two-computer LAN or independent-network WAN test.
+The default chat uses the primary **rust-libp2p** stack. [KNP_CHAT_BETA.md](KNP_CHAT_BETA.md) adds an optional KNP contact panel and a combined two-installation acceptance checklist. The installed-app CI exercises automatic local discovery and WORLD messages, concurrent optional KNP messages, profile exclusivity and both lifecycle paths. It uses two processes on one Windows runner; physical LAN, direct WAN and controlled relay fallback still require field observations.
 
 ## 1. Local validation
 

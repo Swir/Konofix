@@ -6,7 +6,7 @@ export type KnpMessage = {
 };
 export type KnpSnapshot = {
   session_id: string; node_id: string; local_addr: string; nick: string;
-  revision: number; contacts: KnpContact[]; messages: KnpMessage[];
+  revision: number; ignored_untrusted_messages: number; contacts: KnpContact[]; messages: KnpMessage[];
 };
 type Invoke = <T>(command: string, args: Record<string, unknown>) => Promise<T>;
 

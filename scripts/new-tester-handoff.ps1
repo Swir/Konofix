@@ -46,15 +46,15 @@ This file was generated for one exact Windows test bundle. It is **test evidence
 
 BUILD_INFO.json is the authoritative sealed inventory for this bundle. Keep this bundle, its checksum, the generated network-test session and every evidence file together. Never mix binaries, scripts or evidence from a different source commit, workflow artifact or historical prerelease.
 
-## KNP direct-text beta
+## Primary libp2p chat and optional KNP contacts
 
-The login defaults to KNP direct contacts (beta). Follow KNP_CHAT_BETA.md in this exact bundle: exchange verified NodeIDs and reachable UDP endpoints on both installations, check messages in both directions and require recipient-application acknowledgements. Repeat after disconnect and restart. Record two-device LAN and independent-network WAN observations separately. Green CI covers two installed app processes on one Windows runner, not two physical computers or WAN.
+Ordinary login uses the existing libp2p stack: WORLD, rooms, direct files, mDNS, DHT, TCP/QUIC and participant relays. KonoNexus/KNP is an optional separate contact-text panel. Follow KNP_CHAT_BETA.md for the combined acceptance matrix: automatic two-PC LAN discovery without pasted addresses, direct WAN where NAT permits, controlled relay fallback, and optional KNP alongside WORLD. Do not claim WAN or physical two-PC success from two installed-app processes on one Windows runner.
 
-KNP mode has direct text and emoji; WORLD, rooms, files and voice are not implemented over this transport. The separately packaged Node/Netprobe and the following qualification flow exercise the legacy network and must not be presented as KNP evidence.
+For optional KNP, exchange verified NodeIDs and reachable UDP endpoints, admit the contact on both sides, and require recipient-application acknowledgements. Returning to WORLD keeps KNP running; stopping KNP must leave WORLD working. Disconnecting the primary session also stops its KNP child. KNP NodeIDs do not silently substitute for libp2p PeerIDs. Node/Netprobe evidence concerns libp2p, not KNP.
 
-## Start a legacy participant-operated network
+## Start a participant-operated network
 
-1. Install the same application build on each Windows computer, select Legacy WORLD (libp2p), and connect with different nicknames. Every connected app is already a P2P node; do not install a separate server just to chat.
+1. Install the same application build on each Windows computer and connect with different nicknames. Every connected app is already a P2P node; do not install a separate server just to chat.
 2. On one LAN, wait for automatic peer discovery and test WORLD, room creation/switching, counts, file acceptance/SHA-256 and reconnect.
 3. For first contact across the Internet, an online participant opens Network settings, copies a reachable address and shares it with another participant, who adds it in Network settings. Private LAN addresses work only on that LAN. NAT/CGNAT may require a reachable participant acting as relay or suitable port mapping.
 4. Keep at least three participants online, establish more than one contact path, then close one participant and verify that the others still exchange messages, rooms and files. Learned peer addresses help later reconnection; if every participant leaves, fresh invitations may be needed.

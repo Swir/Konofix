@@ -69,6 +69,7 @@ pub(crate) struct Snapshot {
     pub local_addr: String,
     pub nick: String,
     pub revision: u64,
+    pub ignored_untrusted_messages: u64,
     pub contacts: Vec<Contact>,
     pub messages: VecDeque<ChatMessage>,
 }
@@ -141,6 +142,7 @@ impl KnpChat {
             local_addr: runtime.local_addr().to_string(),
             nick,
             revision: 0,
+            ignored_untrusted_messages: 0,
             contacts: Vec::new(),
             messages: VecDeque::new(),
         };
@@ -288,7 +290,11 @@ async fn run(
                 None => break,
                 Some(RelayAppEvent::Message(message)) => {
                     // Sender identity comes exclusively from KNP authentication.
-                    if !contacts.contains_key(&message.peer_node_id) { continue; }
+                    if !contacts.contains_key(&message.peer_node_id) {
+                        snapshot.ignored_untrusted_messages = snapshot.ignored_untrusted_messages.saturating_add(1);
+                        snapshot.revision += 1;
+                        continue;
+                    }
                     match decode(&message.data) {
                         Some(Body::Message { id, text }) => {
                             let key = (message.peer_node_id.clone(), id.clone());
@@ -526,7 +532,10 @@ mod tests {
                 .any(|m| m.id == id && m.delivery == Delivery::TransportDelivered)
         })
         .await;
-        assert!(b.snapshot().await.unwrap().messages.is_empty());
+        // A transport receipt can precede the receiver's application decision.
+        // Observe that decision before changing the contact allowlist.
+        let rejected = wait_for(&b, |s| s.ignored_untrusted_messages > 0).await;
+        assert!(rejected.messages.is_empty());
         add(&b, &a_info).await;
         let id2 = a
             .send(b_info.node_id.clone(), "now admitted".into())

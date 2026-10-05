@@ -1,6 +1,5 @@
-#app .login-shell { height:100vh; min-height:0; overflow-y:auto; align-items:start; padding-block:32px; }
-#app .login-shell .brand-panel { align-self:center; }
-#app .login-shell .login-card { padding:24px; }
+.knp-overlay { position:fixed; inset:0; z-index:900; background:#070913; }
+.knp-overlay[hidden] { display:none; }
 .knp-chat .chat-main { grid-template-rows: auto 1fr auto auto; }
 .knp-chat #knpPeerIdentity { display:block; overflow-wrap:anywhere; font-size:10px; }
 .knp-chat .network-card small { display:block; margin-top:8px; line-height:1.5; }
@@ -15,6 +14,3 @@
 .knp-contact-form input { width:100%; box-sizing:border-box; }
 .knp-contact-form p { font-size:12px; line-height:1.5; }
 .knp-contact-form #knpOwnNodeId { font-size:11px; }
-.knp-login-options { margin:14px 0; }
-.knp-login-options select { width:100%; padding:10px; color:inherit; background:#161c30; border:1px solid #374361; border-radius:8px; }
-.knp-login-options small { display:block; margin:8px 0; color:#a6b3d0; line-height:1.5; }

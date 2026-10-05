@@ -141,7 +141,7 @@ for (const [needle, message] of [
 
 requireText(
   ui,
-  "await listen<string>('network-error', async event => {\n    if (app.dataset.transport === 'knp') return;\n    if (!state.connected && !connectPending) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    resetSessionView(message);\n  });",
+  "await listen<string>('network-error', async event => {\n    if (!state.connected && !connectPending) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    resetSessionView(message);\n  });",
   'terminal network-error recovery must cover both connected sessions and in-flight startup, converge backend disconnect and invalidate stale startup results.',
 );
 

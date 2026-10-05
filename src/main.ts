@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { t } from './i18n';
 import { DEFAULT_NICK_COLOR, KONOFIX_EMOJI, NICK_COLORS, normalizeNickColor, renderChatText } from './chat-expression';
 import './style.css';
-import { startKnpChatUi } from './knp-chat-ui';
+import { openKnpChatUi, closeKnpChatUi } from './knp-chat-ui';
 
 type PublicShareOffer = {
   offer_id: string;
@@ -133,13 +133,12 @@ function wireCredit() {
 }
 
 function renderLogin() {
-  app.dataset.transport = 'login';
   app.innerHTML = `
     <main class="login-shell">
       <section class="brand-panel">
         <div class="brand-mark">K</div>
         <div>
-          <div class="eyebrow">PEER-TO-PEER CHAT · KNP BETA</div>
+          <div class="eyebrow">GLOBAL PEER-TO-PEER CHAT</div>
           <h1>Konofix Chat <span>P2P</span></h1>
           <p>${esc(t('app.tagline'))}</p>
           <div class="feature-row">
@@ -149,9 +148,9 @@ function renderLogin() {
       </section>
 
       <section class="login-card glass">
-        <div class="online-pill"><i></i> KonoNexus / Konofix</div>
-        <h2>Konofix Chat</h2>
-        <p class="muted">${esc(t('knp.loginHelp'))}</p>
+        <div class="online-pill"><i></i> P2P ENGINE 0.4</div>
+        <h2>${esc(t('login.joinWorld'))}</h2>
+        <p class="muted">${esc(t('login.nickHelp'))}</p>
         <label for="nick">${esc(t('login.nickLabel'))}</label>
         <input id="nick" maxlength="24" autocomplete="off" spellcheck="false" placeholder="${esc(t('login.nickPlaceholder'))}" />
         <label>${esc(t('login.nickColor'))}</label>
@@ -159,16 +158,10 @@ function renderLogin() {
           ${NICK_COLORS.map(item => `<button type="button" class="nick-color-swatch ${item.value === state.nickColor ? 'selected' : ''}" data-nick-color="${item.value}" role="radio" aria-checked="${item.value === state.nickColor}" title="${esc(item.label)}" style="--nick-color:${item.value}"></button>`).join('')}
         </div>
         <div class="nick-color-preview"><span style="color:${state.nickColor}">●</span> <strong style="color:${state.nickColor}">${esc(t('login.nickColorPreview'))}</strong></div>
-        <div class="knp-login-options">
-          <label for="chatTransport">${esc(t('knp.transport'))}</label>
-          <select id="chatTransport"><option value="knp">${esc(t('knp.mode'))}</option><option value="legacy">${esc(t('knp.legacy'))}</option></select>
-          <label for="knpProfile">${esc(t('knp.profile'))}</label>
-          <input id="knpProfile" value="default" maxlength="32" pattern="[a-z0-9-]{1,32}" autocomplete="off" />
-        </div>
         <div id="loginError" class="error"></div>
         <button id="connectBtn" class="primary">${esc(t('login.connect'))}</button>
         <button id="loginNetwork" class="link-btn">${esc(t('login.advancedNetwork'))}</button>
-        <div class="privacy-note">${esc(t('knp.historyHelp'))}</div>
+        <div class="privacy-note">${esc(t('login.privacy'))}</div>
       </section>
     </main>
     ${creditHtml()}`;
@@ -178,7 +171,6 @@ function renderLogin() {
   input.focus();
   input.addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
   document.querySelectorAll<HTMLButtonElement>('[data-nick-color]').forEach(button => button.addEventListener('click', () => {
-    if (connectPending) { return; }
     state.nickColor = normalizeNickColor(button.dataset.nickColor);
     localStorage.setItem('konofix.nickColor', state.nickColor);
     renderLogin();
@@ -187,11 +179,6 @@ function renderLogin() {
   }));
   document.querySelector('#connectBtn')?.addEventListener('click', connect);
   document.querySelector('#loginNetwork')?.addEventListener('click', showNetworkModal);
-  const transport = document.querySelector<HTMLSelectElement>('#chatTransport')!;
-  const profile = document.querySelector<HTMLInputElement>('#knpProfile')!;
-  const network = document.querySelector<HTMLButtonElement>('#loginNetwork')!;
-  network.hidden = true;
-  transport.addEventListener('change', () => { profile.disabled = transport.value !== 'knp'; network.hidden = transport.value === 'knp'; });
 }
 
 async function connect() {
@@ -217,18 +204,11 @@ async function connect() {
   btn.textContent = t('login.starting');
 
   try {
-    if (document.querySelector<HTMLSelectElement>('#chatTransport')!.value === 'knp') {
-      const profile = document.querySelector<HTMLInputElement>('#knpProfile')!.value.trim();
-      app.dataset.transport = 'knp';
-      await startKnpChatUi(nick, profile, () => resetSessionView());
-      connectPending = false;
-      return;
-    }
-    app.dataset.transport = 'legacy';
     const result = await invoke<{ peer_id: string; nick: string; nick_color: string; version: string }>('start_network', {
       nick,
       nickColor: state.nickColor,
       bootstraps: loadBootstraps(),
+      enableKnpTransport: false,
     });
     if (revision !== sessionRevision) return;
     connectPending = false;
@@ -243,7 +223,6 @@ async function connect() {
   } catch (e) {
     if (revision !== sessionRevision) return;
     connectPending = false;
-    app.dataset.transport = 'login';
     error.textContent = String(e);
     btn.disabled = false;
     btn.textContent = t('login.connect');
@@ -271,6 +250,7 @@ function renderChat() {
         <div id="rooms">${[...state.rooms.values()].filter(r => r.id !== 'world').map(roomButton).join('')}</div>
         <button id="newRoom" class="ghost wide">${esc(t('rooms.create'))}</button>
 
+        <button id="optionalKnp" class="ghost wide">${esc(t('knp.openOptional'))}</button>
         <div class="network-card" id="networkCard">
           <div class="network-top"><span class="net-dot ${networkClass}"></span><strong>${esc(networkLabel())}</strong><button id="refreshNetwork" title="${esc(t('network.refresh'))}">↻</button></div>
           <small>${esc(networkSubtitle())}</small>
@@ -349,6 +329,7 @@ function renderChat() {
     if (offer?.preview_data) showImagePreview(offer);
   }));
   document.querySelector('#disconnect')?.addEventListener('click', disconnect);
+  document.querySelector('#optionalKnp')?.addEventListener('click', () => openKnpChatUi(state.nick));
   document.querySelector('#networkSettings')?.addEventListener('click', showNetworkModal);
   document.querySelector('#networkCard')?.addEventListener('click', showNetworkModal);
   document.querySelector('#refreshNetwork')?.addEventListener('click', async e => {
@@ -725,6 +706,7 @@ function showFileOfferModal(offer: FileOffer) {
 }
 
 function resetSessionView(errorMessage?: string) {
+  closeKnpChatUi();
   sessionRevision += 1;
   connectPending = false;
   roomChangePending = false;
@@ -829,25 +811,21 @@ function showNetworkModal() {
 }
 
 async function wireEvents() {
-  await listen<ChatMessage>('chat-message', event => { if (app.dataset.transport !== 'knp') pushMessage(event.payload); });
+  await listen<ChatMessage>('chat-message', event => pushMessage(event.payload));
   await listen<PeerInfo>('peer-online', event => {
-    if (app.dataset.transport === 'knp') return;
     state.peers.set(event.payload.peer_id, event.payload);
     if (state.connected) renderChat();
   });
   await listen<{ peer_id: string }>('peer-offline', event => {
-    if (app.dataset.transport === 'knp') return;
     state.peers.delete(event.payload.peer_id);
     if (state.connected) renderChat();
   });
   await listen<RoomInfo>('room-created', event => {
-    if (app.dataset.transport === 'knp') return;
     state.rooms.set(event.payload.id, event.payload);
     if (!state.messages.has(event.payload.id)) state.messages.set(event.payload.id, []);
     if (state.connected) renderChat();
   });
   await listen<{ room_id: string }>('room-closed', event => {
-    if (app.dataset.transport === 'knp') return;
     if (event.payload.room_id === 'world') return;
     state.rooms.delete(event.payload.room_id);
     if (state.room === event.payload.room_id) {
@@ -856,7 +834,6 @@ async function wireEvents() {
     } else if (state.connected) renderChat();
   });
   await listen<RoomUserCountUpdate>('room-user-count', event => {
-    if (app.dataset.transport === 'knp') return;
     if (event.payload.room_id === 'world') return;
     const room = state.rooms.get(event.payload.room_id);
     if (!room) return;
@@ -865,29 +842,24 @@ async function wireEvents() {
     if (state.connected) renderChat();
   });
   await listen<NetworkStatus>('network-status', event => {
-    if (app.dataset.transport === 'knp') return;
     state.status = event.payload;
     if (state.connected) renderChat();
   });
   await listen<string>('network-warning', event => {
-    if (app.dataset.transport === 'knp') return;
     if (state.connected) addSystem('world', `⚠ ${event.payload}`);
   });
   await listen<string>('network-error', async event => {
-    if (app.dataset.transport === 'knp') return;
     if (!state.connected && !connectPending) return;
     const message = t('network.error', { error: event.payload });
     try { await invoke('disconnect_network'); } catch {}
     resetSessionView(message);
   });
   await listen<{ nick: string }>('nick-conflict', async event => {
-    if (app.dataset.transport === 'knp') return;
     const message = t('nick.conflict', { nick: event.payload.nick });
     try { await invoke('disconnect_network'); } catch {}
     resetSessionView(message);
   });
   await listen<PublicShareOffer>('public-file-offer', event => {
-    if (app.dataset.transport === 'knp') return;
     const offer = event.payload;
     if (state.publicOffers.has(offer.offer_id)) {
       const existing = state.publicOffers.get(offer.offer_id)!;
@@ -909,7 +881,6 @@ async function wireEvents() {
     });
   });
   await listen<{ offer_id: string }>('public-offer-expired', event => {
-    if (app.dataset.transport === 'knp') return;
     const offer = state.publicOffers.get(event.payload.offer_id);
     if (!offer) return;
     offer.expired = true;
@@ -918,7 +889,6 @@ async function wireEvents() {
     if (state.connected && state.room === (offer.room_id ?? 'world')) renderChat();
   });
   await listen<{ offer_id: string; error: string }>('public-offer-error', event => {
-    if (app.dataset.transport === 'knp') return;
     state.publicIntents.delete(event.payload.offer_id);
     state.transfers.delete(`claim:${event.payload.offer_id}`);
     if (state.connected) {
@@ -928,21 +898,18 @@ async function wireEvents() {
   });
   await listen<FileOffer>('file-offer', event => showFileOfferModal(event.payload));
   await listen<FileOfferExpired>('file-offer-expired', event => {
-    if (app.dataset.transport === 'knp') return;
     const modal = document.querySelector(`#file-offer-${CSS.escape(event.payload.transfer_id)}`);
     if (!modal) return;
     modal.remove();
     if (state.connected) addSystem(state.room, t('transfer.offerExpired'));
   });
   await listen<FileOfferCancelled>('file-offer-cancelled', event => {
-    if (app.dataset.transport === 'knp') return;
     const modal = document.querySelector(`#file-offer-${CSS.escape(event.payload.transfer_id)}`);
     if (!modal) return;
     modal.remove();
     if (state.connected) addSystem(state.room, t('transfer.offerCancelled'));
   });
   await listen<FileTransfer>('file-transfer', async event => {
-    if (app.dataset.transport === 'knp') return;
     if (event.payload.public_offer_id) state.transfers.delete(`claim:${event.payload.public_offer_id}`);
     state.transfers.set(event.payload.transfer_id, event.payload);
     if (event.payload.status === 'completed') {

@@ -6,14 +6,15 @@ const STORAGE_KEY = 'konofix.locale';
 type Params = Record<string, string | number>;
 
 const EN = {
-  "knp.mode": "KNP direct contacts (beta)",
-  "knp.legacy": "Legacy WORLD (libp2p)",
-  "knp.transport": "Chat transport",
+  "knp.openOptional": "Optional KNP contacts (beta)",
+  "knp.coexistence": "WORLD, rooms, files and private libp2p chat keep running. This optional panel addresses verified KNP NodeIDs separately; it does not map them to libp2p PeerIDs or change existing discovery and relay paths.",
+  "knp.backToWorld": "Back to WORLD (keep KNP running)",
+  "knp.stopOptional": "Stop optional KNP session",
+
   "knp.profile": "Local identity profile",
-  "knp.loginHelp": "KNP uses a persistent device identity and contacts you verify. It does not join WORLD or reserve a global nickname.",
   "knp.contacts": "Contacts & my NodeID",
   "knp.directChats": "Direct conversations",
-  "knp.scope": "Direct text messages to verified contacts. No automatic WORLD discovery.",
+  "knp.scope": "Optional direct text to KNP contacts. WORLD discovery continues through libp2p.",
   "knp.chooseContact": "Choose or add a contact",
   "knp.betaTitle": "KNP text beta",
   "knp.betaHelp": "Exchange NodeID and a reachable UDP endpoint with a trusted tester. Files, rooms and voice are not available in this mode.",
@@ -166,14 +167,15 @@ export type MessageKey = keyof typeof EN;
 type Dictionary = Partial<Record<MessageKey, string>>;
 
 const PL: Dictionary = {
-  "knp.mode": "KNP — kontakty bezpośrednie (beta)",
-  "knp.legacy": "Dotychczasowy WORLD (libp2p)",
-  "knp.transport": "Transport czatu",
+  "knp.openOptional": "Opcjonalne kontakty KNP (beta)",
+  "knp.coexistence": "WORLD, pokoje, pliki i prywatny czat libp2p nadal działają. Ten opcjonalny panel adresuje osobno zweryfikowane NodeID KNP; nie utożsamia ich z PeerID libp2p ani nie zmienia discovery i ścieżek relay.",
+  "knp.backToWorld": "Wróć do WORLD (KNP pozostaje aktywne)",
+  "knp.stopOptional": "Zatrzymaj opcjonalną sesję KNP",
+
   "knp.profile": "Lokalny profil tożsamości",
-  "knp.loginHelp": "KNP używa trwałej tożsamości urządzenia i zweryfikowanych kontaktów. Nie dołącza do WORLD ani nie rezerwuje globalnego nicka.",
   "knp.contacts": "Kontakty i mój NodeID",
   "knp.directChats": "Rozmowy bezpośrednie",
-  "knp.scope": "Wiadomości tekstowe do zweryfikowanych kontaktów. Bez automatycznego wyszukiwania WORLD.",
+  "knp.scope": "Opcjonalny tekst do kontaktów KNP. Wyszukiwanie WORLD nadal działa przez libp2p.",
   "knp.chooseContact": "Wybierz lub dodaj kontakt",
   "knp.betaTitle": "Beta czatu KNP",
   "knp.betaHelp": "Wymień NodeID i osiągalny adres UDP z zaufanym testerem. Pliki, pokoje i głos nie są dostępne w tym trybie.",

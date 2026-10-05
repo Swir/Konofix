@@ -53,9 +53,16 @@ if (baseline.status !== 0) {
   throw new Error('Canonical lifecycle implementation must pass before adversarial mutations run.');
 }
 
-const terminalRecovery = "await listen<string>('network-error', async event => {\n    if (!state.connected && !connectPending) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    resetSessionView(message);\n  });";
+const terminalRecovery = "await listen<string>('network-error', async event => {\n    if (app.dataset.transport === 'knp') return;\n    if (!state.connected && !connectPending) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    resetSessionView(message);\n  });";
 
 const cases = [
+  {
+    name: 'legacy terminal event can close a KNP-only session',
+    target: 'ui',
+    source: "await listen<string>('network-error', async event => {\n    if (app.dataset.transport === 'knp') return;",
+    replacement: "await listen<string>('network-error', async event => {",
+    expected: 'terminal network-error recovery',
+  },
   {
     name: 'network task result is discarded before cleanup',
     target: 'rust',
@@ -162,14 +169,14 @@ const cases = [
     name: 'frontend terminal handler no longer disconnects backend',
     target: 'ui',
     source: terminalRecovery,
-    replacement: "await listen<string>('network-error', async event => {\n    if (!state.connected && !connectPending) return;\n    const message = t('network.error', { error: event.payload });\n    /* backend convergence removed */\n    resetSessionView(message);\n  });",
+    replacement: "await listen<string>('network-error', async event => {\n    if (app.dataset.transport === 'knp') return;\n    if (!state.connected && !connectPending) return;\n    const message = t('network.error', { error: event.payload });\n    /* backend convergence removed */\n    resetSessionView(message);\n  });",
     expected: 'terminal network-error recovery',
   },
   {
     name: 'frontend terminal handler no longer resets UI',
     target: 'ui',
     source: terminalRecovery,
-    replacement: "await listen<string>('network-error', async event => {\n    if (!state.connected && !connectPending) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    addSystem('world', message);\n  });",
+    replacement: "await listen<string>('network-error', async event => {\n    if (app.dataset.transport === 'knp') return;\n    if (!state.connected && !connectPending) return;\n    const message = t('network.error', { error: event.payload });\n    try { await invoke('disconnect_network'); } catch {}\n    addSystem('world', message);\n  });",
     expected: 'terminal network-error recovery',
   },
   {

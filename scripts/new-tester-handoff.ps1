@@ -34,7 +34,7 @@ if (-not [string]::IsNullOrWhiteSpace($parent)) {
 
 $handoff = @"
 <!-- KONOFIX-TESTER-HANDOFF-BUILD:v1 -->
-# Konofix Chat — Exact-Build Public-Network Test Handoff
+# Konofix Chat — Exact-Build Windows Test Handoff
 
 This file was generated for one exact Windows test bundle. It is **test evidence only, not a published GitHub Release**.
 
@@ -46,9 +46,15 @@ This file was generated for one exact Windows test bundle. It is **test evidence
 
 BUILD_INFO.json is the authoritative sealed inventory for this bundle. Keep this bundle, its checksum, the generated network-test session and every evidence file together. Never mix binaries, scripts or evidence from a different source commit, workflow artifact or historical prerelease.
 
-## Start a participant-operated network
+## KNP direct-text beta
 
-1. Install the same application build on each Windows computer and connect with different nicknames. Every connected app is already a P2P node; do not install a separate server just to chat.
+The login defaults to KNP direct contacts (beta). Follow KNP_CHAT_BETA.md in this exact bundle: exchange verified NodeIDs and reachable UDP endpoints on both installations, check messages in both directions and require recipient-application acknowledgements. Repeat after disconnect and restart. Record two-device LAN and independent-network WAN observations separately. Green CI covers two installed app processes on one Windows runner, not two physical computers or WAN.
+
+KNP mode has direct text and emoji; WORLD, rooms, files and voice are not implemented over this transport. The separately packaged Node/Netprobe and the following qualification flow exercise the legacy network and must not be presented as KNP evidence.
+
+## Start a legacy participant-operated network
+
+1. Install the same application build on each Windows computer, select Legacy WORLD (libp2p), and connect with different nicknames. Every connected app is already a P2P node; do not install a separate server just to chat.
 2. On one LAN, wait for automatic peer discovery and test WORLD, room creation/switching, counts, file acceptance/SHA-256 and reconnect.
 3. For first contact across the Internet, an online participant opens Network settings, copies a reachable address and shares it with another participant, who adds it in Network settings. Private LAN addresses work only on that LAN. NAT/CGNAT may require a reachable participant acting as relay or suitable port mapping.
 4. Keep at least three participants online, establish more than one contact path, then close one participant and verify that the others still exchange messages, rooms and files. Learned peer addresses help later reconnection; if every participant leaves, fresh invitations may be needed.

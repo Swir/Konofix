@@ -1,0 +1,17 @@
+.knp-chat .chat-main { grid-template-rows: auto 1fr auto auto; }
+.knp-chat #knpPeerIdentity { display:block; overflow-wrap:anywhere; font-size:10px; }
+.knp-chat .network-card small { display:block; margin-top:8px; line-height:1.5; }
+.knp-chat .knp-delivery { display:block; font-size:10px; color:#a6b3d0; margin-top:6px; }
+.knp-chat [data-delivery="received"] .knp-delivery { color:#62e5b2; }
+.knp-chat [data-delivery="failed"] .knp-delivery,
+.knp-chat [data-delivery="unconfirmed"] .knp-delivery { color:#ffd166; }
+.knp-chat #knpError { padding:0 16px; max-height:90px; overflow:auto; }
+.knp-chat .users p { font-size:12px; line-height:1.6; }
+.knp-contact-form { max-height:90vh; overflow:auto; width:min(560px,95vw); }
+.knp-contact-form label { display:block; margin-top:12px; }
+.knp-contact-form input { width:100%; box-sizing:border-box; }
+.knp-contact-form p { font-size:12px; line-height:1.5; }
+.knp-contact-form #knpOwnNodeId { font-size:11px; }
+.knp-login-options { margin:14px 0; }
+.knp-login-options select { width:100%; padding:10px; color:inherit; background:#161c30; border:1px solid #374361; border-radius:8px; }
+.knp-login-options small { display:block; margin:8px 0; color:#a6b3d0; line-height:1.5; }

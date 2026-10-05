@@ -484,6 +484,18 @@ mod tests {
         assert_eq!(fresh.node_id, a_info.node_id);
         assert_ne!(fresh.session_id, a_info.session_id);
         assert!(fresh.messages.is_empty() && fresh.contacts.is_empty());
+        add(&restarted, &b_info).await;
+        add(&b, &fresh).await;
+        let after_restart = restarted
+            .send(b_info.node_id.clone(), "after restart".into())
+            .await
+            .unwrap();
+        wait_for(&restarted, |s| {
+            s.messages
+                .iter()
+                .any(|m| m.id == after_restart && m.delivery == Delivery::Received)
+        })
+        .await;
         restarted.shutdown().await;
         b.shutdown().await;
     }

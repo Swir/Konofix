@@ -171,6 +171,7 @@ try {
     'konofix-netprobe.exe',
     'README.md',
     'TESTING.md',
+    'KNP_CHAT_BETA.md',
     'NODE.md',
     'NODE_SOAK.md',
     'GLOBAL_BETA.md',

@@ -69,6 +69,10 @@ async function login(p, nick, profile) {
     document.querySelector('#nick').value = ${JSON.stringify(nick)};
     document.querySelector('#knpProfile').value = ${JSON.stringify(profile)};
     document.querySelector('#chatTransport').value = 'knp';
+    const button = document.querySelector('#connectBtn');
+    button.scrollIntoView({block:'center'});
+    const rect = button.getBoundingClientRect();
+    if (rect.top < 0 || rect.bottom > innerHeight) throw new Error('Connect button is not reachable in the window');
     document.querySelector('#connectBtn').click();
   })()`);
 }

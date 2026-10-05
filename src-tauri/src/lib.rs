@@ -26,6 +26,7 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 mod connection_routes;
+mod direct_first;
 mod incoming_file;
 #[cfg(windows)]
 mod knp_chat;
@@ -483,32 +484,38 @@ fn participant_relay_address(address: Multiaddr, peer: PeerId) -> Option<Multiad
     Some(address)
 }
 
-fn add_cached_peers_to_swarm(swarm: &mut libp2p::Swarm<Behaviour>, cache: &PeerCacheFile) -> usize {
-    let mut added = 0usize;
+fn add_cached_peers_to_swarm(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    cache: &PeerCacheFile,
+) -> direct_first::DirectFirstDials {
+    let mut dials = direct_first::DirectFirstDials::default();
+    let now = Instant::now();
     for (peer_raw, addresses) in &cache.peers {
         let Ok(peer) = peer_raw.parse::<PeerId>() else {
             continue;
         };
-        for addr_raw in addresses {
-            let Ok(addr) = addr_raw.parse::<Multiaddr>() else {
-                continue;
-            };
-            swarm.behaviour_mut().kad.add_address(&peer, addr.clone());
-            swarm
-                .behaviour_mut()
-                .file_transfer
-                .add_address(&peer, addr.clone());
-            swarm
-                .behaviour_mut()
-                .secure_control
-                .add_address(&peer, addr.clone());
-            if let Some(full) = address_for_peer(addr, peer) {
-                let _ = swarm.dial(full);
-                added += 1;
-            }
+        if peer == *swarm.local_peer_id() {
+            continue;
         }
+        let addresses = addresses
+            .iter()
+            .filter_map(|raw| {
+                raw.parse::<Multiaddr>()
+                    .ok()
+                    .and_then(|address| address_for_peer(address, peer))
+            })
+            .collect();
+        dials.enqueue(peer, addresses, now);
     }
-    added
+    // Circuit cache entries are not exposed to behaviour dialers before eligible fallback.
+    dials.drive(swarm, now, register_cached_address);
+    dials
+}
+
+fn register_cached_address(behaviour: &mut Behaviour, peer: PeerId, address: &Multiaddr) {
+    behaviour.kad.add_address(&peer, address.clone());
+    behaviour.file_transfer.add_address(&peer, address.clone());
+    behaviour.secure_control.add_address(&peer, address.clone());
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2658,13 +2665,7 @@ async fn network_task(
         .map_err(|e| e.to_string())?;
 
     let mut peer_cache = app.load_peers();
-    let cached_dials = add_cached_peers_to_swarm(&mut swarm, &peer_cache);
-    if cached_dials > 0 {
-        let _ = app.emit_event(
-            "network-log",
-            format!("Załadowano {cached_dials} zapamiętanych adresów P2P."),
-        );
-    }
+    let mut cached_dials = add_cached_peers_to_swarm(&mut swarm, &peer_cache);
 
     let mut bootstrap_targets = Vec::<BootstrapTarget>::new();
     let mut relay_bootstrap_peers = HashSet::<PeerId>::new();
@@ -2756,6 +2757,8 @@ async fn network_task(
     let mut discovery = tokio::time::interval(Duration::from_secs(25));
     let mut bootstrap_retry = tokio::time::interval(Duration::from_secs(BOOTSTRAP_RETRY_TICK_SECS));
     let mut cleanup = tokio::time::interval(Duration::from_secs(8));
+    let mut cached_retry = tokio::time::interval(Duration::from_secs(1));
+    cached_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     discovery.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     bootstrap_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -2774,6 +2777,9 @@ async fn network_task(
 
     'network: loop {
         tokio::select! {
+            _ = cached_retry.tick() => {
+                cached_dials.drive(&mut swarm, Instant::now(), register_cached_address);
+            }
             _ = heartbeat.tick() => {
                 publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
                 publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, session_age_ms(session_started));
@@ -3425,6 +3431,7 @@ async fn network_task(
                 }
                 SwarmEvent::ConnectionEstablished { peer_id: remote, connection_id, endpoint, .. } => {
                     connection_routes.established(connection_id, remote, &endpoint);
+                    cached_dials.connected(remote);
                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
                     if mark_bootstrap_connected(&mut bootstrap_targets, &remote) {
                         let _ = app.emit_event(
@@ -3521,9 +3528,10 @@ async fn network_task(
                 }
                 SwarmEvent::OutgoingConnectionError {
                     peer_id: Some(remote),
+                    connection_id,
                     error,
-                    ..
                 } => {
+                    cached_dials.failed(connection_id, Instant::now());
                     if mark_bootstrap_failed(
                         &mut bootstrap_targets,
                         &remote,

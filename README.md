@@ -48,6 +48,8 @@ Konofix does not use a traditional account, email address, or phone number. **Ev
 
 To form a network, start the app on each computer and connect with a nickname. Participants on one LAN discover each other automatically. For a first Internet connection, an online participant copies a reachable address from **Network settings** and shares it with the other person, who adds it there. The app then discovers and remembers peers. A private LAN address is usable only in that LAN; Internet reachability requires a public/port-mapped address or a reachable participant providing relay. When all participants leave, there is no online network or server keeping it alive. See [the participant-network beta plan](docs/GLOBAL_BETA.md).
 
+KonoNexus/KNP adds an **optional contact-text panel** alongside the primary libp2p network. WORLD, rooms, discovery and files keep their existing routes and security contracts. KNP requires separately verified NodeIDs and endpoints in this initial integration; it does not silently replace or impersonate a libp2p peer. See [the coexistence and installed-app test guide](docs/KNP_CHAT_BETA.md). Cloud tests do not complete the two-physical-installation or WAN gates.
+
 ## Highlights
 
 | Feature | What it provides |

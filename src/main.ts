@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { t } from './i18n';
 import { DEFAULT_NICK_COLOR, KONOFIX_EMOJI, NICK_COLORS, normalizeNickColor, renderChatText } from './chat-expression';
 import './style.css';
+import { openKnpChatUi, closeKnpChatUi } from './knp-chat-ui';
 
 type PublicShareOffer = {
   offer_id: string;
@@ -207,6 +208,7 @@ async function connect() {
       nick,
       nickColor: state.nickColor,
       bootstraps: loadBootstraps(),
+      enableKnpTransport: false,
     });
     if (revision !== sessionRevision) return;
     connectPending = false;
@@ -248,6 +250,7 @@ function renderChat() {
         <div id="rooms">${[...state.rooms.values()].filter(r => r.id !== 'world').map(roomButton).join('')}</div>
         <button id="newRoom" class="ghost wide">${esc(t('rooms.create'))}</button>
 
+        <button id="optionalKnp" class="ghost wide">${esc(t('knp.openOptional'))}</button>
         <div class="network-card" id="networkCard">
           <div class="network-top"><span class="net-dot ${networkClass}"></span><strong>${esc(networkLabel())}</strong><button id="refreshNetwork" title="${esc(t('network.refresh'))}">↻</button></div>
           <small>${esc(networkSubtitle())}</small>
@@ -326,6 +329,7 @@ function renderChat() {
     if (offer?.preview_data) showImagePreview(offer);
   }));
   document.querySelector('#disconnect')?.addEventListener('click', disconnect);
+  document.querySelector('#optionalKnp')?.addEventListener('click', () => openKnpChatUi(state.nick));
   document.querySelector('#networkSettings')?.addEventListener('click', showNetworkModal);
   document.querySelector('#networkCard')?.addEventListener('click', showNetworkModal);
   document.querySelector('#refreshNetwork')?.addEventListener('click', async e => {
@@ -354,7 +358,7 @@ function renderChat() {
     const panel = document.querySelector<HTMLDivElement>('#emojiPanel');
     if (panel) panel.hidden = true;
   }));
-  msg.focus();
+  if (!document.querySelector('#knpChatOverlay:not([hidden])')) msg.focus();
   scrollBottom();
 }
 
@@ -702,6 +706,7 @@ function showFileOfferModal(offer: FileOffer) {
 }
 
 function resetSessionView(errorMessage?: string) {
+  closeKnpChatUi();
   sessionRevision += 1;
   connectPending = false;
   roomChangePending = false;

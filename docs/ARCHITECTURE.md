@@ -17,7 +17,7 @@ The client `Swarm` includes:
 - Circuit Relay client/server
 - DCUtR
 - UPnP
-- CBOR request-response for file transfer
+- CBOR request-response for file transfer and authenticated private control
 
 ## Discovery
 
@@ -51,3 +51,19 @@ The UI detects the operating-system locale. Supported locales are mapped to a tr
 ## Branding
 
 Product name: **Konofix Chat**. Author: **Swir**. Canonical repository: `https://github.com/Swir/Konofix`.
+
+## Optional KonoNexus/KNP coexistence
+
+The ordinary login starts the primary libp2p session. Opening **Optional KNP contacts** starts a separate bounded contact-text actor owned by that primary session; returning to WORLD keeps both running. Closing KNP leaves libp2p running. Disconnecting or terminating the primary owner also stops its KNP child; late cleanup from an old primary session cannot stop a newer child. Persistent KNP profiles are exclusively locked on Windows. The lower-level transport foundation is opt-in (`enableKnpTransport`), avoiding an unused additional KNP identity on ordinary login.
+
+| Conversation / operation | Route and identity | Failure semantics |
+| --- | --- | --- |
+| WORLD and public room announcements | Existing signed libp2p GossipSub, authenticated PeerID/source checks | Existing libp2p discovery and connection recovery; no KNP copy |
+| Private control, protected room grants and direct files | Existing peer-bound libp2p request/response and authorization | Preserve replay, membership, consent, bounds and hash checks; no public GossipSub fallback |
+| Optional KNP direct text | Explicitly admitted KNP NodeID + exact endpoint; separate UI and session | Distinct queued, transport-delivered and application-received states; no silent libp2p resend |
+
+A KNP NodeID is **not** currently authenticated as the same identity as a libp2p PeerID. Automatic cross-protocol fallback would change recipient/security semantics and risk duplicate or misdirected delivery. This integration therefore selects the route by explicit conversation type, while retaining existing discovery, direct TCP/QUIC, relay and recovery within libp2p. Any future shared-recipient router needs authenticated identity binding, equivalent authorization and message deduplication before it can be enabled.
+
+No account service, centralized message store or central history is added. A bootstrap supplies contact addresses; a relay is a replaceable transport participant. Neither is an authority for identities or history. Public WORLD remains public to its participants; transport encryption does not make a public room a private conversation.
+
+LAN discovery uses mDNS without pasted addresses. Across the Internet, DHT/cache/Identify discovery can proceed after a reachable first contact; two fresh isolated nodes cannot discover arbitrary Internet peers from no contact information. CGNAT/symmetric NAT can require a reachable bootstrap/relay. A reservation at a relay is not evidence that a message used a relay, and a successful cloud test is not WAN acceptance. The remaining field acceptance scenarios are in `KNP_CHAT_BETA.md` and `TESTING.md`.

@@ -49,6 +49,14 @@ $installRoot = Join-Path $smokeRoot 'installed chat'
 $msiRoot = Join-Path $smokeRoot 'msi'
 New-Item -ItemType Directory -Path $smokeRoot | Out-Null
 $process = $null
+$secondProcess = $null
+$profileNonce = [guid]::NewGuid().ToString('N').Substring(0, 20)
+$profileA = "ci-$profileNonce-a"
+$profileB = "ci-$profileNonce-b"
+$profileRoot = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Konofix Chat\KonoNexus\chat-profiles'
+foreach ($profile in @($profileA, $profileB)) {
+    if (Test-Path -LiteralPath (Join-Path $profileRoot $profile)) { throw 'Refusing to reuse a smoke-test identity profile.' }
+}
 $oldBrowserArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $oldUserData = $env:WEBVIEW2_USER_DATA_FOLDER
 $addedPolicies = @()
@@ -145,12 +153,39 @@ try {
     }
     if ($process.HasExited) { throw "Installed Chat exited unexpectedly: $($process.ExitCode)" }
     Write-Host 'Installed Chat startup smoke PASS (MSI payload, NSIS installation, Start menu, rendered frontend).'
+
+    # Start the same installed production binary in a second process. The first
+    # WebView is already initialized; change only policies created by this test
+    # so the second instance gets its own loopback CDP port and browser data.
+    $secondListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+    $secondListener.Start()
+    $secondPort = ([Net.IPEndPoint]$secondListener.LocalEndpoint).Port
+    $secondListener.Stop()
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-address=127.0.0.1 --remote-debugging-port=$secondPort"
+    $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $smokeRoot 'webview-b'
+    foreach ($policy in $addedPolicies) {
+        $value = if ($policy.Key.EndsWith('AdditionalBrowserArguments')) { $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS } else { $env:WEBVIEW2_USER_DATA_FOLDER }
+        Set-ItemProperty -LiteralPath $policy.Key -Name $policy.Name -Value $value
+    }
+    $secondProcess = Start-Process -FilePath $installedChat -WorkingDirectory $installRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $smokeRoot 'chat-b-stdout.log') -RedirectStandardError (Join-Path $smokeRoot 'chat-b-stderr.log')
+    & node (Join-Path $PSScriptRoot 'check-chat-page.mjs') $secondPort
+    if ($LASTEXITCODE -ne 0) { throw 'Second installed Chat frontend failed to start.' }
+    & node (Join-Path $PSScriptRoot 'check-knp-chat-pages.mjs') $port $secondPort $profileA $profileB
+    if ($LASTEXITCODE -ne 0) { throw 'Installed KNP chat exchange/reconnect smoke failed.' }
 } finally {
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $oldBrowserArguments
     $env:WEBVIEW2_USER_DATA_FOLDER = $oldUserData
     if ($null -ne $process -and -not $process.HasExited) {
         $process.Kill($true)
         $process.WaitForExit()
+    }
+    if ($null -ne $secondProcess -and -not $secondProcess.HasExited) {
+        $secondProcess.Kill($true)
+        $secondProcess.WaitForExit()
+    }
+    foreach ($profile in @($profileA, $profileB)) {
+        $path = Join-Path $profileRoot $profile
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
     }
     foreach ($policy in $addedPolicies) {
         Remove-ItemProperty -LiteralPath $policy.Key -Name $policy.Name

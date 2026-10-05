@@ -167,13 +167,33 @@ struct KonoNexusSession {
     runtime: kononexus_transport::KonoNexusRuntime,
 }
 
+#[cfg(windows)]
+#[derive(Clone)]
+struct KnpChatSession {
+    owner: mpsc::Sender<NetworkCommand>,
+    chat: knp_chat::KnpChat,
+}
+
+#[cfg(windows)]
+fn take_knp_chat_for_owner(
+    state: &AppState,
+    owner: &mpsc::Sender<NetworkCommand>,
+) -> Option<knp_chat::KnpChat> {
+    let mut guard = state.knp_chat.lock().ok()?;
+    if guard.as_ref().is_some_and(|s| s.owner.same_channel(owner)) {
+        guard.take().map(|s| s.chat)
+    } else {
+        None
+    }
+}
+
 #[derive(Default)]
 struct AppState {
     tx: Mutex<Option<mpsc::Sender<NetworkCommand>>>,
     #[cfg(windows)]
     session_gate: tokio::sync::Mutex<()>,
     #[cfg(windows)]
-    knp_chat: Mutex<Option<knp_chat::KnpChat>>,
+    knp_chat: Mutex<Option<KnpChatSession>>,
     #[cfg(windows)]
     kononexus: Mutex<Option<KonoNexusSession>>,
 }
@@ -1421,20 +1441,12 @@ async fn start_network(
     nick: String,
     nick_color: Option<String>,
     bootstraps: Option<Vec<String>>,
+    enable_knp_transport: Option<bool>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<StartResult, String> {
     #[cfg(windows)]
     let _gate = state.session_gate.lock().await;
-    #[cfg(windows)]
-    if state
-        .knp_chat
-        .lock()
-        .map_err(|_| "Chat state lock failed.")?
-        .is_some()
-    {
-        return Err("Disconnect KNP chat before starting the legacy network.".into());
-    }
     let nick = validate_nick(&nick)?;
     let nick_color = normalize_nick_color(nick_color.as_deref());
     let bootstrap_list = bootstrap_sources(bootstraps.unwrap_or_default())?;
@@ -1465,6 +1477,10 @@ async fn start_network(
         let owned_session =
             clear_network_sender_if_current(app_state.inner(), &task_tx).unwrap_or(false);
         #[cfg(windows)]
+        if let Some(chat) = take_knp_chat_for_owner(app_state.inner(), &task_tx) {
+            chat.shutdown().await;
+        }
+        #[cfg(windows)]
         if let Some(runtime) = knp_runtime {
             runtime.shutdown().await;
         }
@@ -1486,7 +1502,7 @@ async fn start_network(
     match ready_result {
         Ok(peer_id) => {
             #[cfg(windows)]
-            let (knp_node_id, knp_local_addr) =
+            let (knp_node_id, knp_local_addr) = if enable_knp_transport.unwrap_or(false) {
                 match kononexus_transport::KonoNexusRuntime::spawn_default(app.clone()).await {
                     Ok((runtime, node_id, local_addr)) => {
                         match install_kononexus_if_current(state.inner(), &startup_tx, runtime) {
@@ -1538,7 +1554,10 @@ async fn start_network(
                         );
                         (None, None)
                     }
-                };
+                }
+            } else {
+                (None, None)
+            };
             #[cfg(not(windows))]
             let (knp_node_id, knp_local_addr) = (None, None);
             Ok(StartResult {
@@ -2132,6 +2151,10 @@ async fn disconnect_network(state: State<'_, AppState>) -> Result<(), String> {
     let _gate = state.session_gate.lock().await;
     #[cfg(windows)]
     let (tx, knp_runtime) = take_network_session(state.inner())?;
+    #[cfg(windows)]
+    let knp_chat = tx
+        .as_ref()
+        .and_then(|owner| take_knp_chat_for_owner(state.inner(), owner));
     #[cfg(not(windows))]
     let tx = take_network_sender(state.inner())?;
     if let Some(tx) = tx {
@@ -2140,6 +2163,10 @@ async fn disconnect_network(state: State<'_, AppState>) -> Result<(), String> {
     #[cfg(windows)]
     if let Some(runtime) = knp_runtime {
         runtime.shutdown().await;
+    }
+    #[cfg(windows)]
+    if let Some(chat) = knp_chat {
+        chat.shutdown().await;
     }
     Ok(())
 }
@@ -4813,6 +4840,44 @@ mod secure_room_metadata_tests {
 #[cfg(test)]
 mod network_session_state_tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn optional_chat_cleanup_is_fenced_to_its_primary_owner() {
+        let state = AppState::default();
+        let (old_owner, _old_rx) = mpsc::channel(1);
+        let (current_owner, _current_rx) = mpsc::channel(1);
+        let root = std::env::temp_dir().join(format!("konofix-owned-knp-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config = kononexus::KonofixSdkConfig::new(root.join("identity.key"))
+            .with_bind("127.0.0.1:0".parse().unwrap())
+            .with_routing_cache(root.join("routing-cache.json"));
+        let chat = knp_chat::KnpChat::spawn(config, "owner-test".into(), None)
+            .await
+            .unwrap();
+        let session_id = chat.session_id.clone();
+        *state.knp_chat.lock().unwrap() = Some(KnpChatSession {
+            owner: current_owner.clone(),
+            chat,
+        });
+        assert!(take_knp_chat_for_owner(&state, &old_owner).is_none());
+        assert_eq!(
+            state
+                .knp_chat
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .chat
+                .session_id,
+            session_id
+        );
+        let owned = take_knp_chat_for_owner(&state, &current_owner).unwrap();
+        assert!(take_knp_chat_for_owner(&state, &current_owner).is_none());
+        owned.clone().shutdown().await;
+        assert!(owned.snapshot().await.is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn a_task_can_clear_only_the_sender_it_owns() {

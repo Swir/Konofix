@@ -34,7 +34,7 @@ if (-not [string]::IsNullOrWhiteSpace($parent)) {
 
 $handoff = @"
 <!-- KONOFIX-TESTER-HANDOFF-BUILD:v1 -->
-# Konofix Chat — Exact-Build Public-Network Test Handoff
+# Konofix Chat — Exact-Build Windows Test Handoff
 
 This file was generated for one exact Windows test bundle. It is **test evidence only, not a published GitHub Release**.
 
@@ -45,6 +45,12 @@ This file was generated for one exact Windows test bundle. It is **test evidence
 - Evidence scope: exact-build public-network testing
 
 BUILD_INFO.json is the authoritative sealed inventory for this bundle. Keep this bundle, its checksum, the generated network-test session and every evidence file together. Never mix binaries, scripts or evidence from a different source commit, workflow artifact or historical prerelease.
+
+## Primary libp2p chat and optional KNP contacts
+
+Ordinary login uses the existing libp2p stack: WORLD, rooms, direct files, mDNS, DHT, TCP/QUIC and participant relays. KonoNexus/KNP is an optional separate contact-text panel. Follow KNP_CHAT_BETA.md for the combined acceptance matrix: automatic two-PC LAN discovery without pasted addresses, direct WAN where NAT permits, controlled relay fallback, and optional KNP alongside WORLD. Do not claim WAN or physical two-PC success from two installed-app processes on one Windows runner.
+
+For optional KNP, exchange verified NodeIDs and reachable UDP endpoints, admit the contact on both sides, and require recipient-application acknowledgements. Returning to WORLD keeps KNP running; stopping KNP must leave WORLD working. Disconnecting the primary session also stops its KNP child. KNP NodeIDs do not silently substitute for libp2p PeerIDs. Node/Netprobe evidence concerns libp2p, not KNP.
 
 ## Start a participant-operated network
 

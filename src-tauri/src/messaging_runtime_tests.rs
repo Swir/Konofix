@@ -413,6 +413,37 @@ async fn transfer(sender: &mut TestPeer, receiver: &mut TestPeer, path: &Path, b
         .exists());
 }
 
+// Real production swarms, empty peer caches and no supplied bootstrap/address.
+// This exercises host-local mDNS; it is not a two-physical-computer LAN result.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mdns_only_application_loops_discover_and_chat_without_configuration() {
+    let _runtime_test_guard = messaging_runtime_test_lock().lock().await;
+    let files = TestDirectory::new();
+    let mut alice = TestPeer::start("mdns-alice", vec![], files.0.join("alice")).await;
+    let mut bob = TestPeer::start("mdns-bob", vec![], files.0.join("bob")).await;
+    alice.event("peer-online", |v| v["peer_id"] == bob.id).await;
+    bob.event("peer-online", |v| v["peer_id"] == alice.id).await;
+    for peer in [&mut alice, &mut bob] {
+        let status = peer
+            .event("network-status", |v| {
+                v["connected_peers"].as_u64().unwrap_or(0) > 0
+            })
+            .await;
+        assert_eq!(status["bootstrap_count"], 0);
+    }
+    chat(&alice, &mut bob, "world", "Automatic mDNS Alice to Bob").await;
+    chat(&bob, &mut alice, "world", "Automatic mDNS Bob to Alice").await;
+    alice.commands.send(NetworkCommand::Stop).await.unwrap();
+    bob.commands.send(NetworkCommand::Stop).await.unwrap();
+    for task in [&mut alice.task, &mut bob.task] {
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_application_loops_deliver_chat_and_accepted_binary_files_both_directions() {
     let _runtime_test_guard = messaging_runtime_test_lock().lock().await;

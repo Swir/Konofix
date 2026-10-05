@@ -1,7 +1,7 @@
-//! Windows IPC boundary for an exclusive KNP-only chat session.
+//! Optional KNP contact session owned by, but isolated from, the primary libp2p session.
 use crate::{
     knp_chat::{Contact, KnpChat, Snapshot},
-    AppState,
+    AppState, KnpChatSession,
 };
 use kononexus::KonofixSdkConfig;
 use std::{fs::OpenOptions, os::windows::fs::OpenOptionsExt};
@@ -13,8 +13,8 @@ fn current(state: &AppState, session_id: &str) -> Result<KnpChat, String> {
         .lock()
         .map_err(|_| "Chat state lock failed.")?
         .as_ref()
-        .filter(|session| session.session_id == session_id)
-        .cloned()
+        .filter(|session| session.chat.session_id == session_id)
+        .map(|session| session.chat.clone())
         .ok_or_else(|| "This chat session is no longer active.".into())
 }
 
@@ -25,18 +25,19 @@ pub(crate) async fn start_knp_chat(
     state: State<'_, AppState>,
 ) -> Result<Snapshot, String> {
     let _gate = state.session_gate.lock().await;
-    if state
+    let owner = state
         .tx
         .lock()
         .map_err(|_| "Network state lock failed.")?
+        .clone()
+        .ok_or("Connect to the primary P2P network before opening optional KNP contacts.")?;
+    if state
+        .knp_chat
+        .lock()
+        .map_err(|_| "Chat state lock failed.")?
         .is_some()
-        || state
-            .knp_chat
-            .lock()
-            .map_err(|_| "Chat state lock failed.")?
-            .is_some()
     {
-        return Err("Disconnect the active session before starting KNP chat.".into());
+        return Err("A KNP contact session is already active.".into());
     }
     if profile.is_empty()
         || profile.len() > 32
@@ -66,7 +67,7 @@ pub(crate) async fn start_knp_chat(
     let config = KonofixSdkConfig::new(root.join("identity.key"))
         .with_bind("0.0.0.0:0".parse().map_err(|_| "Invalid bind address.")?)
         .with_routing_cache(root.join("routing-cache.json"));
-    // Production defaults: no test mode, seed list, or libp2p fallback.
+    // This optional route never impersonates a libp2p PeerID or changes its routes.
     let session = KnpChat::spawn(config, nick, Some(lock)).await?;
     let snapshot = match session.snapshot().await {
         Ok(snapshot) => snapshot,
@@ -75,10 +76,28 @@ pub(crate) async fn start_knp_chat(
             return Err(error);
         }
     };
-    *state
-        .knp_chat
-        .lock()
-        .map_err(|_| "Chat state lock failed.")? = Some(session);
+    let installed = {
+        let tx = state.tx.lock().map_err(|_| "Network state lock failed.")?;
+        if tx
+            .as_ref()
+            .is_some_and(|current| current.same_channel(&owner))
+        {
+            *state
+                .knp_chat
+                .lock()
+                .map_err(|_| "Chat state lock failed.")? = Some(KnpChatSession {
+                owner,
+                chat: session.clone(),
+            });
+            true
+        } else {
+            false
+        }
+    };
+    if !installed {
+        session.shutdown().await;
+        return Err("The primary P2P session ended during KNP startup.".into());
+    }
     Ok(snapshot)
 }
 
@@ -130,13 +149,16 @@ pub(crate) async fn stop_knp_chat(
             .knp_chat
             .lock()
             .map_err(|_| "Chat state lock failed.")?;
-        if guard.as_ref().is_some_and(|s| s.session_id != session_id) {
+        if guard
+            .as_ref()
+            .is_some_and(|s| s.chat.session_id != session_id)
+        {
             return Err("This chat session is no longer active.".into());
         }
         guard.take()
     };
     if let Some(session) = session {
-        session.shutdown().await;
+        session.chat.shutdown().await;
     }
     Ok(())
 }

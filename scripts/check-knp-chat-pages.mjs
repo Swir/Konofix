@@ -93,7 +93,7 @@ async function openKnp(p, profile) {
 async function discover() {
   for (const [p, nick] of [[a, 'Tester_B'], [b, 'Tester_A']]) {
     await until(() => p.evaluate(`document.querySelector('#peerList')?.textContent.includes(${JSON.stringify(nick)})`), 'Automatic primary peer discovery');
-    assert.equal(await p.evaluate(`window.__networkObservations.some(s => s.connected_peers > 0 && s.bootstrap_count === 0)`), true);
+    assert.equal(await p.evaluate(`window.__networkObservations.some(s => s.connected_peers > 0 && s.bootstrap_count === 0 && s.routes.length > 0 && s.routes.every(r => r.path === 'direct'))`), true);
   }
 }
 async function world(sender, receiver, text) {
@@ -149,7 +149,6 @@ try {
   await contact(b, firstA, 'Tester_A');
   await message(a, b, `KNP A to B ${nonce} <img src=x onerror="window.__knpInjected=1"> 🙂`);
   await message(b, a, `KNP B to A ${nonce} hello`);
-
   // A primary event must not steal focus or a draft from the visible optional panel.
   await a.evaluate(`document.querySelector('#knpMsg').value = 'draft during WORLD'; document.querySelector('#knpMsg').focus()`);
   await b.evaluate(`document.querySelector('#knpBack').click()`);

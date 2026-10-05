@@ -430,6 +430,9 @@ async fn mdns_only_application_loops_discover_and_chat_without_configuration() {
             })
             .await;
         assert_eq!(status["bootstrap_count"], 0);
+        let routes = status["routes"].as_array().unwrap();
+        assert!(!routes.is_empty());
+        assert!(routes.iter().all(|r| r["path"] == "direct"));
     }
     chat(&alice, &mut bob, "world", "Automatic mDNS Alice to Bob").await;
     chat(&bob, &mut alice, "world", "Automatic mDNS Bob to Alice").await;

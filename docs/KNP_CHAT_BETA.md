@@ -23,6 +23,8 @@ Start each result as **NOT RUN**. Same-host cloud tests cannot fill the physical
 
 On LAN, mDNS must work without manual addresses. If guest-Wi-Fi isolation, VLAN boundaries or blocked multicast prevent discovery, record that environment and the failure; do not silently paste an address and mark zero-config PASS. Across the Internet, two fresh isolated peers still need a reachable first contact. DHT is decentralized discovery, not a way to discover an unknown network from nothing. The default bundled bootstrap pool is empty. Typical returning peers use learned addresses; a first invitation/bootstrap may be necessary. CGNAT/symmetric NAT may require a relay. Do not label these prerequisites as a central message server or promise universal direct connectivity.
 
+Use **Network settings → Established peer connections** to record observed peer IDs and direct TCP/QUIC or circuit routes. The window is a snapshot; reopen it after connection changes. The sidebar counts connections, so one peer may contribute more than one. These observations do not identify the route of an individual GossipSub message.
+
 A relay reservation only means a circuit can be requested; it is not evidence that a message travelled over relay. Existing retries and relay selection are bounded. Do not confuse a direct connection to the relay participant with a direct end-to-end connection to the intended recipient. Use the existing network evidence tools and attach actual observations; do not fabricate route evidence from UI labels.
 
 ## Optional KNP alongside the primary network

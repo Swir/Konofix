@@ -358,7 +358,7 @@ function renderChat() {
     const panel = document.querySelector<HTMLDivElement>('#emojiPanel');
     if (panel) panel.hidden = true;
   }));
-  msg.focus();
+  if (!document.querySelector('#knpChatOverlay:not([hidden])')) msg.focus();
   scrollBottom();
 }
 

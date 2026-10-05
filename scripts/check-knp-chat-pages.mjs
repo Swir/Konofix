@@ -150,6 +150,15 @@ try {
   await message(a, b, `KNP A to B ${nonce} <img src=x onerror="window.__knpInjected=1"> 🙂`);
   await message(b, a, `KNP B to A ${nonce} hello`);
 
+  // A primary event must not steal focus or a draft from the visible optional panel.
+  await a.evaluate(`document.querySelector('#knpMsg').value = 'draft during WORLD'; document.querySelector('#knpMsg').focus()`);
+  await b.evaluate(`document.querySelector('#knpBack').click()`);
+  await world(b, a, `WORLD while typing KNP ${nonce}`);
+  assert.equal(await a.evaluate(`document.activeElement?.id`), 'knpMsg');
+  assert.equal(await a.evaluate(`document.querySelector('#knpMsg').value`), 'draft during WORLD');
+  await b.evaluate(`document.querySelector('#optionalKnp').click()`);
+
+
   // Both primary WORLD and optional KNP continue concurrently, with separate IDs.
   for (const p of [a, b]) await p.evaluate(`document.querySelector('#knpBack').click()`);
   await world(a, b, `WORLD while KNP active ${nonce}`);

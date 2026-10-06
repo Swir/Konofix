@@ -46,7 +46,7 @@ Konofix Chat is a desktop P2P messenger built around `rust-libp2p`. A user start
 
 Konofix does not use a traditional account, email address, or phone number. **Every connected desktop is a P2P node**: participants form the network and can help others discover peers and relay connections. A separate server is optional. The headless Konofix Node is an optional always-on participant, not a central message-history or file-storage server.
 
-To form a network, start the app on each computer and connect with a nickname. Participants on one LAN discover each other automatically. For a first Internet connection, an online participant copies a reachable address from **Network settings** and shares it with the other person, who adds it there. The app then discovers and remembers peers. A private LAN address is usable only in that LAN; Internet reachability requires a public/port-mapped address or a reachable participant providing relay. When all participants leave, there is no online network or server keeping it alive. See [the participant-network beta plan](docs/GLOBAL_BETA.md).
+To form a network, start the app on each computer and connect with a nickname. Participants on one LAN discover each other automatically through mDNS. The product target is also automatic entry into **#WORLD over the Internet**, without pasted addresses, through a replaceable pool of reachable P2P discovery/relay participants. The current built-in pool is empty, so clean-start automatic WAN discovery remains blocked; the real LAN-to-LTE tester result is [WAN FAIL #165](https://github.com/Swir/Konofix/issues/165). Manual address exchange is available for diagnosis but does not satisfy that acceptance gate. Direct TCP/QUIC is preferred where reachable; CGNAT or symmetric NAT can require a transport relay. These peers do not provide accounts or central message history. See the [three-peer deployment procedure](docs/BOOTSTRAP_POOL_DEPLOYMENT.md) and [participant-network beta plan](docs/GLOBAL_BETA.md).
 
 KonoNexus/KNP adds an **optional contact-text panel** alongside the primary libp2p network. WORLD, rooms, discovery and files keep their existing routes and security contracts. KNP requires separately verified NodeIDs and endpoints in this initial integration; it does not silently replace or impersonate a libp2p peer. See [the coexistence and installed-app test guide](docs/KNP_CHAT_BETA.md). Cloud tests do not complete the two-physical-installation or WAN gates.
 
@@ -69,9 +69,9 @@ KonoNexus/KNP adds an **optional contact-text panel** alongside the primary libp
 ### Public preview
 
 1. Open [GitHub Releases](https://github.com/Swir/Konofix/releases) and choose the newest published beta preview.
-2. For 0.5.2 Beta 1, download `Konofix-Chat-0.5.2-beta.1-setup.exe` and its `.sha256` file; the release entry is the authority for availability.
+2. **0.5.2 is currently tester-only; public publication is [HELD](docs/BETA_PUBLICATION_HOLD.md).** Use the exact CI candidate and checksum recorded in the tester handoff; do not assume a public 0.5.2 release exists.
 3. Verify the checksum, install it, then open **Konofix Chat** from the Start menu. Do not start Netprobe to open the chat.
-4. Choose a nickname and connect. Every connected desktop participates in the network. LAN discovery is automatic; for first contact over the Internet, exchange a reachable participant address in network settings.
+4. Choose a nickname and connect. Every connected desktop participates in the network. LAN discovery is automatic. An empty or unreachable entry pool is shown in network status; automatic Internet WORLD remains blocked until real entry peers are deployed and the independent-network retest passes.
 
 Follow [the two-PC Poland–Norway procedure](docs/TWO_PC_TEST.md) and record actual results before any WAN claim.
 

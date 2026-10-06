@@ -31,6 +31,10 @@ const DEFAULT_MAX_PENDING_INCOMING: u32 = 128;
 const DEFAULT_MAX_PENDING_OUTGOING: u32 = 128;
 const SOURCE_COMMIT: &str = env!("KONOFIX_SOURCE_COMMIT");
 
+#[cfg(test)]
+#[path = "../bootstrap_pool_policy.rs"]
+mod bootstrap_pool_policy;
+
 #[derive(Debug)]
 struct NodeArgs {
     port: u16,

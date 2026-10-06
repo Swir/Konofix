@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { betaPublicationPolicy } from './beta-publication-policy.mjs';
 import { assertContext, assertChecks, assertPlan, publishBeta } from './publish-beta.mjs';
 
 const commit = 'a'.repeat(40);
@@ -75,3 +81,29 @@ const immutable = service({ existing: { draft: false, prerelease: true, html_url
 assert.equal((await publishBeta(plan, immutable.api, read)).skipped, true);
 assert(!immutable.state.calls.some((call) => call.method !== 'GET'), 'Published releases must never be rewritten');
 console.log('Beta publishing: trusted context, exact CI/build, 0.5.2 intent, draft upload verification, resume and immutable release tests PASS.');
+
+assert.equal(betaPublicationPolicy.mode, 'tester-only');
+assert.equal(betaPublicationPolicy.version, '0.5.2');
+assert(Object.isFrozen(betaPublicationPolicy));
+const holdRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-publication-hold-'));
+try {
+  const summary = path.join(holdRoot, 'summary.md');
+  // This directory has no release plan and the subprocess has no token.
+  // Successful HELD output proves the real CLI exits before those prerequisites,
+  // rather than calling the publisher's mocked API.
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./publish-beta.mjs', import.meta.url))], {
+    cwd: holdRoot,
+    env: { ...process.env, ...env, GH_TOKEN: '', GITHUB_STEP_SUMMARY: summary },
+    encoding: 'utf8',
+    timeout: 10_000,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Public beta publication HELD:/);
+  assert.match(result.stdout, /tester-only; no release, tag or asset is created/);
+  assert.match(fs.readFileSync(summary, 'utf8'), /physical two-PC acceptance/);
+  assert.deepEqual(fs.readdirSync(holdRoot), ['summary.md']);
+} finally {
+  fs.rmSync(holdRoot, { recursive: true, force: true });
+}
+console.log('Tester-only hold: actual CLI exits before token, release plan and GitHub API access PASS.');

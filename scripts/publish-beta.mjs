@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { betaPublicationPolicy } from './beta-publication-policy.mjs';
 
 const repository = 'Swir/Konofix';
 const tag = 'v0.5.2-beta.1';
@@ -98,6 +99,14 @@ export async function publishBeta(plan, api, readFile) {
 
 async function main() {
   assertContext(process.env);
+  assert.equal(betaPublicationPolicy.version, '0.5.2', 'Publication policy version mismatch');
+  assert(['tester-only', 'qualified-preview'].includes(betaPublicationPolicy.mode), 'Unknown publication policy');
+  if (betaPublicationPolicy.mode === 'tester-only') {
+    const hold = `Public beta publication HELD: ${betaPublicationPolicy.reason} Windows Actions bundles remain tester-only; no release, tag or asset is created.`;
+    console.log(hold);
+    if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n${hold}\n`);
+    return;
+  }
   assert(process.env.GH_TOKEN, 'Workflow token is required');
   const api = async (method, endpoint, body, allowMissing = false) => {
     const upload = method === 'UPLOAD';

@@ -86,3 +86,24 @@ code and reports how many distinct TCP ports were tried. The 64-attempt bound,
 TCP-plus-UDP requirement, cleanup and failure outcome are unchanged. This adds
 observability; it does not claim a port-allocator root cause or fix. No retry of
 the whole test is added. The only logged addresses are implicit loopback ports.
+
+## Preserve the original test-harness concurrency
+
+The exact-filtered supervised child isolates a restart test from the parent
+library's parallel tests. That is useful for a hard process deadline, but it
+cannot exclude an interaction with the original Cargo test-harness concurrency.
+The draft now also runs one complete restart in the original four-worker Tokio
+test shape, alongside the rest of the harness. It keeps all existing 20-second
+phase assertions. The 15-minute Cargo step deadline remains the outer bound if
+that in-process probe stalls in synchronous work or harness runtime destruction.
+No existing isolated stress test or assertion is removed.
+
+Every actor Trace now also appends its static phase to a create-new
+`phases-<PID>-<UUID>.log`, including the process ID, actor number and timing.
+These files are uploaded by the existing always-run diagnostic artifact step.
+A `parallel-harness-restart` body-complete marker followed by no completed test
+must not be interpreted as PASS: the harness runtime can still be shutting down.
+Per-process traces cover parent-harness actors too, not only supervised children.
+They contain no payloads, keys, identities, endpoints or profile paths. This
+additional probe/instrumentation is diagnosis only, not an explanation or fix
+for the original Windows timeout.

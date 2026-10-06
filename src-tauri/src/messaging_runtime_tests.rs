@@ -107,6 +107,7 @@ struct TestRuntime {
     events: mpsc::UnboundedSender<(String, serde_json::Value)>,
     downloads: PathBuf,
     previews: PathBuf,
+    mdns_enabled: bool,
 }
 
 impl NetworkRuntime for TestRuntime {
@@ -123,6 +124,9 @@ impl NetworkRuntime for TestRuntime {
     }
     fn previews(&self) -> Result<PathBuf, String> {
         Ok(self.previews.clone())
+    }
+    fn mdns_enabled(&self) -> bool {
+        self.mdns_enabled
     }
     fn load_peers(&self) -> PeerCacheFile {
         PeerCacheFile::default()
@@ -156,6 +160,16 @@ impl TestPeer {
         bootstraps: Vec<String>,
         downloads: PathBuf,
     ) -> Self {
+        Self::start_with_discovery(nick, color, bootstraps, downloads, true).await
+    }
+
+    async fn start_with_discovery(
+        nick: &str,
+        color: &str,
+        bootstraps: Vec<String>,
+        downloads: PathBuf,
+        mdns_enabled: bool,
+    ) -> Self {
         let color = normalize_nick_color(Some(color));
         let previews = downloads.with_file_name(format!(
             "{}-previews",
@@ -175,6 +189,7 @@ impl TestPeer {
                 events: events_tx,
                 downloads,
                 previews,
+                mdns_enabled,
             },
             rx,
             ready_tx,
@@ -413,6 +428,137 @@ async fn transfer(sender: &mut TestPeer, receiver: &mut TestPeer, path: &Path, b
         .exists());
 }
 
+// Controlled socket/interface-event regression, not LTE/WAN acceptance.
+// mDNS is disabled only here so it cannot mask a broken bootstrap reconnect.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bootstrap_only_world_recovers_after_direct_listeners_and_connections_are_lost() {
+    let _runtime_test_guard = messaging_runtime_test_lock().lock().await;
+    let files = TestDirectory::new();
+    let mut bob = TestPeer::start_with_discovery(
+        "recovery-bob",
+        DEFAULT_NICK_COLOR,
+        vec![],
+        files.0.join("bob"),
+        false,
+    )
+    .await;
+    let listening = bob
+        .event("network-status", |v| {
+            v["listen_addresses"].as_array().is_some_and(|addresses| {
+                addresses.iter().any(|a| {
+                    a.as_str()
+                        .is_some_and(|a| a.starts_with("/ip4/127.0.0.1/tcp/"))
+                })
+            })
+        })
+        .await;
+    let bootstrap = listening["listen_addresses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|a| a.as_str())
+        .find(|a| a.starts_with("/ip4/127.0.0.1/tcp/"))
+        .unwrap()
+        .to_string();
+    let mut alice = TestPeer::start_with_discovery(
+        "recovery-alice",
+        DEFAULT_NICK_COLOR,
+        vec![bootstrap],
+        files.0.join("alice"),
+        false,
+    )
+    .await;
+    let identity = alice.id.clone();
+    alice.event("peer-online", |v| v["peer_id"] == bob.id).await;
+    bob.event("peer-online", |v| v["peer_id"] == alice.id).await;
+    chat(
+        &alice,
+        &mut bob,
+        "world",
+        "Before controlled network change",
+    )
+    .await;
+    let initial = alice.event("network-recovery", |_| true).await;
+    let generation = initial["generation"].as_u64().unwrap();
+    let before = alice
+        .event("network-status", |v| {
+            let Some(addresses) = v["listen_addresses"].as_array() else {
+                return false;
+            };
+            ["/tcp/", "/quic-v1/"].iter().all(|transport| {
+                addresses.iter().any(|a| {
+                    a.as_str()
+                        .is_some_and(|a| a.contains(transport) && !a.contains("/p2p-circuit"))
+                })
+            })
+        })
+        .await;
+    let old_direct: Vec<_> = before["listen_addresses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|a| a.as_str())
+        .filter(|a| !a.contains("/p2p-circuit"))
+        .map(str::to_owned)
+        .collect();
+    assert!(!old_direct.is_empty());
+    let (reply, completed) = oneshot::channel();
+    alice
+        .commands
+        .send(NetworkCommand::CycleNetworkForTest { reply })
+        .await
+        .unwrap();
+    completed.await.unwrap();
+    alice
+        .event("network-status", |v| {
+            v["detail"] == "P2P listener closed"
+                && v["listen_addresses"].as_array().is_some_and(|addresses| {
+                    old_direct
+                        .iter()
+                        .all(|old| !addresses.iter().any(|a| a.as_str() == Some(old.as_str())))
+                })
+        })
+        .await;
+    let recovered = alice
+        .event("network-recovery", |v| {
+            v["generation"].as_u64().unwrap_or(0) > generation
+        })
+        .await;
+    assert_eq!(recovered["configured_bootstraps"], 1);
+    alice
+        .event("network-status", |v| {
+            v["bootstrap_connected"] == 1 && v["connected_peers"].as_u64().unwrap_or(0) > 0
+        })
+        .await;
+    assert_eq!(
+        alice.id, identity,
+        "interface change must not rotate identity"
+    );
+    chat(
+        &alice,
+        &mut bob,
+        "world",
+        "Automatic WORLD recovery Alice to Bob",
+    )
+    .await;
+    chat(
+        &bob,
+        &mut alice,
+        "world",
+        "Automatic WORLD recovery Bob to Alice",
+    )
+    .await;
+    alice.commands.send(NetworkCommand::Stop).await.unwrap();
+    bob.commands.send(NetworkCommand::Stop).await.unwrap();
+    for task in [&mut alice.task, &mut bob.task] {
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+}
+
 // Real production swarms, empty peer caches and no supplied bootstrap/address.
 // This exercises host-local mDNS; it is not a two-physical-computer LAN result.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -430,6 +576,7 @@ async fn mdns_only_application_loops_discover_and_chat_without_configuration() {
             })
             .await;
         assert_eq!(status["bootstrap_count"], 0);
+        assert_eq!(status["bootstrap_connected"], 0);
         let routes = status["routes"].as_array().unwrap();
         assert!(!routes.is_empty());
         assert!(routes.iter().all(|r| r["path"] == "direct"));

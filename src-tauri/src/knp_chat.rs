@@ -494,6 +494,18 @@ mod tests {
         );
     }
 
+    // The original failure occurred alongside the library's other parallel tests.
+    // Keep that concurrency as a separate probe; child isolation cannot prove it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn restart_under_original_parallel_harness() {
+        let mut trace = crate::kononexus_transport::lifecycle_diagnostics::Trace::new(
+            "parallel-harness-restart",
+        );
+        trace.at("begin in-process restart");
+        exercise_chat_restart().await;
+        trace.at("body complete before harness runtime drop");
+    }
+
     async fn exercise_chat_restart() {
         let root = TestRoot::new();
         let a = lifecycle_phase(

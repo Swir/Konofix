@@ -1,16 +1,46 @@
 //! Test-only diagnostics. Never compiled into installed applications.
 use std::{
     fs::{File, OpenOptions},
-    io::{Read, Seek, SeekFrom},
+    io::{Read, Seek, SeekFrom, Write},
     path::PathBuf,
     process::{Command, ExitStatus, Stdio},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex, OnceLock,
+    },
     thread,
     time::{Duration, Instant},
 };
 
 static NEXT_ACTOR: AtomicUsize = AtomicUsize::new(1);
 const CHILD_TEST: &str = "KONOFIX_KNP_CHILD_TEST";
+
+// Keep per-process phase traces even when the Cargo harness itself is terminated.
+// A fresh UUID file is created once; no previous attempt is replaced.
+fn record_phase(line: String) {
+    static LOG: OnceLock<Mutex<File>> = OnceLock::new();
+    let log = LOG.get_or_init(|| {
+        let root = std::env::var_os("KONOFIX_KNP_DIAGNOSTICS")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join("konofix-knp-diagnostics"));
+        std::fs::create_dir_all(&root).expect("create phase trace directory");
+        let path = root.join(format!(
+            "phases-{}-{}.log",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        Mutex::new(
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .expect("reserve phase trace"),
+        )
+    });
+    // Never hold this lock across stderr, another lock or an await.
+    writeln!(log.lock().expect("phase trace lock"), "{line}").expect("write phase trace");
+    eprintln!("{line}");
+}
 
 pub(crate) struct Trace {
     id: usize,
@@ -33,21 +63,25 @@ impl Trace {
 
     pub(crate) fn at(&mut self, phase: &'static str) {
         self.phase = phase;
-        eprintln!(
-            "KNP actor={} kind={} elapsed_ms={} phase={phase}",
+        record_phase(format!(
+            "KNP pid={} actor={} kind={} elapsed_ms={} phase={phase}",
+            std::process::id(),
             self.id,
             self.kind,
             self.started.elapsed().as_millis()
-        );
+        ));
     }
 }
 
 impl Drop for Trace {
     fn drop(&mut self) {
-        eprintln!(
-            "KNP actor={} kind={} dropped_from={}",
-            self.id, self.kind, self.phase
-        );
+        record_phase(format!(
+            "KNP pid={} actor={} kind={} dropped_from={}",
+            std::process::id(),
+            self.id,
+            self.kind,
+            self.phase
+        ));
     }
 }
 

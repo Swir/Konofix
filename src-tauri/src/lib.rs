@@ -28,6 +28,7 @@ use uuid::Uuid;
 mod connection_routes;
 mod direct_first;
 mod incoming_file;
+mod network_recovery;
 #[cfg(windows)]
 mod knp_chat;
 #[cfg(windows)]
@@ -382,6 +383,7 @@ struct NetworkStatus {
     routes: Vec<connection_routes::ConnectionRoute>,
     dht_peers: usize,
     bootstrap_count: usize,
+    bootstrap_connected: usize,
     nat: String,
     listen_addresses: Vec<String>,
     detail: String,
@@ -986,6 +988,10 @@ enum NetworkCommand {
         reply: oneshot::Sender<Result<(), String>>,
     },
     RefreshDiscovery,
+    #[cfg(test)]
+    CycleNetworkForTest {
+        reply: oneshot::Sender<()>,
+    },
     OfferFile {
         peer_id: String,
         path: PathBuf,
@@ -1026,7 +1032,7 @@ enum NetworkCommand {
 #[derive(NetworkBehaviour)]
 struct Behaviour {
     gossipsub: gossipsub::Behaviour,
-    mdns: mdns::tokio::Behaviour,
+    mdns: libp2p::swarm::behaviour::toggle::Toggle<mdns::tokio::Behaviour>,
     kad: kad::Behaviour<MemoryStore>,
     identify: identify::Behaviour,
     ping: ping::Behaviour,
@@ -1388,6 +1394,11 @@ trait NetworkRuntime: Send + Sync + 'static {
 
     fn load_peers(&self) -> PeerCacheFile {
         load_peer_cache()
+    }
+
+    #[cfg(test)]
+    fn mdns_enabled(&self) -> bool {
+        true
     }
 
     fn save_peers(&self, cache: &PeerCacheFile) {
@@ -2278,7 +2289,10 @@ fn mark_bootstrap_failed(targets: &mut [BootstrapTarget], peer_id: &PeerId, now:
     matched
 }
 
-fn try_listen_via_relay(swarm: &mut libp2p::Swarm<Behaviour>, raw: &str) -> Result<(), String> {
+fn try_listen_via_relay(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    raw: &str,
+) -> Result<libp2p::core::transport::ListenerId, String> {
     let mut addr: Multiaddr = raw
         .trim()
         .parse()
@@ -2290,8 +2304,25 @@ fn try_listen_via_relay(swarm: &mut libp2p::Swarm<Behaviour>, raw: &str) -> Resu
     addr.push(libp2p::multiaddr::Protocol::P2pCircuit);
     swarm
         .listen_on(addr)
-        .map(|_| ())
         .map_err(|e| format!("Nie udało się utworzyć rezerwacji relay: {e}"))
+}
+
+fn restore_bootstrap_relays(
+    swarm: &mut libp2p::Swarm<Behaviour>,
+    targets: &[BootstrapTarget],
+    listeners: &mut HashMap<PeerId, libp2p::core::transport::ListenerId>,
+) {
+    for target in targets {
+        if listeners.len() >= MAX_PARTICIPANT_RELAYS {
+            break;
+        }
+        if listeners.contains_key(&target.peer_id) || !swarm.is_connected(&target.peer_id) {
+            continue;
+        }
+        if let Ok(listener) = try_listen_via_relay(swarm, &target.raw) {
+            listeners.insert(target.peer_id, listener);
+        }
+    }
 }
 
 fn publish(swarm: &mut libp2p::Swarm<Behaviour>, topic: &gossipsub::IdentTopic, event: &WireEvent) {
@@ -2450,7 +2481,7 @@ fn check_nick_conflict(
 fn emit_status(
     app: &impl NetworkRuntime,
     swarm: &mut libp2p::Swarm<Behaviour>,
-    bootstrap_count: usize,
+    bootstrap_targets: &[BootstrapTarget],
     nat: &str,
     listen_addresses: &[String],
     detail: impl Into<String>,
@@ -2472,7 +2503,13 @@ fn emit_status(
         connected_peers,
         routes: routes.snapshot(),
         dht_peers,
-        bootstrap_count,
+        bootstrap_count: bootstrap_targets.len(),
+        bootstrap_connected: bootstrap_targets
+            .iter()
+            .map(|target| target.peer_id)
+            .filter(|peer| swarm.is_connected(peer))
+            .collect::<HashSet<_>>()
+            .len(),
         nat: nat.to_string(),
         listen_addresses: {
             let mut addresses = listen_addresses.to_vec();
@@ -2567,6 +2604,10 @@ async fn network_task(
     mut rx: mpsc::Receiver<NetworkCommand>,
     ready: oneshot::Sender<Result<String, String>>,
 ) -> Result<(), String> {
+    #[cfg(test)]
+    let mdns_enabled = app.mdns_enabled();
+    #[cfg(not(test))]
+    let mdns_enabled = true;
     let mut swarm = SwarmBuilder::with_new_identity()
         .with_tokio()
         .with_tcp(
@@ -2588,7 +2629,11 @@ async fn network_task(
                 gossipsub_config,
             )
             .map_err(std::io::Error::other)?;
-            let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), local_peer)?;
+            let mdns = if mdns_enabled {
+                Some(mdns::tokio::Behaviour::new(mdns::Config::default(), local_peer)?)
+            } else {
+                None
+            };
 
             let mut kad_config = kad::Config::new(StreamProtocol::new(KAD_PROTOCOL));
             kad_config.set_periodic_bootstrap_interval(Some(Duration::from_secs(60)));
@@ -2622,7 +2667,7 @@ async fn network_task(
 
             Ok(Behaviour {
                 gossipsub,
-                mdns,
+                mdns: mdns.into(),
                 kad,
                 identify,
                 ping: ping::Behaviour::default(),
@@ -2649,35 +2694,27 @@ async fn network_task(
         .subscribe(&world)
         .map_err(|e| e.to_string())?;
 
-    swarm
-        .listen_on(
-            "/ip4/0.0.0.0/tcp/0"
-                .parse()
-                .map_err(|e: libp2p::multiaddr::Error| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-    swarm
-        .listen_on(
-            "/ip4/0.0.0.0/udp/0/quic-v1"
-                .parse()
-                .map_err(|e: libp2p::multiaddr::Error| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
+    let mut tcp_listener = Some(
+        swarm
+            .listen_on("/ip4/0.0.0.0/tcp/0".parse().expect("static TCP listener"))
+            .map_err(|e| e.to_string())?,
+    );
+    let mut quic_listener = Some(
+        swarm
+            .listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse().expect("static QUIC listener"))
+            .map_err(|e| e.to_string())?,
+    );
+    let mut network_recovery = network_recovery::NetworkRecovery::new(Instant::now());
 
     let mut peer_cache = app.load_peers();
     let mut cached_dials = add_cached_peers_to_swarm(&mut swarm, &peer_cache);
 
     let mut bootstrap_targets = Vec::<BootstrapTarget>::new();
-    let mut relay_bootstrap_peers = HashSet::<PeerId>::new();
+    let mut relay_bootstrap_peers = HashMap::new();
     for address in &bootstraps {
         let now = Instant::now();
         match register_bootstrap_target(&mut swarm, address, now) {
             Ok(mut target) => {
-                if relay_bootstrap_peers.insert(target.peer_id.clone()) {
-                    if let Err(err) = try_listen_via_relay(&mut swarm, address) {
-                        let _ = app.emit_event("network-log", format!("Relay rezerwacja: {err}"));
-                    }
-                }
                 if let Err(err) = attempt_bootstrap_target(&mut swarm, &mut target, now) {
                     let _ = app.emit_event("network-log", err);
                 }
@@ -2688,8 +2725,7 @@ async fn network_task(
             }
         }
     }
-    let mut bootstrap_count = bootstrap_targets.len();
-    if bootstrap_count > 0 {
+    if !bootstrap_targets.is_empty() {
         let _ = swarm.behaviour_mut().kad.bootstrap();
     }
 
@@ -2768,7 +2804,7 @@ async fn network_task(
     emit_status(
         &app,
         &mut swarm,
-        bootstrap_count,
+        &bootstrap_targets,
         &nat_status,
         &listen_addresses,
         "Warstwa P2P uruchomiona",
@@ -2779,6 +2815,48 @@ async fn network_task(
         tokio::select! {
             _ = cached_retry.tick() => {
                 cached_dials.drive(&mut swarm, Instant::now(), register_cached_address);
+                if let Some(generation) = network_recovery.take_due(Instant::now()) {
+                    for (listener, address) in [
+                        (&mut tcp_listener, "/ip4/0.0.0.0/tcp/0"),
+                        (&mut quic_listener, "/ip4/0.0.0.0/udp/0/quic-v1"),
+                    ] {
+                        if listener.is_none() {
+                            match swarm.listen_on(address.parse().expect("static listener")) {
+                                Ok(id) => *listener = Some(id),
+                                Err(error) => {
+                                    let _ = app.emit_event("network-warning", format!("Listener recovery failed: {error}"));
+                                    network_recovery.request(Instant::now());
+                                }
+                            }
+                        }
+                    }
+                    let now = Instant::now();
+                    let mut attempted = 0usize;
+                    for target in &mut bootstrap_targets {
+                        if swarm.is_connected(&target.peer_id) {
+                            target.mark_connected();
+                            continue;
+                        }
+                        target.connected = false;
+                        target.failures = 0;
+                        target.next_attempt = now;
+                        attempted += 1;
+                        if let Err(error) = attempt_bootstrap_target(&mut swarm, target, now) {
+                            let _ = app.emit_event("network-log", error);
+                        }
+                    }
+                    let _ = swarm.behaviour_mut().kad.bootstrap();
+                    let _ = swarm.behaviour_mut().kad.start_providing(world_provider_key());
+                    swarm.behaviour_mut().kad.get_providers(world_provider_key());
+                    publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
+                    restore_bootstrap_relays(&mut swarm, &bootstrap_targets, &mut relay_bootstrap_peers);
+                    let _ = app.emit_event("network-recovery", serde_json::json!({
+                        "generation": generation,
+                        "bootstrap_attempts": attempted,
+                        "configured_bootstraps": bootstrap_targets.len(),
+                    }));
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Discovery refreshed after address change", &connection_routes);
+                }
             }
             _ = heartbeat.tick() => {
                 publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
@@ -2800,7 +2878,7 @@ async fn network_task(
                 let _ = swarm.behaviour_mut().kad.bootstrap();
                 swarm.behaviour_mut().kad.get_providers(world_provider_key());
                 app.save_peers(&peer_cache);
-                emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Odświeżono discovery", &connection_routes);
+                emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Odświeżono discovery", &connection_routes);
             }
             _ = bootstrap_retry.tick() => {
                 let now = Instant::now();
@@ -2822,6 +2900,7 @@ async fn network_task(
                         format!("Bootstrap failover: ponowiono {attempted} połączeń."),
                     );
                 }
+                restore_bootstrap_relays(&mut swarm, &bootstrap_targets, &mut relay_bootstrap_peers);
             }
             _ = cleanup.tick() => {
                 secure_runtime.prune(now_ms(), Instant::now());
@@ -3123,16 +3202,13 @@ async fn network_task(
                             let now = Instant::now();
                             match register_bootstrap_target(&mut swarm, &normalized, now) {
                                 Ok(mut target) => {
-                                    if relay_bootstrap_peers.insert(target.peer_id.clone()) {
-                                        let _ = try_listen_via_relay(&mut swarm, &normalized);
-                                    }
                                     if let Err(err) =
                                         attempt_bootstrap_target(&mut swarm, &mut target, now)
                                     {
                                         let _ = app.emit_event("network-log", err);
                                     }
                                     bootstrap_targets.push(target);
-                                    bootstrap_count = bootstrap_targets.len();
+                                    network_recovery.request(now);
                                     let _ = swarm.behaviour_mut().kad.bootstrap();
                                     swarm.behaviour_mut().kad.get_providers(world_provider_key());
                                     Ok(())
@@ -3141,9 +3217,23 @@ async fn network_task(
                             }
                         };
                         let _ = reply.send(result);
-                        emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Zaktualizowano bootstrapy", &connection_routes);
+                        emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Zaktualizowano bootstrapy", &connection_routes);
+                    }
+                    #[cfg(test)]
+                    NetworkCommand::CycleNetworkForTest { reply } => {
+                        for peer in swarm.connected_peers().copied().collect::<Vec<_>>() {
+                            let _ = swarm.disconnect_peer_id(peer);
+                        }
+                        for listener in [&mut tcp_listener, &mut quic_listener] {
+                            if let Some(id) = listener.take() {
+                                swarm.remove_listener(id);
+                            }
+                        }
+                        network_recovery.request(Instant::now());
+                        let _ = reply.send(());
                     }
                     NetworkCommand::RefreshDiscovery => {
+                        network_recovery.request(Instant::now());
                         let _ = swarm.behaviour_mut().kad.bootstrap();
                         swarm.behaviour_mut().kad.get_providers(world_provider_key());
                         publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
@@ -3422,18 +3512,25 @@ async fn network_task(
             }
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { address, .. } => {
+                    if !address.iter().any(|p| matches!(p, libp2p::multiaddr::Protocol::P2pCircuit)) {
+                        network_recovery.request(Instant::now());
+                    }
                     let Some(address) = address_for_peer(address, local_peer) else { continue; };
                     let printable = address.to_string();
                     if !listen_addresses.contains(&printable) {
                         listen_addresses.push(printable);
                     }
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Nasłuchiwanie aktywne", &connection_routes);
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Nasłuchiwanie aktywne", &connection_routes);
                 }
                 SwarmEvent::ConnectionEstablished { peer_id: remote, connection_id, endpoint, .. } => {
                     connection_routes.established(connection_id, remote, &endpoint);
                     cached_dials.connected(remote);
                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
                     if mark_bootstrap_connected(&mut bootstrap_targets, &remote) {
+                        let _ = swarm.behaviour_mut().kad.bootstrap();
+                        let _ = swarm.behaviour_mut().kad.start_providing(world_provider_key());
+                        swarm.behaviour_mut().kad.get_providers(world_provider_key());
+                        restore_bootstrap_relays(&mut swarm, &bootstrap_targets, &mut relay_bootstrap_peers);
                         let _ = app.emit_event(
                             "network-log",
                             format!("Bootstrap aktywny: {remote}"),
@@ -3441,13 +3538,16 @@ async fn network_task(
                     }
                     publish_presence(&mut swarm, &world, &peer_id, &nick, &nick_color, session_age_ms(session_started));
                     publish_nick_lease(&mut swarm, &world, local_peer, &nick, &canonical, session_age_ms(session_started));
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączono z peerem", &connection_routes);
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Połączono z peerem", &connection_routes);
                 }
                 SwarmEvent::ConnectionClosed { peer_id: remote, connection_id, num_established, .. } => {
                     connection_routes.closed(connection_id);
                     apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.connection_closed(&remote, num_established));
                     if num_established == 0 {
                         membership_seen.remove(&remote);
+                        if let Some(listener) = relay_bootstrap_peers.remove(&remote) {
+                            swarm.remove_listener(listener);
+                        }
                         if let Some(listener) = participant_relays.remove(&remote) {
                             swarm.remove_listener(listener);
                         }
@@ -3524,7 +3624,7 @@ async fn network_task(
                 }
 
                     }
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Połączenie z peerem zamknięte", &connection_routes);
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Połączenie z peerem zamknięte", &connection_routes);
                 }
                 SwarmEvent::OutgoingConnectionError {
                     peer_id: Some(remote),
@@ -3532,7 +3632,7 @@ async fn network_task(
                     error,
                 } => {
                     cached_dials.failed(connection_id, Instant::now());
-                    if mark_bootstrap_failed(
+                    if !swarm.is_connected(&remote) && mark_bootstrap_failed(
                         &mut bootstrap_targets,
                         &remote,
                         Instant::now(),
@@ -3577,7 +3677,7 @@ async fn network_task(
                         if offers_relay
                             && participant_relays.len() < MAX_PARTICIPANT_RELAYS
                             && !participant_relays.contains_key(&remote)
-                            && !relay_bootstrap_peers.contains(&remote)
+                            && !bootstrap_targets.iter().any(|target| target.peer_id == remote)
                         {
                             if let Some(address) = participant_relay_address(addr, remote) {
                                 if let Ok(listener) = swarm.listen_on(address) {
@@ -3589,17 +3689,31 @@ async fn network_task(
                 }
                 SwarmEvent::ListenerClosed { listener_id, .. } => {
                     participant_relays.retain(|_, listener| *listener != listener_id);
+                    let old_count = relay_bootstrap_peers.len();
+                    relay_bootstrap_peers.retain(|_, listener| *listener != listener_id);
+                    if relay_bootstrap_peers.len() != old_count {
+                        network_recovery.request(Instant::now());
+                    }
+                    for listener in [&mut tcp_listener, &mut quic_listener] {
+                        if *listener == Some(listener_id) {
+                            *listener = None;
+                            network_recovery.request(Instant::now());
+                        }
+                    }
                 }
                 SwarmEvent::ExpiredListenAddr { address, .. } => {
+                    if !address.iter().any(|p| matches!(p, libp2p::multiaddr::Protocol::P2pCircuit)) {
+                        network_recovery.request(Instant::now());
+                    }
                     if let Some(address) = address_for_peer(address, local_peer) {
                         listen_addresses.retain(|current| current != &address.to_string());
                     }
-                    emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "P2P address expired", &connection_routes);
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "P2P address expired", &connection_routes);
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Autonat(event)) => {
                     if let autonat::Event::StatusChanged { old: _, new } = event {
                         nat_status = format!("{new:?}").to_lowercase();
-                        emit_status(&app, &mut swarm, bootstrap_count, &nat_status, &listen_addresses, "Zmieniono status NAT", &connection_routes);
+                        emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Zmieniono status NAT", &connection_routes);
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Upnp(event)) => {

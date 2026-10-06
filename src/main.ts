@@ -40,6 +40,7 @@ type NetworkStatus = {
   routes: { peer_id: string; connection_id: string; path: 'direct' | 'relay'; transport: string; remote_address: string }[];
   dht_peers: number;
   bootstrap_count: number;
+  bootstrap_connected: number;
   nat: string;
   listen_addresses: string[];
   detail: string;
@@ -64,7 +65,7 @@ type FileTransfer = {
 };
 
 const EMPTY_STATUS: NetworkStatus = {
-  phase: 'offline', connected_peers: 0, dht_peers: 0, bootstrap_count: 0,
+  phase: 'offline', connected_peers: 0, dht_peers: 0, bootstrap_count: 0, bootstrap_connected: 0,
   nat: 'unknown', listen_addresses: [], routes: [], detail: 'Disconnected'
 };
 
@@ -255,6 +256,7 @@ function renderChat() {
         <div class="network-card" id="networkCard">
           <div class="network-top"><span class="net-dot ${networkClass}"></span><strong>${esc(networkLabel())}</strong><button id="refreshNetwork" title="${esc(t('network.refresh'))}">↻</button></div>
           <small>${esc(networkSubtitle())}</small>
+          <small id="internetEntryStatus">${esc(internetEntryLabel())}</small>
         </div>
 
         <div class="sidebar-bottom">
@@ -367,6 +369,12 @@ function networkLabel(): string {
   if (state.status.phase === 'online') return t('network.online');
   if (state.status.phase === 'searching') return t('network.searching');
   return t('network.offline');
+}
+
+function internetEntryLabel(): string {
+  if (!state.status.bootstrap_count) return t('network.entryMissing');
+  if (!state.status.bootstrap_connected) return t('network.entrySearching');
+  return t('network.entryConnected', { count: state.status.bootstrap_connected });
 }
 
 function networkSubtitle(): string {
@@ -777,6 +785,7 @@ function showNetworkModal() {
       </div>
       <div class="listen-block" id="observedRoutes"><span>${esc(t('network.observedRoutes'))}</span>${state.status.routes.map(r => `<div data-route-peer="${esc(r.peer_id)}" data-route-path="${r.path}"><code>${esc(r.peer_id)} · ${esc(r.path)} / ${esc(r.transport)} · ${esc(r.remote_address)}</code></div>`).join('')}</div>
       <p class="modal-note">${esc(t('network.routeHelp'))}</p>
+      <p class="modal-note" id="internetEntryDetail"><strong>${esc(internetEntryLabel())}</strong><br/>${esc(t('network.entryHelp'))}</p>
       <p class="modal-note">${esc(t('network.participantNode'))}</p>
       <label>${esc(t('network.bootstrapAddress'))}</label>
       <div class="inline-form"><input id="bootstrapInput" placeholder="/ip4/.../tcp/.../p2p/12D3KooW..."/><button id="addBootstrap" class="primary compact">${esc(t('common.add'))}</button></div>

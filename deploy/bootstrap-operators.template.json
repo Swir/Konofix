@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "purpose": "operator-input-template-not-network-evidence",
+  "status": "UNCONFIGURED",
+  "nodes": [
+    {
+      "name": "bootstrap-a",
+      "operator": null,
+      "failure_domain": null,
+      "public_host": null,
+      "port": 45555,
+      "peer_id": null,
+      "tcp_multiaddr": null,
+      "quic_multiaddr": null,
+      "external_tcp_result": "NOT RUN",
+      "external_quic_result": "NOT RUN",
+      "circuit_application_result": "NOT RUN",
+      "evidence_reference": null
+    },
+    {
+      "name": "bootstrap-b",
+      "operator": null,
+      "failure_domain": null,
+      "public_host": null,
+      "port": 45555,
+      "peer_id": null,
+      "tcp_multiaddr": null,
+      "quic_multiaddr": null,
+      "external_tcp_result": "NOT RUN",
+      "external_quic_result": "NOT RUN",
+      "circuit_application_result": "NOT RUN",
+      "evidence_reference": null
+    },
+    {
+      "name": "bootstrap-c",
+      "operator": null,
+      "failure_domain": null,
+      "public_host": null,
+      "port": 45555,
+      "peer_id": null,
+      "tcp_multiaddr": null,
+      "quic_multiaddr": null,
+      "external_tcp_result": "NOT RUN",
+      "external_quic_result": "NOT RUN",
+      "circuit_application_result": "NOT RUN",
+      "evidence_reference": null
+    }
+  ],
+  "production_pool_updated": false
+}

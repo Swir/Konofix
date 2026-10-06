@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.2 — Windows beta preview
+
+- version the libp2p plus optional KNP coexistence candidate separately from published 0.5.1; preserve earlier releases and publish only after exact-main Windows/Linux/RustSec checks,
+- include the short two-PC Poland–Norway installation, checksum, route-status and private observation procedure in the sealed Windows bundle,
+- retain direct/circuit observations, bounded direct-first remembered reconnects and installed-app lifecycle coverage; physical LAN, WAN/NAT and relay acceptance remain NOT RUN until user evidence arrives,
+- no Global Beta or production-readiness claim; qualification stays 56/67 = 83.6%.
+
 ## 0.5.1 — in development
 
 - fixed receiver-side room/WORLD offer downloads so the Transfers panel immediately shows a requesting state, then reconciles to the real incoming P2P transfer and live progress instead of appearing only after completion,

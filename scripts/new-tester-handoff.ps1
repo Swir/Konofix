@@ -36,13 +36,15 @@ $handoff = @"
 <!-- KONOFIX-TESTER-HANDOFF-BUILD:v1 -->
 # Konofix Chat — Exact-Build Windows Test Handoff
 
-This file was generated for one exact Windows test bundle. It is **test evidence only, not a published GitHub Release**.
+This file was generated for one exact Windows test bundle. It is **build metadata, not evidence that a field test passed**.
 
 - Product: Konofix Chat
 - Build version: $Version
 - Source commit: $Commit
 - Workflow run: $WorkflowRun
 - Evidence scope: exact-build public-network testing
+
+Start with TWO_PC_TEST.md for installation, checksum verification, a simple Poland–Norway procedure and private observation collection without replacing originals. Release availability is separate: a handoff does not prove that a GitHub Release was published or that WAN testing succeeded.
 
 BUILD_INFO.json is the authoritative sealed inventory for this bundle. Keep this bundle, its checksum, the generated network-test session and every evidence file together. Never mix binaries, scripts or evidence from a different source commit, workflow artifact or historical prerelease.
 
@@ -64,7 +66,7 @@ For optional KNP, exchange verified NodeIDs and reachable UDP endpoints, admit t
 
 The separately packaged Node is an optional always-on participant. These tools qualify that deployment profile; they do not replace participant-application testing or require a central chat server.
 
-1. Verify the outer ZIP SHA-256 before extraction and keep the checksum beside the exact archive.
+1. Verify the exact-commit release ZIP SHA-256 before extraction (the outer Actions download has a different hash) and keep the checksum beside the exact archive.
 2. Confirm BUILD_INFO.json identifies the expected version and source commit; use only the packaged konofix-node.exe, konofix-netprobe.exe and bundled scripts from this artifact.
 3. Deploy or launch the public Konofix Node with the bundled scripts\public-node.ps1 (or the supervised startup-task installer), preserve its identity and pass public-node readiness checks.
 4. Collect and validate a continuous exact-build Node soak history with scripts\collect-node-soak.ps1 and scripts\validate-node-soak.ps1.

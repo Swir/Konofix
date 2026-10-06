@@ -6,6 +6,10 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+#[cfg(test)]
+#[path = "knp_lifecycle_diagnostics.rs"]
+pub(crate) mod lifecycle_diagnostics;
+
 const KNP_EVENT_CAPACITY: usize = 128;
 
 enum RuntimeCommand {
@@ -102,9 +106,15 @@ impl KonoNexusRuntime {
     pub(crate) async fn spawn(
         config: KonofixSdkConfig,
     ) -> Result<(Self, mpsc::Receiver<RelayAppEvent>), String> {
+        #[cfg(test)]
+        let mut trace = lifecycle_diagnostics::Trace::new("bridge-spawn");
+        #[cfg(test)]
+        trace.at("await SDK spawn");
         let transport = KonofixTransport::spawn(config)
             .await
             .map_err(|error| format!("KonoNexus transport startup failed: {error:#}"))?;
+        #[cfg(test)]
+        trace.at("SDK spawned");
         let node_id = transport.node_id().to_owned();
         let local_addr = transport.local_addr();
         let (command_tx, command_rx) = mpsc::channel(KNP_EVENT_CAPACITY);
@@ -212,8 +222,12 @@ async fn run_transport(
         ConsumerClosed,
     }
 
+    #[cfg(test)]
+    let mut trace = lifecycle_diagnostics::Trace::new("bridge");
     let mut shutdown_reply = None;
     loop {
+        #[cfg(test)]
+        trace.at("select events or commands");
         let wake = tokio::select! {
             // Reserve output space before receiving an SDK event. Both waits are
             // cancellation-safe: control commands remain available under backpressure,
@@ -239,6 +253,8 @@ async fn run_transport(
                     endpoints,
                     reply,
                 }) => {
+                    #[cfg(test)]
+                    trace.at("await SDK connect");
                     let result = transport
                         .connect(expected_node_id, endpoints)
                         .await
@@ -246,6 +262,8 @@ async fn run_transport(
                     let _ = reply.send(result);
                 }
                 Some(RuntimeCommand::ConnectInvite { invite_code, reply }) => {
+                    #[cfg(test)]
+                    trace.at("decode invite and await SDK connect");
                     let result = InviteCode::decode(&invite_code)
                         .map_err(|error| format!("KonoNexus invite is invalid: {error:#}"))
                         .and_then(|invite| {
@@ -270,6 +288,8 @@ async fn run_transport(
                     data,
                     reply,
                 }) => {
+                    #[cfg(test)]
+                    trace.at("await SDK send");
                     let result = transport
                         .send(peer_node_id, data)
                         .await
@@ -277,6 +297,8 @@ async fn run_transport(
                     let _ = reply.send(result);
                 }
                 Some(RuntimeCommand::AuthenticatedPeerCount { reply }) => {
+                    #[cfg(test)]
+                    trace.at("read SDK diagnostics");
                     let _ = reply.send(transport.diagnostics().authenticated_peers);
                 }
                 Some(RuntimeCommand::Shutdown { reply }) => {
@@ -287,10 +309,16 @@ async fn run_transport(
             },
         }
     }
+    #[cfg(test)]
+    trace.at("await SDK abort and join");
     transport.shutdown().await;
+    #[cfg(test)]
+    trace.at("SDK stopped and socket dropped");
     if let Some(reply) = shutdown_reply {
         let _ = reply.send(());
     }
+    #[cfg(test)]
+    trace.at("bridge stopped");
 }
 
 #[cfg(test)]

@@ -66,5 +66,23 @@ socket or cache behavior without evidence.
 This draft does not change installed networking or the pinned SDK. libp2p
 remains the primary network; KNP remains optional. Candidate 0.5.2 is tester-only.
 The main Windows hang remains unresolved until supported by an actual diagnosis
-and qualified correction. Physical LAN, direct WAN and controlled relay tests
-remain NOT RUN until testers supply real results. See [the two-PC procedure](TWO_PC_TEST.md).
+and qualified correction. The user has reported real two-PC LAN discovery and **LTE/WAN FAIL**, preserved
+in [#165](https://github.com/Swir/Konofix/issues/165). Full LAN messaging/file/restart
+acceptance and controlled relay acceptance are not implied by that discovery.
+Only an actual successful retest can close the WAN failure. See [the two-PC procedure](TWO_PC_TEST.md).
+
+
+## 2026-10-06 follow-up result
+
+Head `5471e6834ba37bab68a1b64dfef5d09a2bf875d0` passed its supervised KNP
+restart/stress tests, but Windows [37463593123](https://github.com/Swir/Konofix/actions/runs/37463593123)
+failed later in production Node smoke, before Node started. The TCP/UDP loopback
+port helper exhausted 64 attempts without retaining socket error codes. Linux
+37463593159 succeeded. The KNP diagnostic artifact was retained; no final Windows
+bundle came from that failed run. This did not reproduce the original KNP hang.
+
+The Node smoke now logs each rejected loopback candidate's socket/native error
+code and reports how many distinct TCP ports were tried. The 64-attempt bound,
+TCP-plus-UDP requirement, cleanup and failure outcome are unchanged. This adds
+observability; it does not claim a port-allocator root cause or fix. No retry of
+the whole test is added. The only logged addresses are implicit loopback ports.

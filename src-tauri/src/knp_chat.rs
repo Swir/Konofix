@@ -457,7 +457,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let a_info = lifecycle_phase("snapshot Alice", a.snapshot()).await.unwrap();
+        let a_info = lifecycle_phase("snapshot Alice", a.snapshot())
+            .await
+            .unwrap();
         let b_info = lifecycle_phase("snapshot Bob", b.snapshot()).await.unwrap();
         lifecycle_phase("admit Bob", add(&a, &b_info)).await;
         lifecycle_phase("admit Alice", add(&b, &a_info)).await;

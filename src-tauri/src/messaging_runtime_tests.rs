@@ -480,6 +480,28 @@ async fn bootstrap_only_world_recovers_after_direct_listeners_and_connections_ar
     .await;
     let initial = alice.event("network-recovery", |_| true).await;
     let generation = initial["generation"].as_u64().unwrap();
+    let before = alice
+        .event("network-status", |v| {
+            let Some(addresses) = v["listen_addresses"].as_array() else {
+                return false;
+            };
+            ["/tcp/", "/quic-v1/"].iter().all(|transport| {
+                addresses.iter().any(|a| {
+                    a.as_str()
+                        .is_some_and(|a| a.contains(transport) && !a.contains("/p2p-circuit"))
+                })
+            })
+        })
+        .await;
+    let old_direct: Vec<_> = before["listen_addresses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|a| a.as_str())
+        .filter(|a| !a.contains("/p2p-circuit"))
+        .map(str::to_owned)
+        .collect();
+    assert!(!old_direct.is_empty());
     let (reply, completed) = oneshot::channel();
     alice
         .commands
@@ -487,6 +509,16 @@ async fn bootstrap_only_world_recovers_after_direct_listeners_and_connections_ar
         .await
         .unwrap();
     completed.await.unwrap();
+    alice
+        .event("network-status", |v| {
+            v["detail"] == "P2P listener closed"
+                && v["listen_addresses"].as_array().is_some_and(|addresses| {
+                    old_direct
+                        .iter()
+                        .all(|old| !addresses.iter().any(|a| a.as_str() == Some(old.as_str())))
+                })
+        })
+        .await;
     let recovered = alice
         .event("network-recovery", |v| {
             v["generation"].as_u64().unwrap_or(0) > generation

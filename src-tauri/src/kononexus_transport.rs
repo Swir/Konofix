@@ -326,6 +326,7 @@ mod tests {
     async fn test_runtime(
         root: &Path,
         name: &str,
+        bridge_start: Option<oneshot::Receiver<()>>,
     ) -> (
         KonoNexusRuntime,
         mpsc::Receiver<RelayAppEvent>,
@@ -345,7 +346,12 @@ mod tests {
             local_addr: transport.local_addr(),
             command_tx,
         };
-        let task = tokio::spawn(run_transport(transport, command_rx, event_tx));
+        let task = tokio::spawn(async move {
+            if let Some(start) = bridge_start {
+                start.await.expect("test must release the bridge gate");
+            }
+            run_transport(transport, command_rx, event_tx).await;
+        });
         (runtime, event_rx, task)
     }
 
@@ -369,11 +375,23 @@ mod tests {
         .expect("local KNP delivery must finish");
     }
 
+    async fn wait_for_full_output(events: &mpsc::Receiver<RelayAppEvent>) {
+        time::timeout(Duration::from_secs(3), async {
+            while events.is_empty() {
+                time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the real message must reach the bridge output without draining it");
+        assert_eq!(events.len(), 1, "the output queue must actually be full");
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn event_backpressure_preserves_control_delivery_order_and_shutdown() {
         let root = TestState::new();
-        let (a, mut a_events, a_task) = test_runtime(&root.0, "a").await;
-        let (b, mut b_events, b_task) = test_runtime(&root.0, "b").await;
+        let (a, mut a_events, a_task) = test_runtime(&root.0, "a", None).await;
+        let (release_bridge, bridge_start) = oneshot::channel();
+        let (b, mut b_events, b_task) = test_runtime(&root.0, "b", Some(bridge_start)).await;
         a.connect(b.node_id().to_owned(), vec![b.local_addr()])
             .await
             .unwrap();
@@ -381,11 +399,11 @@ mod tests {
         for n in 0..3 {
             send_and_wait_for_receipt(&a, &mut a_events, b.node_id(), vec![n]).await;
         }
-        assert_eq!(
-            b_events.len(),
-            1,
-            "consumer has deliberately not drained events"
-        );
+        // SDK receipts can arrive before the receiver's forwarding task runs.
+        // Hold that task deliberately: all three receipts must precede its output.
+        assert_eq!(b_events.len(), 0, "the bridge is still behind the test gate");
+        release_bridge.send(()).unwrap();
+        wait_for_full_output(&b_events).await;
         // Commands must work while the output queue remains full; they must not
         // discard a message or require the frontend to resume consuming first.
         time::timeout(Duration::from_secs(3), async {
@@ -415,6 +433,7 @@ mod tests {
         for n in 3..6 {
             send_and_wait_for_receipt(&a, &mut a_events, b.node_id(), vec![n]).await;
         }
+        wait_for_full_output(&b_events).await;
         let b_addr = b.local_addr();
         time::timeout(Duration::from_secs(3), b.shutdown())
             .await
@@ -430,7 +449,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn idle_runtime_stops_when_event_consumer_is_dropped() {
         let root = TestState::new();
-        let (runtime, events, task) = test_runtime(&root.0, "idle").await;
+        let (runtime, events, task) = test_runtime(&root.0, "idle", None).await;
         let addr = runtime.local_addr();
         drop(events);
         time::timeout(Duration::from_secs(3), task)

@@ -10,6 +10,8 @@ Windows CI also installs the generated NSIS package into its disposable runner a
 
 On Windows 11 run `.\scripts\check.ps1`. The local preflight runs the release gate, network-evidence self-tests, exact-build promotion-evidence self-tests, network-report-editor and network-test-session self-tests, strict bootstrap-precheck self-tests, public-Node deployment/startup-task/readiness self-tests, Node-health self-tests, Node-soak validator/collector self-tests, project/localization audit, deterministic `npm ci`, TypeScript/Vite build, a locked Rust metadata check, Rust all-target tests and Rust checks for both the application and `konofix-node`. GitHub Actions runs the same core validation on `windows-latest`, and pull requests reproduce the production Windows packaging/verification path before merge.
 
+Evidence creation never overwrites an existing report. Each network report attempt gets a unique filename; Rooms 2.0 template creation rejects an existing output path. Preserve originals and choose a fresh output path for a new attempt. The editor remains the explicit, snapshot-bound way to update a formal session; creating a template is never an update operation. Manual two-PC notes follow TWO_PC_TEST.md and remain separate from promotion evidence.
+
 ## 2. LAN baseline
 
 Before Internet testing, validate two computers on the same LAN: different nicknames, mDNS discovery, `#WORLD` both ways, a temporary room, small and 100+ MB file transfers, cancellation, and room cleanup after its host leaves. Do not proceed if this baseline fails.

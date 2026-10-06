@@ -157,6 +157,30 @@ try {
     Add-Content -LiteralPath $oversized -Value (' ' * 8192) -NoNewline
     Assert-Rejected { & $validator -Manifest $oversized -RequiredScenario TCP -MaxManifestBytes 4096 } 'oversized evidence manifest before JSON parsing'
 
+
+    # Real generator: rapid repeated invocations must retain every prior pair.
+    # These are PENDING templates in a temporary fixture, never WAN evidence.
+    $generator = Join-Path $PSScriptRoot 'new-network-test-report.ps1'
+    $generated = Join-Path $temp 'generated'
+    $remembered = @{}
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        & $generator -Scenario TCP -ClientA 'fixture-a' -ClientB 'fixture-b' -ClientACountry 'PL' -ClientBCountry 'NO' -ClientANetwork 'fixture-network-a' -ClientBNetwork 'fixture-network-b' -Bootstrap '/dns/fixture.example.test/tcp/45555/p2p/12D3KooWFixturePeer' -BuildVersion '0.5.2' -NodeVersion '0.5.2' -SourceCommit $sourceCommit -OutputDirectory $generated | Out-Null
+        $pairs = @(Get-ChildItem -LiteralPath $generated -Filter '*.json' -File)
+        if ($pairs.Count -ne ($attempt + 1)) { throw 'Repeated report creation lost a prior manifest.' }
+        foreach ($file in Get-ChildItem -LiteralPath $generated -File) {
+            $encoded = [Convert]::ToBase64String([IO.File]::ReadAllBytes($file.FullName))
+            if ($remembered.ContainsKey($file.Name) -and $remembered[$file.Name] -cne $encoded) { throw 'Repeated report creation changed existing bytes.' }
+            $remembered[$file.Name] = $encoded
+        }
+        foreach ($file in $pairs) {
+            if ($file.Name -cnotmatch '^network-test-tcp-[0-9]{8}-[0-9]{6}-[0-9a-f]{32}\.json$') { throw 'Report filename lacks collision-resistant attempt identity.' }
+            $pending = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+            if ($pending.overall -cne 'PENDING' -or @($pending.checks.PSObject.Properties | Where-Object Value -CNE 'PENDING').Count -ne 0) { throw 'Generator must never invent passing observations.' }
+            if (-not (Test-Path -LiteralPath ([IO.Path]::ChangeExtension($file.FullName, '.md')) -PathType Leaf)) { throw 'Generated report pair is incomplete.' }
+        }
+    }
+    if (@(Get-ChildItem -LiteralPath $generated -Filter '*.tmp' -File).Count -ne 0) { throw 'Successful report publication left staging files.' }
+
     Write-Host 'Network evidence validator self-tests passed.'
 } finally {
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue

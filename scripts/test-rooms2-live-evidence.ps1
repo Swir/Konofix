@@ -13,6 +13,15 @@ function Expect-Failure([scriptblock]$Action, [string]$Label) {
 try {
   $validPath = Join-Path $temp 'valid.json'
   & $newTool -BuildVersion '0.4.2' -SourceCommit ('1' * 40) -WorkflowRun '123456789' -ArtifactSha256 ('a' * 64) -Scenario LAN -ParticipantLabels @('alice','bob','carol') -OutputPath $validPath | Out-Null
+
+  # A second invocation must not erase pending or already collected evidence.
+  $before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($validPath))
+  Expect-Failure {
+    & $newTool -BuildVersion '0.4.2' -SourceCommit ('1' * 40) -WorkflowRun '123456789' -ArtifactSha256 ('a' * 64) -Scenario LAN -ParticipantLabels @('alice','bob','carol') -OutputPath $validPath
+  } 'existing pending template must survive'
+  if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($validPath)) -cne $before) { throw 'Existing template bytes changed.' }
+  if (@(Get-ChildItem -LiteralPath $temp -Filter '*.tmp' -File).Count -ne 0) { throw 'Failed publication left staging files.' }
+
   $doc = Get-Content -LiteralPath $validPath -Raw | ConvertFrom-Json
   $doc.started_utc = '2026-09-20T16:00:00Z'
   $doc.finished_utc = '2026-09-20T16:05:00Z'
@@ -39,6 +48,17 @@ try {
   }
   $doc | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $validPath -Encoding UTF8
   & $validator -EvidencePath $validPath | Out-Null
+
+  $collectedBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($validPath))
+  $held = [IO.File]::Open($validPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+  try {
+    Expect-Failure {
+      & $newTool -BuildVersion '0.4.2' -SourceCommit ('1' * 40) -WorkflowRun '123456789' -ArtifactSha256 ('a' * 64) -Scenario LAN -ParticipantLabels @('alice','bob','carol') -OutputPath $validPath
+    } 'collected evidence held by another reader must survive'
+  } finally { $held.Dispose() }
+  if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($validPath)) -cne $collectedBytes) { throw 'Collected evidence bytes changed.' }
+  if (@(Get-ChildItem -LiteralPath $temp -Filter '*.tmp' -File).Count -ne 0) { throw 'Writer contention left staging files.' }
+
 
   $mismatchPath = Join-Path $temp 'mismatch.json'
   Copy-Item $validPath $mismatchPath

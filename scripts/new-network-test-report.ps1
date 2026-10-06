@@ -16,6 +16,29 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Stage complete bytes, then publish with the non-overwriting two-argument Move.
+# Neither a pre-existing report nor a competing writer's file may be replaced.
+function Write-NewEvidenceText([string]$Path, [string]$Text) {
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $stagePath = $fullPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    $ownedStage = $false
+    try {
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($Text)
+        $stream = [IO.File]::Open($stagePath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $ownedStage = $true
+        try {
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        } finally {
+            $stream.Dispose()
+        }
+        [IO.File]::Move($stagePath, $fullPath)
+        $ownedStage = $false
+    } finally {
+        if ($ownedStage) { [IO.File]::Delete($stagePath) }
+    }
+}
+
 function Get-CanonicalSourceCommit {
     param([string]$ExplicitCommit)
 
@@ -66,7 +89,7 @@ $resolvedCommit = Get-CanonicalSourceCommit -ExplicitCommit $SourceCommit
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $now = [DateTimeOffset]::UtcNow
 $stamp = $now.ToString('yyyyMMdd-HHmmss')
-$baseName = "network-test-$($Scenario.ToLowerInvariant())-$stamp"
+$baseName = "network-test-$($Scenario.ToLowerInvariant())-$stamp-$([Guid]::NewGuid().ToString('N'))"
 $markdownPath = Join-Path $OutputDirectory "$baseName.md"
 $jsonPath = Join-Path $OutputDirectory "$baseName.json"
 
@@ -85,7 +108,7 @@ $manifest = [ordered]@{
     client_a_network = $ClientANetwork; client_b_network = $ClientBNetwork
     bootstrap = $Bootstrap; notes = $Notes; overall = 'PENDING'; checks = $checks
 }
-$manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
+Write-NewEvidenceText -Path $jsonPath -Text (($manifest | ConvertTo-Json -Depth 5) + "`n")
 
 $body = @"
 # Konofix Network Test Report
@@ -132,7 +155,7 @@ Overall: **PENDING**
 
 Record PASS/FAIL and enough evidence to reproduce failures. Keep the JSON manifest in sync with this report. Do not include identity keys, tokens, private addresses, or other secrets.
 "@
-Set-Content -LiteralPath $markdownPath -Value $body -Encoding UTF8
+Write-NewEvidenceText -Path $markdownPath -Text ($body + "`n")
 Write-Host "Created network test report: $markdownPath"
 Write-Host "Created network test manifest: $jsonPath"
 Write-Host "Evidence source commit: $resolvedCommit"

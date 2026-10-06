@@ -11,6 +11,29 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Stage complete bytes, then publish with the non-overwriting two-argument Move.
+# Neither a pre-existing report nor a competing writer's file may be replaced.
+function Write-NewEvidenceText([string]$Path, [string]$Text) {
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $stagePath = $fullPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    $ownedStage = $false
+    try {
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($Text)
+        $stream = [IO.File]::Open($stagePath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $ownedStage = $true
+        try {
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        } finally {
+            $stream.Dispose()
+        }
+        [IO.File]::Move($stagePath, $fullPath)
+        $ownedStage = $false
+    } finally {
+        if ($ownedStage) { [IO.File]::Delete($stagePath) }
+    }
+}
+
 if ($BuildVersion -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
   throw "BuildVersion must be a SemVer-like exact build version: '$BuildVersion'"
 }
@@ -71,6 +94,6 @@ $full = [IO.Path]::GetFullPath($OutputPath)
 $parent = Split-Path -Parent $full
 if (-not [string]::IsNullOrWhiteSpace($parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
 $json = $doc | ConvertTo-Json -Depth 8
-[IO.File]::WriteAllText($full, $json.Replace("`r`n", "`n") + "`n", [Text.UTF8Encoding]::new($false))
+Write-NewEvidenceText -Path $full -Text ($json.Replace("`r`n", "`n") + "`n")
 Write-Host "Rooms 2.0 live-evidence template written: $full" -ForegroundColor Green
 Write-Host 'Fill real Peer IDs, timestamps and UI-observed counts, then run validate-rooms2-live-evidence.ps1. This template does not grant readiness credit by itself.'

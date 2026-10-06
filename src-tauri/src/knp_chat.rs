@@ -424,38 +424,71 @@ mod tests {
         assert!(!valid_text("\u{1b}[31m", 4000));
     }
 
+    async fn lifecycle_phase<T>(name: &str, future: impl std::future::Future<Output = T>) -> T {
+        eprintln!("KNP lifecycle: start {name}");
+        let value = timeout(Duration::from_secs(20), future)
+            .await
+            .unwrap_or_else(|_| panic!("KNP lifecycle phase timed out: {name}"));
+        eprintln!("KNP lifecycle: finished {name}");
+        value
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn real_chat_is_bidirectional_acknowledged_and_restarts_without_old_session() {
+        // Exercise fresh sockets and persisted identities repeatedly: a single
+        // successful restart does not cover the intermittent Windows CI hang.
+        for attempt in 1..=8 {
+            eprintln!("KNP lifecycle: restart attempt {attempt}/8");
+            exercise_chat_restart().await;
+        }
+    }
+
+    async fn exercise_chat_restart() {
         let root = TestRoot::new();
-        let a = KnpChat::spawn(config(&root.0, "a"), "Alice".into(), None)
-            .await
-            .unwrap();
-        let b = KnpChat::spawn(config(&root.0, "b"), "Bob".into(), None)
-            .await
-            .unwrap();
-        let a_info = a.snapshot().await.unwrap();
-        let b_info = b.snapshot().await.unwrap();
-        add(&a, &b_info).await;
-        add(&b, &a_info).await;
-        let id = a
-            .send(
+        let a = lifecycle_phase(
+            "spawn Alice",
+            KnpChat::spawn(config(&root.0, "a"), "Alice".into(), None),
+        )
+        .await
+        .unwrap();
+        let b = lifecycle_phase(
+            "spawn Bob",
+            KnpChat::spawn(config(&root.0, "b"), "Bob".into(), None),
+        )
+        .await
+        .unwrap();
+        let a_info = lifecycle_phase("snapshot Alice", a.snapshot()).await.unwrap();
+        let b_info = lifecycle_phase("snapshot Bob", b.snapshot()).await.unwrap();
+        lifecycle_phase("admit Bob", add(&a, &b_info)).await;
+        lifecycle_phase("admit Alice", add(&b, &a_info)).await;
+        let id = lifecycle_phase(
+            "send Alice to Bob",
+            a.send(
                 b_info.node_id.clone(),
                 "hello 🙂 <script>literal</script>".into(),
-            )
-            .await
-            .unwrap();
-        let received = wait_for(&b, |s| s.messages.iter().any(|m| m.id == id)).await;
+            ),
+        )
+        .await
+        .unwrap();
+        let received = lifecycle_phase(
+            "receive Alice message",
+            wait_for(&b, |s| s.messages.iter().any(|m| m.id == id)),
+        )
+        .await;
         assert_eq!(received.messages[0].peer_node_id, a_info.node_id);
         assert!(!received.messages[0].outgoing);
         assert_eq!(
             received.messages[0].text,
             "hello 🙂 <script>literal</script>"
         );
-        let confirmed = wait_for(&a, |s| {
-            s.messages
-                .iter()
-                .any(|m| m.id == id && m.delivery == Delivery::Received)
-        })
+        let confirmed = lifecycle_phase(
+            "acknowledge Alice message",
+            wait_for(&a, |s| {
+                s.messages
+                    .iter()
+                    .any(|m| m.id == id && m.delivery == Delivery::Received)
+            }),
+        )
         .await;
         assert!(confirmed.messages[0]
             .transport_id
@@ -463,47 +496,67 @@ mod tests {
             .unwrap()
             .parse::<u64>()
             .is_ok());
-        let reply = b
-            .send(a_info.node_id.clone(), "reply".into())
-            .await
-            .unwrap();
-        wait_for(&b, |s| {
-            s.messages
-                .iter()
-                .any(|m| m.id == reply && m.delivery == Delivery::Received)
-        })
+        let reply = lifecycle_phase(
+            "send Bob to Alice",
+            b.send(a_info.node_id.clone(), "reply".into()),
+        )
+        .await
+        .unwrap();
+        lifecycle_phase(
+            "acknowledge Bob message",
+            wait_for(&b, |s| {
+                s.messages
+                    .iter()
+                    .any(|m| m.id == reply && m.delivery == Delivery::Received)
+            }),
+        )
         .await;
         let stale = a.clone();
-        a.shutdown().await;
-        assert!(stale
-            .send(b_info.node_id.clone(), "stale".into())
-            .await
-            .is_err());
-        let socket = tokio::net::UdpSocket::bind(&a_info.local_addr)
-            .await
-            .unwrap();
+        lifecycle_phase("stop Alice", a.shutdown()).await;
+        assert!(lifecycle_phase(
+            "reject old session",
+            stale.send(b_info.node_id.clone(), "stale".into()),
+        )
+        .await
+        .is_err());
+        let socket = lifecycle_phase(
+            "rebind released Alice socket",
+            tokio::net::UdpSocket::bind(&a_info.local_addr),
+        )
+        .await
+        .unwrap();
         drop(socket);
-        let restarted = KnpChat::spawn(config(&root.0, "a"), "Alice".into(), None)
+        let restarted = lifecycle_phase(
+            "restart Alice identity",
+            KnpChat::spawn(config(&root.0, "a"), "Alice".into(), None),
+        )
+        .await
+        .unwrap();
+        let fresh = lifecycle_phase("snapshot restarted Alice", restarted.snapshot())
             .await
             .unwrap();
-        let fresh = restarted.snapshot().await.unwrap();
         assert_eq!(fresh.node_id, a_info.node_id);
         assert_ne!(fresh.session_id, a_info.session_id);
         assert!(fresh.messages.is_empty() && fresh.contacts.is_empty());
-        add(&restarted, &b_info).await;
-        add(&b, &fresh).await;
-        let after_restart = restarted
-            .send(b_info.node_id.clone(), "after restart".into())
-            .await
-            .unwrap();
-        wait_for(&restarted, |s| {
-            s.messages
-                .iter()
-                .any(|m| m.id == after_restart && m.delivery == Delivery::Received)
-        })
+        lifecycle_phase("readmit Bob after restart", add(&restarted, &b_info)).await;
+        lifecycle_phase("readmit Alice after restart", add(&b, &fresh)).await;
+        let after_restart = lifecycle_phase(
+            "send after restart",
+            restarted.send(b_info.node_id.clone(), "after restart".into()),
+        )
+        .await
+        .unwrap();
+        lifecycle_phase(
+            "acknowledge after restart",
+            wait_for(&restarted, |s| {
+                s.messages
+                    .iter()
+                    .any(|m| m.id == after_restart && m.delivery == Delivery::Received)
+            }),
+        )
         .await;
-        restarted.shutdown().await;
-        b.shutdown().await;
+        lifecycle_phase("stop restarted Alice", restarted.shutdown()).await;
+        lifecycle_phase("stop Bob", b.shutdown()).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -28,7 +28,6 @@ use uuid::Uuid;
 mod connection_routes;
 mod direct_first;
 mod incoming_file;
-mod network_recovery;
 #[cfg(windows)]
 mod knp_chat;
 #[cfg(windows)]
@@ -37,6 +36,7 @@ mod knp_chat_commands;
 mod kononexus_transport;
 #[cfg(test)]
 mod messaging_runtime_tests;
+mod network_recovery;
 mod room_membership;
 mod room_membership_application;
 mod room_membership_desktop;
@@ -2630,7 +2630,10 @@ async fn network_task(
             )
             .map_err(std::io::Error::other)?;
             let mdns = if mdns_enabled {
-                Some(mdns::tokio::Behaviour::new(mdns::Config::default(), local_peer)?)
+                Some(mdns::tokio::Behaviour::new(
+                    mdns::Config::default(),
+                    local_peer,
+                )?)
             } else {
                 None
             };
@@ -2701,7 +2704,11 @@ async fn network_task(
     );
     let mut quic_listener = Some(
         swarm
-            .listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse().expect("static QUIC listener"))
+            .listen_on(
+                "/ip4/0.0.0.0/udp/0/quic-v1"
+                    .parse()
+                    .expect("static QUIC listener"),
+            )
             .map_err(|e| e.to_string())?,
     );
     let mut network_recovery = network_recovery::NetworkRecovery::new(Instant::now());

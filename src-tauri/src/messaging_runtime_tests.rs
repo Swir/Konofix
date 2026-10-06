@@ -446,7 +446,8 @@ async fn bootstrap_only_world_recovers_after_direct_listeners_and_connections_ar
         .event("network-status", |v| {
             v["listen_addresses"].as_array().is_some_and(|addresses| {
                 addresses.iter().any(|a| {
-                    a.as_str().is_some_and(|a| a.starts_with("/ip4/127.0.0.1/tcp/"))
+                    a.as_str()
+                        .is_some_and(|a| a.starts_with("/ip4/127.0.0.1/tcp/"))
                 })
             })
         })
@@ -470,7 +471,13 @@ async fn bootstrap_only_world_recovers_after_direct_listeners_and_connections_ar
     let identity = alice.id.clone();
     alice.event("peer-online", |v| v["peer_id"] == bob.id).await;
     bob.event("peer-online", |v| v["peer_id"] == alice.id).await;
-    chat(&alice, &mut bob, "world", "Before controlled network change").await;
+    chat(
+        &alice,
+        &mut bob,
+        "world",
+        "Before controlled network change",
+    )
+    .await;
     let initial = alice.event("network-recovery", |_| true).await;
     let generation = initial["generation"].as_u64().unwrap();
     let (reply, completed) = oneshot::channel();
@@ -491,9 +498,24 @@ async fn bootstrap_only_world_recovers_after_direct_listeners_and_connections_ar
             v["bootstrap_connected"] == 1 && v["connected_peers"].as_u64().unwrap_or(0) > 0
         })
         .await;
-    assert_eq!(alice.id, identity, "interface change must not rotate identity");
-    chat(&alice, &mut bob, "world", "Automatic WORLD recovery Alice to Bob").await;
-    chat(&bob, &mut alice, "world", "Automatic WORLD recovery Bob to Alice").await;
+    assert_eq!(
+        alice.id, identity,
+        "interface change must not rotate identity"
+    );
+    chat(
+        &alice,
+        &mut bob,
+        "world",
+        "Automatic WORLD recovery Alice to Bob",
+    )
+    .await;
+    chat(
+        &bob,
+        &mut alice,
+        "world",
+        "Automatic WORLD recovery Bob to Alice",
+    )
+    .await;
     alice.commands.send(NetworkCommand::Stop).await.unwrap();
     bob.commands.send(NetworkCommand::Stop).await.unwrap();
     for task in [&mut alice.task, &mut bob.task] {

@@ -401,7 +401,11 @@ mod tests {
         }
         // SDK receipts can arrive before the receiver's forwarding task runs.
         // Hold that task deliberately: all three receipts must precede its output.
-        assert_eq!(b_events.len(), 0, "the bridge is still behind the test gate");
+        assert_eq!(
+            b_events.len(),
+            0,
+            "the bridge is still behind the test gate"
+        );
         release_bridge.send(()).unwrap();
         wait_for_full_output(&b_events).await;
         // Commands must work while the output queue remains full; they must not

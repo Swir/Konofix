@@ -14,9 +14,10 @@ Pull requests stage and verify the same Linux archive shape before merge instead
 
 A successful `main` run uploads a Linux x86_64 bundle containing:
 
-- `konofix-node`,
+- `konofix-node` and the exact-build `konofix-netprobe`,
 - `scripts/install-public-node-linux.sh`,
-- Node, soak, and Linux operator documentation,
+- Node, soak, Linux and three-peer deployment documentation,
+- the unconfigured three-operator worksheet and standalone provenance verifier,
 - `NODE_BUILD_INFO.json` with exact source commit/version plus per-file sizes and SHA-256 hashes,
 - a `.tar.gz` archive and SHA-256 checksum.
 
@@ -150,3 +151,38 @@ bash scripts/install-public-node-linux.sh \
 ```
 
 The rendered service command carries the same `--allow-private-address` flag into `konofix-node`, and both the installer preview and raw Node label the result as lab-only. This is not public-Node or cross-country evidence. Stable promotion requires a genuinely public path and independent real networks.
+
+## Verify each real entry peer from a separate network
+
+The bundle now includes the same Netprobe binary tested by Linux CI. Keep it
+with its `NODE_BUILD_INFO.json`; never mix binaries or evidence from different
+source commits. Use the [three-peer procedure](BOOTSTRAP_POOL_DEPLOYMENT.md) and
+`deploy/bootstrap-operators.template.json`. Only populate the worksheet with
+actual operator-owned endpoints and observed public PeerIDs.
+
+On an independent observer host, set `TCP_MULTIADDR` and `QUIC_MULTIADDR` to
+one deployed peer's real addresses. Preserve every attempt in a new directory:
+
+```bash
+: "${TCP_MULTIADDR:?Set the actual deployed peer TCP multiaddr}"
+: "${QUIC_MULTIADDR:?Set the actual deployed peer QUIC multiaddr}"
+attempt_dir="$(mktemp -d ./entry-probe-XXXXXXXX)"
+cp NODE_BUILD_INFO.json "$attempt_dir/"
+sha256sum konofix-netprobe > "$attempt_dir/netprobe-binary.sha256"
+./konofix-netprobe --timeout 30 "$TCP_MULTIADDR" > "$attempt_dir/tcp.json" 2> "$attempt_dir/tcp.stderr"
+tcp_exit=$?
+printf '%s\n' "$tcp_exit" > "$attempt_dir/tcp.exit"
+./konofix-netprobe --timeout 30 "$QUIC_MULTIADDR" > "$attempt_dir/quic.json" 2> "$attempt_dir/quic.stderr"
+quic_exit=$?
+printf '%s\n' "$quic_exit" > "$attempt_dir/quic.exit"
+sha256sum "$attempt_dir"/* > "$attempt_dir/SHA256SUMS.txt"
+```
+
+Run these commands in an interactive shell without `set -e`, so a failed TCP
+attempt is preserved and QUIC is still attempted. An empty/malformed JSON or
+nonzero exit is a failure, never a transport PASS. Record observer network,
+UTC time and operator/failure domain beside the captured outputs. Repeat for
+all three peers. Do not put private identity keys or hosting credentials into
+these records. Netprobe checks authenticated identity, Node Identify and ping;
+it deliberately does not claim relay, DCUtR, WORLD chat or automatic WAN PASS.
+Those need the installed-app procedure on independent networks.

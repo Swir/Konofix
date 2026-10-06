@@ -6,6 +6,10 @@ const STORAGE_KEY = 'konofix.locale';
 type Params = Record<string, string | number>;
 
 const EN = {
+  "network.entryMissing": "No Internet entry configured",
+  "network.entrySearching": "Internet entry unavailable — retrying",
+  "network.entryConnected": "Connected entry peers: {count}",
+  "network.entryHelp": "LAN discovery can work independently. An entry peer only supplies discovery or transport; it stores no central history. This status does not prove that another Internet user is in WORLD.",
   "network.directCount": "Direct {count}",
   "network.relayCount": "Relay {count}",
   "network.directRoutes": "Direct connections",
@@ -174,6 +178,10 @@ export type MessageKey = keyof typeof EN;
 type Dictionary = Partial<Record<MessageKey, string>>;
 
 const PL: Dictionary = {
+  "network.entryMissing": "Brak skonfigurowanego wejścia do sieci Internet",
+  "network.entrySearching": "Wejście do sieci Internet niedostępne — ponawiam",
+  "network.entryConnected": "Połączone peery wejściowe: {count}",
+  "network.entryHelp": "Wykrywanie w LAN może działać niezależnie. Peer wejściowy służy tylko do discovery lub transportu; nie przechowuje centralnej historii. Ten stan nie dowodzi, że drugi użytkownik Internetu jest w WORLD.",
   "network.directCount": "Direct {count}",
   "network.relayCount": "Relay {count}",
   "network.directRoutes": "Połączenia bezpośrednie",
@@ -322,6 +330,10 @@ const PL: Dictionary = {
 };
 
 const NO: Dictionary = {
+  "network.entryMissing": "Ingen Internett-kontakt konfigurert",
+  "network.entrySearching": "Internett-kontakt utilgjengelig — prøver igjen",
+  "network.entryConnected": "Tilkoblede kontaktpeers: {count}",
+  "network.entryHelp": "LAN-oppdagelse kan fungere uavhengig. En kontaktpeer tilbyr bare oppdagelse eller transport, uten sentral historikk. Denne statusen beviser ikke at en annen Internett-bruker er i WORLD.",
   'login.nickColor': 'Farge på kallenavn', 'login.nickColorPreview': 'Forhåndsvisning av kallenavn',
   'chat.emoji': 'Konofix-emojier',
   'rooms.passwordOptionalPrompt': 'Valgfritt rompassord (6–64 tegn). La feltet stå tomt for et offentlig rom:',
@@ -367,6 +379,10 @@ const NO: Dictionary = {
 };
 
 const DE: Dictionary = {
+  "network.entryMissing": "Kein Internet-Einstieg konfiguriert",
+  "network.entrySearching": "Internet-Einstieg nicht erreichbar — neuer Versuch",
+  "network.entryConnected": "Verbundene Einstiegspeers: {count}",
+  "network.entryHelp": "LAN-Erkennung kann unabhängig funktionieren. Einstiegspeers dienen nur der Erkennung oder dem Transport, ohne zentralen Verlauf. Dieser Status beweist nicht, dass ein anderer Internet-Nutzer in WORLD ist.",
   'login.nickColor': 'Nickname-Farbe', 'login.nickColorPreview': 'Nickname-Vorschau',
   'chat.emoji': 'Konofix-Emojis',
   'rooms.passwordOptionalPrompt': 'Optionales Raumpasswort (6–64 Zeichen). Leer lassen für einen öffentlichen Raum:',
@@ -396,6 +412,10 @@ const DE: Dictionary = {
 };
 
 const FR: Dictionary = {
+  "network.entryMissing": "Aucun point de contact Internet configuré",
+  "network.entrySearching": "Contact Internet indisponible — nouvel essai",
+  "network.entryConnected": "Pairs de contact connectés : {count}",
+  "network.entryHelp": "La découverte LAN peut fonctionner indépendamment. Un pair de contact assure seulement la découverte ou le transport, sans historique central. Ce statut ne prouve pas la présence dans WORLD d'un autre utilisateur Internet.",
   'login.nickColor': 'Couleur du pseudo', 'login.nickColorPreview': 'Aperçu du pseudo',
   'chat.emoji': 'Émojis Konofix',
   'rooms.passwordOptionalPrompt': 'Mot de passe facultatif du salon (6–64 caractères). Laissez vide pour un salon public :',
@@ -425,6 +445,10 @@ const FR: Dictionary = {
 };
 
 const ES: Dictionary = {
+  "network.entryMissing": "Sin punto de contacto de Internet configurado",
+  "network.entrySearching": "Contacto de Internet no disponible — reintentando",
+  "network.entryConnected": "Pares de contacto conectados: {count}",
+  "network.entryHelp": "El descubrimiento LAN puede funcionar por separado. Un par de contacto solo ofrece descubrimiento o transporte, sin historial central. Este estado no demuestra que otro usuario de Internet esté en WORLD.",
   'login.nickColor': 'Color del apodo', 'login.nickColorPreview': 'Vista previa del apodo',
   'chat.emoji': 'Emojis Konofix',
   'rooms.passwordOptionalPrompt': 'Contraseña opcional de la sala (6–64 caracteres). Déjala vacía para una sala pública:',
@@ -454,6 +478,10 @@ const ES: Dictionary = {
 };
 
 const UK: Dictionary = {
+  "network.entryMissing": "Не налаштовано контакт для входу через Інтернет",
+  "network.entrySearching": "Контакт Інтернету недоступний — повторна спроба",
+  "network.entryConnected": "Підключені контактні вузли: {count}",
+  "network.entryHelp": "Виявлення в LAN може працювати незалежно. Контактний вузол надає лише виявлення або транспорт, без центральної історії. Цей стан не доводить, що інший користувач Інтернету перебуває у WORLD.",
   'login.nickColor': 'Колір ніка', 'login.nickColorPreview': 'Попередній вигляд ніка',
   'chat.emoji': 'Емодзі Konofix',
   'rooms.passwordOptionalPrompt': 'Необов’язковий пароль кімнати (6–64 символи). Залиште порожнім для публічної кімнати:',

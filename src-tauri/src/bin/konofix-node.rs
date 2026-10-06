@@ -15,7 +15,7 @@ use libp2p::{
     kad::{self, store::MemoryStore},
     noise, ping, relay,
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux, PeerId, StreamProtocol, SwarmBuilder,
+    tcp, yamux, Multiaddr, PeerId, StreamProtocol, Swarm, SwarmBuilder,
 };
 use serde::Serialize;
 
@@ -632,6 +632,7 @@ fn print_shareable_addresses(host: &str, port: u16, peer: PeerId, lab_only: bool
     } else {
         println!("=== KONOFIX SHAREABLE ADDRESSES ===");
     }
+    println!("ADVERTISED: operator-configured TCP/QUIC endpoints; external reachability is not verified by this process.");
     println!("BOOTSTRAP TCP : {tcp}");
     println!("BOOTSTRAP QUIC: {quic}");
     println!("RECOMMENDED   : {tcp}");
@@ -769,65 +770,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     validate_state_paths(&identity_path, args.health_file.as_deref())
         .map_err(std::io::Error::other)?;
 
-    let limits_config = connection_limits::ConnectionLimits::default()
-        .with_max_pending_incoming(Some(args.max_pending_incoming))
-        .with_max_pending_outgoing(Some(args.max_pending_outgoing))
-        .with_max_established_incoming(Some(args.max_incoming_connections))
-        .with_max_established(Some(args.max_connections))
-        .with_max_established_per_peer(Some(args.max_connections_per_peer));
-
-    let mut swarm = SwarmBuilder::with_existing_identity(key)
-        .with_tokio()
-        .with_tcp(
-            tcp::Config::default(),
-            noise::Config::new,
-            yamux::Config::default,
-        )?
-        .with_quic()
-        .with_dns()?
-        .with_behaviour(|key| {
-            let peer = key.public().to_peer_id();
-            let gossipsub_cfg = gossipsub::ConfigBuilder::default()
-                .heartbeat_interval(Duration::from_secs(2))
-                .validation_mode(gossipsub::ValidationMode::Strict)
-                .build()
-                .map_err(std::io::Error::other)?;
-            let gossipsub = gossipsub::Behaviour::new(
-                gossipsub::MessageAuthenticity::Signed(key.clone()),
-                gossipsub_cfg,
-            )
-            .map_err(std::io::Error::other)?;
-
-            let mut kad_cfg = kad::Config::new(StreamProtocol::new(KAD_PROTOCOL));
-            kad_cfg.set_periodic_bootstrap_interval(Some(Duration::from_secs(60)));
-            kad_cfg.set_record_ttl(Some(Duration::from_secs(120)));
-            kad_cfg.set_replication_interval(Some(Duration::from_secs(30)));
-            kad_cfg.set_provider_record_ttl(Some(Duration::from_secs(180)));
-            let kad = kad::Behaviour::with_config(peer, MemoryStore::new(peer), kad_cfg);
-
-            let identify = identify::Behaviour::new(
-                identify::Config::new("/konofix/4.0".into(), key.public())
-                    .with_agent_version(format!("Konofix-Node/{}", env!("CARGO_PKG_VERSION")))
-                    .with_interval(Duration::from_secs(30))
-                    .with_push_listen_addr_updates(true),
-            );
-
-            Ok(NodeBehaviour {
-                gossipsub,
-                kad,
-                identify,
-                ping: ping::Behaviour::default(),
-                autonat: autonat::Behaviour::new(peer, autonat::Config::default()),
-                relay: relay::Behaviour::new(peer, relay::Config::default()),
-                limits: connection_limits::Behaviour::new(limits_config.clone()),
-            })
-        })?
-        .build();
-
-    swarm.behaviour_mut().kad.set_mode(Some(kad::Mode::Server));
-    let world = gossipsub::IdentTopic::new(WORLD_TOPIC);
-    let _ = swarm.behaviour_mut().gossipsub.subscribe(&world);
-    let _ = swarm.behaviour_mut().kad.start_providing(provider_key());
+    let mut swarm = node_swarm(key, &args)?;
 
     swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{port}").parse()?)?;
     swarm.listen_on(format!("/ip4/0.0.0.0/udp/{port}/quic-v1").parse()?)?;
@@ -901,7 +844,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         connected_peers.insert(peer_id);
                         println!("+ peer {peer_id}");
                     }
-                    SwarmEvent::ConnectionClosed { peer_id, num_established, .. } if num_established == 0 => {
+                    SwarmEvent::ConnectionClosed { peer_id, num_established: 0, .. } => {
                         connected_peers.remove(&peer_id);
                         println!("- peer {peer_id}");
                     }
@@ -920,6 +863,92 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn node_swarm(
+    key: identity::Keypair,
+    args: &NodeArgs,
+) -> Result<Swarm<NodeBehaviour>, Box<dyn std::error::Error>> {
+    let limits_config = connection_limits::ConnectionLimits::default()
+        .with_max_pending_incoming(Some(args.max_pending_incoming))
+        .with_max_pending_outgoing(Some(args.max_pending_outgoing))
+        .with_max_established_incoming(Some(args.max_incoming_connections))
+        .with_max_established(Some(args.max_connections))
+        .with_max_established_per_peer(Some(args.max_connections_per_peer));
+
+    let mut swarm = SwarmBuilder::with_existing_identity(key)
+        .with_tokio()
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )?
+        .with_quic()
+        .with_dns()?
+        .with_behaviour(|key| {
+            let peer = key.public().to_peer_id();
+            let gossipsub_cfg = gossipsub::ConfigBuilder::default()
+                .heartbeat_interval(Duration::from_secs(2))
+                .validation_mode(gossipsub::ValidationMode::Strict)
+                .build()
+                .map_err(std::io::Error::other)?;
+            let gossipsub = gossipsub::Behaviour::new(
+                gossipsub::MessageAuthenticity::Signed(key.clone()),
+                gossipsub_cfg,
+            )
+            .map_err(std::io::Error::other)?;
+
+            let mut kad_cfg = kad::Config::new(StreamProtocol::new(KAD_PROTOCOL));
+            kad_cfg.set_periodic_bootstrap_interval(Some(Duration::from_secs(60)));
+            kad_cfg.set_record_ttl(Some(Duration::from_secs(120)));
+            kad_cfg.set_replication_interval(Some(Duration::from_secs(30)));
+            kad_cfg.set_provider_record_ttl(Some(Duration::from_secs(180)));
+            let kad = kad::Behaviour::with_config(peer, MemoryStore::new(peer), kad_cfg);
+
+            let identify = identify::Behaviour::new(
+                identify::Config::new("/konofix/4.0".into(), key.public())
+                    .with_agent_version(format!("Konofix-Node/{}", env!("CARGO_PKG_VERSION")))
+                    .with_interval(Duration::from_secs(30))
+                    .with_push_listen_addr_updates(true),
+            );
+
+            Ok(NodeBehaviour {
+                gossipsub,
+                kad,
+                identify,
+                ping: ping::Behaviour::default(),
+                autonat: autonat::Behaviour::new(peer, autonat::Config::default()),
+                relay: relay::Behaviour::new(peer, relay::Config::default()),
+                limits: connection_limits::Behaviour::new(limits_config.clone()),
+            })
+        })?
+        .build();
+
+    swarm.behaviour_mut().kad.set_mode(Some(kad::Mode::Server));
+    let world = gossipsub::IdentTopic::new(WORLD_TOPIC);
+    let _ = swarm.behaviour_mut().gossipsub.subscribe(&world);
+    let _ = swarm.behaviour_mut().kad.start_providing(provider_key());
+
+    // An explicitly configured public host is an operator assertion of reachability.
+    // Never infer it from an untrusted Identify observed_addr or a private listener.
+    if let Some(host) = &args.public_host {
+        validate_public_host(host, args.allow_private_address).map_err(std::io::Error::other)?;
+        for address in public_transport_addresses(host, args.port)? {
+            swarm.add_external_address(address);
+        }
+    }
+    Ok(swarm)
+}
+
+fn public_transport_addresses(
+    host: &str,
+    port: u16,
+) -> Result<[Multiaddr; 2], libp2p::multiaddr::Error> {
+    let prefix = public_prefix(host);
+    Ok([
+        format!("{prefix}/tcp/{port}").parse()?,
+        format!("{prefix}/udp/{port}/quic-v1").parse()?,
+    ])
 }
 
 #[cfg(test)]
@@ -1221,5 +1250,154 @@ mod tests {
             & 0o777;
         assert_eq!(mode & 0o077, 0, "group/other access must be removed");
         let _ = std::fs::remove_dir_all(path.parent().expect("test path has parent"));
+    }
+}
+
+#[cfg(test)]
+mod node_relay_tests {
+    // Controlled loopback checks of the production Node. These are not WAN evidence.
+    use super::*;
+    use libp2p::multiaddr::Protocol;
+
+    #[derive(NetworkBehaviour)]
+    struct Client {
+        relay: relay::client::Behaviour,
+        identify: identify::Behaviour,
+        ping: ping::Behaviour,
+    }
+
+    fn client() -> Swarm<Client> {
+        SwarmBuilder::with_new_identity()
+            .with_tokio()
+            .with_tcp(
+                tcp::Config::default(),
+                noise::Config::new,
+                yamux::Config::default,
+            )
+            .unwrap()
+            .with_relay_client(noise::Config::new, yamux::Config::default)
+            .unwrap()
+            .with_behaviour(|key, relay| Client {
+                relay,
+                identify: identify::Behaviour::new(identify::Config::new(
+                    "/konofix/4.0".into(),
+                    key.public(),
+                )),
+                ping: ping::Behaviour::new(
+                    ping::Config::new().with_interval(Duration::from_millis(100)),
+                ),
+            })
+            .unwrap()
+            .with_swarm_config(|config| {
+                config.with_idle_connection_timeout(Duration::from_secs(30))
+            })
+            .build()
+    }
+
+    #[tokio::test]
+    async fn no_public_host_does_not_assert_external_reachability() {
+        let args = parse_args_from(Vec::<String>::new()).unwrap().unwrap();
+        let node = node_swarm(identity::Keypair::generate_ed25519(), &args).unwrap();
+        assert_eq!(node.external_addresses().count(), 0);
+        for host in ["8.8.8.8", "2606:4700:4700::1111", "node.konofix.net"] {
+            // Address construction only; no connection to these fixture hosts.
+            let addresses = public_transport_addresses(host, 45555).unwrap();
+            assert_eq!(
+                addresses[0].to_string(),
+                format!("{}/tcp/45555", public_prefix(host))
+            );
+            assert_eq!(
+                addresses[1].to_string(),
+                format!("{}/udp/45555/quic-v1", public_prefix(host))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn configured_node_advertises_and_relays_authenticated_clients() {
+        let port_guard = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = port_guard.local_addr().unwrap().port();
+        let args = parse_args_from(vec![
+            "--public-host".into(),
+            "127.0.0.1".into(),
+            "--allow-private-address".into(),
+            "--port".into(),
+            port.to_string(),
+        ])
+        .unwrap()
+        .unwrap();
+        let mut node = node_swarm(identity::Keypair::generate_ed25519(), &args).unwrap();
+        let advertised = public_transport_addresses("127.0.0.1", port).unwrap();
+        assert_eq!(node.external_addresses().count(), 2);
+        for address in &advertised {
+            assert!(node.external_addresses().any(|current| current == address));
+        }
+        drop(port_guard);
+        node.listen_on(advertised[0].clone()).unwrap();
+        let node_id = *node.local_peer_id();
+        let mut alice = client();
+        let mut bob = client();
+        let alice_id = *alice.local_peer_id();
+        let bob_id = *bob.local_peer_id();
+        let mut reservation_requested = false;
+        let mut reservation_accepted = false;
+        let mut circuit_dialed = false;
+        let mut identified = false;
+        let mut alice_route = false;
+        let mut bob_route = false;
+        let mut alice_ping = false;
+        let mut bob_ping = false;
+
+        let completed = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                tokio::select! {
+                    event = node.select_next_some() => match event {
+                        SwarmEvent::NewListenAddr { address, .. } if !reservation_requested => {
+                            alice.listen_on(address.with(Protocol::P2p(node_id)).with(Protocol::P2pCircuit)).unwrap();
+                            reservation_requested = true;
+                        }
+                        SwarmEvent::Behaviour(NodeBehaviourEvent::Relay(relay::Event::ReservationReqAccepted { src_peer_id, .. })) if src_peer_id == alice_id => {
+                            reservation_accepted = true;
+                        }
+                        _ => {}
+                    },
+                    event = alice.select_next_some() => match event {
+                        SwarmEvent::Behaviour(ClientEvent::Identify(identify::Event::Received { peer_id, info, .. })) if peer_id == node_id => {
+                            for address in &advertised {
+                                assert!(info.listen_addrs.contains(address), "configured address missing from Identify");
+                            }
+                            identified = true;
+                        }
+                        SwarmEvent::NewListenAddr { address, .. } if !circuit_dialed && address.iter().any(|p| matches!(p, Protocol::Tcp(_))) => {
+                            assert!(address.iter().any(|p| matches!(p, Protocol::P2pCircuit)));
+                            assert_eq!(address.iter().last(), Some(Protocol::P2p(alice_id)));
+                            bob.dial(address).unwrap();
+                            circuit_dialed = true;
+                        }
+                        SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } if peer_id == bob_id => {
+                            assert!(endpoint.is_relayed());
+                            alice_route = true;
+                        }
+                        SwarmEvent::Behaviour(ClientEvent::Ping(ping::Event { peer, result: Ok(_), .. })) if peer == bob_id => alice_ping = true,
+                        _ => {}
+                    },
+                    event = bob.select_next_some() => match event {
+                        SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } if peer_id == alice_id => {
+                            assert!(endpoint.is_relayed());
+                            bob_route = true;
+                        }
+                        SwarmEvent::Behaviour(ClientEvent::Ping(ping::Event { peer, result: Ok(_), .. })) if peer == alice_id => bob_ping = true,
+                        _ => {}
+                    },
+                }
+                if reservation_accepted && identified && alice_route && bob_route && alice_ping && bob_ping {
+                    break;
+                }
+            }
+        }).await;
+        assert!(
+            completed.is_ok(),
+            "Node relay deadline: reservation={reservation_accepted} identify={identified} dial={circuit_dialed} routes={alice_route}/{bob_route} ping={alice_ping}/{bob_ping}"
+        );
     }
 }

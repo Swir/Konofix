@@ -172,6 +172,7 @@ try {
     'README.md',
     'TESTING.md',
     'KNP_CHAT_BETA.md',
+    'TWO_PC_TEST.md',
     'NODE.md',
     'NODE_SOAK.md',
     'GLOBAL_BETA.md',
@@ -230,7 +231,7 @@ try {
   Assert-True ($testerHandoff.Contains("- Build version: $expectedVersion")) 'TESTER_HANDOFF.md version does not match BUILD_INFO.json.'
   Assert-True ($testerHandoff.Contains("- Source commit: $commit")) 'TESTER_HANDOFF.md source commit does not match BUILD_INFO.json.'
   Assert-True ($testerHandoff.Contains("- Workflow run: $workflowRun")) 'TESTER_HANDOFF.md workflow run does not match BUILD_INFO.json.'
-  Assert-True ($testerHandoff.Contains('test evidence only, not a published GitHub Release')) 'TESTER_HANDOFF.md does not distinguish test evidence from a published release.'
+  Assert-True ($testerHandoff.Contains('build metadata, not evidence that a field test passed')) 'TESTER_HANDOFF.md does not distinguish test evidence from a published release.'
   Assert-True ($testerHandoff.Contains('BUILD_INFO.json')) 'TESTER_HANDOFF.md does not identify BUILD_INFO.json as bundle authority.'
   Assert-True ($testerHandoff.Contains('check-promotion-evidence.ps1')) 'TESTER_HANDOFF.md is missing the final promotion preflight step.'
   Assert-True ($testerHandoff -notmatch '^#\s+Konofix Chat 0\.4\.2 Test 1') 'TESTER_HANDOFF.md regressed to the historical test-release heading.'

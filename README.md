@@ -38,7 +38,7 @@
 
 The active `0.4.3 — Real Internet Test` / Global Beta readiness scope has **56 of 67 tasks complete**. The Global Beta expansion added eight many-computer release gates to the five original real-network gates. The reviewed public-Node admission-limit gate and the Rooms 2.0 production membership/count implementation gate are now verified after exact-head Windows/Linux qualification; the other six Global Beta gates and the five original real-world gates remain open. The Rooms 2.0 credit covers production runtime wiring and application-loop convergence only: CI, documentation or local/same-host tests cannot credit the remaining participant-topology, real 50/100/250 load, cross-country, field-soak, failover or qualified prerelease gates.
 
-Published packages and their actual availability are listed on [GitHub Releases](https://github.com/Swir/Konofix/releases). [Beta 1 notes](docs/RELEASE_0.4.3_BETA1.md) describe the chat/file-transfer and Windows installer corrections, participant networking and current testing scope. Update both participants to the same package. Beta previews collect real-world results; they do not declare the Global Beta network gates complete. Historical `test1`/`test2` packages predate current runtime fixes and must not be mixed with newer binaries or evidence tools.
+Published packages and their actual availability are listed on [GitHub Releases](https://github.com/Swir/Konofix/releases). [0.5.2 Beta 1 notes](docs/RELEASE_0.5.2_BETA1.md) describe the chat/file-transfer and Windows installer corrections, participant networking and current testing scope. Update both participants to the same package. Beta previews collect real-world results; they do not declare the Global Beta network gates complete. Historical `test1`/`test2` packages predate current runtime fixes and must not be mixed with newer binaries or evidence tools.
 
 ## What is Konofix?
 
@@ -69,9 +69,11 @@ KonoNexus/KNP adds an **optional contact-text panel** alongside the primary libp
 ### Public preview
 
 1. Open [GitHub Releases](https://github.com/Swir/Konofix/releases) and choose the newest published beta preview.
-2. For Beta 1, download `Konofix-Chat-0.4.3-beta.1-setup.exe` and its `.sha256` file; the release entry is the authority for availability.
+2. For 0.5.2 Beta 1, download `Konofix-Chat-0.5.2-beta.1-setup.exe` and its `.sha256` file; the release entry is the authority for availability.
 3. Verify the checksum, install it, then open **Konofix Chat** from the Start menu. Do not start Netprobe to open the chat.
 4. Choose a nickname and connect. Every connected desktop participates in the network. LAN discovery is automatic; for first contact over the Internet, exchange a reachable participant address in network settings.
+
+Follow [the two-PC Poland–Norway procedure](docs/TWO_PC_TEST.md) and record actual results before any WAN claim.
 
 The full exact-commit ZIP includes the MSI alternative, optional Node/Netprobe tools and test instructions. Keep one build's archive, `BUILD_INFO.json`, checksums and tools together. Node and Netprobe are command-line tools; the chat installer supplies the desktop window. The older `v0.4.2-test1` remains historical. Builds are not commercially code-signed.
 
@@ -160,7 +162,7 @@ Before cross-country testing, validate the advertised TCP and QUIC bootstrap add
   -TcpBootstrap "/dns/node.yourdomain.com/tcp/45555/p2p/12D3KooW..." `
   -QuicBootstrap "/dns/node.yourdomain.com/udp/45555/quic-v1/p2p/12D3KooW..." `
   -HealthPath "C:\Konofix\node-health.json" `
-  -ExpectedVersion "0.4.3" `
+  -ExpectedVersion "0.5.2" `
   -ExpectedSourceCommit "FULL_40_CHARACTER_COMMIT_SHA"
 ```
 
@@ -257,9 +259,9 @@ The broader Global Beta scope adds fleet, multi-seed fallback, capacity, Rooms 2
 
 ## Releases
 
-See [published releases](https://github.com/Swir/Konofix/releases) for available downloads and [Beta 1 notes](docs/RELEASE_0.4.3_BETA1.md) for the current preview scope. Beta previews use verified exact-commit installers to gather the still-missing live evidence. Fully qualified Global Beta/stable promotion continues to require the real network, load and failover gates; publishing a preview does not complete any remaining gate or raise the verified fraction on its own.
+See [published releases](https://github.com/Swir/Konofix/releases) for available downloads and [0.5.2 Beta 1 notes](docs/RELEASE_0.5.2_BETA1.md) for the current preview scope. Beta previews use verified exact-commit installers to gather the still-missing live evidence. Fully qualified Global Beta/stable promotion continues to require the real network, load and failover gates; publishing a preview does not complete any remaining gate or raise the verified fraction on its own.
 
-Windows CI can publish `v0.4.3-beta.1` only from a trusted `main` push, after installed-GUI verification, sealed archive verification and exact-commit Windows/Linux/RustSec success. Assets are uploaded to a draft and their server-reported SHA-256 digests are checked before publication. Existing published releases are never overwritten. The ordinary application version is `0.4.3`; `beta.1` identifies the preview release channel.
+Windows CI can publish `v0.5.2-beta.1` only from a trusted `main` push, after installed-GUI verification, sealed archive verification and exact-commit Windows/Linux/RustSec success. Assets are uploaded to a draft and their server-reported SHA-256 digests are checked before publication. Existing published releases are never overwritten. The ordinary application version is `0.5.2`; `beta.1` identifies the preview release channel.
 
 Release history: [GitHub Releases](https://github.com/Swir/Konofix/releases)  
 Change history: [`CHANGELOG.md`](CHANGELOG.md)

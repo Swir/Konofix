@@ -221,6 +221,13 @@ This short feature-freeze package is completed before the next user-led publicat
 
 These four status bullets are deliberately not roadmap checkboxes: the authoritative 56/67 fraction measures Real Internet Test / Global Beta qualification, while this temporary feature-freeze has its own stop gate. Automatic feature development stops after all four items are **VERIFIED on main** with green exact-head CI; publication remains a separate manual decision.
 
+## 0.5.2 — Two-PC preview / Optional KNP coexistence
+
+- uniquely versioned Windows preview with exact-commit installers, checksums and a Poland–Norway tester procedure
+- preserve primary libp2p, optional concurrent KNP, observed direct/circuit status and bounded remembered reconnects
+- collect real two-installation outcomes without overwriting originals; physical LAN/WAN/relay gates remain open
+- no checklist credit is added by packaging or cloud CI; qualification remains **56/67 = 83.6%**
+
 ## 0.5.1 — Transfer visibility / Private attention
 - receiver-side room/WORLD downloads show an immediate requesting card and live P2P transfer progress in the Transfers panel
 - first/new incoming private messages use a prominent Open / Ignore notification instead of relying only on the unread badge

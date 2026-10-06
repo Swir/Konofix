@@ -226,7 +226,9 @@ mod tests {
         assert!(panic.tail().contains("watchdog fixture deliberate failure"));
         let stalled = run_child(FIXTURE, Duration::from_secs(10), Some("stall"));
         assert!(stalled.timed_out && !stalled.passed());
-        assert!(stalled.tail().contains("deliberately stalled outside Tokio"));
+        assert!(stalled
+            .tail()
+            .contains("deliberately stalled outside Tokio"));
         assert_ne!(success.log, panic.log);
         assert_ne!(panic.log, stalled.log);
         assert!(success.tail().contains("watchdog fixture completed"));

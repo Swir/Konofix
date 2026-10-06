@@ -135,7 +135,13 @@ impl KnpChat {
         if !valid_text(&nick, 24) || nick.chars().any(char::is_control) {
             return Err("Nickname must contain 1 to 24 visible characters.".into());
         }
+        #[cfg(test)]
+        let mut trace = crate::kononexus_transport::lifecycle_diagnostics::Trace::new("chat-spawn");
+        #[cfg(test)]
+        trace.at("await bridge spawn");
         let (runtime, events) = KonoNexusRuntime::spawn(config).await?;
+        #[cfg(test)]
+        trace.at("bridge spawned");
         let snapshot = Snapshot {
             session_id: Uuid::new_v4().to_string(),
             node_id: runtime.node_id().into(),
@@ -232,6 +238,8 @@ async fn run(
     mut snapshot: Snapshot,
     profile_lock: Option<File>,
 ) {
+    #[cfg(test)]
+    let mut trace = crate::kononexus_transport::lifecycle_diagnostics::Trace::new("chat");
     let mut contacts = BTreeMap::<String, Contact>::new();
     let mut pending = HashMap::<u64, Pending>::new();
     let mut seen = VecDeque::<(String, String)>::new();
@@ -239,6 +247,8 @@ async fn run(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut stop_reply = None;
     loop {
+        #[cfg(test)]
+        trace.at("select events commands or expiry");
         tokio::select! {
             command = commands.recv() => match command {
                 None => break,
@@ -259,6 +269,8 @@ async fn run(
                             return Err("This beta supports at most 16 contacts per session.".into());
                         }
                         let endpoint: SocketAddr = contact.endpoint.parse().map_err(|_| "Expected an exact IP:port endpoint.")?;
+                        #[cfg(test)]
+                        trace.at("await bridge connect");
                         runtime.connect(contact.node_id.clone(), vec![endpoint]).await?;
                         contacts.insert(contact.node_id.clone(), contact);
                         snapshot.revision += 1;
@@ -273,6 +285,8 @@ async fn run(
                         if pending.len() >= MAX_PENDING { return Err("Too many pending messages. Wait for delivery before sending more.".into()); }
                         let id = Uuid::new_v4().to_string();
                         let data = encode(Body::Message { id: id.clone(), text: text.clone() })?;
+                        #[cfg(test)]
+                        trace.at("await bridge send");
                         let transport_id = runtime.send(peer.clone(), data).await?;
                         // The actor cannot consume a receipt before registering this message.
                         pending.insert(transport_id, Pending { peer: peer.clone(), id: id.clone(), queued: Instant::now() });
@@ -308,6 +322,8 @@ async fn run(
                                 });
                             }
                             if let Ok(data) = encode(Body::Ack { id }) {
+                                #[cfg(test)]
+                                trace.at("await bridge application ack");
                                 let _ = runtime.send(message.peer_node_id, data).await;
                             }
                         }
@@ -342,8 +358,14 @@ async fn run(
             }
         }
     }
+    #[cfg(test)]
+    trace.at("await bridge shutdown");
     runtime.shutdown().await;
+    #[cfg(test)]
+    trace.at("drop profile lock");
     drop(profile_lock);
+    #[cfg(test)]
+    trace.at("chat stopped");
     if let Some(reply) = stop_reply {
         let _ = reply.send(());
     }
@@ -361,6 +383,10 @@ mod tests {
             let root = std::env::temp_dir().join(format!("konofix-chat-{}", Uuid::new_v4()));
             std::fs::create_dir_all(&root).unwrap();
             Self(root)
+        }
+
+        fn cleanup(self) {
+            std::fs::remove_dir_all(&self.0).expect("test identity/cache files must be released");
         }
     }
     impl Drop for TestRoot {
@@ -433,14 +459,39 @@ mod tests {
         value
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn real_chat_is_bidirectional_acknowledged_and_restarts_without_old_session() {
-        // Exercise fresh sockets and persisted identities repeatedly: a single
-        // successful restart does not cover the intermittent Windows CI hang.
-        for attempt in 1..=8 {
-            eprintln!("KNP lifecycle: restart attempt {attempt}/8");
-            exercise_chat_restart().await;
-        }
+    #[test]
+    fn real_chat_is_bidirectional_acknowledged_and_restarts_without_old_session() {
+        crate::kononexus_transport::lifecycle_diagnostics::supervised(
+            "knp_chat::tests::real_chat_is_bidirectional_acknowledged_and_restarts_without_old_session",
+            Duration::from_secs(180),
+            || {
+                for workers in [1, 4] {
+                    eprintln!("KNP lifecycle: create runtime workers={workers}");
+                    let runtime = tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(workers)
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    runtime.block_on(async {
+                        let heartbeat = tokio::spawn(async {
+                            loop {
+                                sleep(Duration::from_secs(1)).await;
+                                eprintln!("KNP lifecycle: Tokio heartbeat");
+                            }
+                        });
+                        for attempt in 1..=8 {
+                            eprintln!("KNP lifecycle: workers={workers} attempt={attempt}/8");
+                            exercise_chat_restart().await;
+                        }
+                        heartbeat.abort();
+                        let _ = heartbeat.await;
+                    });
+                    eprintln!("KNP lifecycle: start runtime drop workers={workers}");
+                    drop(runtime);
+                    eprintln!("KNP lifecycle: finished runtime drop workers={workers}");
+                }
+            },
+        );
     }
 
     async fn exercise_chat_restart() {
@@ -559,6 +610,105 @@ mod tests {
         .await;
         lifecycle_phase("stop restarted Alice", restarted.shutdown()).await;
         lifecycle_phase("stop Bob", b.shutdown()).await;
+        eprintln!("KNP lifecycle: start state directory cleanup");
+        root.cleanup();
+        eprintln!("KNP lifecycle: finished state directory cleanup");
+    }
+
+    #[test]
+    fn concurrent_senders_abandoned_replies_and_stop_release_every_socket() {
+        crate::kononexus_transport::lifecycle_diagnostics::supervised(
+            "knp_chat::tests::concurrent_senders_abandoned_replies_and_stop_release_every_socket",
+            Duration::from_secs(120),
+            || {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(4)
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                runtime.block_on(async {
+                    for attempt in 1..=8 {
+                        eprintln!("KNP shutdown race: attempt={attempt}/8");
+                        lifecycle_phase("shutdown race", exercise_shutdown_race()).await;
+                    }
+                });
+                eprintln!("KNP shutdown race: start runtime drop");
+                drop(runtime);
+                eprintln!("KNP shutdown race: finished runtime drop");
+            },
+        );
+    }
+
+    async fn exercise_shutdown_race() {
+        let root = TestRoot::new();
+        let a = KnpChat::spawn(config(&root.0, "a"), "Alice".into(), None)
+            .await
+            .unwrap();
+        let b = KnpChat::spawn(config(&root.0, "b"), "Bob".into(), None)
+            .await
+            .unwrap();
+        let a_info = a.snapshot().await.unwrap();
+        let b_info = b.snapshot().await.unwrap();
+        add(&a, &b_info).await;
+        add(&b, &a_info).await;
+        let id = a
+            .send(b_info.node_id.clone(), "before shutdown race".into())
+            .await
+            .unwrap();
+        wait_for(&a, |s| {
+            s.messages
+                .iter()
+                .any(|m| m.id == id && m.delivery == Delivery::Received)
+        })
+        .await;
+        // Queue control requests whose callers have already disappeared.
+        for _ in 0..64 {
+            let (reply, response) = oneshot::channel();
+            drop(response);
+            a.commands.send(Command::Snapshot(reply)).await.unwrap();
+        }
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(21));
+        let mut tasks = Vec::new();
+        for _ in 0..16 {
+            let chat = a.clone();
+            let peer = b_info.node_id.clone();
+            let ready = barrier.clone();
+            tasks.push(tokio::spawn(async move {
+                ready.wait().await;
+                // Racing sends may be accepted or rejected after Stop. A panic,
+                // stuck reply, or successful use after shutdown is never OK.
+                if let Err(error) = chat.send(peer, "racing shutdown".into()).await {
+                    assert_eq!(error, "Chat session closed.");
+                }
+            }));
+        }
+        for _ in 0..4 {
+            let chat = a.clone();
+            let ready = barrier.clone();
+            tasks.push(tokio::spawn(async move {
+                ready.wait().await;
+                chat.shutdown().await;
+            }));
+        }
+        barrier.wait().await;
+        for task in tasks {
+            task.await.unwrap();
+        }
+        assert!(a.snapshot().await.is_err());
+        assert!(a.send(b_info.node_id, "after stop".into()).await.is_err());
+        let socket = tokio::net::UdpSocket::bind(&a_info.local_addr)
+            .await
+            .expect("all stop waiters completed but Alice socket is still owned");
+        drop(socket);
+        b.shutdown().await;
+        let socket = tokio::net::UdpSocket::bind(&b_info.local_addr)
+            .await
+            .expect("Bob socket is still owned after shutdown");
+        drop(socket);
+        drop(a);
+        eprintln!("KNP shutdown race: start state directory cleanup");
+        root.cleanup();
+        eprintln!("KNP shutdown race: finished state directory cleanup");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

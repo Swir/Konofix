@@ -107,3 +107,11 @@ Per-process traces cover parent-harness actors too, not only supervised children
 They contain no payloads, keys, identities, endpoints or profile paths. This
 additional probe/instrumentation is diagnosis only, not an explanation or fix
 for the original Windows timeout.
+
+The test's individual lifecycle operations also use the per-process phase file.
+Each `lifecycle-phase` actor records its static operation name before polling the
+future, then `complete` only after successful completion within the unchanged
+20-second limit. An unwind/drop from the operation name without `complete` is
+not success. The file write precedes stderr, preserving the last operation even
+if test-output capture stalls. This does not establish output capture as the
+cause of either uninstrumented Windows timeout.

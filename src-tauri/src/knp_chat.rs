@@ -450,12 +450,17 @@ mod tests {
         assert!(!valid_text("\u{1b}[31m", 4000));
     }
 
-    async fn lifecycle_phase<T>(name: &str, future: impl std::future::Future<Output = T>) -> T {
-        eprintln!("KNP lifecycle: start {name}");
+    async fn lifecycle_phase<T>(
+        name: &'static str,
+        future: impl std::future::Future<Output = T>,
+    ) -> T {
+        let mut trace =
+            crate::kononexus_transport::lifecycle_diagnostics::Trace::new("lifecycle-phase");
+        trace.at(name);
         let value = timeout(Duration::from_secs(20), future)
             .await
             .unwrap_or_else(|_| panic!("KNP lifecycle phase timed out: {name}"));
-        eprintln!("KNP lifecycle: finished {name}");
+        trace.at("complete");
         value
     }
 

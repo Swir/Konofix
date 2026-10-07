@@ -28,10 +28,13 @@ impl Participation {
     pub(crate) fn behaviour(&self, peer: PeerId) -> relay::Behaviour {
         let mut config = relay::Config {
             max_reservations: 8,
-            max_reservations_per_peer: 1,
+            // libp2p-relay 0.22 compares the existing count with `>` before
+            // admission. Zero therefore permits exactly one; wire test below
+            // protects this pinned-version workaround against dependency drift.
+            max_reservations_per_peer: 0,
             reservation_duration: Duration::from_secs(120),
             max_circuits: 2,
-            max_circuits_per_peer: 1,
+            max_circuits_per_peer: 0,
             max_circuit_duration: Duration::from_secs(120),
             max_circuit_bytes: 8 * 1024 * 1024,
             ..Default::default()
@@ -148,5 +151,86 @@ mod tests {
         on.public_probe(now);
         assert!(!on.enabled(now + Duration::from_secs(300)));
         on.disconnected(&client);
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+    use futures::StreamExt;
+    use libp2p::{
+        identity, noise, ping,
+        swarm::{NetworkBehaviour, SwarmEvent},
+        tcp, yamux, Multiaddr, Swarm, SwarmBuilder,
+    };
+    #[derive(NetworkBehaviour)]
+    struct Host {
+        relay: relay::Behaviour,
+        ping: ping::Behaviour,
+    }
+    #[derive(NetworkBehaviour)]
+    struct Client {
+        relay: relay::client::Behaviour,
+        ping: ping::Behaviour,
+    }
+    fn client(key: identity::Keypair) -> Swarm<Client> {
+        SwarmBuilder::with_existing_identity(key)
+            .with_tokio()
+            .with_tcp(
+                tcp::Config::default(),
+                noise::Config::new,
+                yamux::Config::default,
+            )
+            .unwrap()
+            .with_relay_client(noise::Config::new, yamux::Config::default)
+            .unwrap()
+            .with_behaviour(|_, relay| Client {
+                relay,
+                ping: ping::Behaviour::default(),
+            })
+            .unwrap()
+            .build()
+    }
+    #[tokio::test]
+    async fn production_relay_policy_rejects_second_reservation_for_same_authenticated_peer() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let mut policy = Participation::new(true);
+            let mut host = SwarmBuilder::with_new_identity().with_tokio()
+                .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default).unwrap()
+                .with_behaviour(|key| Host { relay: policy.behaviour(key.public().to_peer_id()), ping: ping::Behaviour::default() }).unwrap().build();
+            host.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
+            let address: Multiaddr = loop {
+                if let SwarmEvent::NewListenAddr { address, .. } = host.select_next_some().await { break address; }
+            };
+            host.add_external_address(address.clone());
+            // Deliberate local test input to the policy, NOT public reachability proof.
+            policy.public_probe(Instant::now());
+            policy.update(&mut host.behaviour_mut().relay, Instant::now());
+            let key = identity::Keypair::generate_ed25519(); let peer = key.public().to_peer_id();
+            let mut first = client(key.clone()); let mut second = client(key);
+            let circuit: Multiaddr = format!("{address}/p2p/{}/p2p-circuit", host.local_peer_id()).parse().unwrap();
+            first.listen_on(circuit.clone()).unwrap();
+            let mut first_accepted = false; let mut second_started = false;
+            loop {
+                tokio::select! {
+                    event = host.select_next_some() => {
+                        if let SwarmEvent::Behaviour(HostEvent::Relay(event)) = event {
+                            policy.observe(&event);
+                            if let relay::Event::ReservationReqDenied { src_peer_id, status } = event {
+                                assert!(first_accepted); assert!(second_started); assert_eq!(src_peer_id, peer);
+                                assert!(matches!(status, relay::StatusCode::ResourceLimitExceeded)); break;
+                            }
+                        }
+                    }
+                    event = first.select_next_some() => {
+                        if matches!(event, SwarmEvent::Behaviour(ClientEvent::Relay(relay::client::Event::ReservationReqAccepted { .. }))) { first_accepted = true; }
+                    }
+                    _ = second.select_next_some(), if second_started => {}
+                }
+                if first_accepted && !second_started { second.listen_on(circuit.clone()).unwrap(); second_started = true; }
+            }
+            policy.invalidate();
+            assert_eq!(policy.update(&mut host.behaviour_mut().relay, Instant::now()), vec![peer]);
+        }).await.expect("bounded local relay admission exceeded 10 seconds");
     }
 }

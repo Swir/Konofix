@@ -93,3 +93,21 @@ No operator-owned VPS is mandated. LAN uses mDNS; Internet cold start uses a sha
 public overlay and rotating consenting participants. Discovery alone cannot connect
 two fresh restrictive-CGNAT peers if no reachable compatible participant can provide
 a rendezvous/relay path. Public IPFS bootstrappers are not substitute Konofix relays.
+
+
+## Additional review findings
+
+The locked libp2p-relay 0.22 checks the existing per-peer reservation/circuit count
+with `>` before accepting a new request. The desktop configuration uses zero for
+those two fields to enforce one effective slot. A real three-swarm loopback test
+creates two connections with the same authenticated client identity, proves the
+first reservation succeeds and the second is denied by the production policy.
+This version-specific workaround must be rechecked when updating libp2p; the first
+reservation acceptance assertion prevents silently changing the policy to deny all.
+
+Future explicitly authorized probe attempts include bounded counters separating
+DNS input, candidates reaching the resolved-address filter, policy/budget rejection
+and accepted underlying-transport dial calls. These contain no endpoint or user
+identity values. The original attempt JSON is unchanged: those counters were not
+available then, and no retrospective DNS/failure cause is invented. A dial call
+counter is not a completed socket, handshake, RPC or WAN proof.

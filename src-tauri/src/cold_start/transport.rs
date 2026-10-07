@@ -10,16 +10,37 @@ use libp2p::{
 };
 use std::{
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     task::{Context, Poll},
     time::{Duration, Instant},
 };
 
 #[derive(Clone)]
-pub struct DialBudget(Arc<Mutex<(Instant, usize)>>);
+pub struct DialBudget(Arc<Mutex<(Instant, usize)>>, Arc<Counters>);
+#[derive(Default)]
+struct Counters {
+    dns: AtomicU64,
+    resolved: AtomicU64,
+    rejected: AtomicU64,
+    accepted: AtomicU64,
+}
+
 impl DialBudget {
     pub fn new() -> Self {
-        Self(Arc::new(Mutex::new((Instant::now(), 0))))
+        Self(
+            Arc::new(Mutex::new((Instant::now(), 0))),
+            Arc::new(Counters::default()),
+        )
+    }
+    #[cfg(test)]
+    pub fn snapshot(&self) -> serde_json::Value {
+        serde_json::json!({"dns_candidates": self.1.dns.load(Ordering::Relaxed),
+            "resolved_transport_candidates": self.1.resolved.load(Ordering::Relaxed),
+            "policy_or_budget_rejections": self.1.rejected.load(Ordering::Relaxed),
+            "accepted_transport_dials": self.1.accepted.load(Ordering::Relaxed)})
     }
     fn take(&self) -> bool {
         let Ok(mut state) = self.0.lock() else {
@@ -112,19 +133,26 @@ impl<T: Transport + Unpin> Transport for PublicTransport<T> {
                     Protocol::Dns(_) | Protocol::Dns4(_) | Protocol::Dns6(_) | Protocol::Dnsaddr(_)
                 )
             });
+            if has_dns {
+                self.budget.1.dns.fetch_add(1, Ordering::Relaxed);
+            }
             if has_dns && !super::runtime::SEEDS.contains(&addr.to_string().as_str()) {
+                self.budget.1.rejected.fetch_add(1, Ordering::Relaxed);
                 return Err(TransportError::MultiaddrNotSupported(addr));
             }
             return self.inner.dial(addr, opts);
         }
+        self.budget.1.resolved.fetch_add(1, Ordering::Relaxed);
         let allowed = permitted(&addr);
         #[cfg(test)]
         let allowed = allowed
             || (self.loopback
                 && matches!(addr.iter().next(), Some(Protocol::Ip4(ip)) if ip.is_loopback()));
         if !allowed || !self.budget.take() {
+            self.budget.1.rejected.fetch_add(1, Ordering::Relaxed);
             return Err(TransportError::MultiaddrNotSupported(addr));
         }
+        self.budget.1.accepted.fetch_add(1, Ordering::Relaxed);
         self.inner.dial(addr, opts)
     }
     fn poll(

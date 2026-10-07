@@ -140,7 +140,8 @@ async fn public_amino_read_only_once() {
         uuid::Uuid::new_v4()
     );
     let key = identity::Keypair::generate_ed25519();
-    let mut swarm = Discovery::new_swarm(&key, DialBudget::new()).unwrap();
+    let budget = DialBudget::new();
+    let mut swarm = Discovery::new_swarm(&key, budget.clone()).unwrap();
     let query = swarm
         .behaviour_mut()
         .kad
@@ -186,6 +187,7 @@ async fn public_amino_read_only_once() {
         "authenticated_connections": connections, "outgoing_errors": errors,
         "query_requests": requests, "query_successes": successes, "query_completed": completed,
         "deadline_exceeded": result.is_err(), "provider_writes": 0, "value_writes": 0,
+        "transport_stages": budget.snapshot(),
         "remote_ttl": "none requested: read-only", "chat_messages": 0, "physical_wan_acceptance": "NOT_EVALUATED",
         "limits": {"seconds":30,"dials_per_300_seconds":64,"connections":16,"pending_dials":4,"queries":1}
     });

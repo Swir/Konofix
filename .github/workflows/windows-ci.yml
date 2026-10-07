@@ -138,6 +138,10 @@ jobs:
           KONOFIX_KNP_DIAGNOSTICS: ${{ runner.temp }}/konofix-knp-capture
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
 
+      - name: Opt-in loopback Amino discovery POC
+        timeout-minutes: 5
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --features experimental-amino-discovery --test amino_discovery_poc
+
       - name: Original captured parallel KNP restart batch
         timeout-minutes: 8
         env:
@@ -220,8 +224,9 @@ jobs:
           Copy-Item 'docs\NODE.md' 'artifact\NODE.md'
           Copy-Item 'docs\NODE_SOAK.md' 'artifact\NODE_SOAK.md'
           Copy-Item 'docs\GLOBAL_BETA.md' 'artifact\GLOBAL_BETA.md'
+          Copy-Item 'docs\PARTICIPANT_COLD_START.md' 'artifact\PARTICIPANT_COLD_START.md'
           New-Item -ItemType Directory -Path 'artifact\docs' | Out-Null
-          Copy-Item 'docs\global-beta-evidence.template.json', 'docs\RELEASE_0.5.2_BETA1.md' 'artifact\docs'
+          Copy-Item 'docs\global-beta-evidence.template.json', 'docs\RELEASE_0.5.2_BETA1.md', 'docs\PARTICIPANT_COLD_START.md' 'artifact\docs'
           $package = Get-Content 'package.json' -Raw | ConvertFrom-Json
           & .\scripts\new-tester-handoff.ps1 -OutputPath 'artifact\TESTER_HANDOFF.md' -Version ([string]$package.version) -Commit ([string]$env:GITHUB_SHA) -WorkflowRun ([string]$env:GITHUB_RUN_ID)
 

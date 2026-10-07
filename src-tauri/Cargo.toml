@@ -50,3 +50,13 @@ libp2p = { version = "0.57", features = [
 tauri = { version = "2", features = [] }
 rfd = "0.17.2"
 kononexus = { git = "https://github.com/Swir/KonoNexus.git", rev = "ea9cc5dfffa7480ab5a1bb0f79e8b5649fdeea3e", default-features = false }
+
+# Laboratory experiment only; the installed application has no activation path.
+[features]
+default = []
+experimental-amino-discovery = []
+
+[[test]]
+name = "amino_discovery_poc"
+path = "tests/amino_discovery_poc.rs"
+required-features = ["experimental-amino-discovery"]

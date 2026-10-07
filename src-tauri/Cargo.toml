@@ -49,4 +49,4 @@ libp2p = { version = "0.57", features = [
 [target.'cfg(windows)'.dependencies]
 tauri = { version = "2", features = [] }
 rfd = "0.17.2"
-kononexus = { git = "https://github.com/Swir/KonoNexus.git", rev = "ea9cc5dfffa7480ab5a1bb0f79e8b5649fdeea3e", default-features = false }
+kononexus = { git = "https://github.com/Swir/KonoNexus.git", rev = "dc377e1001200268039b6e4df7d19b94dd0692ef", default-features = false }

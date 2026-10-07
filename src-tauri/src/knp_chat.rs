@@ -79,6 +79,8 @@ enum Command {
     Send(String, String, oneshot::Sender<Result<String, String>>),
     Snapshot(oneshot::Sender<Snapshot>),
     Stop(oneshot::Sender<()>),
+    #[cfg(test)]
+    StopAndHold(oneshot::Sender<()>, oneshot::Receiver<()>),
 }
 
 #[derive(Clone)]
@@ -238,11 +240,15 @@ async fn run(
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut stop_reply = None;
+    #[cfg(test)]
+    let mut exit_gate = None;
     loop {
         tokio::select! {
             command = commands.recv() => match command {
                 None => break,
                 Some(Command::Stop(reply)) => { stop_reply = Some(reply); break; }
+                #[cfg(test)]
+                Some(Command::StopAndHold(reply, gate)) => { stop_reply = Some(reply); exit_gate = Some(gate); break; }
                 Some(Command::Snapshot(reply)) => {
                     snapshot.contacts = contacts.values().cloned().collect();
                     let _ = reply.send(snapshot.clone());
@@ -342,10 +348,21 @@ async fn run(
             }
         }
     }
+    // Stop admission and drop queued reply senders before cleanup can yield.
+    // Acknowledgement is a lifecycle barrier: stale handles must already fail,
+    // even if this task is descheduled immediately after sending it.
+    commands.close();
+    drop(commands);
     runtime.shutdown().await;
+    drop(events);
+    drop(tick);
     drop(profile_lock);
     if let Some(reply) = stop_reply {
         let _ = reply.send(());
+    }
+    #[cfg(test)]
+    if let Some(gate) = exit_gate {
+        let _ = gate.await;
     }
 }
 
@@ -682,6 +699,52 @@ mod tests {
         chat.shutdown().await;
         peer.shutdown().await;
         other.shutdown().await;
+    }
+
+    // Freeze the actor at the acknowledgement boundary. This is the real
+    // production shutdown path with a test-only post-ack scheduling gate.
+    #[tokio::test]
+    async fn stop_acknowledges_closed_admission_drained_replies_and_released_socket() {
+        let root = TestRoot::new();
+        let chat = KnpChat::spawn(config(&root.0, "barrier"), "Alice".into(), None)
+            .await
+            .unwrap();
+        let endpoint = chat.snapshot().await.unwrap().local_addr;
+        let (ack, stopped) = oneshot::channel();
+        let (release, gate) = oneshot::channel();
+        let (queued_reply, queued_response) = oneshot::channel();
+        // No await between sends: both commands are queued before the actor runs.
+        chat.commands
+            .try_send(Command::StopAndHold(ack, gate))
+            .unwrap();
+        chat.commands
+            .try_send(Command::Snapshot(queued_reply))
+            .unwrap();
+        timeout(Duration::from_secs(3), stopped)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            chat.commands.is_closed(),
+            "stop acknowledged before command admission closed"
+        );
+        assert!(
+            timeout(Duration::from_secs(1), queued_response)
+                .await
+                .unwrap()
+                .is_err(),
+            "queued command reply must be dropped before stop acknowledgement"
+        );
+        assert!(timeout(
+            Duration::from_secs(1),
+            chat.send("unused".into(), "stale".into())
+        )
+        .await
+        .unwrap()
+        .is_err());
+        let socket = tokio::net::UdpSocket::bind(endpoint).await.unwrap();
+        drop(socket);
+        release.send(()).unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -128,15 +128,17 @@ jobs:
           KONOFIX_KNP_DIAGNOSTICS: ${{ runner.temp }}/konofix-knp-capture
         run: node scripts/test-knp-original-capture.mjs --self-test
 
-      - name: Timer cancellation regression
-        timeout-minutes: 5
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --test runtime_cancel
-
       - name: Cargo test - all targets
         timeout-minutes: 15
         env:
           KONOFIX_KNP_DIAGNOSTICS: ${{ runner.temp }}/konofix-knp-capture
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
+
+      # All-target tests compile this executable first; keep its runtime gate
+      # independent of cold dependency compilation, with the same deadline.
+      - name: Timer cancellation regression
+        timeout-minutes: 5
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --test runtime_cancel
 
       - name: Original captured parallel KNP restart batch
         timeout-minutes: 8

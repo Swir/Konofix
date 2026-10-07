@@ -6,28 +6,40 @@ Global Beta means a public, many-computer network. A two-PC test is only the sma
 
 The product remains **participant-operated P2P**: every connected desktop is a
 network node, with TCP/QUIC, signed GossipSub, discovery and Circuit Relay.
-The clarified requirement of 2026-10-06 is zero-config mDNS on LAN and automatic
-Internet entry into WORLD without pasting an invitation address. No central
-account, message server or history store is permitted. libp2p is the foundation;
-KNP is an optional additional contact path with its own identity boundary.
+The clarified requirement of 2026-10-07 is zero-config mDNS on LAN and automatic
+Internet entry into WORLD without pasted addresses **or an operator-owned VPS**.
+No central account, message server or history store is permitted. libp2p remains
+the foundation; KNP is optional with its own authenticated identity boundary.
 
-Two fresh Internet nodes need a reachable first contact. The build-owned pool
-must contain several replaceable public participants with independent failure
-domains; those peers provide discovery and encrypted transport, never authority
-over identity or history. The headless Node is an optional operator
-implementation. A reachable participant pool is still necessary for the
-automatic first-contact requirement. Direct TCP/QUIC is preferred when NAT
-permits; CGNAT/symmetric NAT can require relay, without promising universal hole
-punching.
+Ordinary clients maintain the participant network. Publicly reachable clients
+may serve WAN discovery and, with explicit consent and bounded resources, relay
+encrypted endpoint traffic. Restrictive-NAT clients remain full application
+peers but must not advertise unreachable DHT server/relay capacity. A shared
+public DHT/overlay is a candidate for cold-start discovery only. The [participant
+cold-start design](PARTICIPANT_COLD_START.md) compares Amino, Mainline, the native
+overlay, metadata/abuse limits and optional Tor/I2P. Its default-off local POC
+does not implement automatic Internet discovery in the installed application.
 
-**Current blocker:** the bundled pool is empty and a real tester reported WAN
-FAIL after changing one PC from LAN to LTE ([#165](https://github.com/Swir/Konofix/issues/165)).
-Manual addresses can diagnose transport reachability but cannot qualify
-zero-config Internet discovery. Deploy and verify the [three-peer pool](BOOTSTRAP_POOL_DEPLOYMENT.md),
-then run the exact-build installed-app test with clean settings and no pasted
-addresses. Keep the original failure and append each new attempt separately.
+Fresh clients still require some reachable first contact. Public discovery
+does not itself provide a compatible consenting relay: two restrictive-CGNAT
+peers need an available participant relay or another reachable transport
+overlay. Direct TCP/QUIC is preferred, with bounded circuit fallback/DCUtR.
+No scheme promises universal hole punching or operation through a network
+that blocks every usable path.
 
-Qualification must exercise at least three participant nodes across at least two independent networks, with at least two reachable contact/relay paths, then demonstrate recovery when one leaves. Participants may keep the app open or optionally run the headless Node. Ephemeral desktop identities and addresses are valid for the running session; after all participants leave, fresh invitations may be necessary.
+**Current blocker:** the bundled pool is empty, no alternative automatic
+cold-start path is wired into the app, and a real tester reported WAN FAIL after
+changing one PC from LAN to LTE ([#165](https://github.com/Swir/Konofix/issues/165)).
+The [three-peer deployment kit](BOOTSTRAP_POOL_DEPLOYMENT.md) is an optional
+community contribution, not the sole permitted fix and not a demand to buy VPSs.
+Manual addresses can diagnose transport but cannot qualify automatic WORLD.
+Keep the failure; append exact-build clean-start retests without overwriting.
+
+Qualification must exercise at least three participants across two independent
+networks and two reachable contact/relay paths, then recovery when one leaves.
+Applications or optional headless Nodes may provide these paths. Requiring a
+fresh invitation after all participants leave is a limitation of the current
+build, not acceptable completion of the automatic cold-start product target.
 
 The optional build-owned `src-tauri/bootstrap-pool.json` is merged ahead of environment and user-provided contacts. Duplicates are removed without destroying priority, the total pool is bounded, and failed/lost bootstrap Peer IDs are retried with bounded exponential backoff. The desktop also selects up to three relay candidates from connected Konofix participants advertising relay support through Identify, without requiring them to be configured bootstrap servers. Failed listeners and disconnected candidates are released for later rediscovery. The committed default pool remains empty; placeholder infrastructure is never shipped.
 

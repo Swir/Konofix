@@ -25,6 +25,8 @@ use tokio::{
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
+#[cfg(test)]
+mod cold_start;
 mod connection_routes;
 mod direct_first;
 mod incoming_file;

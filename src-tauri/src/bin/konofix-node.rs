@@ -35,6 +35,10 @@ const SOURCE_COMMIT: &str = env!("KONOFIX_SOURCE_COMMIT");
 #[path = "../bootstrap_pool_policy.rs"]
 mod bootstrap_pool_policy;
 
+#[cfg(test)]
+#[path = "../cold_start.rs"]
+mod cold_start;
+
 #[derive(Debug)]
 struct NodeArgs {
     port: u16,

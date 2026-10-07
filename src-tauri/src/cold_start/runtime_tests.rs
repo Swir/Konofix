@@ -68,7 +68,7 @@ async fn real_provider_lookup_authenticates_request_before_native_handoff() {
                     }
                     _ => {}
                 },
-                candidate = client.next(), if started => { native_handoff = candidate; }
+                candidate = client.next(), if started => { if let Some(Event::Candidate(candidate)) = candidate { native_handoff = Some(candidate); } }
             }
             if published && stored && !started { client.tick(1001); started = true; }
         }
@@ -201,4 +201,39 @@ async fn public_amino_read_only_once() {
         interoperable,
         "public RPC interoperability not established; evidence preserved, no retry"
     );
+}
+
+#[tokio::test]
+async fn native_probe_bridge_needs_inbound_evidence_and_discards_old_interface_ports() {
+    let mut client = Discovery::new(identity::Keypair::generate_ed25519()).unwrap();
+    client.observed_hosts.push("/ip4/8.8.8.8".parse().unwrap());
+    client.refresh_probe_candidates();
+    assert!(client.probe_candidates.is_empty());
+    client.native_listeners(std::iter::repeat_n(
+        "/ip4/127.0.0.1/tcp/45555".parse().unwrap(),
+        12,
+    ));
+    assert_eq!(client.native_ports.len(), 4);
+    assert_eq!(client.probe_candidates.len(), 1);
+    let local = *client.swarm.local_peer_id();
+    let server = PeerId::random();
+    let response = Event::PublicProbe {
+        server,
+        address: format!("/ip4/8.8.8.8/tcp/45555/p2p/{local}")
+            .parse()
+            .unwrap(),
+    };
+    let mut witness = super::super::reachability::Witness::default();
+    if let Event::PublicProbe { server, address } = response {
+        assert!(witness
+            .response(server, local, address, Instant::now())
+            .is_none());
+    }
+    client.network_changed().unwrap();
+    witness.clear();
+    assert!(client.native_ports.is_empty());
+    assert!(client.observed_hosts.is_empty());
+    assert!(client.probe_candidates.is_empty());
+    assert!(client.probe_servers.is_empty());
+    // This test does not poll any swarm; its literals are never dialed.
 }

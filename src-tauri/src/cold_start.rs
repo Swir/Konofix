@@ -8,8 +8,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "cold_start/reachability.rs"]
+pub mod reachability;
 #[path = "cold_start/runtime.rs"]
 pub mod runtime;
+#[path = "cold_start/server.rs"]
+pub mod server;
 #[path = "cold_start/transport.rs"]
 mod transport;
 

@@ -185,6 +185,7 @@ impl TestPeer {
             nick.into(),
             color.clone(),
             bootstraps,
+            DiscoveryOptions::default(),
             TestRuntime {
                 events: events_tx,
                 downloads,

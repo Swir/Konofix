@@ -301,3 +301,10 @@ button:disabled { opacity:.45; cursor:not-allowed; }
   font-size: 10px;
 }
 .public-scope strong { color: #dff8ff; font-weight: 700; }
+
+/* Keep opt-in disclosures reachable on the minimum supported window size. */
+.login-shell { height: 100vh; overflow-y: auto; align-items: safe center; }
+.network-options summary { cursor: pointer; color: #afb7ce; margin: 16px 0; font-size: 13px; }
+.network-options label { display: flex; align-items: flex-start; gap: 8px; }
+.network-options input[type="checkbox"] { width: auto; flex: none; margin-top: 2px; }
+.network-options .muted { font-size: 12px; line-height: 1.45; margin-bottom: 12px; }

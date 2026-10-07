@@ -1,6 +1,6 @@
 # Tokio timer cancellation qualification
 
-The product lockfile currently selects Tokio 1.53.1. Upstream
+The baseline product lockfile selected Tokio 1.53.1; this change selects 1.53.2. Upstream
 [tokio-rs/tokio#8551](https://github.com/tokio-rs/tokio/issues/8551) identifies a
 deterministic deadlock when cancellation destroys a resource-owning waker
 under the timer-driver mutex, and that waker destroys another registered timer.
@@ -26,3 +26,20 @@ The historical KNP hangs in 37415648734 and 37511929284 therefore remain
 unexplained unless their own trace proves this lock cycle. Original captured
 KNP stress and installed-app Windows checks remain necessary. Public beta
 publication remains HELD and the existing physical WAN FAIL remains open.
+
+## Recorded baseline
+
+Windows run [37567796069](https://github.com/Swir/Konofix/actions/runs/37567796069),
+head `cdb992843942abeee53522ec9b0c809b10d7dfd2` (PR test merge
+`032aee08ae8aa78ed297e09f521435cea08089e0`), reproduced the old-lock defect:
+retained-owner controls completed cancellation and runtime cleanup with zero
+and four workers. Reentrant cancellation entered the nested destructor and
+did not return; the parent failed after 10.06 seconds at its unchanged
+10-second OS deadline. The initial attempt at `76376b7` stopped earlier at
+local/CI command parity and is not reproduction evidence.
+
+Only the Tokio version/checksum entry changes in the dependency lockfile.
+The crates.io index confirms identical normal dependency requirements and
+features between these patch versions. The same regression and the original
+captured/parallel KNP batch from #173 must pass on the candidate. This does not
+retroactively identify the cause of the historical KNP timeouts.

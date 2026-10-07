@@ -350,6 +350,10 @@ async fn run(
 }
 
 #[cfg(test)]
+#[path = "knp_restart_probe.rs"]
+mod restart_probe;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
@@ -426,17 +430,25 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn real_chat_is_bidirectional_acknowledged_and_restarts_without_old_session() {
+        let probe = restart_probe::Probe::new();
         let root = TestRoot::new();
+        probe.at("spawn Alice");
         let a = KnpChat::spawn(config(&root.0, "a"), "Alice".into(), None)
             .await
             .unwrap();
+        probe.at("spawn Bob");
         let b = KnpChat::spawn(config(&root.0, "b"), "Bob".into(), None)
             .await
             .unwrap();
+        probe.at("snapshot Alice");
         let a_info = a.snapshot().await.unwrap();
+        probe.at("snapshot Bob");
         let b_info = b.snapshot().await.unwrap();
+        probe.at("admit Bob");
         add(&a, &b_info).await;
+        probe.at("admit Alice");
         add(&b, &a_info).await;
+        probe.at("send Alice");
         let id = a
             .send(
                 b_info.node_id.clone(),
@@ -444,6 +456,7 @@ mod tests {
             )
             .await
             .unwrap();
+        probe.at("receive Alice");
         let received = wait_for(&b, |s| s.messages.iter().any(|m| m.id == id)).await;
         assert_eq!(received.messages[0].peer_node_id, a_info.node_id);
         assert!(!received.messages[0].outgoing);
@@ -451,6 +464,7 @@ mod tests {
             received.messages[0].text,
             "hello 🙂 <script>literal</script>"
         );
+        probe.at("acknowledge Alice");
         let confirmed = wait_for(&a, |s| {
             s.messages
                 .iter()
@@ -463,10 +477,12 @@ mod tests {
             .unwrap()
             .parse::<u64>()
             .is_ok());
+        probe.at("send Bob");
         let reply = b
             .send(a_info.node_id.clone(), "reply".into())
             .await
             .unwrap();
+        probe.at("acknowledge Bob");
         wait_for(&b, |s| {
             s.messages
                 .iter()
@@ -474,36 +490,48 @@ mod tests {
         })
         .await;
         let stale = a.clone();
+        probe.at("stop Alice");
         a.shutdown().await;
+        probe.at("reject stale handle");
         assert!(stale
             .send(b_info.node_id.clone(), "stale".into())
             .await
             .is_err());
+        probe.at("rebind Alice socket");
         let socket = tokio::net::UdpSocket::bind(&a_info.local_addr)
             .await
             .unwrap();
         drop(socket);
+        probe.at("restart Alice");
         let restarted = KnpChat::spawn(config(&root.0, "a"), "Alice".into(), None)
             .await
             .unwrap();
+        probe.at("snapshot restarted Alice");
         let fresh = restarted.snapshot().await.unwrap();
         assert_eq!(fresh.node_id, a_info.node_id);
         assert_ne!(fresh.session_id, a_info.session_id);
         assert!(fresh.messages.is_empty() && fresh.contacts.is_empty());
+        probe.at("readmit Bob");
         add(&restarted, &b_info).await;
+        probe.at("readmit Alice");
         add(&b, &fresh).await;
+        probe.at("send restarted Alice");
         let after_restart = restarted
             .send(b_info.node_id.clone(), "after restart".into())
             .await
             .unwrap();
+        probe.at("acknowledge restarted Alice");
         wait_for(&restarted, |s| {
             s.messages
                 .iter()
                 .any(|m| m.id == after_restart && m.delivery == Delivery::Received)
         })
         .await;
+        probe.at("stop restarted Alice");
         restarted.shutdown().await;
+        probe.at("stop Bob");
         b.shutdown().await;
+        probe.at("body complete; destructors pending");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

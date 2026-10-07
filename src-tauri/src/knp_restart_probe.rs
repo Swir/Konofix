@@ -71,8 +71,9 @@ impl Probe {
         let observer = thread::spawn(move || {
             let started = Instant::now();
             loop {
-                let phase = sampled.phase.load(Ordering::Relaxed);
+                // Acquire completion before reading the final published phase.
                 let done = sampled.done.load(Ordering::Acquire);
+                let phase = sampled.phase.load(Ordering::Relaxed);
                 writeln!(
                     output,
                     "elapsed_ms={} phase={} observer_done={done}",

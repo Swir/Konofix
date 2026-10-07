@@ -26,7 +26,7 @@ impl Wake for CleanupOnRelease {
 impl Drop for CleanupOnRelease {
     fn drop(&mut self) {
         eprintln!("timer regression: nested cancellation entered");
-        self.0.take();
+        drop(self.0.take());
         eprintln!("timer regression: nested cancellation returned");
     }
 }

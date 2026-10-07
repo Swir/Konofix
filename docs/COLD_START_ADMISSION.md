@@ -1,9 +1,10 @@
 # Experimental cold-start advertisement admission
 
-This module is the application trust boundary for the next opt-in Amino adapter.
-It is tested on Windows and Linux but is not yet connected to production discovery.
-Draft #175 remains an earlier isolated wire experiment; neither change enables
-public DHT traffic or qualifies automatic Internet WORLD.
+This module is the application trust boundary for the experimental opt-in Amino
+adapter. Desktop wiring and qualification limits are documented in
+[COLD_START_DESKTOP.md](COLD_START_DESKTOP.md); it is off by default.
+Draft #175 remains an earlier isolated wire experiment. Local tests do not qualify
+public interoperability or automatic Internet WORLD.
 
 Provider records only suggest peers. After an authenticated Noise connection, the
 receiver issues a fresh 128-bit challenge and binds the response to that live
@@ -50,9 +51,9 @@ hide those metadata. No public interoperability or two-PC WAN PASS is claimed.
 
 The client adapter now owns a separate Amino swarm using the application's libp2p
 key. It has no GossipSub, native DHT, KNP or relay-server behaviour, listens on no
-ports and explicitly stays a DHT client. The native application must serve the
-v2 advertisement protocol on its own advertised endpoints before enabling it.
-This PR still does not enable the adapter in desktop startup.
+ports and explicitly stays a DHT client. The opt-in native application serves the
+v2 advertisement protocol on its own witnessed endpoints; the isolated swarm
+never becomes the application's message transport.
 
 A lookup runs at most once per five minutes; interface recovery may request an
 earlier lookup but retains the shared budget of 64 resolved dials per five minutes.
@@ -83,5 +84,7 @@ authorized interoperability trial. It reserves a new evidence file before traffi
 performs one GET_PROVIDERS query in a UUID-scoped experimental test namespace, and
 stops within 30 seconds. It writes no provider/value records, sends no chat and
 claims no physical-WAN acceptance. A remote short provider TTL cannot be requested;
-read-only probing avoids creating a 48-hour provider entry. CI never enables this
-test. Failed attempts are preserved, not overwritten or retried until green.
+read-only probing avoids creating a 48-hour provider entry. Ordinary push/PR CI
+never enables this test. A separately authorized manual workflow may run it once;
+see [AMINO_MANUAL_INTEROP.md](AMINO_MANUAL_INTEROP.md). Failed attempts are preserved,
+not overwritten or retried until green.

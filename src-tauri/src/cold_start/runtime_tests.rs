@@ -68,13 +68,23 @@ async fn real_provider_lookup_authenticates_request_before_native_handoff() {
                     }
                     _ => {}
                 },
-                candidate = client.next(), if started => { native_handoff = candidate; }
+                candidate = client.next(), if started => { if let Some(Event::Candidate(candidate)) = candidate { native_handoff = Some(candidate); } }
             }
             if published && stored && !started { client.tick(1001); started = true; }
         }
         let candidate = native_handoff.unwrap();
         assert_eq!(candidate.peer, peer); assert_eq!(candidate.endpoints.len(), 1); assert!(!candidate.relay_opt_in);
         assert!(client.contains(&peer)); assert!(client.pending.is_empty());
+        assert_eq!(client.status, "verified-participant");
+        // A completed lookup must not erase the status of an admitted response.
+        while client.query.is_some() {
+            tokio::select! {
+                _ = seed.select_next_some() => {},
+                _ = publisher.select_next_some() => {},
+                _ = client.next() => {},
+            }
+        }
+        assert_eq!(client.status, "verified-participant");
         let before = *client.swarm.local_peer_id();
         client.network_changed().unwrap();
         assert_eq!(*client.swarm.local_peer_id(), before);
@@ -203,6 +213,95 @@ async fn public_amino_read_only_once() {
         interoperable,
         "public RPC interoperability not established; evidence preserved, no retry"
     );
+}
+
+#[tokio::test]
+async fn native_probe_bridge_needs_inbound_evidence_and_discards_old_interface_ports() {
+    let mut client = Discovery::new(identity::Keypair::generate_ed25519()).unwrap();
+    client.observed_hosts.push("/ip4/8.8.8.8".parse().unwrap());
+    client.refresh_probe_candidates();
+    assert!(client.probe_candidates.is_empty());
+    client.native_listeners(std::iter::repeat_n(
+        "/ip4/127.0.0.1/tcp/45555".parse().unwrap(),
+        12,
+    ));
+    assert_eq!(client.native_ports.len(), 1);
+    assert_eq!(client.probe_candidates.len(), 1);
+    let local = *client.swarm.local_peer_id();
+    let server = PeerId::random();
+    let response = Event::PublicProbe {
+        server,
+        address: format!("/ip4/8.8.8.8/tcp/45555/p2p/{local}")
+            .parse()
+            .unwrap(),
+    };
+    let mut witness = super::super::reachability::Witness::default();
+    if let Event::PublicProbe { server, address } = response {
+        assert!(witness
+            .response(server, local, address, Instant::now())
+            .is_none());
+    }
+    client.network_changed().unwrap();
+    witness.clear();
+    assert!(client.native_ports.is_empty());
+    assert!(client.observed_hosts.is_empty());
+    assert!(client.probe_candidates.is_empty());
+    assert!(client.probe_servers.is_empty());
+    // This test does not poll any swarm; its literals are never dialed.
+}
+
+#[tokio::test]
+async fn repeated_interface_addresses_cannot_starve_quic_reachability_candidates() {
+    let mut client = Discovery::isolated_for_test(identity::Keypair::generate_ed25519()).unwrap();
+    // Syntax fixtures only: this test never polls a swarm or dials these hosts.
+    client.observed_hosts.push("/ip4/8.8.8.8".parse().unwrap());
+    let tcp_interfaces = (1..=12).map(|last| {
+        format!("/ip4/192.168.1.{last}/tcp/45555")
+            .parse::<Multiaddr>()
+            .unwrap()
+    });
+    let quic: Multiaddr = "/ip4/192.168.1.1/udp/45555/quic-v1".parse().unwrap();
+    client.native_listeners(tcp_interfaces.chain(std::iter::once(quic)));
+    let local = client.swarm.local_peer_id();
+    assert!(
+        client.probe_candidates.contains(
+            &format!("/ip4/8.8.8.8/udp/45555/quic-v1/p2p/{local}")
+                .parse()
+                .unwrap()
+        ),
+        "repeated TCP interfaces must not consume the QUIC probe slot"
+    );
+    assert_eq!(client.native_ports.len(), 2);
+    assert_eq!(client.probe_candidates.len(), 2);
+
+    client.network_changed().unwrap();
+    assert!(client.probe_candidates.is_empty());
+    client.native_listeners(
+        (45000..45012).map(|port| format!("/ip4/192.168.1.1/tcp/{port}").parse().unwrap()),
+    );
+    assert_eq!(
+        client.native_ports.len(),
+        4,
+        "distinct-port cap remains unchanged"
+    );
+}
+
+#[tokio::test]
+async fn isolated_desktop_fixture_never_restores_public_seeds_on_network_change() {
+    let mut client = Discovery::isolated_for_test(identity::Keypair::generate_ed25519()).unwrap();
+    assert_eq!(client.swarm.behaviour_mut().kad.kbuckets().count(), 0);
+    client.network_changed().unwrap();
+    assert_eq!(client.swarm.behaviour_mut().kad.kbuckets().count(), 0);
+    client.tick(1000);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while client.query.is_some() {
+            client.next().await;
+        }
+    })
+    .await
+    .expect("seedless query should complete without a network dial");
+    assert_eq!(client.budget.snapshot()["accepted_transport_dials"], 0);
+    assert_eq!(client.budget.snapshot()["dns_candidates"], 0);
 }
 
 #[tokio::test]

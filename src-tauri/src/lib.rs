@@ -25,7 +25,6 @@ use tokio::{
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
-#[cfg(test)]
 mod cold_start;
 mod connection_routes;
 mod direct_first;
@@ -39,6 +38,7 @@ mod kononexus_transport;
 #[cfg(test)]
 mod messaging_runtime_tests;
 mod network_recovery;
+mod participant_relay;
 mod room_membership;
 mod room_membership_application;
 mod room_membership_desktop;
@@ -1033,6 +1033,9 @@ enum NetworkCommand {
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
+    // Admission must precede stateful handlers: rejected connections must not
+    // be pre-registered by request/response or other sibling behaviours.
+    limits: libp2p::connection_limits::Behaviour,
     gossipsub: gossipsub::Behaviour,
     mdns: libp2p::swarm::behaviour::toggle::Toggle<mdns::tokio::Behaviour>,
     kad: kad::Behaviour<MemoryStore>,
@@ -1041,6 +1044,9 @@ struct Behaviour {
     autonat: autonat::Behaviour,
     relay_client: relay::client::Behaviour,
     relay_server: relay::Behaviour,
+    cold_ads: libp2p::swarm::behaviour::toggle::Toggle<
+        request_response::cbor::Behaviour<cold_start::Request, Option<cold_start::Advertisement>>,
+    >,
     dcutr: dcutr::Behaviour,
     upnp: upnp::tokio::Behaviour,
     file_transfer: request_response::cbor::Behaviour<FileRequest, FileResponse>,
@@ -1464,6 +1470,8 @@ async fn start_network(
     nick_color: Option<String>,
     bootstraps: Option<Vec<String>>,
     enable_knp_transport: Option<bool>,
+    enable_public_discovery: Option<bool>,
+    consent_relay: Option<bool>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<StartResult, String> {
@@ -1486,6 +1494,10 @@ async fn start_network(
             nick_for_task,
             nick_color_for_task,
             bootstrap_list,
+            DiscoveryOptions {
+                public_discovery: enable_public_discovery.unwrap_or(false),
+                relay_consent: consent_relay.unwrap_or(false),
+            },
             app_for_task.clone(),
             rx,
             ready_tx,
@@ -2598,10 +2610,17 @@ async fn send_next_chunk(
     Ok(())
 }
 
+#[derive(Clone, Copy, Default)]
+struct DiscoveryOptions {
+    public_discovery: bool,
+    relay_consent: bool,
+}
+
 async fn network_task(
     nick: String,
     nick_color: String,
     bootstraps: Vec<String>,
+    discovery_options: DiscoveryOptions,
     app: impl NetworkRuntime,
     mut rx: mpsc::Receiver<NetworkCommand>,
     ready: oneshot::Sender<Result<String, String>>,
@@ -2610,7 +2629,23 @@ async fn network_task(
     let mdns_enabled = app.mdns_enabled();
     #[cfg(not(test))]
     let mdns_enabled = true;
-    let mut swarm = SwarmBuilder::with_new_identity()
+    let key = libp2p::identity::Keypair::generate_ed25519();
+    let mut discovery = if discovery_options.public_discovery {
+        #[cfg(not(test))]
+        let client = cold_start::runtime::Discovery::new(key.clone())?;
+        #[cfg(test)]
+        let client = cold_start::runtime::Discovery::isolated_for_test(key.clone())?;
+        Some(client)
+    } else {
+        None
+    };
+    let mut ad_server = cold_start::server::Server::new(key.clone());
+    let mut reachability_witness = cold_start::reachability::Witness::default();
+    let mut participation = participant_relay::Participation::new(discovery_options.relay_consent);
+    let mut discovery_contacts: HashMap<PeerId, Vec<Multiaddr>> = HashMap::new();
+    let mut discovery_relay_claims = HashSet::new();
+    let mut discovery_status = String::new();
+    let mut swarm = SwarmBuilder::with_existing_identity(key)
         .with_tokio()
         .with_tcp(
             tcp::Config::default(),
@@ -2678,7 +2713,23 @@ async fn network_task(
                 ping: ping::Behaviour::default(),
                 autonat: autonat::Behaviour::new(local_peer, autonat::Config::default()),
                 relay_client,
-                relay_server: relay::Behaviour::new(local_peer, relay::Config::default()),
+                relay_server: participation.behaviour(local_peer),
+                cold_ads: discovery_options
+                    .public_discovery
+                    .then(|| {
+                        cold_start::runtime::ad_behaviour(
+                            request_response::ProtocolSupport::Inbound,
+                        )
+                    })
+                    .into(),
+                limits: libp2p::connection_limits::Behaviour::new(
+                    libp2p::connection_limits::ConnectionLimits::default()
+                        .with_max_established(Some(128))
+                        .with_max_established_incoming(Some(64))
+                        .with_max_established_per_peer(Some(4))
+                        .with_max_pending_incoming(Some(16))
+                        .with_max_pending_outgoing(Some(16)),
+                ),
                 dcutr: dcutr::Behaviour::new(local_peer),
                 upnp: upnp::tokio::Behaviour::default(),
                 file_transfer,
@@ -2799,13 +2850,13 @@ async fn network_task(
     );
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
-    let mut discovery = tokio::time::interval(Duration::from_secs(25));
+    let mut native_discovery = tokio::time::interval(Duration::from_secs(25));
     let mut bootstrap_retry = tokio::time::interval(Duration::from_secs(BOOTSTRAP_RETRY_TICK_SECS));
     let mut cleanup = tokio::time::interval(Duration::from_secs(8));
     let mut cached_retry = tokio::time::interval(Duration::from_secs(1));
     cached_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    discovery.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    native_discovery.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     bootstrap_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     bootstrap_retry.tick().await;
@@ -2822,9 +2873,81 @@ async fn network_task(
 
     'network: loop {
         tokio::select! {
+            result = async { match discovery.as_mut() { Some(client) => client.next().await, None => std::future::pending().await } } => {
+                match result {
+                    Some(cold_start::runtime::Event::Candidate(candidate)) => {
+                        if discovery_contacts.len() < cold_start::MAX_CACHE || discovery_contacts.contains_key(&candidate.peer) {
+                            if let Some(previous) = discovery_contacts.get(&candidate.peer) {
+                                for address in previous {
+                                    swarm.behaviour_mut().kad.remove_address(&candidate.peer, address);
+                                    swarm.behaviour_mut().file_transfer.remove_address(&candidate.peer, address);
+                                    swarm.behaviour_mut().secure_control.remove_address(&candidate.peer, address);
+                                }
+                            }
+                            cached_dials.connected(candidate.peer);
+                            cached_dials.enqueue(candidate.peer, candidate.endpoints.clone(), Instant::now());
+                            if !candidate.relay_opt_in {
+                                if let Some(listener) = participant_relays.remove(&candidate.peer) { swarm.remove_listener(listener); }
+                            }
+                            if candidate.relay_opt_in { discovery_relay_claims.insert(candidate.peer); } else { discovery_relay_claims.remove(&candidate.peer); }
+                            discovery_contacts.insert(candidate.peer, candidate.endpoints);
+                        }
+                    }
+                    Some(cold_start::runtime::Event::PublicProbe { server, address }) => {
+                        if let Some(address) = reachability_witness.response(server, local_peer, address, Instant::now()) {
+                            swarm.add_external_address(address);
+                            participation.public_probe(Instant::now());
+                        }
+                    }
+                    None => {}
+                }
+            }
             _ = cached_retry.tick() => {
+                if let Some(client) = discovery.as_mut() {
+                    client.native_listeners(swarm.listeners().chain(swarm.external_addresses()).cloned());
+                    client.tick(now_ms() / 1000);
+                    client.publish(&reachability_witness.endpoints(Instant::now()), participation.reachable(Instant::now()));
+                    for (remote, addresses) in &mut discovery_contacts {
+                        if !client.contains(remote) {
+                            for address in addresses.drain(..) {
+                                swarm.behaviour_mut().kad.remove_address(remote, &address);
+                                swarm.behaviour_mut().file_transfer.remove_address(remote, &address);
+                                swarm.behaviour_mut().secure_control.remove_address(remote, &address);
+                            }
+                            discovery_relay_claims.remove(remote);
+                            if let Some(listener) = participant_relays.remove(remote) { swarm.remove_listener(listener); }
+                            cached_dials.connected(*remote);
+                        }
+                    }
+                    discovery_contacts.retain(|peer, addresses| !addresses.is_empty() || swarm.is_connected(peer));
+                }
+                for peer in participation.update(&mut swarm.behaviour_mut().relay_server, Instant::now()) { let _ = swarm.disconnect_peer_id(peer); }
+                let phase = discovery.as_ref().map_or("off", |c| c.status);
+                let state_key = format!("{phase}:{}:{}", participation.enabled(Instant::now()), participation.reachable(Instant::now()));
+                if state_key != discovery_status {
+                    discovery_status = state_key;
+                    let _ = app.emit_event("network-discovery", serde_json::json!({"peer_id": local_peer.to_string(), "phase": phase, "relay_enabled": participation.enabled(Instant::now()), "public_reachability": participation.reachable(Instant::now())}));
+                }
                 cached_dials.drive(&mut swarm, Instant::now(), register_cached_address);
                 if let Some(generation) = network_recovery.take_due(Instant::now()) {
+                    reachability_witness.clear(); participation.invalidate();
+                    for (remote, addresses) in &mut discovery_contacts {
+                        for address in addresses.drain(..) {
+                            swarm.behaviour_mut().kad.remove_address(remote, &address);
+                            swarm.behaviour_mut().file_transfer.remove_address(remote, &address);
+                            swarm.behaviour_mut().secure_control.remove_address(remote, &address);
+                        }
+                        cached_dials.connected(*remote);
+                        if let Some(listener) = participant_relays.remove(remote) { swarm.remove_listener(listener); }
+                    }
+                    discovery_relay_claims.clear();
+                    for peer in participation.update(&mut swarm.behaviour_mut().relay_server, Instant::now()) { let _ = swarm.disconnect_peer_id(peer); }
+                    if let Some(client) = discovery.as_mut() {
+                        if let Err(error) = client.network_changed() {
+                            let _ = app.emit_event("network-warning", format!("Public discovery stopped: {error}"));
+                            discovery = None;
+                        }
+                    }
                     for (listener, address) in [
                         (&mut tcp_listener, "/ip4/0.0.0.0/tcp/0"),
                         (&mut quic_listener, "/ip4/0.0.0.0/udp/0/quic-v1"),
@@ -2883,7 +3006,7 @@ async fn network_task(
                 apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.heartbeat());
                 swarm.behaviour_mut().kad.get_record(nick_record_key(&canonical));
             }
-            _ = discovery.tick() => {
+            _ = native_discovery.tick() => {
                 let _ = swarm.behaviour_mut().kad.bootstrap();
                 swarm.behaviour_mut().kad.get_providers(world_provider_key());
                 app.save_peers(&peer_cache);
@@ -3532,9 +3655,14 @@ async fn network_task(
                     emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Nasłuchiwanie aktywne", &connection_routes);
                 }
                 SwarmEvent::ConnectionEstablished { peer_id: remote, connection_id, endpoint, .. } => {
+                    if let Some(address) = reachability_witness.connection(remote, &endpoint, Instant::now()) {
+                        swarm.add_external_address(address); participation.public_probe(Instant::now());
+                    }
                     connection_routes.established(connection_id, remote, &endpoint);
                     cached_dials.connected(remote);
-                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
+                    if discovery.is_none() {
+                        swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
+                    }
                     if mark_bootstrap_connected(&mut bootstrap_targets, &remote) {
                         let _ = swarm.behaviour_mut().kad.bootstrap();
                         let _ = swarm.behaviour_mut().kad.start_providing(world_provider_key());
@@ -3553,6 +3681,7 @@ async fn network_task(
                     connection_routes.closed(connection_id);
                     apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.connection_closed(&remote, num_established));
                     if num_established == 0 {
+                        participation.disconnected(&remote);
                         membership_seen.remove(&remote);
                         if let Some(listener) = relay_bootstrap_peers.remove(&remote) {
                             swarm.remove_listener(listener);
@@ -3676,13 +3805,27 @@ async fn network_task(
                     }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id: remote, info, .. })) => {
-                    let offers_relay = info.protocol_version == "/konofix/4.0"
+                    if discovery.is_some() && info.protocol_version != "/konofix/4.0" {
+                        // Public DHT/AutoNAT infrastructure is not native room membership.
+                        swarm.behaviour_mut().gossipsub.remove_explicit_peer(&remote);
+                        // The isolated cold-start client also has a distinct
+                        // Identify version: keep its bounded ad request usable.
+                        continue;
+                    }
+                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
+                    let offers_relay = (!discovery_contacts.contains_key(&remote) || discovery_relay_claims.contains(&remote)) && info.protocol_version == "/konofix/4.0"
                         && info.protocols.iter().any(|protocol| protocol.as_ref() == "/libp2p/circuit/relay/0.2.0/hop");
                     for addr in info.listen_addrs {
+                        // A fresh Identify frame must not extend the signed contact's
+                        // lifetime or introduce extra addresses outside its bounded ad.
+                        let addr = if let Some(authorized) = discovery_contacts.get(&remote) {
+                            let Some(canonical) = cold_start::authorized_identify_address(remote, addr, authorized) else { continue; };
+                            canonical
+                        } else { addr };
                         swarm.behaviour_mut().kad.add_address(&remote, addr.clone());
                         swarm.behaviour_mut().file_transfer.add_address(&remote, addr.clone());
                         swarm.behaviour_mut().secure_control.add_address(&remote, addr.clone());
-                        remember_peer_address(&mut peer_cache, remote.clone(), &addr);
+                        if !discovery_contacts.contains_key(&remote) { remember_peer_address(&mut peer_cache, remote, &addr); }
                         if offers_relay
                             && participant_relays.len() < MAX_PARTICIPANT_RELAYS
                             && !participant_relays.contains_key(&remote)
@@ -3728,7 +3871,17 @@ async fn network_task(
                     }
                     emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "P2P address expired", &connection_routes);
                 }
+                SwarmEvent::Behaviour(BehaviourEvent::ColdAds(request_response::Event::Message { peer, message: request_response::Message::Request { request, channel, .. }, .. })) => {
+                    let endpoints = reachability_witness.endpoints(Instant::now());
+                    let response = ad_server.respond(peer, &request, &endpoints, participation.enabled(Instant::now()), now_ms() / 1000);
+                    if let Some(ads) = swarm.behaviour_mut().cold_ads.as_mut() { let _ = ads.send_response(channel, response); }
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::RelayServer(event)) => { participation.observe(&event); }
                 SwarmEvent::Behaviour(BehaviourEvent::Autonat(event)) => {
+                    if let autonat::Event::OutboundProbe(autonat::OutboundProbeEvent::Response { peer, address, .. }) = &event {
+                        if let Some(address) = address_for_peer(address.clone(), local_peer).and_then(|a| reachability_witness.response(*peer, local_peer, a, Instant::now())) { swarm.add_external_address(address); participation.public_probe(Instant::now()); }
+                    }
+                    if matches!(&event, autonat::Event::StatusChanged { new: autonat::NatStatus::Private | autonat::NatStatus::Unknown, .. }) { participation.invalidate(); }
                     if let autonat::Event::StatusChanged { old: _, new } = event {
                         nat_status = format!("{new:?}").to_lowercase();
                         emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Zmieniono status NAT", &connection_routes);

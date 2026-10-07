@@ -134,6 +134,18 @@ function wireCredit() {
   });
 }
 
+let publicDiscoveryOptIn = false;
+let relayConsent = false;
+let discoveryStatus = { phase: 'off', relay_enabled: false, public_reachability: false };
+function discoveryLabel(): string {
+  const labels: Record<string, string> = {
+    off: t('network.coldOff'), searching: t('network.coldSearching'),
+    'network-changed': t('network.coldRecovering'), 'entry-unreachable': t('network.coldUnavailable'),
+    'no-verified-participant': t('network.coldNoPeer'), 'verified-participant': t('network.coldVerified')
+  };
+  return labels[discoveryStatus.phase] || t('network.coldUnavailable');
+}
+
 function renderLogin() {
   app.innerHTML = `
     <main class="login-shell">
@@ -160,6 +172,12 @@ function renderLogin() {
           ${NICK_COLORS.map(item => `<button type="button" class="nick-color-swatch ${item.value === state.nickColor ? 'selected' : ''}" data-nick-color="${item.value}" role="radio" aria-checked="${item.value === state.nickColor}" title="${esc(item.label)}" style="--nick-color:${item.value}"></button>`).join('')}
         </div>
         <div class="nick-color-preview"><span style="color:${state.nickColor}">●</span> <strong style="color:${state.nickColor}">${esc(t('login.nickColorPreview'))}</strong></div>
+        <details class="network-options"><summary>${esc(t('network.experimentalOptions'))}</summary>
+        <label><input id="publicDiscoveryOptIn" type="checkbox" ${publicDiscoveryOptIn ? 'checked' : ''} /> ${esc(t('network.coldOptIn'))}</label>
+        <p class="muted">${esc(t('network.coldPrivacy'))}</p>
+        <label><input id="relayConsent" type="checkbox" ${relayConsent ? 'checked' : ''} /> ${esc(t('network.relayConsent'))}</label>
+        <p class="muted">${esc(t('network.relayBudget'))}</p>
+        </details>
         <div id="loginError" class="error"></div>
         <button id="connectBtn" class="primary">${esc(t('login.connect'))}</button>
         <button id="loginNetwork" class="link-btn">${esc(t('login.advancedNetwork'))}</button>
@@ -179,6 +197,8 @@ function renderLogin() {
     document.querySelector<HTMLInputElement>('#nick')!.value = input.value;
     document.querySelector<HTMLInputElement>('#nick')!.focus();
   }));
+  document.querySelector<HTMLInputElement>('#publicDiscoveryOptIn')?.addEventListener('change', e => { publicDiscoveryOptIn = (e.target as HTMLInputElement).checked; });
+  document.querySelector<HTMLInputElement>('#relayConsent')?.addEventListener('change', e => { relayConsent = (e.target as HTMLInputElement).checked; });
   document.querySelector('#connectBtn')?.addEventListener('click', connect);
   document.querySelector('#loginNetwork')?.addEventListener('click', showNetworkModal);
 }
@@ -211,6 +231,8 @@ async function connect() {
       nickColor: state.nickColor,
       bootstraps: loadBootstraps(),
       enableKnpTransport: false,
+      enablePublicDiscovery: publicDiscoveryOptIn,
+      consentRelay: relayConsent,
     });
     if (revision !== sessionRevision) return;
     connectPending = false;
@@ -372,6 +394,7 @@ function networkLabel(): string {
 }
 
 function internetEntryLabel(): string {
+  if (publicDiscoveryOptIn && state.connected) return discoveryLabel();
   if (!state.status.bootstrap_count) return t('network.entryMissing');
   if (!state.status.bootstrap_connected) return t('network.entrySearching');
   return t('network.entryConnected', { count: state.status.bootstrap_connected });
@@ -733,6 +756,9 @@ function resetSessionView(errorMessage?: string) {
   state.publicOffers.clear();
   state.publicIntents.clear();
   state.status = { ...EMPTY_STATUS };
+  discoveryStatus = { phase: 'off', relay_enabled: false, public_reachability: false };
+  publicDiscoveryOptIn = false;
+  relayConsent = false;
   state.room = 'world';
   renderLogin();
   if (errorMessage) {
@@ -786,6 +812,8 @@ function showNetworkModal() {
       <div class="listen-block" id="observedRoutes"><span>${esc(t('network.observedRoutes'))}</span>${state.status.routes.map(r => `<div data-route-peer="${esc(r.peer_id)}" data-route-path="${r.path}"><code>${esc(r.peer_id)} · ${esc(r.path)} / ${esc(r.transport)} · ${esc(r.remote_address)}</code></div>`).join('')}</div>
       <p class="modal-note">${esc(t('network.routeHelp'))}</p>
       <p class="modal-note" id="internetEntryDetail"><strong>${esc(internetEntryLabel())}</strong><br/>${esc(t('network.entryHelp'))}</p>
+      <p class="modal-note" id="publicDiscoveryStatus"><strong>${esc(discoveryLabel())}</strong><br/>${esc(discoveryStatus.relay_enabled ? t('network.relayActive') : t('network.relayInactive'))}</p>
+      <p class="modal-note">${esc(t('network.coldProofLimit'))}</p>
       <p class="modal-note">${esc(t('network.participantNode'))}</p>
       <label>${esc(t('network.bootstrapAddress'))}</label>
       <div class="inline-form"><input id="bootstrapInput" placeholder="/ip4/.../tcp/.../p2p/12D3KooW..."/><button id="addBootstrap" class="primary compact">${esc(t('common.add'))}</button></div>
@@ -856,6 +884,12 @@ async function wireEvents() {
     const users = Math.max(0, Number(event.payload.users) || 0);
     state.rooms.set(event.payload.room_id, { ...room, users });
     if (state.connected) renderChat();
+  });
+  await listen<typeof discoveryStatus & { peer_id: string }>('network-discovery', event => {
+    if (state.connected && event.payload.peer_id === state.peerId) {
+      discoveryStatus = event.payload;
+      renderChat();
+    }
   });
   await listen<NetworkStatus>('network-status', event => {
     state.status = event.payload;

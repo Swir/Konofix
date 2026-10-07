@@ -6,7 +6,7 @@ use super::{
 };
 use futures::StreamExt;
 use libp2p::{
-    connection_limits,
+    autonat, connection_limits,
     core::{muxing::StreamMuxerBox, transport::Boxed, upgrade},
     dns, identify, identity,
     kad::{
@@ -18,7 +18,7 @@ use libp2p::{
     tcp, yamux, Multiaddr, PeerId, StreamProtocol, Swarm, Transport,
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     num::NonZeroUsize,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -33,12 +33,14 @@ pub const SEEDS: [&str; 3] = [
 
 #[derive(NetworkBehaviour)]
 pub struct DiscoveryBehaviour {
-    // Reject before request/response registers a handler for this connection.
+    // Derive invokes siblings in declaration order. Reject before ads can
+    // register a handler for a connection the swarm will never establish.
     limits: connection_limits::Behaviour,
     kad: kad::Behaviour<MemoryStore>,
     ads: request_response::cbor::Behaviour<Request, Option<Advertisement>>,
     identify: identify::Behaviour,
     ping: ping::Behaviour,
+    autonat: autonat::Behaviour,
 }
 
 pub fn ad_behaviour(
@@ -84,6 +86,16 @@ fn behaviour(key: &identity::Keypair) -> DiscoveryBehaviour {
                 .with_interval(Duration::from_secs(300)),
         ),
         ping: ping::Behaviour::default(),
+        autonat: autonat::Behaviour::new(
+            peer,
+            autonat::Config {
+                use_connected: false,
+                throttle_clients_global_max: 0,
+                boot_delay: Duration::from_secs(5),
+                retry_interval: Duration::from_secs(60),
+                ..Default::default()
+            },
+        ),
         limits: connection_limits::Behaviour::new(
             connection_limits::ConnectionLimits::default()
                 .with_max_established(Some(16))
@@ -125,6 +137,11 @@ struct Pending {
     generation: u64,
     deadline: Instant,
 }
+pub enum Event {
+    Candidate(Candidate),
+    PublicProbe { server: PeerId, address: Multiaddr },
+}
+
 pub struct Candidate {
     pub peer: PeerId,
     pub endpoints: Vec<Multiaddr>,
@@ -145,7 +162,13 @@ pub struct Discovery {
     publication: Option<kad::QueryId>,
     advertised: Vec<Multiaddr>,
     retry_publish: Instant,
+    probe_servers: HashSet<PeerId>,
+    native_ports: Vec<Multiaddr>,
+    observed_hosts: Vec<Multiaddr>,
+    probe_candidates: Vec<Multiaddr>,
     pub status: &'static str,
+    #[cfg(test)]
+    isolated_test: bool,
 }
 impl Discovery {
     pub fn new(key: identity::Keypair) -> Result<Self, String> {
@@ -166,8 +189,40 @@ impl Discovery {
             publication: None,
             advertised: Vec::new(),
             retry_publish: now,
+            probe_servers: HashSet::new(),
+            native_ports: Vec::new(),
+            observed_hosts: Vec::new(),
+            probe_candidates: Vec::new(),
             status: "searching",
+            #[cfg(test)]
+            isolated_test: false,
         })
+    }
+    /// Native application tests exercise this adapter without any public sockets,
+    /// including after interface recovery rebuilds it. Not compiled in releases.
+    #[cfg(test)]
+    pub fn isolated_for_test(key: identity::Keypair) -> Result<Self, String> {
+        let mut client = Self::new(key)?;
+        client.isolated_test = true;
+        client.swarm = client.replacement_swarm()?;
+        Ok(client)
+    }
+    fn replacement_swarm(&self) -> Result<Swarm<DiscoveryBehaviour>, String> {
+        #[cfg(test)]
+        if self.isolated_test {
+            let tcp = tcp::tokio::Transport::new(tcp::Config::default())
+                .upgrade(upgrade::Version::V1Lazy)
+                .authenticate(noise::Config::new(&self.key).map_err(|e| e.to_string())?)
+                .multiplex(yamux::Config::default())
+                .map(|(peer, mux), _| (peer, StreamMuxerBox::new(mux)));
+            return Ok(Swarm::new(
+                PublicTransport::loopback(tcp, self.budget.clone()).boxed(),
+                behaviour(&self.key),
+                self.key.public().to_peer_id(),
+                libp2p::swarm::Config::with_tokio_executor(),
+            ));
+        }
+        Self::new_swarm(&self.key, self.budget.clone())
     }
     fn new_swarm(
         key: &identity::Keypair,
@@ -202,17 +257,62 @@ impl Discovery {
         self.query = None;
         // Drop old sockets, queries and resolver configuration. Keep identity,
         // anti-replay tombstones and global dial budget across interface churn.
-        self.swarm = Self::new_swarm(&self.key, self.budget.clone())?;
+        self.swarm = self.replacement_swarm()?;
         self.published = false;
         self.publication = None;
         self.advertised.clear();
+        self.probe_candidates.clear();
+        self.native_ports.clear();
+        self.observed_hosts.clear();
+        self.probe_servers.clear();
         self.next_lookup = Instant::now();
         self.status = "network-changed";
         Ok(())
     }
+    pub fn native_listeners(&mut self, addresses: impl Iterator<Item = Multiaddr>) {
+        // Wildcard listeners yield one address per interface. Bound distinct
+        // transport/port pairs so duplicate TCP interfaces cannot crowd out QUIC.
+        let mut ports = HashSet::new();
+        self.native_ports = addresses
+            .filter(|a| !is_circuit(a))
+            .filter(|a| {
+                super::reachability::port(a).is_some_and(|port| port.1 != 0 && ports.insert(port))
+            })
+            .take(4)
+            .collect();
+        self.refresh_probe_candidates();
+    }
+    fn refresh_probe_candidates(&mut self) {
+        for host in &self.observed_hosts {
+            for native in &self.native_ports {
+                let mut candidate = host.clone();
+                for p in native.iter().skip(1) {
+                    candidate.push(p);
+                }
+                if !matches!(
+                    candidate.iter().last(),
+                    Some(libp2p::multiaddr::Protocol::P2p(_))
+                ) {
+                    candidate.push(libp2p::multiaddr::Protocol::P2p(
+                        *self.swarm.local_peer_id(),
+                    ));
+                }
+                if public_endpoint(&candidate.to_string(), *self.swarm.local_peer_id()).is_some()
+                    && self.probe_candidates.len() < 8
+                    && !self.probe_candidates.contains(&candidate)
+                {
+                    self.probe_candidates.push(candidate.clone());
+                    self.swarm.behaviour_mut().autonat.probe_address(candidate);
+                }
+            }
+        }
+    }
     pub fn tick(&mut self, unix: u64) {
         let now = Instant::now();
         self.cache.expire(unix, now);
+        if self.status == "verified-participant" && !self.cache.has_accepted() {
+            self.status = "no-verified-participant";
+        }
         self.pending.retain(|_, p| p.deadline > now);
         if now >= self.next_lookup && self.query.is_none() {
             self.attempted.clear();
@@ -282,7 +382,7 @@ impl Discovery {
     pub fn contains(&self, peer: &PeerId) -> bool {
         self.cache.get(peer).is_some()
     }
-    pub async fn next(&mut self) -> Option<Candidate> {
+    pub async fn next(&mut self) -> Option<Event> {
         let event = self.swarm.select_next_some().await;
         let unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -340,7 +440,9 @@ impl Discovery {
                     }
                     if step.last {
                         self.query = None;
-                        self.status = if stats.num_successes() == 0 {
+                        self.status = if self.cache.has_accepted() {
+                            "verified-participant"
+                        } else if stats.num_successes() == 0 {
                             "entry-unreachable"
                         } else {
                             "no-verified-participant"
@@ -379,11 +481,11 @@ impl Discovery {
                             {
                                 let accepted = self.cache.get(&peer).unwrap();
                                 self.status = "verified-participant";
-                                return Some(Candidate {
+                                return Some(Event::Candidate(Candidate {
                                     peer,
                                     endpoints: accepted.endpoints.clone(),
                                     relay_opt_in: accepted.relay_opt_in,
-                                });
+                                }));
                             }
                         }
                     }
@@ -393,6 +495,46 @@ impl Discovery {
                 request_response::Event::OutboundFailure { request_id, .. },
             )) => {
                 self.pending.remove(&request_id);
+            }
+            SwarmEvent::Behaviour(DiscoveryBehaviourEvent::Identify(
+                identify::Event::Received { peer_id, info, .. },
+            )) => {
+                if info.protocols.contains(&autonat::DEFAULT_PROTOCOL_NAME)
+                    && (self.probe_servers.len() < 8 || self.probe_servers.contains(&peer_id))
+                {
+                    self.probe_servers.insert(peer_id);
+                    // Advertised AutoNAT support is permission to request that
+                    // protocol, never permission to relay or send chat to IPFS.
+                    self.swarm.behaviour_mut().autonat.add_server(peer_id, None);
+                    if let Some(
+                        host @ (libp2p::multiaddr::Protocol::Ip4(_)
+                        | libp2p::multiaddr::Protocol::Ip6(_)),
+                    ) = info.observed_addr.iter().next()
+                    {
+                        let mut prefix = Multiaddr::empty();
+                        prefix.push(host);
+                        if self.observed_hosts.len() < 4 && !self.observed_hosts.contains(&prefix) {
+                            self.observed_hosts.push(prefix);
+                        }
+                        self.refresh_probe_candidates();
+                    }
+                }
+            }
+            // A response alone is not evidence: the caller correlates a fresh
+            // authenticated inbound native connection from this same server.
+            SwarmEvent::Behaviour(DiscoveryBehaviourEvent::Autonat(
+                autonat::Event::OutboundProbe(autonat::OutboundProbeEvent::Response {
+                    peer,
+                    address,
+                    ..
+                }),
+            )) if public_endpoint(&address.to_string(), *self.swarm.local_peer_id()).is_some()
+                && self.probe_candidates.contains(&address) =>
+            {
+                return Some(Event::PublicProbe {
+                    server: peer,
+                    address,
+                });
             }
             _ => {}
         }

@@ -39,6 +39,10 @@ mod bootstrap_pool_policy;
 #[path = "../cold_start.rs"]
 mod cold_start;
 
+#[cfg(test)]
+#[path = "../participant_relay.rs"]
+mod participant_relay;
+
 #[derive(Debug)]
 struct NodeArgs {
     port: u16,

@@ -8,8 +8,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "cold_start/reachability.rs"]
+pub mod reachability;
 #[path = "cold_start/runtime.rs"]
 pub mod runtime;
+#[path = "cold_start/server.rs"]
+pub mod server;
 #[path = "cold_start/transport.rs"]
 mod transport;
 
@@ -300,6 +304,9 @@ impl Cache {
     pub fn get(&self, peer: &PeerId) -> Option<&Accepted> {
         self.entries.get(peer)?.accepted.as_ref()
     }
+    pub fn has_accepted(&self) -> bool {
+        self.entries.values().any(|entry| entry.accepted.is_some())
+    }
     pub fn admit(
         &mut self,
         peer: PeerId,
@@ -351,3 +358,53 @@ impl Cache {
 #[cfg(test)]
 #[path = "cold_start/tests.rs"]
 mod tests;
+
+/// Native Identify may refresh only an address in the current signed advertisement.
+/// Canonical form is also used for removal, so expiry cannot leave unsigned aliases.
+pub fn authorized_identify_address(
+    peer: PeerId,
+    mut address: Multiaddr,
+    authorized: &[Multiaddr],
+) -> Option<Multiaddr> {
+    if !matches!(
+        address.iter().last(),
+        Some(libp2p::multiaddr::Protocol::P2p(_))
+    ) {
+        address.push(libp2p::multiaddr::Protocol::P2p(peer));
+    }
+    let canonical = public_endpoint(&address.to_string(), peer)?;
+    authorized.contains(&canonical).then_some(canonical)
+}
+
+#[cfg(test)]
+mod identify_admission_tests {
+    use super::*;
+    #[test]
+    fn identify_cannot_extend_expired_signed_contacts_or_add_unadvertised_endpoints() {
+        let peer = PeerId::random();
+        let address: Multiaddr = "/ip4/8.8.8.8/tcp/4001".parse().unwrap();
+        let canonical = address.clone().with(libp2p::multiaddr::Protocol::P2p(peer));
+        let authorized = vec![canonical.clone()];
+        assert_eq!(
+            authorized_identify_address(peer, address.clone(), &authorized),
+            Some(canonical.clone())
+        );
+        assert_eq!(
+            authorized_identify_address(peer, canonical, &authorized),
+            authorized.first().cloned()
+        );
+        assert!(authorized_identify_address(peer, address.clone(), &[]).is_none());
+        assert!(authorized_identify_address(
+            peer,
+            "/ip4/1.1.1.1/tcp/4001".parse().unwrap(),
+            &authorized
+        )
+        .is_none());
+        assert!(authorized_identify_address(
+            peer,
+            address.with(libp2p::multiaddr::Protocol::P2p(PeerId::random())),
+            &authorized
+        )
+        .is_none());
+    }
+}

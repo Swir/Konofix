@@ -97,6 +97,10 @@ try {
   cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
   if ($LASTEXITCODE -ne 0) { throw "cargo clippy --locked failed with exit code $LASTEXITCODE." }
 
+  Write-Host 'Timer cancellation regression...' -ForegroundColor Yellow
+  cargo test --locked --manifest-path src-tauri/Cargo.toml --test runtime_cancel
+  if ($LASTEXITCODE -ne 0) { throw "Timer cancellation regression failed with exit code $LASTEXITCODE." }
+
   Write-Host 'Rust all-target tests...' -ForegroundColor Yellow
   cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
   if ($LASTEXITCODE -ne 0) { throw "cargo test --locked failed with exit code $LASTEXITCODE." }

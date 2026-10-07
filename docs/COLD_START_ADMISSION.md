@@ -45,3 +45,43 @@ gives provider records a 48-hour validity and provider addresses a 24-hour TTL.
 Our five-minute acceptance does **not** shorten remote retention. Public observers
 can learn IPs, PeerIDs, namespace interest and timing; encrypted transport does not
 hide those metadata. No public interoperability or two-PC WAN PASS is claimed.
+
+## Isolated runtime adapter
+
+The client adapter now owns a separate Amino swarm using the application's libp2p
+key. It has no GossipSub, native DHT, KNP or relay-server behaviour, listens on no
+ports and explicitly stays a DHT client. The native application must serve the
+v2 advertisement protocol on its own advertised endpoints before enabling it.
+This PR still does not enable the adapter in desktop startup.
+
+A lookup runs at most once per five minutes; interface recovery may request an
+earlier lookup but retains the shared budget of 64 resolved dials per five minutes.
+At most 16 established connections, four pending dials, four ad requests and eight
+provider candidates per lookup are allowed. Queries expire after 15 seconds;
+requests after five seconds. TCP+Noise/Yamux and QUIC use the existing dependencies.
+Public IP filtering is below DNS, and only the three pinned official bootstrap
+DNS multiaddresses may enter DNS resolution. DHT-supplied DNS names are rejected.
+These bootstrap names are best-effort community utilities, not three independently
+operated Konofix relays or a production availability guarantee.
+
+Network changes discard the adapter's sockets, queries, pending challenges and
+resolver configuration. The native identity, replay tombstones and dial budget
+survive; old-generation responses cannot return a contact. Provider publication
+requires independently confirmed public reachability plus direct public native
+endpoints, with a five-minute retry/change budget and a 22-hour normal refresh.
+Losing reachability removes local advertisements; it cannot erase remote caches.
+A signed ad is generated on demand and expires independently after five minutes.
+
+Local tests use three real TCP/Noise swarms and a loopback-only test transport.
+They verify DHT discovery followed by the production request/response decoder,
+challenge/signature admission and generation invalidation. Claimed public endpoint
+literals in these tests are syntax fixtures and are never dialed. No local test
+contacts the public bootstrap list.
+
+A manually ignored `public_amino_read_only_once` test is available for one explicitly
+authorized interoperability trial. It reserves a new evidence file before traffic,
+performs one GET_PROVIDERS query in a UUID-scoped experimental test namespace, and
+stops within 30 seconds. It writes no provider/value records, sends no chat and
+claims no physical-WAN acceptance. A remote short provider TTL cannot be requested;
+read-only probing avoids creating a 48-hour provider entry. CI never enables this
+test. Failed attempts are preserved, not overwritten or retried until green.

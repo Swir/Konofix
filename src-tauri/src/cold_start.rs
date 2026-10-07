@@ -8,6 +8,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "cold_start/runtime.rs"]
+pub mod runtime;
+#[path = "cold_start/transport.rs"]
+mod transport;
+
 pub const AD_PROTOCOL: &str = "/konofix/experimental/cold-start/2";
 pub const WORLD_NAMESPACE: &str = "konofix/experimental/world/v2";
 pub const MAX_TTL: u64 = 300;

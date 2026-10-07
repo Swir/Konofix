@@ -11,23 +11,30 @@ Internet entry into WORLD without pasting an invitation address. No central
 account, message server or history store is permitted. libp2p is the foundation;
 KNP is an optional additional contact path with its own identity boundary.
 
-Two fresh Internet nodes need a reachable first contact. The build-owned pool
-must contain several replaceable public participants with independent failure
-domains; those peers provide discovery and encrypted transport, never authority
-over identity or history. The headless Node is an optional operator
-implementation. A reachable participant pool is still necessary for the
-automatic first-contact requirement. Direct TCP/QUIC is preferred when NAT
-permits; CGNAT/symmetric NAT can require relay, without promising universal hole
-punching.
+Two fresh Internet nodes need a reachable first contact, but **operator-owned
+VPSs and a dedicated server are not product prerequisites**. The experimental
+public cold-start adapter uses shared Amino provider routing only to find
+untrusted contact hints. It then authenticates and verifies bounded, short-lived
+signed advertisements before handing contacts to native direct-first libp2p.
+A publicly reachable desktop can separately consent to bounded relay service.
+Public IPFS peers are not Konofix relays, room-membership authorities or history
+servers. Native configured pools and the headless Node remain optional operator
+alternatives. See [COLD_START_DESKTOP.md](COLD_START_DESKTOP.md) for limits,
+observable public metadata and the explicit session opt-in (off by default).
 
-**Current blocker:** the bundled pool is empty and a real tester reported WAN
-FAIL after changing one PC from LAN to LTE ([#165](https://github.com/Swir/Konofix/issues/165)).
-Manual addresses can diagnose transport reachability but cannot qualify
-zero-config Internet discovery. Deploy and verify the [three-peer pool](BOOTSTRAP_POOL_DEPLOYMENT.md),
+**Current blocker:** the original candidate's empty pool explained the physical
+LAN-to-LTE [WAN FAIL #165](https://github.com/Swir/Konofix/issues/165). The new
+experimental alternative still has no completed public RPC interoperability
+proof and no physical automatic-WORLD/recovery PASS. No real compatible public
+participant pool or relay availability is asserted. Qualify public RPCs first,
 then run the exact-build installed-app test with clean settings and no pasted
-addresses. Keep the original failure and append each new attempt separately.
+addresses. A manual invitation can diagnose transport but cannot pass this gate.
+Preserve the original failure and append each new attempt separately. Two fresh
+restrictive-CGNAT peers cannot connect without some reachable compatible
+rendezvous/relay path; discovery alone does not supply it. Direct TCP/QUIC remains
+preferred where NAT allows, without promising universal hole punching.
 
-Qualification must exercise at least three participant nodes across at least two independent networks, with at least two reachable contact/relay paths, then demonstrate recovery when one leaves. Participants may keep the app open or optionally run the headless Node. Ephemeral desktop identities and addresses are valid for the running session; after all participants leave, fresh invitations may be necessary.
+Qualification must exercise at least three participant nodes across at least two independent networks, with at least two reachable contact/relay paths, then demonstrate recovery when one leaves. Participants may keep the app open or optionally run the headless Node. Ephemeral desktop identities and addresses are valid for the running session. After all compatible participants leave, automatic public rediscovery must recover when participants return; an invitation-only recovery is diagnostic and cannot satisfy automatic WORLD.
 
 The optional build-owned `src-tauri/bootstrap-pool.json` is merged ahead of environment and user-provided contacts. Duplicates are removed without destroying priority, the total pool is bounded, and failed/lost bootstrap Peer IDs are retried with bounded exponential backoff. The desktop also selects up to three relay candidates from connected Konofix participants advertising relay support through Identify, without requiring them to be configured bootstrap servers. Failed listeners and disconnected candidates are released for later rediscovery. The committed default pool remains empty; placeholder infrastructure is never shipped.
 
@@ -131,7 +138,7 @@ QUIC-v1, at different configured hostnames/IP literals. Duplicates, extra
 protocols/circuits, zero ports, placeholders, private/CGNAT/documentation hosts
 and unsupported JSON fields/schema are rejected. The 32-address limit remains.
 
-The empty pool is allowed only as the explicit current infrastructure blocker.
+The empty native pool is allowed because it is optional. It records the original candidate's missing-first-contact condition; the experimental shared-overlay route has separate admission and evidence gates.
 Passing this static check does not enable publication or establish DNS,
 ownership, distinct providers/ASNs, reachability, relay service or WAN success.
 Different hostnames may still resolve to one machine: independent operator and

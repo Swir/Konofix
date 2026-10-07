@@ -1,4 +1,4 @@
-# Konofix Chat — Architecture 0.4.2
+# Konofix Chat — Architecture 0.5.2 (tester-only)
 
 ## Windows client
 
@@ -23,10 +23,12 @@ The client `Swarm` includes:
 
 1. mDNS discovers peers on the local network.
 2. The peer cache tries addresses learned during previous sessions.
-3. A bootstrap peer provides the first global entry point.
-4. Kademlia discovers additional `#WORLD` providers.
-5. Identify exchanges listen addresses.
-6. Discovered addresses are stored in the local cache.
+3. Optional configured native peers or experimental public cold-start discovery supply first contacts; an operator-owned VPS is not mandatory.
+4. Native Kademlia discovers additional `#WORLD` providers. The isolated Amino client does not join chat or replace this DHT.
+5. Identify exchanges listen addresses. Public cold-start hints cannot authorize arbitrary extra addresses or relay service.
+6. Native learned addresses retain the existing cache policy; signed cold-start contacts expire in memory and are not persisted as trusted native cache entries.
+
+The experimental session choice is off by default. It uses a dedicated WORLD namespace, bounded untrusted provider hints and authenticated, signed short-lived advertisements. Network changes discard pending queries/contacts/witnesses while retaining anti-replay tombstones and the global dial budget. A separate explicit consent plus a fresh public inbound/AutoNAT witness permits bounded participant relay service. Public DHT metadata (IP, PeerID, namespace interest and timing) is observable; short local ad acceptance does not erase remote provider records. See `COLD_START_DESKTOP.md` for bounds and remaining qualification, including the inconclusive first public RPC trial. This is implementation behind an opt-in, not completed automatic-WORLD acceptance.
 
 ## NAT / Relay
 

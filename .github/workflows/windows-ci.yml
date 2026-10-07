@@ -219,6 +219,9 @@ jobs:
           Copy-Item 'docs\TESTING.md' 'artifact\TESTING.md'
           Copy-Item 'docs\KNP_CHAT_BETA.md' 'artifact\KNP_CHAT_BETA.md'
           Copy-Item 'docs\TWO_PC_TEST.md' 'artifact\TWO_PC_TEST.md'
+          Copy-Item 'docs\COLD_START_DESKTOP.md' 'artifact\COLD_START_DESKTOP.md'
+          New-Item -ItemType Directory -Path 'artifact\evidence\amino' -Force | Out-Null
+          Copy-Item 'docs\evidence\amino\amino-public-20261007-attempt1.json' 'artifact\evidence\amino\amino-public-20261007-attempt1.json'
           Copy-Item 'docs\NODE.md' 'artifact\NODE.md'
           Copy-Item 'docs\NODE_SOAK.md' 'artifact\NODE_SOAK.md'
           Copy-Item 'docs\GLOBAL_BETA.md' 'artifact\GLOBAL_BETA.md'

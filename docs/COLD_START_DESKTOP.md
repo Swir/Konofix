@@ -120,8 +120,12 @@ transport is seedless and local-only under `cfg(test)`, including after recovery
 this is not a physical LAN/WAN result. The normal Windows regression suite remains
 a required gate, alongside the shared Node/component tests.
 
-This draft includes the same unchanged-deadline CI ordering correction as #178;
-it must be reviewed and integrated after the prerequisite policy/runtime/CI PRs.
+Windows CI retains the original runtime deadlines and captured KNP restart batch;
+the all-target build precedes the standalone timer regression as qualified in #180.
+The [manual read-only RPC workflow](https://github.com/Swir/Konofix/blob/main/docs/AMINO_MANUAL_INTEROP.md)
+provides stage counters and immutable attempt files for a future separately authorized
+trial. Merging that workflow or this integration does not authorize another public
+attempt and does not complete any physical WORLD acceptance gate.
 
 
 ## Protocol basis and limits of the public service

@@ -173,6 +173,8 @@ try {
     'TESTING.md',
     'KNP_CHAT_BETA.md',
     'TWO_PC_TEST.md',
+    'COLD_START_DESKTOP.md',
+    'evidence/amino/amino-public-20261007-attempt1.json',
     'NODE.md',
     'NODE_SOAK.md',
     'GLOBAL_BETA.md',

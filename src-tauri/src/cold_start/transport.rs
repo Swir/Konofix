@@ -167,6 +167,38 @@ impl<T: Transport + Unpin> Transport for PublicTransport<T> {
 mod tests {
     use super::*;
     #[test]
+    fn trace_counts_transport_stages_without_claiming_a_connection() {
+        use libp2p::core::{
+            transport::{dummy::DummyTransport, PortUse},
+            Endpoint,
+        };
+        let budget = DialBudget::new();
+        let options = || DialOpts {
+            role: Endpoint::Dialer,
+            port_use: PortUse::New,
+        };
+        let mut resolved = PublicTransport::new(DummyTransport::<()>::new(), budget.clone());
+        assert!(resolved
+            .dial("/ip4/127.0.0.1/tcp/1".parse().unwrap(), options())
+            .is_err());
+        // DummyTransport never opens a socket, including for this public literal.
+        assert!(resolved
+            .dial("/ip4/1.1.1.1/tcp/1".parse().unwrap(), options())
+            .is_err());
+        let mut ingress =
+            PublicTransport::seed_ingress(DummyTransport::<()>::new(), budget.clone());
+        assert!(ingress
+            .dial("/dnsaddr/untrusted.invalid".parse().unwrap(), options())
+            .is_err());
+        assert_eq!(
+            budget.snapshot(),
+            serde_json::json!({
+                "dns_candidates": 1, "resolved_transport_candidates": 2,
+                "policy_or_budget_rejections": 2, "accepted_transport_dials": 1,
+            })
+        );
+    }
+    #[test]
     fn resolved_address_policy_blocks_rebinding_and_global_dial_flood() {
         for raw in [
             "/ip4/127.0.0.1/tcp/1",

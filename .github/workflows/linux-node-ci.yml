@@ -32,6 +32,9 @@ jobs:
       - name: Isolated Node manifest/source parity self-tests
         run: python3 scripts/check-node-linux-parity.py self-test
 
+      - name: Offline manual Amino probe guards (no public traffic)
+        run: python3 scripts/test-amino-once.py
+
       - name: Isolated Node manifest/source parity gate
         run: python3 scripts/check-node-linux-parity.py check
 

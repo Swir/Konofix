@@ -33,11 +33,12 @@ pub const SEEDS: [&str; 3] = [
 
 #[derive(NetworkBehaviour)]
 pub struct DiscoveryBehaviour {
+    // Reject before request/response registers a handler for this connection.
+    limits: connection_limits::Behaviour,
     kad: kad::Behaviour<MemoryStore>,
     ads: request_response::cbor::Behaviour<Request, Option<Advertisement>>,
     identify: identify::Behaviour,
     ping: ping::Behaviour,
-    limits: connection_limits::Behaviour,
 }
 
 pub fn ad_behaviour(

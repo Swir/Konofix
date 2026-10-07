@@ -140,6 +140,18 @@ jobs:
           KONOFIX_KNP_DIAGNOSTICS: ${{ runner.temp }}/konofix-knp-capture
         run: node scripts/test-knp-original-capture.mjs
 
+      - name: Show passive restart samples after failure
+        if: failure()
+        shell: pwsh
+        run: |
+          $root = Join-Path '${{ runner.temp }}' 'konofix-knp-capture'
+          if (Test-Path $root) {
+            Get-ChildItem $root -Filter 'restart-*.log' | ForEach-Object {
+              Write-Output $_.Name
+              Get-Content $_.FullName -Tail 5
+            }
+          }
+
       - name: Preserve original-harness KNP evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

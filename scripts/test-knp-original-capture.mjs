@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -49,6 +49,8 @@ async function run(label, executable, args, expected, limitMs) {
   const result = {
     schema: 1, label, source_commit: process.env.GITHUB_SHA || null,
     elapsed_ms: Math.round(performance.now() - started), limit_ms: limitMs,
+    pid: child.pid ?? null,
+    phase_files: readdirSync(root).filter(name => name.startsWith('restart-' + child.pid + '-')),
     timed_out: timedOut, exit_code: code, signal, spawn_error: spawnError,
     harness_completed: completed,
     success: !timedOut && !spawnError && code === 0 && completed,
@@ -56,7 +58,10 @@ async function run(label, executable, args, expected, limitMs) {
   };
   writeNew(join(directory, 'result.json'), result);
   console.log(JSON.stringify(result));
-  if (!result.success) console.log(text.slice(-16000));
+  if (!result.success) {
+    console.log(text.slice(-16000));
+    for (const name of result.phase_files) console.log(name + '\n' + readFileSync(join(root, name), 'utf8').slice(-4000));
+  }
   return { ...result, directory };
 }
 

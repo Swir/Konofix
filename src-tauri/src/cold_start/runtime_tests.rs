@@ -267,3 +267,47 @@ async fn isolated_desktop_fixture_never_restores_public_seeds_on_network_change(
     assert_eq!(client.budget.snapshot()["accepted_transport_dials"], 0);
     assert_eq!(client.budget.snapshot()["dns_candidates"], 0);
 }
+
+#[tokio::test]
+async fn admission_limit_rejection_leaves_no_phantom_request_response_connection() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut host = local_swarm(&identity::Keypair::generate_ed25519(), true);
+        host.behaviour_mut().limits = connection_limits::Behaviour::new(
+            connection_limits::ConnectionLimits::default().with_max_established_per_peer(Some(1)),
+        );
+        let key = identity::Keypair::generate_ed25519();
+        let peer = key.public().to_peer_id();
+        let mut first = local_swarm(&key, false);
+        let mut second = local_swarm(&key, false);
+        let address = listen(&mut host).await;
+        first.dial(address.clone()).unwrap();
+        let connection = loop {
+            tokio::select! {
+                event = host.select_next_some() => if let SwarmEvent::ConnectionEstablished { connection_id, .. } = event { break connection_id; },
+                _ = first.select_next_some() => {},
+            }
+        };
+        second.dial(address).unwrap();
+        loop {
+            tokio::select! {
+                event = host.select_next_some() => if let SwarmEvent::IncomingConnectionError { error, .. } = event {
+                    assert!(matches!(error, libp2p::swarm::ListenError::Denied { .. }));
+                    break;
+                },
+                _ = first.select_next_some() => {},
+                _ = second.select_next_some() => {},
+            }
+        }
+        assert!(host.close_connection(connection));
+        loop {
+            tokio::select! {
+                event = host.select_next_some() => if let SwarmEvent::ConnectionClosed { peer_id, num_established, .. } = event {
+                    assert_eq!(peer_id, peer); assert_eq!(num_established, 0);
+                    assert!(!host.is_connected(&peer)); break;
+                },
+                _ = first.select_next_some() => {},
+                _ = second.select_next_some() => {},
+            }
+        }
+    }).await.expect("bounded connection rejection/close regression exceeded 10 seconds");
+}

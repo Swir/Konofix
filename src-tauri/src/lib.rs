@@ -1033,6 +1033,9 @@ enum NetworkCommand {
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
+    // Admission must precede stateful handlers: rejected connections must not
+    // be pre-registered by request/response or other sibling behaviours.
+    limits: libp2p::connection_limits::Behaviour,
     gossipsub: gossipsub::Behaviour,
     mdns: libp2p::swarm::behaviour::toggle::Toggle<mdns::tokio::Behaviour>,
     kad: kad::Behaviour<MemoryStore>,
@@ -1044,7 +1047,6 @@ struct Behaviour {
     cold_ads: libp2p::swarm::behaviour::toggle::Toggle<
         request_response::cbor::Behaviour<cold_start::Request, Option<cold_start::Advertisement>>,
     >,
-    limits: libp2p::connection_limits::Behaviour,
     dcutr: dcutr::Behaviour,
     upnp: upnp::tokio::Behaviour,
     file_transfer: request_response::cbor::Behaviour<FileRequest, FileResponse>,
@@ -3806,7 +3808,8 @@ async fn network_task(
                     if discovery.is_some() && info.protocol_version != "/konofix/4.0" {
                         // Public DHT/AutoNAT infrastructure is not native room membership.
                         swarm.behaviour_mut().gossipsub.remove_explicit_peer(&remote);
-                        let _ = swarm.disconnect_peer_id(remote);
+                        // The isolated cold-start client also has a distinct
+                        // Identify version: keep its bounded ad request usable.
                         continue;
                     }
                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);

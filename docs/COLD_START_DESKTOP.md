@@ -134,3 +134,17 @@ defines the wire protocol and record retention; [public utilities](https://docs.
 are explicitly best effort. The listed bootstrap names are published by IPFS, but
 the failed local trial does not establish their reachability from this environment.
 No new dependency or third-party source copy is introduced by this experiment.
+
+
+## Connection-admission regression
+
+Windows run 37659096461 on head `89fd7a4dfe42e86c031a016460f28f967179f32a`
+passed the new mDNS/discovery coexistence test but failed the existing many-peer
+rooms regression in libp2p-request-response's connection-count assertion.
+The composed behavior declared its connection limiter after request/response,
+which had already registered a handler before the later sibling rejected it.
+Admission now comes first in both native and isolated behavior declarations;
+limits and upstream assertions are unchanged. A real loopback Noise regression
+opens one connection, rejects a second from the same PeerID, then closes the first.
+It reproduces the identical assertion with the old order and passes with admission
+first. This preserves the original failed Windows run instead of retrying it away.

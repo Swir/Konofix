@@ -33,11 +33,13 @@ pub const SEEDS: [&str; 3] = [
 
 #[derive(NetworkBehaviour)]
 pub struct DiscoveryBehaviour {
+    // Derive invokes siblings in declaration order. Reject before ads can
+    // register a handler for a connection the swarm will never establish.
+    limits: connection_limits::Behaviour,
     kad: kad::Behaviour<MemoryStore>,
     ads: request_response::cbor::Behaviour<Request, Option<Advertisement>>,
     identify: identify::Behaviour,
     ping: ping::Behaviour,
-    limits: connection_limits::Behaviour,
     autonat: autonat::Behaviour,
 }
 

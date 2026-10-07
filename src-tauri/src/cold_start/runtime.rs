@@ -165,6 +165,8 @@ pub struct Discovery {
     observed_hosts: Vec<Multiaddr>,
     probe_candidates: Vec<Multiaddr>,
     pub status: &'static str,
+    #[cfg(test)]
+    isolated_test: bool,
 }
 impl Discovery {
     pub fn new(key: identity::Keypair) -> Result<Self, String> {
@@ -190,7 +192,35 @@ impl Discovery {
             observed_hosts: Vec::new(),
             probe_candidates: Vec::new(),
             status: "searching",
+            #[cfg(test)]
+            isolated_test: false,
         })
+    }
+    /// Native application tests exercise this adapter without any public sockets,
+    /// including after interface recovery rebuilds it. Not compiled in releases.
+    #[cfg(test)]
+    pub fn isolated_for_test(key: identity::Keypair) -> Result<Self, String> {
+        let mut client = Self::new(key)?;
+        client.isolated_test = true;
+        client.swarm = client.replacement_swarm()?;
+        Ok(client)
+    }
+    fn replacement_swarm(&self) -> Result<Swarm<DiscoveryBehaviour>, String> {
+        #[cfg(test)]
+        if self.isolated_test {
+            let tcp = tcp::tokio::Transport::new(tcp::Config::default())
+                .upgrade(upgrade::Version::V1Lazy)
+                .authenticate(noise::Config::new(&self.key).map_err(|e| e.to_string())?)
+                .multiplex(yamux::Config::default())
+                .map(|(peer, mux), _| (peer, StreamMuxerBox::new(mux)));
+            return Ok(Swarm::new(
+                PublicTransport::loopback(tcp, self.budget.clone()).boxed(),
+                behaviour(&self.key),
+                self.key.public().to_peer_id(),
+                libp2p::swarm::Config::with_tokio_executor(),
+            ));
+        }
+        Self::new_swarm(&self.key, self.budget.clone())
     }
     fn new_swarm(
         key: &identity::Keypair,
@@ -225,7 +255,7 @@ impl Discovery {
         self.query = None;
         // Drop old sockets, queries and resolver configuration. Keep identity,
         // anti-replay tombstones and global dial budget across interface churn.
-        self.swarm = Self::new_swarm(&self.key, self.budget.clone())?;
+        self.swarm = self.replacement_swarm()?;
         self.published = false;
         self.publication = None;
         self.advertised.clear();
@@ -269,6 +299,9 @@ impl Discovery {
     pub fn tick(&mut self, unix: u64) {
         let now = Instant::now();
         self.cache.expire(unix, now);
+        if self.status == "verified-participant" && !self.cache.has_accepted() {
+            self.status = "no-verified-participant";
+        }
         self.pending.retain(|_, p| p.deadline > now);
         if now >= self.next_lookup && self.query.is_none() {
             self.attempted.clear();
@@ -396,7 +429,9 @@ impl Discovery {
                     }
                     if step.last {
                         self.query = None;
-                        self.status = if stats.num_successes() == 0 {
+                        self.status = if self.cache.has_accepted() {
+                            "verified-participant"
+                        } else if stats.num_successes() == 0 {
                             "entry-unreachable"
                         } else {
                             "no-verified-participant"

@@ -304,6 +304,9 @@ impl Cache {
     pub fn get(&self, peer: &PeerId) -> Option<&Accepted> {
         self.entries.get(peer)?.accepted.as_ref()
     }
+    pub fn has_accepted(&self) -> bool {
+        self.entries.values().any(|entry| entry.accepted.is_some())
+    }
     pub fn admit(
         &mut self,
         peer: PeerId,

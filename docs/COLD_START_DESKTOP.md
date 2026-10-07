@@ -38,7 +38,8 @@ An observed Identify address is only a candidate. The adapter can ask at most ei
 peers advertising the AutoNAT protocol to probe bounded native listen-port candidates.
 The application correlates a successful response with a recent authenticated,
 non-relayed native inbound connection from that exact server and matching transport
-port. Either event order is accepted within 30 seconds. A response alone, a wrong
+port. Either event order is accepted within 30 seconds. Only those individually witnessed endpoints can be published or signed in ads;
+other native external-address hints are excluded. A response alone, a wrong
 port/identity, an old generation or an expired witness cannot enable publication or
 relay. Conservative port matching can reject mappings that change external ports;
 this limitation must not be reported as proof that the host is unreachable.
@@ -94,7 +95,6 @@ public overlay and rotating consenting participants. Discovery alone cannot conn
 two fresh restrictive-CGNAT peers if no reachable compatible participant can provide
 a rendezvous/relay path. Public IPFS bootstrappers are not substitute Konofix relays.
 
-
 ## Additional review findings
 
 The locked libp2p-relay 0.22 checks the existing per-peer reservation/circuit count
@@ -111,3 +111,26 @@ and accepted underlying-transport dial calls. These contain no endpoint or user
 identity values. The original attempt JSON is unchanged: those counters were not
 available then, and no retrospective DNS/failure cause is invented. A dial call
 counter is not a completed socket, handshake, RPC or WAN proof.
+
+
+The desktop regression suite also runs an opt-in discovery session alongside an
+ordinary mDNS-only session, exchanges WORLD messages both directions and checks
+that local consent without a public witness cannot enable the relay. Its discovery
+transport is seedless and local-only under `cfg(test)`, including after recovery;
+this is not a physical LAN/WAN result. The normal Windows regression suite remains
+a required gate, alongside the shared Node/component tests.
+
+This draft includes the same unchanged-deadline CI ordering correction as #178;
+it must be reviewed and integrated after the prerequisite policy/runtime/CI PRs.
+
+
+## Protocol basis and limits of the public service
+
+The namespace-to-SHA256-multihash scheme follows libp2p's maintained
+[RoutingDiscovery implementation](https://github.com/libp2p/go-libp2p/blob/v0.49.0/p2p/discovery/routing/routing.go),
+which uses provider routing for service discovery. It does not establish an SLA or
+operator approval for a large rollout. The [Amino specification](https://specs.ipfs.tech/routing/kad-dht/)
+defines the wire protocol and record retention; [public utilities](https://docs.ipfs.tech/concepts/public-utilities/)
+are explicitly best effort. The listed bootstrap names are published by IPFS, but
+the failed local trial does not establish their reachability from this environment.
+No new dependency or third-party source copy is introduced by this experiment.

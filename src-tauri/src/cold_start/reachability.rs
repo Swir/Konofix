@@ -10,6 +10,7 @@ use std::{
 pub struct Witness {
     inbound: HashMap<PeerId, (Vec<(bool, u16)>, Instant)>,
     responses: HashMap<PeerId, (Multiaddr, Instant)>,
+    confirmed: HashMap<Multiaddr, Instant>,
 }
 fn port(address: &Multiaddr) -> Option<(bool, u16)> {
     let tcp = address.iter().find_map(|p| {
@@ -33,20 +34,38 @@ impl Witness {
     pub fn clear(&mut self) {
         self.inbound.clear();
         self.responses.clear();
+        self.confirmed.clear();
+    }
+    pub fn endpoints(&self, now: Instant) -> Vec<Multiaddr> {
+        let mut endpoints: Vec<_> = self
+            .confirmed
+            .iter()
+            .filter(|(_, until)| now < **until)
+            .map(|(address, _)| address.clone())
+            .collect();
+        endpoints.sort();
+        endpoints
     }
     fn expire(&mut self, now: Instant) {
+        self.confirmed.retain(|_, until| now < *until);
         self.inbound
             .retain(|_, (_, at)| now.duration_since(*at) < Duration::from_secs(30));
         self.responses
             .retain(|_, (_, at)| now.duration_since(*at) < Duration::from_secs(30));
     }
-    fn matched(&mut self, peer: PeerId) -> Option<Multiaddr> {
+    fn matched(&mut self, peer: PeerId, now: Instant) -> Option<Multiaddr> {
         let (address, _) = self.responses.get(&peer)?;
         let (ports, _) = self.inbound.get(&peer)?;
         if !ports.contains(&port(address)?) {
             return None;
         }
-        self.responses.remove(&peer).map(|(a, _)| a)
+        let (address, _) = self.responses.remove(&peer)?;
+        if self.confirmed.len() >= super::MAX_ENDPOINTS && !self.confirmed.contains_key(&address) {
+            return None;
+        }
+        self.confirmed
+            .insert(address.clone(), now + Duration::from_secs(300));
+        Some(address)
     }
     pub fn connection(
         &mut self,
@@ -82,7 +101,7 @@ impl Witness {
                 *at = now;
             }
         }
-        self.matched(peer)
+        self.matched(peer, now)
     }
     pub fn response(
         &mut self,
@@ -98,7 +117,7 @@ impl Witness {
         if self.responses.len() < 32 || self.responses.contains_key(&server) {
             self.responses.insert(server, (address, now));
         }
-        self.matched(server)
+        self.matched(server, now)
     }
 }
 #[cfg(test)]
@@ -121,8 +140,11 @@ mod tests {
         assert!(witness
             .connection(PeerId::random(), &incoming, now)
             .is_none());
-        assert!(witness.connection(server, &incoming, now).is_some());
+        let confirmed = witness.connection(server, &incoming, now).unwrap();
+        assert_eq!(witness.endpoints(now), vec![confirmed]);
+        assert!(witness.endpoints(now + Duration::from_secs(300)).is_empty());
         witness.clear();
+        assert!(witness.endpoints(now).is_empty());
         assert!(witness
             .response(
                 server,

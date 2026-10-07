@@ -2614,15 +2614,6 @@ struct DiscoveryOptions {
     relay_consent: bool,
 }
 
-fn public_native_endpoints(swarm: &libp2p::Swarm<Behaviour>) -> Vec<Multiaddr> {
-    swarm
-        .external_addresses()
-        .filter_map(|a| address_for_peer(a.clone(), *swarm.local_peer_id()))
-        .filter(|a| cold_start::public_endpoint(&a.to_string(), *swarm.local_peer_id()).is_some())
-        .take(4)
-        .collect()
-}
-
 async fn network_task(
     nick: String,
     nick_color: String,
@@ -2638,7 +2629,11 @@ async fn network_task(
     let mdns_enabled = true;
     let key = libp2p::identity::Keypair::generate_ed25519();
     let mut discovery = if discovery_options.public_discovery {
-        Some(cold_start::runtime::Discovery::new(key.clone())?)
+        #[cfg(not(test))]
+        let client = cold_start::runtime::Discovery::new(key.clone())?;
+        #[cfg(test)]
+        let client = cold_start::runtime::Discovery::isolated_for_test(key.clone())?;
+        Some(client)
     } else {
         None
     };
@@ -2909,7 +2904,7 @@ async fn network_task(
                 if let Some(client) = discovery.as_mut() {
                     client.native_listeners(swarm.listeners().chain(swarm.external_addresses()).cloned());
                     client.tick(now_ms() / 1000);
-                    client.publish(&public_native_endpoints(&swarm), participation.reachable(Instant::now()));
+                    client.publish(&reachability_witness.endpoints(Instant::now()), participation.reachable(Instant::now()));
                     for (remote, addresses) in &mut discovery_contacts {
                         if !client.contains(remote) {
                             for address in addresses.drain(..) {
@@ -3663,7 +3658,9 @@ async fn network_task(
                     }
                     connection_routes.established(connection_id, remote, &endpoint);
                     cached_dials.connected(remote);
-                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
+                    if discovery.is_none() {
+                        swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
+                    }
                     if mark_bootstrap_connected(&mut bootstrap_targets, &remote) {
                         let _ = swarm.behaviour_mut().kad.bootstrap();
                         let _ = swarm.behaviour_mut().kad.start_providing(world_provider_key());
@@ -3808,8 +3805,11 @@ async fn network_task(
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id: remote, info, .. })) => {
                     if discovery.is_some() && info.protocol_version != "/konofix/4.0" {
                         // Public DHT/AutoNAT infrastructure is not native room membership.
+                        swarm.behaviour_mut().gossipsub.remove_explicit_peer(&remote);
+                        let _ = swarm.disconnect_peer_id(remote);
                         continue;
                     }
+                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
                     let offers_relay = (!discovery_contacts.contains_key(&remote) || discovery_relay_claims.contains(&remote)) && info.protocol_version == "/konofix/4.0"
                         && info.protocols.iter().any(|protocol| protocol.as_ref() == "/libp2p/circuit/relay/0.2.0/hop");
                     for addr in info.listen_addrs {
@@ -3869,7 +3869,7 @@ async fn network_task(
                     emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "P2P address expired", &connection_routes);
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::ColdAds(request_response::Event::Message { peer, message: request_response::Message::Request { request, channel, .. }, .. })) => {
-                    let endpoints = public_native_endpoints(&swarm);
+                    let endpoints = reachability_witness.endpoints(Instant::now());
                     let response = ad_server.respond(peer, &request, &endpoints, participation.enabled(Instant::now()), now_ms() / 1000);
                     if let Some(ads) = swarm.behaviour_mut().cold_ads.as_mut() { let _ = ads.send_response(channel, response); }
                 }

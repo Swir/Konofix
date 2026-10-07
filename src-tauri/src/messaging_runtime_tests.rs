@@ -170,6 +170,25 @@ impl TestPeer {
         downloads: PathBuf,
         mdns_enabled: bool,
     ) -> Self {
+        Self::start_with_options(
+            nick,
+            color,
+            bootstraps,
+            downloads,
+            mdns_enabled,
+            DiscoveryOptions::default(),
+        )
+        .await
+    }
+
+    async fn start_with_options(
+        nick: &str,
+        color: &str,
+        bootstraps: Vec<String>,
+        downloads: PathBuf,
+        mdns_enabled: bool,
+        options: DiscoveryOptions,
+    ) -> Self {
         let color = normalize_nick_color(Some(color));
         let previews = downloads.with_file_name(format!(
             "{}-previews",
@@ -185,7 +204,7 @@ impl TestPeer {
             nick.into(),
             color.clone(),
             bootstraps,
-            DiscoveryOptions::default(),
+            options,
             TestRuntime {
                 events: events_tx,
                 downloads,
@@ -571,6 +590,9 @@ async fn mdns_only_application_loops_discover_and_chat_without_configuration() {
     alice.event("peer-online", |v| v["peer_id"] == bob.id).await;
     bob.event("peer-online", |v| v["peer_id"] == alice.id).await;
     for peer in [&mut alice, &mut bob] {
+        let discovery = peer.event("network-discovery", |_| true).await;
+        assert_eq!(discovery["phase"], "off");
+        assert_eq!(discovery["relay_enabled"], false);
         let status = peer
             .event("network-status", |v| {
                 v["connected_peers"].as_u64().unwrap_or(0) > 0
@@ -1155,4 +1177,55 @@ async fn rooms2_counts_converge_across_many_application_loops_and_disconnects() 
         .unwrap()
         .unwrap()
         .unwrap();
+}
+
+// Production desktop loops with the public adapter enabled but a seedless local
+// test transport. No public DNS/socket traffic and no physical LAN/WAN claim.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn optional_cold_start_preserves_mdns_world_and_cannot_enable_private_relay() {
+    let _runtime_test_guard = messaging_runtime_test_lock().lock().await;
+    let files = TestDirectory::new();
+    let mut alice = TestPeer::start_with_options(
+        "cold-lan-alice",
+        DEFAULT_NICK_COLOR,
+        vec![],
+        files.0.join("alice"),
+        true,
+        DiscoveryOptions {
+            public_discovery: true,
+            relay_consent: true,
+        },
+    )
+    .await;
+    let mut bob = TestPeer::start("cold-lan-bob", vec![], files.0.join("bob")).await;
+    alice.event("peer-online", |v| v["peer_id"] == bob.id).await;
+    bob.event("peer-online", |v| v["peer_id"] == alice.id).await;
+    let discovery = alice
+        .event("network-discovery", |v| v["phase"] != "off")
+        .await;
+    assert_eq!(discovery["relay_enabled"], false);
+    assert_eq!(discovery["public_reachability"], false);
+    chat(
+        &alice,
+        &mut bob,
+        "world",
+        "Opt-in discovery keeps LAN Alice to Bob",
+    )
+    .await;
+    chat(
+        &bob,
+        &mut alice,
+        "world",
+        "Default LAN meets opt-in discovery Bob to Alice",
+    )
+    .await;
+    alice.commands.send(NetworkCommand::Stop).await.unwrap();
+    bob.commands.send(NetworkCommand::Stop).await.unwrap();
+    for task in [&mut alice.task, &mut bob.task] {
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
 }

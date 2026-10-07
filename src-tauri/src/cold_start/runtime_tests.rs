@@ -75,6 +75,16 @@ async fn real_provider_lookup_authenticates_request_before_native_handoff() {
         let candidate = native_handoff.unwrap();
         assert_eq!(candidate.peer, peer); assert_eq!(candidate.endpoints.len(), 1); assert!(!candidate.relay_opt_in);
         assert!(client.contains(&peer)); assert!(client.pending.is_empty());
+        assert_eq!(client.status, "verified-participant");
+        // A completed lookup must not erase the status of an admitted response.
+        while client.query.is_some() {
+            tokio::select! {
+                _ = seed.select_next_some() => {},
+                _ = publisher.select_next_some() => {},
+                _ = client.next() => {},
+            }
+        }
+        assert_eq!(client.status, "verified-participant");
         let before = *client.swarm.local_peer_id();
         client.network_changed().unwrap();
         assert_eq!(*client.swarm.local_peer_id(), before);
@@ -238,4 +248,22 @@ async fn native_probe_bridge_needs_inbound_evidence_and_discards_old_interface_p
     assert!(client.probe_candidates.is_empty());
     assert!(client.probe_servers.is_empty());
     // This test does not poll any swarm; its literals are never dialed.
+}
+
+#[tokio::test]
+async fn isolated_desktop_fixture_never_restores_public_seeds_on_network_change() {
+    let mut client = Discovery::isolated_for_test(identity::Keypair::generate_ed25519()).unwrap();
+    assert_eq!(client.swarm.behaviour_mut().kad.kbuckets().count(), 0);
+    client.network_changed().unwrap();
+    assert_eq!(client.swarm.behaviour_mut().kad.kbuckets().count(), 0);
+    client.tick(1000);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while client.query.is_some() {
+            client.next().await;
+        }
+    })
+    .await
+    .expect("seedless query should complete without a network dial");
+    assert_eq!(client.budget.snapshot()["accepted_transport_dials"], 0);
+    assert_eq!(client.budget.snapshot()["dns_candidates"], 0);
 }

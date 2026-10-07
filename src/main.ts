@@ -886,7 +886,10 @@ async function wireEvents() {
     if (state.connected) renderChat();
   });
   await listen<typeof discoveryStatus & { peer_id: string }>('network-discovery', event => {
-    if (state.connected && event.payload.peer_id === state.peerId) discoveryStatus = event.payload;
+    if (state.connected && event.payload.peer_id === state.peerId) {
+      discoveryStatus = event.payload;
+      renderChat();
+    }
   });
   await listen<NetworkStatus>('network-status', event => {
     state.status = event.payload;

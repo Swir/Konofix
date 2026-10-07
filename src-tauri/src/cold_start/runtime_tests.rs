@@ -55,7 +55,7 @@ async fn read_only_lookup_does_not_send_background_bootstrap_rpcs() {
         tokio::pin!(observation);
         loop {
             tokio::select! {
-                _ = &mut observation => break,
+                _ = &mut observation, if completed => break,
                 event = seed.select_next_some() => {
                     if let SwarmEvent::Behaviour(DiscoveryBehaviourEvent::Kad(kad::Event::InboundRequest { request })) = event {
                         match request {
@@ -68,6 +68,7 @@ async fn read_only_lookup_does_not_send_background_bootstrap_rpcs() {
                     if let SwarmEvent::Behaviour(DiscoveryBehaviourEvent::Kad(kad::Event::OutboundQueryProgressed { id, result, step, .. })) = event {
                         if id == query && step.last {
                             assert!(matches!(result, kad::QueryResult::GetProviders(Ok(_))));
+                            observation.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(1200));
                             completed = true;
                         }
                     }
@@ -75,6 +76,7 @@ async fn read_only_lookup_does_not_send_background_bootstrap_rpcs() {
             }
         }
         assert!(completed, "local GET_PROVIDERS must actually succeed");
+        assert_eq!(client.behaviour_mut().kad.kbuckets().count(), 0);
         assert_eq!(reads, 1);
         assert_eq!(other_rpcs, 0, "read-only lookup sent unsolicited Kademlia RPCs");
     }).await.expect("local RPC accounting exceeded 5 seconds");

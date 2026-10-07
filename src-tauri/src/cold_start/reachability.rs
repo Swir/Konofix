@@ -12,7 +12,7 @@ pub struct Witness {
     responses: HashMap<PeerId, (Multiaddr, Instant)>,
     confirmed: HashMap<Multiaddr, Instant>,
 }
-fn port(address: &Multiaddr) -> Option<(bool, u16)> {
+pub(super) fn port(address: &Multiaddr) -> Option<(bool, u16)> {
     let tcp = address.iter().find_map(|p| {
         if let Protocol::Tcp(port) = p {
             Some((false, port))

@@ -36,6 +36,8 @@ WORLD retains public signed GossipSub semantics, not private recipient-only E2E.
 
 An observed Identify address is only a candidate. The adapter can ask at most eight
 peers advertising the AutoNAT protocol to probe bounded native listen-port candidates.
+The four-port bound applies after deduplicating transport/port pairs, so repeated
+TCP interface addresses cannot crowd out the native QUIC port on a multihomed PC.
 The application correlates a successful response with a recent authenticated,
 non-relayed native inbound connection from that exact server and matching transport
 port. Either event order is accepted within 30 seconds. Only those individually witnessed endpoints can be published or signed in ads;

@@ -270,7 +270,16 @@ impl Discovery {
         Ok(())
     }
     pub fn native_listeners(&mut self, addresses: impl Iterator<Item = Multiaddr>) {
-        self.native_ports = addresses.filter(|a| !is_circuit(a)).take(4).collect();
+        // Wildcard listeners yield one address per interface. Bound distinct
+        // transport/port pairs so duplicate TCP interfaces cannot crowd out QUIC.
+        let mut ports = HashSet::new();
+        self.native_ports = addresses
+            .filter(|a| !is_circuit(a))
+            .filter(|a| {
+                super::reachability::port(a).is_some_and(|port| port.1 != 0 && ports.insert(port))
+            })
+            .take(4)
+            .collect();
         self.refresh_probe_candidates();
     }
     fn refresh_probe_candidates(&mut self) {

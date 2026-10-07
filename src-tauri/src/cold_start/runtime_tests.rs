@@ -225,7 +225,7 @@ async fn native_probe_bridge_needs_inbound_evidence_and_discards_old_interface_p
         "/ip4/127.0.0.1/tcp/45555".parse().unwrap(),
         12,
     ));
-    assert_eq!(client.native_ports.len(), 4);
+    assert_eq!(client.native_ports.len(), 1);
     assert_eq!(client.probe_candidates.len(), 1);
     let local = *client.swarm.local_peer_id();
     let server = PeerId::random();
@@ -248,6 +248,42 @@ async fn native_probe_bridge_needs_inbound_evidence_and_discards_old_interface_p
     assert!(client.probe_candidates.is_empty());
     assert!(client.probe_servers.is_empty());
     // This test does not poll any swarm; its literals are never dialed.
+}
+
+#[tokio::test]
+async fn repeated_interface_addresses_cannot_starve_quic_reachability_candidates() {
+    let mut client = Discovery::isolated_for_test(identity::Keypair::generate_ed25519()).unwrap();
+    // Syntax fixtures only: this test never polls a swarm or dials these hosts.
+    client.observed_hosts.push("/ip4/8.8.8.8".parse().unwrap());
+    let tcp_interfaces = (1..=12).map(|last| {
+        format!("/ip4/192.168.1.{last}/tcp/45555")
+            .parse::<Multiaddr>()
+            .unwrap()
+    });
+    let quic: Multiaddr = "/ip4/192.168.1.1/udp/45555/quic-v1".parse().unwrap();
+    client.native_listeners(tcp_interfaces.chain(std::iter::once(quic)));
+    let local = client.swarm.local_peer_id();
+    assert!(
+        client.probe_candidates.contains(
+            &format!("/ip4/8.8.8.8/udp/45555/quic-v1/p2p/{local}")
+                .parse()
+                .unwrap()
+        ),
+        "repeated TCP interfaces must not consume the QUIC probe slot"
+    );
+    assert_eq!(client.native_ports.len(), 2);
+    assert_eq!(client.probe_candidates.len(), 2);
+
+    client.network_changed().unwrap();
+    assert!(client.probe_candidates.is_empty());
+    client.native_listeners(
+        (45000..45012).map(|port| format!("/ip4/192.168.1.1/tcp/{port}").parse().unwrap()),
+    );
+    assert_eq!(
+        client.native_ports.len(),
+        4,
+        "distinct-port cap remains unchanged"
+    );
 }
 
 #[tokio::test]

@@ -101,6 +101,10 @@ try {
   cargo test --locked --manifest-path src-tauri/Cargo.toml --test runtime_cancel
   if ($LASTEXITCODE -ne 0) { throw "Timer cancellation regression failed with exit code $LASTEXITCODE." }
 
+  Write-Host 'Opt-in loopback Amino discovery POC...' -ForegroundColor Yellow
+  cargo test --locked --manifest-path src-tauri/Cargo.toml --features experimental-amino-discovery --test amino_discovery_poc
+  if ($LASTEXITCODE -ne 0) { throw "Amino discovery POC failed with exit code $LASTEXITCODE." }
+
   Write-Host 'Rust all-target tests...' -ForegroundColor Yellow
   cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
   if ($LASTEXITCODE -ne 0) { throw "cargo test --locked failed with exit code $LASTEXITCODE." }

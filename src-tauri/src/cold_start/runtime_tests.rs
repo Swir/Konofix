@@ -37,26 +37,76 @@ async fn listen(swarm: &mut Swarm<DiscoveryBehaviour>) -> Multiaddr {
 }
 
 #[tokio::test]
+async fn read_only_lookup_does_not_send_background_bootstrap_rpcs() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut seed = local_swarm(&identity::Keypair::generate_ed25519(), true);
+        let seed_id = *seed.local_peer_id();
+        let seed_addr = listen(&mut seed).await;
+        let mut client = local_swarm(&identity::Keypair::generate_ed25519(), false);
+        let query = seeded_query(&mut client, &[(seed_id, seed_addr)], |kad| {
+            kad.get_providers(provider_key("local/read-only-budget"))
+        });
+        let mut reads = 0;
+        let mut other_rpcs = 0;
+        let mut completed = false;
+        // libp2p's insertion-triggered bootstrap waits 500ms. Keep polling after
+        // the lookup finishes so a successful fast query cannot hide it.
+        let observation = tokio::time::sleep(Duration::from_millis(1200));
+        tokio::pin!(observation);
+        loop {
+            tokio::select! {
+                _ = &mut observation => break,
+                event = seed.select_next_some() => {
+                    if let SwarmEvent::Behaviour(DiscoveryBehaviourEvent::Kad(kad::Event::InboundRequest { request })) = event {
+                        match request {
+                            kad::InboundRequest::GetProvider { .. } => reads += 1,
+                            _ => other_rpcs += 1,
+                        }
+                    }
+                }
+                event = client.select_next_some() => {
+                    if let SwarmEvent::Behaviour(DiscoveryBehaviourEvent::Kad(kad::Event::OutboundQueryProgressed { id, result, step, .. })) = event {
+                        if id == query && step.last {
+                            assert!(matches!(result, kad::QueryResult::GetProviders(Ok(_))));
+                            completed = true;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(completed, "local GET_PROVIDERS must actually succeed");
+        assert_eq!(reads, 1);
+        assert_eq!(other_rpcs, 0, "read-only lookup sent unsolicited Kademlia RPCs");
+    }).await.expect("local RPC accounting exceeded 5 seconds");
+}
+
+#[tokio::test]
 async fn real_provider_lookup_authenticates_request_before_native_handoff() {
     tokio::time::timeout(Duration::from_secs(20), async {
         let key = identity::Keypair::generate_ed25519();
         let peer = key.public().to_peer_id();
         let mut publisher = local_swarm(&key, false);
         let mut seed = local_swarm(&identity::Keypair::generate_ed25519(), true);
+        let mut routing_peer = local_swarm(&identity::Keypair::generate_ed25519(), true);
         let mut client = Discovery::new(identity::Keypair::generate_ed25519()).unwrap();
         // Replace all production seeds before polling: no public DNS/socket activity.
         client.swarm = local_swarm(&client.key, false);
         let seed_id = *seed.local_peer_id(); let seed_addr = listen(&mut seed).await;
+        let routing_id = *routing_peer.local_peer_id(); let routing_addr = listen(&mut routing_peer).await;
+        // The entry point has no provider record. Its closer-peer response must
+        // lead to a second DHT server using query-local addresses, despite the
+        // isolated client's intentionally empty persistent routing table.
+        seed.behaviour_mut().kad.add_address(&routing_id, routing_addr.clone());
         let publisher_addr = listen(&mut publisher).await;
         publisher.add_external_address(publisher_addr);
-        publisher.behaviour_mut().kad.add_address(&seed_id, seed_addr.clone());
-        client.swarm.behaviour_mut().kad.add_address(&seed_id, seed_addr);
-        let publish = publisher.behaviour_mut().kad.start_providing(provider_key(WORLD_NAMESPACE)).unwrap();
+        client.seeds = vec![(seed_id, seed_addr)];
+        let publish = seeded_query(&mut publisher, &[(routing_id, routing_addr)], |kad| kad.start_providing(provider_key(WORLD_NAMESPACE))).unwrap();
         let mut stored = false; let mut published = false; let mut started = false;
         let mut native_handoff = None;
         while native_handoff.is_none() {
             tokio::select! {
-                event = seed.select_next_some() => {
+                _ = seed.select_next_some() => {},
+                event = routing_peer.select_next_some() => {
                     if matches!(event, SwarmEvent::Behaviour(DiscoveryBehaviourEvent::Kad(kad::Event::InboundRequest { request: kad::InboundRequest::AddProvider {..}, .. }))) { stored = true; }
                 }
                 event = publisher.select_next_some() => match event {
@@ -75,11 +125,13 @@ async fn real_provider_lookup_authenticates_request_before_native_handoff() {
         let candidate = native_handoff.unwrap();
         assert_eq!(candidate.peer, peer); assert_eq!(candidate.endpoints.len(), 1); assert!(!candidate.relay_opt_in);
         assert!(client.contains(&peer)); assert!(client.pending.is_empty());
+        assert_eq!(client.swarm.behaviour_mut().kad.kbuckets().count(), 0);
         assert_eq!(client.status, "verified-participant");
         // A completed lookup must not erase the status of an admitted response.
         while client.query.is_some() {
             tokio::select! {
                 _ = seed.select_next_some() => {},
+                _ = routing_peer.select_next_some() => {},
                 _ = publisher.select_next_some() => {},
                 _ = client.next() => {},
             }
@@ -152,19 +204,25 @@ async fn public_amino_read_only_once() {
     let key = identity::Keypair::generate_ed25519();
     let budget = DialBudget::new();
     let mut swarm = Discovery::new_swarm(&key, budget.clone()).unwrap();
-    let query = swarm
-        .behaviour_mut()
-        .kad
-        .get_providers(provider_key(&namespace));
+    let query = seeded_query(&mut swarm, &seed_addresses().unwrap(), |kad| {
+        kad.get_providers(provider_key(&namespace))
+    });
     let begin = Instant::now();
     let mut connections = 0u32;
     let mut errors = 0u32;
     let mut successes = 0u32;
     let mut requests = 0u32;
     let mut completed = false;
+    let mut unexpected_queries = HashSet::new();
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
-            match swarm.select_next_some().await {
+            let event = swarm.select_next_some().await;
+            for active in swarm.behaviour().kad.iter_queries() {
+                if active.id() != query {
+                    unexpected_queries.insert(active.id());
+                }
+            }
+            match event {
                 SwarmEvent::ConnectionEstablished { .. } => connections += 1,
                 SwarmEvent::OutgoingConnectionError { .. } => errors += 1,
                 SwarmEvent::Behaviour(DiscoveryBehaviourEvent::Kad(
@@ -175,7 +233,11 @@ async fn public_amino_read_only_once() {
                         step,
                         ..
                     },
-                )) if id == query => {
+                )) => {
+                    if id != query {
+                        unexpected_queries.insert(id);
+                        break;
+                    }
                     successes = stats.num_successes();
                     requests = stats.num_requests();
                     if step.last {
@@ -185,17 +247,25 @@ async fn public_amino_read_only_once() {
                 }
                 _ => {}
             }
+            if !unexpected_queries.is_empty() {
+                break;
+            }
         }
     })
     .await;
     drop(swarm);
-    let interoperable = result.is_ok() && completed && successes > 0 && connections > 0;
+    let interoperable = result.is_ok()
+        && completed
+        && successes > 0
+        && connections > 0
+        && unexpected_queries.is_empty();
     let report = serde_json::json!({
-        "schema": 1, "kind": "konofix-amino-read-only-interop", "source_commit": env!("KONOFIX_SOURCE_COMMIT"),
+        "schema": 2, "kind": "konofix-amino-read-only-interop", "source_commit": env!("KONOFIX_SOURCE_COMMIT"),
         "started_unix": started, "elapsed_ms": begin.elapsed().as_millis(), "namespace": namespace,
         "outcome": if interoperable { "RPC_INTEROPERABILITY_PASS" } else { "NO_COMPLETED_INTEROPERABILITY_PROOF" },
         "authenticated_connections": connections, "outgoing_errors": errors,
         "query_requests": requests, "query_successes": successes, "query_completed": completed,
+        "unexpected_queries": unexpected_queries.len(),
         "deadline_exceeded": result.is_err(), "provider_writes": 0, "value_writes": 0,
         "transport_stages": budget.snapshot(),
         "remote_ttl": "none requested: read-only", "chat_messages": 0, "physical_wan_acceptance": "NOT_EVALUATED",

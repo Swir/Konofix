@@ -7,6 +7,8 @@ authenticated connection or successful RPC. Its complete, non-overwritten record
 is [attempt 1](evidence/amino/amino-public-20261007-attempt1.json), SHA-256
 `b5205b394c900351a1fbf8854dabb010b7e94854fef7e5b696c8073a15253670`.
 The trace cannot distinguish pending DNS, dial or network-access failure.
+Its schema-1 counter also cannot account for insertion-triggered bootstrap queries;
+see the preserved-evidence correction in [AMINO_MANUAL_INTEROP.md](AMINO_MANUAL_INTEROP.md).
 No public interoperability PASS or qualified new Windows handoff is asserted.
 
 ## Session choices

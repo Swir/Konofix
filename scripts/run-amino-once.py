@@ -52,7 +52,7 @@ def executable(messages, root):
 
 def validate_report(report, sha):
     for key, value in {
-        "schema": 1, "kind": "konofix-amino-read-only-interop", "source_commit": sha,
+        "schema": 2, "kind": "konofix-amino-read-only-interop", "source_commit": sha,
         "provider_writes": 0, "value_writes": 0, "chat_messages": 0,
         "physical_wan_acceptance": "NOT_EVALUATED",
         "remote_ttl": "none requested: read-only",
@@ -68,7 +68,7 @@ def validate_report(report, sha):
     require(parsed.version == 4 and str(parsed) == suffix, "Namespace must use a fresh-format UUIDv4")
     for field in ["schema", "provider_writes", "value_writes", "chat_messages",
                   "authenticated_connections", "outgoing_errors", "query_requests",
-                  "query_successes", "elapsed_ms", "started_unix"]:
+                  "query_successes", "elapsed_ms", "started_unix", "unexpected_queries"]:
         require(type(report.get(field)) is int and report[field] >= 0, f"Invalid counter: {field}")
     for field in ["query_completed", "deadline_exceeded"]:
         require(type(report.get(field)) is bool, f"Invalid flag: {field}")
@@ -81,7 +81,8 @@ def validate_report(report, sha):
     require(report.get("outcome") in ["RPC_INTEROPERABILITY_PASS", "NO_COMPLETED_INTEROPERABILITY_PROOF"],
             "Unknown RPC outcome")
     passed = (report["authenticated_connections"] > 0 and report["query_successes"] > 0
-              and report["query_completed"] and not report["deadline_exceeded"])
+              and report["query_completed"] and not report["deadline_exceeded"]
+              and report["unexpected_queries"] == 0)
     require((report["outcome"] == "RPC_INTEROPERABILITY_PASS") == passed, "Contradictory RPC outcome")
     return passed
 

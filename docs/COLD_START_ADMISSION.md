@@ -65,6 +65,16 @@ DNS multiaddresses may enter DNS resolution. DHT-supplied DNS names are rejected
 These bootstrap names are best-effort community utilities, not three independently
 operated Konofix relays or a production availability guarantee.
 
+The isolated client uses manual routing-table insertion. Each explicitly scheduled
+lookup/publication snapshots the three pinned entry peers into the iterative query
+and removes them from the routing table before polling. Query-local closer-peer
+addresses continue the traversal; the bounded address cache resolves the seed dials.
+The empty table prevents libp2p-kad 0.49's insertion-triggered bootstrap, which is
+**not** disabled by `set_periodic_bootstrap_interval(None)`. Native chat Kademlia
+keeps its existing routing/bootstrap behaviour. This conservative client policy
+re-enters through the pinned seeds each lookup; it does not provide an independent
+bootstrap availability guarantee.
+
 Network changes discard the adapter's sockets, queries, pending challenges and
 resolver configuration. The native identity, replay tombstones and dial budget
 survive; old-generation responses cannot return a contact. Provider publication
@@ -73,11 +83,14 @@ endpoints, with a five-minute retry/change budget and a 22-hour normal refresh.
 Losing reachability removes local advertisements; it cannot erase remote caches.
 A signed ad is generated on demand and expires independently after five minutes.
 
-Local tests use three real TCP/Noise swarms and a loopback-only test transport.
-They verify DHT discovery followed by the production request/response decoder,
+Local tests use four real TCP/Noise swarms and a loopback-only test transport.
+They verify iterative discovery through a second DHT peer followed by the production request/response decoder,
 challenge/signature admission and generation invalidation. Claimed public endpoint
 literals in these tests are syntax fixtures and are never dialed. No local test
 contacts the public bootstrap list.
+An additional two-swarm regression counts actual received Kademlia requests and
+keeps polling past the 500ms insertion-bootstrap timer: one provider read, no
+unsolicited FIND_NODE or writes. It failed on the previous implementation.
 
 A manually ignored `public_amino_read_only_once` test is available for one explicitly
 authorized interoperability trial. It reserves a new evidence file before traffic,

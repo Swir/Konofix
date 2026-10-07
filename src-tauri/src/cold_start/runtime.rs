@@ -64,6 +64,7 @@ fn behaviour(key: &identity::Keypair) -> DiscoveryBehaviour {
         .set_query_timeout(Duration::from_secs(15))
         .set_parallelism(NonZeroUsize::new(2).unwrap())
         .set_periodic_bootstrap_interval(None)
+        .set_kbucket_inserts(kad::BucketInserts::Manual)
         .set_provider_publication_interval(None)
         .set_publication_interval(None)
         .set_replication_interval(None);
@@ -104,6 +105,44 @@ fn behaviour(key: &identity::Keypair) -> DiscoveryBehaviour {
                 .with_max_pending_incoming(Some(0)),
         ),
     }
+}
+
+fn seed_addresses() -> Result<Vec<(PeerId, Multiaddr)>, String> {
+    SEEDS
+        .iter()
+        .map(|raw| {
+            let address: Multiaddr = raw
+                .parse()
+                .map_err(|e| format!("Invalid pinned bootstrap: {e}"))?;
+            let Some(libp2p::multiaddr::Protocol::P2p(peer)) = address.iter().last() else {
+                return Err("Pinned bootstrap lacks a PeerID".into());
+            };
+            Ok((peer, address))
+        })
+        .collect()
+}
+
+/// Kad 0.49 starts insertion-triggered bootstrap even with periodic bootstrap
+/// disabled. Seed only the explicit query, then empty its routing table BEFORE
+/// polling. Manual insertion prevents connected peers from repopulating it.
+/// Query-local closer-peer addresses still support the normal iterative lookup;
+/// seed addresses are supplied by the bounded request/response address cache.
+/// This policy applies only to the isolated client, never the native chat DHT.
+fn seeded_query<T>(
+    swarm: &mut Swarm<DiscoveryBehaviour>,
+    seeds: &[(PeerId, Multiaddr)],
+    start: impl FnOnce(&mut kad::Behaviour<MemoryStore>) -> T,
+) -> T {
+    debug_assert_eq!(swarm.behaviour_mut().kad.kbuckets().count(), 0);
+    for (peer, address) in seeds {
+        swarm.add_peer_address(*peer, address.clone());
+        swarm.behaviour_mut().kad.add_address(peer, address.clone());
+    }
+    let query = start(&mut swarm.behaviour_mut().kad);
+    for (peer, _) in seeds {
+        swarm.behaviour_mut().kad.remove_peer(peer);
+    }
+    query
 }
 
 fn transport(
@@ -150,6 +189,7 @@ pub struct Candidate {
 
 pub struct Discovery {
     swarm: Swarm<DiscoveryBehaviour>,
+    seeds: Vec<(PeerId, Multiaddr)>,
     key: identity::Keypair,
     budget: DialBudget,
     cache: Cache,
@@ -177,6 +217,7 @@ impl Discovery {
         let now = Instant::now();
         Ok(Self {
             swarm,
+            seeds: seed_addresses()?,
             key,
             budget,
             cache: Cache::new(),
@@ -204,6 +245,7 @@ impl Discovery {
     pub fn isolated_for_test(key: identity::Keypair) -> Result<Self, String> {
         let mut client = Self::new(key)?;
         client.isolated_test = true;
+        client.seeds.clear();
         client.swarm = client.replacement_swarm()?;
         Ok(client)
     }
@@ -228,24 +270,13 @@ impl Discovery {
         key: &identity::Keypair,
         budget: DialBudget,
     ) -> Result<Swarm<DiscoveryBehaviour>, String> {
-        let mut swarm = Swarm::new(
+        let swarm = Swarm::new(
             transport(key, budget)?,
             behaviour(key),
             key.public().to_peer_id(),
             libp2p::swarm::Config::with_tokio_executor()
                 .with_idle_connection_timeout(Duration::from_secs(15)),
         );
-        for raw in SEEDS {
-            let address: Multiaddr = raw
-                .parse()
-                .map_err(|e| format!("Invalid pinned bootstrap: {e}"))?;
-            if let Some(libp2p::multiaddr::Protocol::P2p(peer)) = address.iter().last() {
-                swarm
-                    .behaviour_mut()
-                    .kad
-                    .add_address(&peer, address.clone());
-            }
-        }
         Ok(swarm)
     }
     pub fn network_changed(&mut self) -> Result<(), String> {
@@ -316,12 +347,9 @@ impl Discovery {
         self.pending.retain(|_, p| p.deadline > now);
         if now >= self.next_lookup && self.query.is_none() {
             self.attempted.clear();
-            self.query = Some(
-                self.swarm
-                    .behaviour_mut()
-                    .kad
-                    .get_providers(provider_key(WORLD_NAMESPACE)),
-            );
+            self.query = Some(seeded_query(&mut self.swarm, &self.seeds, |kad| {
+                kad.get_providers(provider_key(WORLD_NAMESPACE))
+            }));
             self.next_lookup = now + Duration::from_secs(300);
             self.status = "searching";
         }
@@ -370,12 +398,9 @@ impl Discovery {
             return;
         }
         self.retry_publish = now + Duration::from_secs(300);
-        if let Ok(id) = self
-            .swarm
-            .behaviour_mut()
-            .kad
-            .start_providing(provider_key(WORLD_NAMESPACE))
-        {
+        if let Ok(id) = seeded_query(&mut self.swarm, &self.seeds, |kad| {
+            kad.start_providing(provider_key(WORLD_NAMESPACE))
+        }) {
             self.publication = Some(id);
         }
     }

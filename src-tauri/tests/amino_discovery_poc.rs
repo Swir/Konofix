@@ -167,6 +167,12 @@ fn signed_advertisements_reject_tampering_expiry_and_identity_substitution() {
         .public()
         .encode_protobuf();
     assert!(!forged.verify(peer, 1000));
+    forged = ad.clone();
+    forged.signature = key.sign(b"another application domain").unwrap();
+    assert!(!forged.verify(peer, 1000));
+    forged = ad.clone();
+    forged.public_key = vec![0; 65];
+    assert!(!forged.verify(peer, 1000));
     forged = ad;
     forged.signature.truncate(63);
     assert!(!forged.verify(peer, 1000));
@@ -213,21 +219,26 @@ async fn loopback_provider_discovery_then_authenticated_signed_advertisement() {
             .start_providing(key.clone())
             .unwrap();
         let mut lookup_started = false;
+        let mut published = false;
+        let mut stored = false;
         let mut requested = None;
         let mut authenticated = false;
         loop {
             tokio::select! {
-                _ = seed.select_next_some() => {}
+                event = seed.select_next_some() => {
+                    if let SwarmEvent::Behaviour(PocEvent::Kad(kad::Event::InboundRequest {
+                        request: kad::InboundRequest::AddProvider { .. },
+                    })) = event {
+                        stored = true;
+                    }
+                }
                 event = publisher.select_next_some() => {
                     match event {
                         SwarmEvent::Behaviour(PocEvent::Kad(kad::Event::OutboundQueryProgressed {
                             id, result: kad::QueryResult::StartProviding(result), ..
                         })) if id == publish => {
                             result.expect("provider announcement must succeed");
-                            if !lookup_started {
-                                seeker.behaviour_mut().kad.get_providers(key.clone());
-                                lookup_started = true;
-                            }
+                            published = true;
                         }
                         SwarmEvent::Behaviour(PocEvent::Ads(request_response::Event::Message {
                             message: request_response::Message::Request { channel, .. }, ..
@@ -271,6 +282,12 @@ async fn loopback_provider_discovery_then_authenticated_signed_advertisement() {
                         _ => {}
                     }
                 }
+            }
+            // ADD_PROVIDER is one-way: local send completion alone is not a
+            // barrier proving that the remote fixture has stored the record.
+            if published && stored && !lookup_started {
+                seeker.behaviour_mut().kad.get_providers(key.clone());
+                lookup_started = true;
             }
         }
     })

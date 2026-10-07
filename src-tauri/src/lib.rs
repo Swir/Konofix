@@ -2853,13 +2853,13 @@ async fn network_task(
     );
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(10));
-    let mut discovery = tokio::time::interval(Duration::from_secs(25));
+    let mut native_discovery = tokio::time::interval(Duration::from_secs(25));
     let mut bootstrap_retry = tokio::time::interval(Duration::from_secs(BOOTSTRAP_RETRY_TICK_SECS));
     let mut cleanup = tokio::time::interval(Duration::from_secs(8));
     let mut cached_retry = tokio::time::interval(Duration::from_secs(1));
     cached_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    discovery.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    native_discovery.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     bootstrap_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     bootstrap_retry.tick().await;
@@ -2880,7 +2880,18 @@ async fn network_task(
                 match result {
                     Some(cold_start::runtime::Event::Candidate(candidate)) => {
                         if discovery_contacts.len() < cold_start::MAX_CACHE || discovery_contacts.contains_key(&candidate.peer) {
+                            if let Some(previous) = discovery_contacts.get(&candidate.peer) {
+                                for address in previous {
+                                    swarm.behaviour_mut().kad.remove_address(&candidate.peer, address);
+                                    swarm.behaviour_mut().file_transfer.remove_address(&candidate.peer, address);
+                                    swarm.behaviour_mut().secure_control.remove_address(&candidate.peer, address);
+                                }
+                            }
+                            cached_dials.connected(candidate.peer);
                             cached_dials.enqueue(candidate.peer, candidate.endpoints.clone(), Instant::now());
+                            if !candidate.relay_opt_in {
+                                if let Some(listener) = participant_relays.remove(&candidate.peer) { swarm.remove_listener(listener); }
+                            }
                             if candidate.relay_opt_in { discovery_relay_claims.insert(candidate.peer); } else { discovery_relay_claims.remove(&candidate.peer); }
                             discovery_contacts.insert(candidate.peer, candidate.endpoints);
                         }
@@ -2907,6 +2918,7 @@ async fn network_task(
                                 swarm.behaviour_mut().secure_control.remove_address(remote, &address);
                             }
                             discovery_relay_claims.remove(remote);
+                            if let Some(listener) = participant_relays.remove(remote) { swarm.remove_listener(listener); }
                             cached_dials.connected(*remote);
                         }
                     }
@@ -2922,6 +2934,16 @@ async fn network_task(
                 cached_dials.drive(&mut swarm, Instant::now(), register_cached_address);
                 if let Some(generation) = network_recovery.take_due(Instant::now()) {
                     reachability_witness.clear(); participation.invalidate();
+                    for (remote, addresses) in &mut discovery_contacts {
+                        for address in addresses.drain(..) {
+                            swarm.behaviour_mut().kad.remove_address(remote, &address);
+                            swarm.behaviour_mut().file_transfer.remove_address(remote, &address);
+                            swarm.behaviour_mut().secure_control.remove_address(remote, &address);
+                        }
+                        cached_dials.connected(*remote);
+                        if let Some(listener) = participant_relays.remove(remote) { swarm.remove_listener(listener); }
+                    }
+                    discovery_relay_claims.clear();
                     for peer in participation.update(&mut swarm.behaviour_mut().relay_server, Instant::now()) { let _ = swarm.disconnect_peer_id(peer); }
                     if let Some(client) = discovery.as_mut() {
                         if let Err(error) = client.network_changed() {
@@ -2987,7 +3009,7 @@ async fn network_task(
                 apply_membership_effects(&app, &mut swarm, &world, &mut rooms, membership.heartbeat());
                 swarm.behaviour_mut().kad.get_record(nick_record_key(&canonical));
             }
-            _ = discovery.tick() => {
+            _ = native_discovery.tick() => {
                 let _ = swarm.behaviour_mut().kad.bootstrap();
                 swarm.behaviour_mut().kad.get_providers(world_provider_key());
                 app.save_peers(&peer_cache);
@@ -3791,7 +3813,12 @@ async fn network_task(
                     let offers_relay = (!discovery_contacts.contains_key(&remote) || discovery_relay_claims.contains(&remote)) && info.protocol_version == "/konofix/4.0"
                         && info.protocols.iter().any(|protocol| protocol.as_ref() == "/libp2p/circuit/relay/0.2.0/hop");
                     for addr in info.listen_addrs {
-                        if discovery_contacts.contains_key(&remote) && address_for_peer(addr.clone(), remote).is_none_or(|a| cold_start::public_endpoint(&a.to_string(), remote).is_none()) { continue; }
+                        // A fresh Identify frame must not extend the signed contact's
+                        // lifetime or introduce extra addresses outside its bounded ad.
+                        let addr = if let Some(authorized) = discovery_contacts.get(&remote) {
+                            let Some(canonical) = cold_start::authorized_identify_address(remote, addr, authorized) else { continue; };
+                            canonical
+                        } else { addr };
                         swarm.behaviour_mut().kad.add_address(&remote, addr.clone());
                         swarm.behaviour_mut().file_transfer.add_address(&remote, addr.clone());
                         swarm.behaviour_mut().secure_control.add_address(&remote, addr.clone());

@@ -77,6 +77,18 @@ accounts, central message storage or history. Public WORLD remains public.
 Private control/files keep existing peer-bound authorization; a relay forwards
 transport traffic without becoming the recipient identity. KNP stays optional.
 
+## Configured public addresses
+
+The configured `--public-host` now enters the Node's libp2p external address
+set for Identify and relay reservation responses, as well as its printed
+instructions. This is an **operator assertion**, not an automatic reachability
+check. Only set it to endpoints the operator has made reachable; the Node does
+not promote an arbitrary peer's observed address into a trusted public endpoint.
+Without the flag it makes no configured external-address assertion. A bounded
+loopback regression exercises the production Node, its advertised Identify
+addresses, relay reservation and bidirectional authenticated circuit ping.
+That regression is not public TCP/QUIC reachability, chat or WAN acceptance.
+
 ## Recovery slice and honest limits
 
 Direct listen-address additions/expiry and closed direct listeners now schedule

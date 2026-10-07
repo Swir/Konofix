@@ -287,6 +287,10 @@ async fn run_transport(
             },
         }
     }
+    // Close command admission before SDK teardown and before acknowledging stop.
+    // Pending reply senders are dropped here rather than during task destruction.
+    commands.close();
+    drop(commands);
     transport.shutdown().await;
     if let Some(reply) = shutdown_reply {
         let _ = reply.send(());

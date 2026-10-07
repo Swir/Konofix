@@ -4,9 +4,28 @@ Global Beta means a public, many-computer network. A two-PC test is only the sma
 
 ## Target topology
 
-The product decision of 2026-09-20 is **participant-operated P2P**: every connected desktop application is a network node. The desktop includes discovery, TCP/QUIC, signed GossipSub, a Circuit Relay service and relay client. A separately installed `konofix-node` or a company-operated server fleet is optional, not a prerequisite for using the chat.
+The product remains **participant-operated P2P**: every connected desktop is a
+network node, with TCP/QUIC, signed GossipSub, discovery and Circuit Relay.
+The clarified requirement of 2026-10-06 is zero-config mDNS on LAN and automatic
+Internet entry into WORLD without pasting an invitation address. No central
+account, message server or history store is permitted. libp2p is the foundation;
+KNP is an optional additional contact path with its own identity boundary.
 
-The first participant in an isolated network cannot discover arbitrary Internet computers without any contact information. In a LAN, mDNS discovers and dials other applications automatically. For a first Internet connection, an online participant shares a reachable address from Network settings. The recipient adds that address; Identify/Kademlia and the local peer cache then help discover and reconnect to other participants. Private LAN addresses are not Internet invitations. Symmetric NAT/CGNAT may require a reachable participant providing relay or appropriate port mapping; this is a network reachability constraint, not a central chat-server requirement.
+Two fresh Internet nodes need a reachable first contact. The build-owned pool
+must contain several replaceable public participants with independent failure
+domains; those peers provide discovery and encrypted transport, never authority
+over identity or history. The headless Node is an optional operator
+implementation. A reachable participant pool is still necessary for the
+automatic first-contact requirement. Direct TCP/QUIC is preferred when NAT
+permits; CGNAT/symmetric NAT can require relay, without promising universal hole
+punching.
+
+**Current blocker:** the bundled pool is empty and a real tester reported WAN
+FAIL after changing one PC from LAN to LTE ([#165](https://github.com/Swir/Konofix/issues/165)).
+Manual addresses can diagnose transport reachability but cannot qualify
+zero-config Internet discovery. Deploy and verify the [three-peer pool](BOOTSTRAP_POOL_DEPLOYMENT.md),
+then run the exact-build installed-app test with clean settings and no pasted
+addresses. Keep the original failure and append each new attempt separately.
 
 Qualification must exercise at least three participant nodes across at least two independent networks, with at least two reachable contact/relay paths, then demonstrate recovery when one leaves. Participants may keep the app open or optionally run the headless Node. Ephemeral desktop identities and addresses are valid for the running session; after all participants leave, fresh invitations may be necessary.
 
@@ -102,3 +121,20 @@ The project audit runs deterministic adversarial self-tests for schema downgrade
 ## Infrastructure blocker
 
 The external blocker is actual participant reachability and multi-network evidence, not purchasing servers. Local tests and GitHub Actions cannot establish that twenty real users across five networks and three countries can exchange messages, switch rooms, transfer files and recover after a participant leaves. The existing headless-Node health/load tools remain available for optional operators; their PASS results alone do not qualify the desktop participant network. Global Beta readiness remains open until the real participant tests pass.
+
+## Build-owned pool admission is not network evidence
+
+Windows and Linux Node tests validate every committed seed with the real libp2p
+Multiaddr/PeerID parser and the existing strict public-host policy. A nonempty
+pool must contain at least three distinct identities, each with direct TCP and
+QUIC-v1, at different configured hostnames/IP literals. Duplicates, extra
+protocols/circuits, zero ports, placeholders, private/CGNAT/documentation hosts
+and unsupported JSON fields/schema are rejected. The 32-address limit remains.
+
+The empty pool is allowed only as the explicit current infrastructure blocker.
+Passing this static check does not enable publication or establish DNS,
+ownership, distinct providers/ASNs, reachability, relay service or WAN success.
+Different hostnames may still resolve to one machine: independent operator and
+failure-domain review plus actual external observations remain required. The
+checks apply to build-owned defaults; user-supplied lab/LAN contacts keep their
+existing runtime handling.

@@ -242,8 +242,12 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf artifact-linux
-          mkdir -p artifact-linux/scripts artifact-linux/docs
+          mkdir -p artifact-linux/scripts artifact-linux/docs artifact-linux/deploy
           install -m 0755 node-linux/target/release/konofix-node artifact-linux/konofix-node
+          install -m 0755 node-linux/target/release/konofix-netprobe artifact-linux/konofix-netprobe
+          cp scripts/linux-bundle-provenance.py artifact-linux/scripts/
+          cp docs/BOOTSTRAP_POOL_DEPLOYMENT.md artifact-linux/docs/
+          cp deploy/bootstrap-operators.template.json artifact-linux/deploy/
           install -m 0755 scripts/install-public-node-linux.sh artifact-linux/scripts/install-public-node-linux.sh
           cp docs/NODE.md artifact-linux/docs/NODE.md
           cp docs/NODE_SOAK.md artifact-linux/docs/NODE_SOAK.md
@@ -269,6 +273,8 @@ jobs:
           trap 'rm -rf -- "$verify_dir"' EXIT
           tar -xzf Konofix-Node-0.5.2-Linux-x86_64.tar.gz -C "$verify_dir"
           test -x "$verify_dir/konofix-node"
+          test -x "$verify_dir/konofix-netprobe"
+          "$verify_dir/konofix-netprobe" --help | grep -F 'Konofix Netprobe 0.5.2'
           test -x "$verify_dir/scripts/install-public-node-linux.sh"
           "$verify_dir/konofix-node" --help | grep -F 'Konofix Node 0.5.2'
 

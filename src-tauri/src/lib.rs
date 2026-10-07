@@ -3694,7 +3694,15 @@ async fn network_task(
                         }
                     }
                 }
-                SwarmEvent::ListenerClosed { listener_id, .. } => {
+                SwarmEvent::ListenerClosed { listener_id, addresses, .. } => {
+                    // libp2p sends these expirations to behaviours internally, but the
+                    // application receives one ListenerClosed event, not individual
+                    // SwarmEvent::ExpiredListenAddr events for the closed listener.
+                    for address in addresses {
+                        if let Some(address) = address_for_peer(address, local_peer) {
+                            listen_addresses.retain(|current| current != &address.to_string());
+                        }
+                    }
                     participant_relays.retain(|_, listener| *listener != listener_id);
                     let old_count = relay_bootstrap_peers.len();
                     relay_bootstrap_peers.retain(|_, listener| *listener != listener_id);
@@ -3707,6 +3715,7 @@ async fn network_task(
                             network_recovery.request(Instant::now());
                         }
                     }
+                    emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "P2P listener closed", &connection_routes);
                 }
                 SwarmEvent::ExpiredListenAddr { address, .. } => {
                     if !address.iter().any(|p| matches!(p, libp2p::multiaddr::Protocol::P2pCircuit)) {

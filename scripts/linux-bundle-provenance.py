@@ -15,12 +15,16 @@ import tempfile
 
 EXPECTED_FILES = (
     "konofix-node",
+    "konofix-netprobe",
     "scripts/install-public-node-linux.sh",
     "docs/NODE.md",
     "docs/NODE_SOAK.md",
     "docs/NODE_LINUX.md",
+    "docs/BOOTSTRAP_POOL_DEPLOYMENT.md",
+    "deploy/bootstrap-operators.template.json",
+    "scripts/linux-bundle-provenance.py",
 )
-EXPECTED_DIRS = {"scripts", "docs"}
+EXPECTED_DIRS = {"scripts", "docs", "deploy"}
 METADATA_NAME = "NODE_BUILD_INFO.json"
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 COMMIT_RE = re.compile(r"[0-9a-f]{40}")
@@ -29,6 +33,10 @@ MAX_ARCHIVE_BYTES = 320 * 1024 * 1024
 MAX_MEMBER_COUNT = 32
 FILE_SIZE_LIMITS = {
     "konofix-node": 256 * 1024 * 1024,
+    "konofix-netprobe": 64 * 1024 * 1024,
+    "docs/BOOTSTRAP_POOL_DEPLOYMENT.md": 4 * 1024 * 1024,
+    "deploy/bootstrap-operators.template.json": 64 * 1024,
+    "scripts/linux-bundle-provenance.py": 2 * 1024 * 1024,
     "scripts/install-public-node-linux.sh": 2 * 1024 * 1024,
     "docs/NODE.md": 4 * 1024 * 1024,
     "docs/NODE_SOAK.md": 4 * 1024 * 1024,
@@ -297,7 +305,7 @@ def verify_bundle(archive_path: Path, checksum_path: Path, expected_commit: str,
             if sha256_member(archive, member, FILE_SIZE_LIMITS[relative]) != entry["sha256"]:
                 raise VerificationError(f"SHA-256 mismatch for {relative}.")
 
-        for executable in ("konofix-node", "scripts/install-public-node-linux.sh"):
+        for executable in ("konofix-node", "konofix-netprobe", "scripts/install-public-node-linux.sh"):
             if files[executable].mode & 0o111 == 0:
                 raise VerificationError(f"Expected executable mode is missing for {executable}.")
 
@@ -310,8 +318,13 @@ def make_fixture(root: Path, commit: str, version: str) -> tuple[Path, Path, Pat
     stage = root / "artifact-linux"
     (stage / "scripts").mkdir(parents=True)
     (stage / "docs").mkdir(parents=True)
+    (stage / "deploy").mkdir(parents=True)
     payloads = {
         "konofix-node": b"fake-node-binary\n",
+        "konofix-netprobe": b"fake-netprobe-binary\n",
+        "docs/BOOTSTRAP_POOL_DEPLOYMENT.md": b"deployment docs\n",
+        "deploy/bootstrap-operators.template.json": b"{}\n",
+        "scripts/linux-bundle-provenance.py": b"# fixture verifier\n",
         "scripts/install-public-node-linux.sh": b"#!/usr/bin/env bash\necho fake\n",
         "docs/NODE.md": b"node docs\n",
         "docs/NODE_SOAK.md": b"soak docs\n",
@@ -321,6 +334,7 @@ def make_fixture(root: Path, commit: str, version: str) -> tuple[Path, Path, Pat
         path = stage / relative
         path.write_bytes(data)
     os.chmod(stage / "konofix-node", 0o755)
+    os.chmod(stage / "konofix-netprobe", 0o755)
     os.chmod(stage / "scripts/install-public-node-linux.sh", 0o755)
     write_metadata(stage, commit, version)
     archive = root / "Konofix-Node-0.4.2-Linux-x86_64.tar.gz"
@@ -393,6 +407,22 @@ def run_self_test() -> None:
         with oversized.open("wb") as handle:
             handle.truncate(MAX_ARCHIVE_BYTES + 1)
         expect_failure("oversized archive", lambda: verify_bundle(oversized, checksum, commit, version))
+
+        for case in ("missing", "tampered", "non-executable"):
+            stage, _, _ = make_fixture(root / f"netprobe-{case}", commit, version)
+            probe = stage / "konofix-netprobe"
+            if case == "missing":
+                probe.unlink()
+            elif case == "tampered":
+                probe.write_bytes(b"different-netprobe-build\n")
+            else:
+                os.chmod(probe, 0o644)
+            bad = root / f"netprobe-{case}.tar.gz"
+            with tarfile.open(bad, "w:gz") as handle:
+                handle.add(stage, arcname=".")
+            bad_sum = root / f"netprobe-{case}.tar.gz.sha256"
+            write_checksum(bad, bad_sum)
+            expect_failure(f"{case} Netprobe", lambda: verify_bundle(bad, bad_sum, commit, version))
 
         expect_failure("wrong source commit", lambda: verify_bundle(archive, checksum, "b" * 40, version))
         expect_failure("wrong version", lambda: verify_bundle(archive, checksum, commit, "9.9.9"))

@@ -2894,8 +2894,8 @@ async fn network_task(
                         }
                     }
                     Some(cold_start::runtime::Event::PublicProbe { server, address }) => {
-                        if let Some(address) = reachability_witness.response(server, local_peer, address, Instant::now()) {
-                            swarm.add_external_address(address);
+                        if reachability_witness.response(server, local_peer, address, Instant::now()).is_some() {
+                            reachability_witness.sync_external(&mut swarm, Instant::now());
                             participation.public_probe(Instant::now());
                         }
                     }
@@ -2903,6 +2903,7 @@ async fn network_task(
                 }
             }
             _ = cached_retry.tick() => {
+                reachability_witness.sync_external(&mut swarm, Instant::now());
                 if let Some(client) = discovery.as_mut() {
                     client.native_listeners(swarm.listeners().chain(swarm.external_addresses()).cloned());
                     client.tick(now_ms() / 1000);
@@ -2930,7 +2931,9 @@ async fn network_task(
                 }
                 cached_dials.drive(&mut swarm, Instant::now(), register_cached_address);
                 if let Some(generation) = network_recovery.take_due(Instant::now()) {
-                    reachability_witness.clear(); participation.invalidate();
+                    reachability_witness.clear();
+                    reachability_witness.sync_external(&mut swarm, Instant::now());
+                    participation.invalidate();
                     for (remote, addresses) in &mut discovery_contacts {
                         for address in addresses.drain(..) {
                             swarm.behaviour_mut().kad.remove_address(remote, &address);
@@ -3655,8 +3658,8 @@ async fn network_task(
                     emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Nasłuchiwanie aktywne", &connection_routes);
                 }
                 SwarmEvent::ConnectionEstablished { peer_id: remote, connection_id, endpoint, .. } => {
-                    if let Some(address) = reachability_witness.connection(remote, &endpoint, Instant::now()) {
-                        swarm.add_external_address(address); participation.public_probe(Instant::now());
+                    if reachability_witness.connection(remote, &endpoint, Instant::now()).is_some() {
+                        reachability_witness.sync_external(&mut swarm, Instant::now()); participation.public_probe(Instant::now());
                     }
                     connection_routes.established(connection_id, remote, &endpoint);
                     cached_dials.connected(remote);
@@ -3879,9 +3882,13 @@ async fn network_task(
                 SwarmEvent::Behaviour(BehaviourEvent::RelayServer(event)) => { participation.observe(&event); }
                 SwarmEvent::Behaviour(BehaviourEvent::Autonat(event)) => {
                     if let autonat::Event::OutboundProbe(autonat::OutboundProbeEvent::Response { peer, address, .. }) = &event {
-                        if let Some(address) = address_for_peer(address.clone(), local_peer).and_then(|a| reachability_witness.response(*peer, local_peer, a, Instant::now())) { swarm.add_external_address(address); participation.public_probe(Instant::now()); }
+                        if address_for_peer(address.clone(), local_peer).and_then(|a| reachability_witness.response(*peer, local_peer, a, Instant::now())).is_some() { reachability_witness.sync_external(&mut swarm, Instant::now()); participation.public_probe(Instant::now()); }
                     }
-                    if matches!(&event, autonat::Event::StatusChanged { new: autonat::NatStatus::Private | autonat::NatStatus::Unknown, .. }) { participation.invalidate(); }
+                    if matches!(&event, autonat::Event::StatusChanged { new: autonat::NatStatus::Private | autonat::NatStatus::Unknown, .. }) {
+                        reachability_witness.clear();
+                        reachability_witness.sync_external(&mut swarm, Instant::now());
+                        participation.invalidate();
+                    }
                     if let autonat::Event::StatusChanged { old: _, new } = event {
                         nat_status = format!("{new:?}").to_lowercase();
                         emit_status(&app, &mut swarm, &bootstrap_targets, &nat_status, &listen_addresses, "Zmieniono status NAT", &connection_routes);

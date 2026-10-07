@@ -180,6 +180,73 @@ async fn publisher_requires_public_reachability_and_limits_reannouncement() {
 }
 
 #[tokio::test]
+async fn native_witness_address_does_not_outlive_its_reachability_lease() {
+    let mut swarm = local_swarm(&identity::Keypair::generate_ed25519(), false);
+    let local = *swarm.local_peer_id();
+    let server = PeerId::random();
+    let mut witness = super::super::reachability::Witness::default();
+    let now = Instant::now();
+    let address: Multiaddr = format!("/ip4/8.8.8.8/tcp/45555/p2p/{local}")
+        .parse()
+        .unwrap();
+    let preexisting: Multiaddr = format!("/ip4/9.9.9.9/tcp/45555/p2p/{local}")
+        .parse()
+        .unwrap();
+    swarm.add_external_address(preexisting.clone());
+    let inbound = libp2p::core::ConnectedPoint::Listener {
+        local_addr: "/ip4/192.168.1.2/tcp/45555".parse().unwrap(),
+        send_back_addr: "/ip4/1.1.1.1/tcp/4001".parse().unwrap(),
+    };
+    assert!(witness
+        .response(server, local, address.clone(), now)
+        .is_none());
+    assert_eq!(
+        witness.connection(server, &inbound, now),
+        Some(address.clone())
+    );
+    // Even a matching witness must not take ownership of a pre-existing address.
+    assert_eq!(
+        witness.response(server, local, preexisting.clone(), now),
+        Some(preexisting.clone())
+    );
+    witness.sync_external(&mut swarm, now);
+    assert!(swarm.external_addresses().any(|a| a == &address));
+    witness.sync_external(&mut swarm, now + Duration::from_secs(299));
+    assert!(swarm.external_addresses().any(|a| a == &address));
+    assert!(witness.endpoints(now + Duration::from_secs(300)).is_empty());
+    witness.sync_external(&mut swarm, now + Duration::from_secs(300));
+    assert!(
+        !swarm.external_addresses().any(|a| a == &address),
+        "expired witness remained advertised by the native swarm"
+    );
+    assert!(swarm.external_addresses().any(|a| a == &preexisting));
+
+    for seconds in [301, 400] {
+        let at = now + Duration::from_secs(seconds);
+        assert!(witness
+            .response(server, local, address.clone(), at)
+            .is_none());
+        assert_eq!(
+            witness.connection(server, &inbound, at),
+            Some(address.clone())
+        );
+        witness.sync_external(&mut swarm, at);
+    }
+    witness.sync_external(&mut swarm, now + Duration::from_secs(601));
+    assert!(
+        swarm.external_addresses().any(|a| a == &address),
+        "fresh revalidation must renew the lease"
+    );
+    // Network change / private-or-unknown status withdraws immediately, without
+    // touching an address already owned by the native stack before this witness.
+    witness.clear();
+    witness.sync_external(&mut swarm, now + Duration::from_secs(602));
+    assert!(!swarm.external_addresses().any(|a| a == &address));
+    assert!(swarm.external_addresses().any(|a| a == &preexisting));
+    // Synthetic endpoint strings exercise state only: no swarm is ever polled.
+}
+
+#[tokio::test]
 #[ignore = "manual one-shot public read-only interoperability trial; never run in CI"]
 async fn public_amino_read_only_once() {
     use std::io::Write;

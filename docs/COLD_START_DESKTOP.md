@@ -51,6 +51,14 @@ port/identity, an old generation or an expired witness cannot enable publication
 relay. Conservative port matching can reject mappings that change external ports;
 this limitation must not be reported as proof that the host is unreachable.
 
+Native external addresses introduced by this witness have the same five-minute
+lease. The one-second maintenance tick withdraws them on expiry; network recovery
+or a private/unknown NAT transition withdraws them immediately in that handler.
+Fresh matching evidence renews the lease. Addresses already present before witness
+admission remain owned by the existing native behaviours and are left alone.
+This prevents a cleared witness from leaving its old interface advertised by
+Identify/Kademlia; no socket rebind or public reachability is claimed by cleanup.
+
 The relay requires explicit consent plus reachability refreshed within five minutes.
 Limits: eight reservations, one per peer, two circuits total, one per peer,
 120-second reservation/circuit lifetime, 8 MiB per circuit and eight new circuits

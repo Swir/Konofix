@@ -1,0 +1,27 @@
+{
+  "authenticated_connections": 0,
+  "chat_messages": 0,
+  "deadline_exceeded": false,
+  "elapsed_ms": 15007,
+  "kind": "konofix-amino-read-only-interop",
+  "limits": {
+    "connections": 16,
+    "dials_per_300_seconds": 64,
+    "pending_dials": 4,
+    "queries": 1,
+    "seconds": 30
+  },
+  "namespace": "konofix/experimental/interop-read-only/65795ef4-bfb0-4f69-8803-4f1809f40ef3",
+  "outcome": "NO_COMPLETED_INTEROPERABILITY_PROOF",
+  "outgoing_errors": 0,
+  "physical_wan_acceptance": "NOT_EVALUATED",
+  "provider_writes": 0,
+  "query_completed": false,
+  "query_requests": 2,
+  "query_successes": 0,
+  "remote_ttl": "none requested: read-only",
+  "schema": 1,
+  "source_commit": "b398bf941bad1e1f8b75ab0a61dd33ed2d0e003c",
+  "started_unix": 1791391323,
+  "value_writes": 0
+}

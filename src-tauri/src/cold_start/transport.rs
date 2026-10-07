@@ -10,16 +10,37 @@ use libp2p::{
 };
 use std::{
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     task::{Context, Poll},
     time::{Duration, Instant},
 };
 
 #[derive(Clone)]
-pub struct DialBudget(Arc<Mutex<(Instant, usize)>>);
+pub struct DialBudget(Arc<Mutex<(Instant, usize)>>, Arc<Counters>);
+#[derive(Default)]
+struct Counters {
+    dns: AtomicU64,
+    resolved: AtomicU64,
+    rejected: AtomicU64,
+    accepted: AtomicU64,
+}
+
 impl DialBudget {
     pub fn new() -> Self {
-        Self(Arc::new(Mutex::new((Instant::now(), 0))))
+        Self(
+            Arc::new(Mutex::new((Instant::now(), 0))),
+            Arc::new(Counters::default()),
+        )
+    }
+    #[cfg(test)]
+    pub fn snapshot(&self) -> serde_json::Value {
+        serde_json::json!({"dns_candidates": self.1.dns.load(Ordering::Relaxed),
+            "resolved_transport_candidates": self.1.resolved.load(Ordering::Relaxed),
+            "policy_or_budget_rejections": self.1.rejected.load(Ordering::Relaxed),
+            "accepted_transport_dials": self.1.accepted.load(Ordering::Relaxed)})
     }
     fn take(&self) -> bool {
         let Ok(mut state) = self.0.lock() else {
@@ -112,19 +133,26 @@ impl<T: Transport + Unpin> Transport for PublicTransport<T> {
                     Protocol::Dns(_) | Protocol::Dns4(_) | Protocol::Dns6(_) | Protocol::Dnsaddr(_)
                 )
             });
+            if has_dns {
+                self.budget.1.dns.fetch_add(1, Ordering::Relaxed);
+            }
             if has_dns && !super::runtime::SEEDS.contains(&addr.to_string().as_str()) {
+                self.budget.1.rejected.fetch_add(1, Ordering::Relaxed);
                 return Err(TransportError::MultiaddrNotSupported(addr));
             }
             return self.inner.dial(addr, opts);
         }
+        self.budget.1.resolved.fetch_add(1, Ordering::Relaxed);
         let allowed = permitted(&addr);
         #[cfg(test)]
         let allowed = allowed
             || (self.loopback
                 && matches!(addr.iter().next(), Some(Protocol::Ip4(ip)) if ip.is_loopback()));
         if !allowed || !self.budget.take() {
+            self.budget.1.rejected.fetch_add(1, Ordering::Relaxed);
             return Err(TransportError::MultiaddrNotSupported(addr));
         }
+        self.budget.1.accepted.fetch_add(1, Ordering::Relaxed);
         self.inner.dial(addr, opts)
     }
     fn poll(
@@ -138,6 +166,38 @@ impl<T: Transport + Unpin> Transport for PublicTransport<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn trace_counts_transport_stages_without_claiming_a_connection() {
+        use libp2p::core::{
+            transport::{dummy::DummyTransport, PortUse},
+            Endpoint,
+        };
+        let budget = DialBudget::new();
+        let options = || DialOpts {
+            role: Endpoint::Dialer,
+            port_use: PortUse::New,
+        };
+        let mut resolved = PublicTransport::new(DummyTransport::<()>::new(), budget.clone());
+        assert!(resolved
+            .dial("/ip4/127.0.0.1/tcp/1".parse().unwrap(), options())
+            .is_err());
+        // DummyTransport never opens a socket, including for this public literal.
+        assert!(resolved
+            .dial("/ip4/1.1.1.1/tcp/1".parse().unwrap(), options())
+            .is_err());
+        let mut ingress =
+            PublicTransport::seed_ingress(DummyTransport::<()>::new(), budget.clone());
+        assert!(ingress
+            .dial("/dnsaddr/untrusted.invalid".parse().unwrap(), options())
+            .is_err());
+        assert_eq!(
+            budget.snapshot(),
+            serde_json::json!({
+                "dns_candidates": 1, "resolved_transport_candidates": 2,
+                "policy_or_budget_rejections": 2, "accepted_transport_dials": 1,
+            })
+        );
+    }
     #[test]
     fn resolved_address_policy_blocks_rebinding_and_global_dial_flood() {
         for raw in [

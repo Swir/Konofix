@@ -1,0 +1,64 @@
+name: Manual read-only Amino interoperability
+
+on:
+  workflow_dispatch:
+    inputs:
+      authorization:
+        description: 'Authorize ONE public RPC query: type read-only-no-wan-claim'
+        required: true
+        type: string
+      expected_sha:
+        description: 'Exact reviewed main SHA to probe (40 lowercase hex characters)'
+        required: true
+        type: string
+
+concurrency:
+  group: amino-read-only-manual
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  amino-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AMINO_AUTHORIZATION: ${{ inputs.authorization }}
+      AMINO_EXPECTED_SHA: ${{ inputs.expected_sha }}
+      CARGO_INCREMENTAL: 0
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - name: Checkout exact workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Refuse reruns, non-main source or missing explicit authorization
+        run: python3 scripts/run-amino-once.py preflight
+      - name: Offline evidence and execution guards
+        run: python3 scripts/test-amino-once.py
+      - name: Setup reviewed Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: '1.99.0'
+      - name: Compile only (no public traffic)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp src-tauri/Cargo.lock node-linux/Cargo.lock
+          cargo test --locked --manifest-path node-linux/Cargo.toml --bin konofix-node --no-run --message-format=json > "$RUNNER_TEMP/amino-build.json"
+      - name: One bounded read-only query
+        timeout-minutes: 2
+        run: python3 scripts/run-amino-once.py run "$RUNNER_TEMP/amino-build.json" "$RUNNER_TEMP/amino-${{ github.run_id }}"
+      - name: Preserve this attempt even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Amino-read-only-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/amino-${{ github.run_id }}/
+            ${{ runner.temp }}/amino-build.json
+          overwrite: false
+          if-no-files-found: warn
+          retention-days: 30

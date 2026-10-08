@@ -1,8 +1,10 @@
 //! Correlate a remote AutoNAT response with a real native inbound connection.
 use super::public_endpoint;
-use libp2p::{core::ConnectedPoint, multiaddr::Protocol, Multiaddr, PeerId};
+use libp2p::{
+    core::ConnectedPoint, multiaddr::Protocol, swarm::NetworkBehaviour, Multiaddr, PeerId, Swarm,
+};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -11,6 +13,7 @@ pub struct Witness {
     inbound: HashMap<PeerId, (Vec<(bool, u16)>, Instant)>,
     responses: HashMap<PeerId, (Multiaddr, Instant)>,
     confirmed: HashMap<Multiaddr, Instant>,
+    owned_external: HashSet<Multiaddr>,
 }
 pub(super) fn port(address: &Multiaddr) -> Option<(bool, u16)> {
     let tcp = address.iter().find_map(|p| {
@@ -35,6 +38,30 @@ impl Witness {
         self.inbound.clear();
         self.responses.clear();
         self.confirmed.clear();
+        // Keep ownership until sync_external withdraws our announcements.
+    }
+    /// Reconcile only addresses introduced by this witness. Pre-existing native
+    /// UPnP/AutoNAT/relay addresses belong to their existing behaviours.
+    pub fn sync_external<B: NetworkBehaviour>(&mut self, swarm: &mut Swarm<B>, now: Instant) {
+        self.expire(now);
+        let current = self.endpoints(now);
+        self.owned_external.retain(|address| {
+            if current.contains(address) {
+                true
+            } else {
+                swarm.remove_external_address(address);
+                false
+            }
+        });
+        for address in current {
+            if !swarm
+                .external_addresses()
+                .any(|existing| existing == &address)
+            {
+                swarm.add_external_address(address.clone());
+                self.owned_external.insert(address);
+            }
+        }
     }
     pub fn endpoints(&self, now: Instant) -> Vec<Multiaddr> {
         let mut endpoints: Vec<_> = self

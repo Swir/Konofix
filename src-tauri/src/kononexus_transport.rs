@@ -469,14 +469,8 @@ mod tests {
         send_and_wait_for_receipt(&b, &mut b_events, a.node_id(), vec![9]).await;
         wait_for_full_output(&a_events).await;
 
-        let first = a
-            .send(b.node_id().to_owned(), vec![10])
-            .await
-            .unwrap();
-        let second = a
-            .send(b.node_id().to_owned(), vec![11])
-            .await
-            .unwrap();
+        let first = a.send(b.node_id().to_owned(), vec![10]).await.unwrap();
+        let second = a.send(b.node_id().to_owned(), vec![11]).await.unwrap();
 
         time::timeout(Duration::from_secs(15), async {
             match a_events.recv().await.expect("message stream is open") {

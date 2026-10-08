@@ -2838,7 +2838,7 @@ dependencies = [
 [[package]]
 name = "kononexus"
 version = "0.1.0-alpha.28"
-source = "git+https://github.com/Swir/KonoNexus.git?rev=dc377e1001200268039b6e4df7d19b94dd0692ef#dc377e1001200268039b6e4df7d19b94dd0692ef"
+source = "git+https://github.com/Swir/KonoNexus.git?rev=ee97b8b6c56467eeff9aee9f93e9375582005541#ee97b8b6c56467eeff9aee9f93e9375582005541"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

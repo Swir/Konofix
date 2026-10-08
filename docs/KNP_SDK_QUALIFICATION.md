@@ -1,8 +1,8 @@
 # Optional KNP SDK pin qualification
 
-The candidate pin is KonoNexus `dc377e1001200268039b6e4df7d19b94dd0692ef`
+The candidate pin is KonoNexus `ee97b8b6c56467eeff9aee9f93e9375582005541`
 (package `0.1.0-alpha.28`), replacing
-`ea9cc5dfffa7480ab5a1bb0f79e8b5649fdeea3e` (`0.1.0-alpha.23`). Both desktop and
+`dc377e1001200268039b6e4df7d19b94dd0692ef` (also `0.1.0-alpha.28`). Both desktop and
 Linux Node manifests keep `default-features = false`. This remains an experimental
 SDK, not stable 1.0 or a production-readiness claim. Native libp2p is the primary
 chat network; KNP remains a separate optional contact/identity path.
@@ -15,17 +15,32 @@ validation now refreshes an already admitted peer's activity time. Its determini
 regression fails before the fix and also proves rejected/replayed traffic cannot
 extend the lease. It does not create unknown peers, extend idle TTLs or relax tests.
 
-The complete pin also includes upstream #21–#29. The runtime changes are bounded
+[Upstream #31](https://github.com/Swir/KonoNexus/pull/31) fixes a second,
+independently demonstrated consumer-path defect. After an authenticated ACK removed
+an outbound message, a full SDK receipt channel caused `try_send` to discard the
+only success event. The SDK now retains receipts in FIFO order and retries them when
+capacity returns, with bounded admission once 1,024 receipts are pending. It changes
+no wire format, delivery timeout or retransmission budget.
+
+The Konofix regression sets the SDK event capacity to one, fills the sender's bridge
+output with a real inbound message, sends two real messages while that output remains
+blocked, then requires both delivery receipts in order. This covers the sender-side
+condition missing from the earlier receiver-backpressure test. It is expected to fail
+on the previous pin because the second receipt is discarded after the first fills the
+SDK channel.
+
+The complete pin also includes upstream #21–#30. The runtime changes are bounded
 local route-quality learning from authenticated outcomes, authenticated IPv6 endpoint
 selection and multi-relay failover selection. Added SDK JSON bridge/process-host and
 WAN-evidence utilities are not automatically wired into Konofix. This update does
-not switch the application to that process host or produce any WAN evidence. The
-SDK facade, configuration and packet/session/security source files are unchanged
-across this range. No registry package version is updated in Konofix's lockfile.
+not switch the application to that process host or produce any WAN evidence. No
+registry package version is updated in Konofix's lockfile.
 
-Upstream exact-main core and Windows jobs passed at this pin (37668159811 and
-37668159832). Those results are prerequisites, not substitutes for Konofix's own
-Windows integration tests, artifact validation and post-merge checks.
+Upstream #31 exact-head CI run 37790134910 passed format, Clippy, all tests,
+SDK-only check and SDK-only Clippy at `01990cea78b76a9cdac59280450d074119b401b0`.
+The merge commit is `ee97b8b6c56467eeff9aee9f93e9375582005541`; no exact-merge
+workflow run had appeared when this candidate was prepared. Konofix's own exact-head
+Windows/Linux/RustSec tests and artifact validation remain required.
 
 ## Preserved failures and the isolated control
 

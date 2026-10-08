@@ -344,7 +344,18 @@ impl Discovery {
         if self.status == "verified-participant" && !self.cache.has_accepted() {
             self.status = "no-verified-participant";
         }
-        self.pending.retain(|_, p| p.deadline > now);
+        let mut expired = Vec::new();
+        self.pending.retain(|_, p| {
+            if p.deadline > now {
+                true
+            } else {
+                expired.push(p.peer);
+                false
+            }
+        });
+        for peer in expired {
+            let _ = self.swarm.disconnect_peer_id(peer);
+        }
         if now >= self.next_lookup && self.query.is_none() {
             self.attempted.clear();
             self.query = Some(seeded_query(&mut self.swarm, &self.seeds, |kad| {
@@ -486,6 +497,9 @@ impl Discovery {
                     ..
                 },
             )) => {
+                // This isolated swarm shares the native identity, not its chat
+                // protocols. Release the helper before handing off a native dial.
+                let _ = self.swarm.disconnect_peer_id(peer);
                 if let Some(pending) = self.pending.remove(&request_id) {
                     if pending.peer == peer && pending.deadline > Instant::now() {
                         if let Some(ad) = response {
@@ -519,7 +533,9 @@ impl Discovery {
             SwarmEvent::Behaviour(DiscoveryBehaviourEvent::Ads(
                 request_response::Event::OutboundFailure { request_id, .. },
             )) => {
-                self.pending.remove(&request_id);
+                if let Some(pending) = self.pending.remove(&request_id) {
+                    let _ = self.swarm.disconnect_peer_id(pending.peer);
+                }
             }
             SwarmEvent::Behaviour(DiscoveryBehaviourEvent::Identify(
                 identify::Event::Received { peer_id, info, .. },

@@ -2,6 +2,14 @@ use super::*;
 use libp2p::multiaddr::Protocol;
 
 fn local_swarm(key: &identity::Keypair, server: bool) -> Swarm<DiscoveryBehaviour> {
+    local_swarm_with_config(key, server, libp2p::swarm::Config::with_tokio_executor())
+}
+
+fn local_swarm_with_config(
+    key: &identity::Keypair,
+    server: bool,
+    config: libp2p::swarm::Config,
+) -> Swarm<DiscoveryBehaviour> {
     let tcp = tcp::tokio::Transport::new(tcp::Config::default())
         .upgrade(upgrade::Version::V1Lazy)
         .authenticate(noise::Config::new(key).unwrap())
@@ -22,7 +30,7 @@ fn local_swarm(key: &identity::Keypair, server: bool) -> Swarm<DiscoveryBehaviou
         PublicTransport::loopback(tcp, DialBudget::new()).boxed(),
         behaviour,
         key.public().to_peer_id(),
-        libp2p::swarm::Config::with_tokio_executor(),
+        config,
     )
 }
 async fn listen(swarm: &mut Swarm<DiscoveryBehaviour>) -> Multiaddr {
@@ -87,12 +95,16 @@ async fn real_provider_lookup_authenticates_request_before_native_handoff() {
     tokio::time::timeout(Duration::from_secs(20), async {
         let key = identity::Keypair::generate_ed25519();
         let peer = key.public().to_peer_id();
-        let mut publisher = local_swarm(&key, false);
+        // Keep these fixture connections idle for longer than the unchanged
+        // 20-second test deadline: only explicit helper cleanup may pass.
+        let mut publisher = local_swarm_with_config(&key, false,
+            libp2p::swarm::Config::with_tokio_executor().with_idle_connection_timeout(Duration::from_secs(60)));
         let mut seed = local_swarm(&identity::Keypair::generate_ed25519(), true);
         let mut routing_peer = local_swarm(&identity::Keypair::generate_ed25519(), true);
         let mut client = Discovery::new(identity::Keypair::generate_ed25519()).unwrap();
         // Replace all production seeds before polling: no public DNS/socket activity.
-        client.swarm = local_swarm(&client.key, false);
+        client.swarm = local_swarm_with_config(&client.key, false,
+            libp2p::swarm::Config::with_tokio_executor().with_idle_connection_timeout(Duration::from_secs(60)));
         let seed_id = *seed.local_peer_id(); let seed_addr = listen(&mut seed).await;
         let routing_id = *routing_peer.local_peer_id(); let routing_addr = listen(&mut routing_peer).await;
         // The entry point has no provider record. Its closer-peer response must
@@ -129,8 +141,13 @@ async fn real_provider_lookup_authenticates_request_before_native_handoff() {
         assert!(client.contains(&peer)); assert!(client.pending.is_empty());
         assert_eq!(client.swarm.behaviour_mut().kad.kbuckets().count(), 0);
         assert_eq!(client.status, "verified-participant");
-        // A completed lookup must not erase the status of an admitted response.
-        while client.query.is_some() {
+        // A completed lookup must not erase the admitted status. The temporary
+        // ad connection must close on both ends so it cannot occupy the native
+        // peer's connection slot while a simultaneous handoff waits.
+        while client.query.is_some()
+            || client.swarm.is_connected(&peer)
+            || publisher.is_connected(client.swarm.local_peer_id())
+        {
             tokio::select! {
                 _ = seed.select_next_some() => {},
                 _ = routing_peer.select_next_some() => {},

@@ -1,6 +1,7 @@
 //! Bounded direct-first reconnects from remembered peer addresses.
 //! mDNS, DHT, request/response and DCUtR retain their libp2p behaviours.
 use libp2p::{
+    core::ConnectedPoint,
     multiaddr::Protocol,
     swarm::{
         dial_opts::{DialOpts, PeerCondition},
@@ -76,6 +77,14 @@ impl DirectFirstDials {
         self.pending.retain(|_, p| p.peer != peer);
     }
 
+    /// An inbound connection may belong to the peer's isolated discovery reader,
+    /// not its native chat swarm. Keep the bounded plan until that helper closes.
+    pub(crate) fn established(&mut self, peer: PeerId, endpoint: &ConnectedPoint) {
+        if endpoint.is_dialer() {
+            self.connected(peer);
+        }
+    }
+
     pub(crate) fn failed(&mut self, id: ConnectionId, now: Instant) {
         if let Some(plan) = self.pending.remove(&id) {
             if now < plan.expires && !plan.batches.is_empty() {
@@ -96,7 +105,13 @@ impl DirectFirstDials {
             let Some(mut plan) = self.waiting.pop_front() else {
                 break;
             };
-            if now >= plan.expires || swarm.is_connected(&plan.peer) {
+            if now >= plan.expires {
+                continue;
+            }
+            if swarm.is_connected(&plan.peer) {
+                // Do not dial alongside a working connection, but do not lose a
+                // native handoff behind a temporary inbound discovery connection.
+                self.waiting.push_back(plan);
                 continue;
             }
             let Some(addresses) = plan.batches.front() else {
@@ -242,5 +257,155 @@ mod tests {
         dials.failed(id, now);
         assert!(dials.waiting.is_empty());
         assert!(dials.pending.is_empty());
+    }
+
+    #[test]
+    fn inbound_connection_preserves_plan_and_outbound_success_cancels_it() {
+        use libp2p::core::{transport::PortUse, Endpoint};
+
+        let peer = PeerId::random();
+        let now = Instant::now();
+        let mut dials = DirectFirstDials::default();
+        dials.enqueue(
+            peer,
+            vec![address(peer, 1, false), address(peer, 2, true)],
+            now,
+        );
+        dials.established(
+            peer,
+            &ConnectedPoint::Listener {
+                local_addr: "/ip4/127.0.0.1/tcp/3".parse().unwrap(),
+                send_back_addr: "/ip4/127.0.0.1/tcp/4".parse().unwrap(),
+            },
+        );
+        assert_eq!(dials.waiting.len(), 1);
+        assert_eq!(dials.waiting[0].expires, now + PLAN_TTL);
+        assert_eq!(dials.waiting[0].batches.len(), 2);
+        dials.established(
+            peer,
+            &ConnectedPoint::Dialer {
+                address: address(peer, 1, false),
+                role_override: Endpoint::Dialer,
+                port_use: PortUse::New,
+            },
+        );
+        assert!(dials.waiting.is_empty());
+        assert!(dials.pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn helper_connection_cannot_discard_native_handoff() {
+        use futures::StreamExt;
+        use libp2p::{identity, noise, ping, swarm::SwarmEvent, tcp, yamux, SwarmBuilder};
+
+        fn local(key: identity::Keypair) -> Swarm<ping::Behaviour> {
+            SwarmBuilder::with_existing_identity(key)
+                .with_tokio()
+                .with_tcp(
+                    tcp::Config::default(),
+                    noise::Config::new,
+                    yamux::Config::default,
+                )
+                .unwrap()
+                .with_behaviour(|_| ping::Behaviour::default())
+                .unwrap()
+                .build()
+        }
+
+        async fn listen(swarm: &mut Swarm<ping::Behaviour>) -> Multiaddr {
+            swarm
+                .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+                .unwrap();
+            loop {
+                if let SwarmEvent::NewListenAddr { address, .. } = swarm.select_next_some().await {
+                    return address;
+                }
+            }
+        }
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            // A native endpoint and its isolated reader share an authenticated
+            // identity, as in production, but are different TCP/Noise swarms.
+            let key = identity::Keypair::generate_ed25519();
+            let mut target = local(key.clone());
+            let mut reader = local(key);
+            let mut client = local(identity::Keypair::generate_ed25519());
+            let peer = *target.local_peer_id();
+            let client_peer = *client.local_peer_id();
+            let target_address = listen(&mut target).await.with(Protocol::P2p(peer));
+            let client_address = listen(&mut client).await;
+            reader.dial(client_address).unwrap();
+            let mut client_ready = false;
+            let mut reader_ready = false;
+            while !client_ready || !reader_ready {
+                tokio::select! {
+                    event = client.select_next_some() => {
+                        if let SwarmEvent::ConnectionEstablished { peer_id, .. } = event {
+                            assert_eq!(peer_id, peer);
+                            client_ready = true;
+                        }
+                    }
+                    event = reader.select_next_some() => {
+                        if let SwarmEvent::ConnectionEstablished { peer_id, .. } = event {
+                            assert_eq!(peer_id, client_peer);
+                            reader_ready = true;
+                        }
+                    }
+                }
+            }
+            assert!(client.is_connected(&peer));
+            assert!(!target.is_connected(&client_peer));
+            let mut dials = DirectFirstDials::default();
+            dials.enqueue(peer, vec![target_address.clone()], Instant::now());
+            dials.drive(&mut client, Instant::now(), |_, _, _| {});
+            assert_eq!(
+                dials.waiting.len(),
+                1,
+                "temporary helper connection discarded the native endpoint plan"
+            );
+
+            // Even a connected helper cannot extend the existing plan deadline.
+            let now = Instant::now();
+            let mut expired = DirectFirstDials::default();
+            expired.enqueue(peer, vec![target_address], now);
+            expired.drive(&mut client, now + PLAN_TTL, |_, _, _| {
+                panic!("expired handoff must never dial")
+            });
+            assert!(expired.waiting.is_empty());
+
+            reader.disconnect_peer_id(client_peer).unwrap();
+            while client.is_connected(&peer) {
+                tokio::select! {
+                    _ = client.select_next_some() => {}
+                    _ = reader.select_next_some() => {}
+                }
+            }
+            dials.drive(&mut client, Instant::now(), |_, _, _| {});
+            let mut native_ready = false;
+            client_ready = false;
+            while !native_ready || !client_ready {
+                tokio::select! {
+                    event = client.select_next_some() => {
+                        if let SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } = event {
+                            assert_eq!(peer_id, peer);
+                            assert!(endpoint.is_dialer());
+                            dials.established(peer_id, &endpoint);
+                            assert!(dials.waiting.is_empty());
+                            assert!(dials.pending.is_empty());
+                            client_ready = true;
+                        }
+                    }
+                    event = target.select_next_some() => {
+                        if let SwarmEvent::ConnectionEstablished { peer_id, .. } = event {
+                            assert_eq!(peer_id, client_peer);
+                            native_ready = true;
+                        }
+                    }
+                    _ = reader.select_next_some() => {}
+                }
+            }
+        })
+        .await
+        .expect("bounded loopback native handoff exceeded 10 seconds");
     }
 }

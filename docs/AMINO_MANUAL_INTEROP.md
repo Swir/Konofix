@@ -6,6 +6,20 @@ hash are preserved in #177 and `docs/evidence/amino/`. It must not be overwritte
 or reclassified. The manual workflow is prepared for a **new** authorization;
 adding or merging it does not authorize running another public test.
 
+Correction to the historical attempt's scope accounting: its schema-1
+`query_requests` counter covered only the selected provider query. A local wire
+regression subsequently proved that libp2p-kad 0.49 can also send insertion-triggered
+bootstrap RPCs when periodic bootstrap is disabled. The old `limits.queries: 1`
+therefore is not proof of a one-query wire budget. The original JSON/hash remains
+unchanged; neither a public bootstrap RPC nor its absence can be inferred from that
+record. Its outcome remains NO_COMPLETED_INTEROPERABILITY_PROOF.
+
+The corrected isolated client uses query-scoped seeds and manual table insertion
+to prevent background bootstrap, verified against actual loopback server requests.
+New schema-2 reports also record `unexpected_queries`; observing any fails the
+probe and cannot produce RPC_INTEROPERABILITY_PASS. No new public attempt was
+made to validate this change.
+
 This workflow has no push, PR, schedule or workflow-completion trigger. It is
 dispatched manually on `main`, requires the exact reviewed SHA and the literal
 acknowledgement `read-only-no-wan-claim`, and refuses GitHub **Re-run jobs** attempts.

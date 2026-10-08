@@ -7,6 +7,11 @@ authenticated connection or successful RPC. Its complete, non-overwritten record
 is [attempt 1](evidence/amino/amino-public-20261007-attempt1.json), SHA-256
 `b5205b394c900351a1fbf8854dabb010b7e94854fef7e5b696c8073a15253670`.
 The trace cannot distinguish pending DNS, dial or network-access failure.
+Its schema-1 counter covered only the selected provider query. Consequently
+`limits.queries: 1` cannot prove the absence of insertion-triggered bootstrap
+queries; the original JSON remains unchanged. The corrected isolated client uses
+query-scoped seeds, verified locally against received Kademlia requests. A new
+public attempt still requires separate authorization; no such attempt is claimed.
 No public interoperability PASS or qualified new Windows handoff is asserted.
 
 ## Session choices

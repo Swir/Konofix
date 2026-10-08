@@ -22,7 +22,7 @@ def context(sha=SHA):
 
 
 def report(sha=SHA):
-    return dict(schema=1, kind="konofix-amino-read-only-interop", source_commit=sha,
+    return dict(schema=2, unexpected_queries=0, kind="konofix-amino-read-only-interop", source_commit=sha,
                 namespace="konofix/experimental/interop-read-only/65795ef4-bfb0-4f69-8803-4f1809f40ef3",
                 provider_writes=0, value_writes=0, chat_messages=0,
                 physical_wan_acceptance="NOT_EVALUATED", remote_ttl="none requested: read-only",
@@ -49,7 +49,7 @@ class Guards(unittest.TestCase):
         for field, bad in {"outcome": "RPC_INTEROPERABILITY_PASS", "physical_wan_acceptance": "PASS",
                            "source_commit": "b" * 40, "namespace": "konofix/experimental/world/v2",
                            "provider_writes": 1, "chat_messages": False, "query_requests": -1,
-                           "query_completed": 1, "limits": {"queries": 2},
+                           "query_completed": 1, "unexpected_queries": -1, "schema": 1, "limits": {"queries": 2},
                            "transport_stages": {}}.items():
             with self.subTest(field=field), self.assertRaises(ValueError):
                 probe.validate_report(dict(report(), **{field: bad}), SHA)
@@ -58,6 +58,10 @@ class Guards(unittest.TestCase):
         self.assertTrue(probe.validate_report(passed, SHA))
         with self.assertRaises(ValueError):
             probe.validate_report(dict(passed, deadline_exceeded=True), SHA)
+        with self.assertRaises(ValueError):
+            probe.validate_report(dict(passed, unexpected_queries=1), SHA)
+        self.assertFalse(probe.validate_report(dict(passed, unexpected_queries=1,
+                         outcome="NO_COMPLETED_INTEROPERABILITY_PROOF"), SHA))
 
     def test_runner_rejects_zero_tests_and_preserves_failure_without_second_execution(self):
         with tempfile.TemporaryDirectory(prefix="konofix-amino-offline-") as temporary:

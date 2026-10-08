@@ -3662,7 +3662,7 @@ async fn network_task(
                         reachability_witness.sync_external(&mut swarm, Instant::now()); participation.public_probe(Instant::now());
                     }
                     connection_routes.established(connection_id, remote, &endpoint);
-                    cached_dials.connected(remote);
+                    cached_dials.established(remote, &endpoint);
                     if discovery.is_none() {
                         swarm.behaviour_mut().gossipsub.add_explicit_peer(&remote);
                     }

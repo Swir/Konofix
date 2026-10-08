@@ -37,6 +37,23 @@ DCUtR continue running. Unrelated Amino/AutoNAT peers are not imported into the
 native DHT by Identify, and are not room-membership authorities or authorized relays.
 WORLD retains public signed GossipSub semantics, not private recipient-only E2E.
 
+## Native handoff and temporary discovery connections
+
+The isolated reader and native chat use the same authenticated PeerID. An incoming
+reader connection must not cancel a queued native dial merely because that PeerID
+is already connected. The planner keeps its original bounded plan and deadline
+while a connection exists; an outgoing native success cancels remaining work.
+The reader explicitly closes its ad connection after a response, failure or request
+expiry. A waiting native plan can then proceed direct-first without granting an
+extra attempt or authorizing circuit fallback. Existing native chat connections
+are not closed by this isolated-reader cleanup.
+
+A loopback TCP/Noise regression reproduces the collision using two separate swarms
+with one key and verifies the subsequent native dial. The signed-ad fixture also
+requires both ends of the helper connection to close within its unchanged test
+deadline, with fixture idle expiry deliberately later than that deadline. Neither
+test is physical WORLD or WAN evidence.
+
 ## Reachability and voluntary relay
 
 An observed Identify address is only a candidate. The adapter can ask at most eight

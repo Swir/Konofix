@@ -340,7 +340,8 @@ mod tests {
             .with_bind("127.0.0.1:0".parse().unwrap())
             .with_routing_cache(root.join(format!("{name}-routing.json")))
             .with_local_test_mode(true)
-            .with_hello_interval(Duration::from_millis(100));
+            .with_hello_interval(Duration::from_millis(100))
+            .with_event_capacity(1);
         let transport = KonofixTransport::spawn(config).await.unwrap();
         let (command_tx, command_rx) = mpsc::channel(8);
         // A one-event output queue makes backpressure reachable with three real messages.
@@ -452,6 +453,55 @@ mod tests {
             .await
             .unwrap();
         a_task.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sender_output_backpressure_preserves_every_delivery_receipt() {
+        let root = TestState::new();
+        let (a, mut a_events, a_task) = test_runtime(&root.0, "a-sender", None).await;
+        let (b, mut b_events, b_task) = test_runtime(&root.0, "b-receiver", None).await;
+        a.connect(b.node_id().to_owned(), vec![b.local_addr()])
+            .await
+            .unwrap();
+
+        // Fill A's bridge output with a real inbound message. run_transport must
+        // continue accepting Send commands while it cannot drain SDK receipts.
+        send_and_wait_for_receipt(&b, &mut b_events, a.node_id(), vec![9]).await;
+        wait_for_full_output(&a_events).await;
+
+        let first = a.send(b.node_id().to_owned(), vec![10]).await.unwrap();
+        let second = a.send(b.node_id().to_owned(), vec![11]).await.unwrap();
+
+        time::timeout(Duration::from_secs(15), async {
+            match a_events.recv().await.expect("message stream is open") {
+                RelayAppEvent::Message(message) => {
+                    assert_eq!(message.peer_node_id, b.node_id());
+                    assert_eq!(message.data, vec![9]);
+                }
+                other => panic!("expected the event that filled output, got {other:?}"),
+            }
+
+            for expected in [first, second] {
+                match a_events.recv().await.expect("receipt stream is open") {
+                    RelayAppEvent::Delivered(receipt) => {
+                        assert_eq!(receipt.peer_node_id, b.node_id());
+                        assert_eq!(receipt.message_id, expected);
+                    }
+                    other => panic!("expected ordered delivery receipt, got {other:?}"),
+                }
+            }
+        })
+        .await
+        .expect("both receipts must survive sender-side output backpressure");
+
+        time::timeout(Duration::from_secs(3), a.shutdown())
+            .await
+            .unwrap();
+        time::timeout(Duration::from_secs(3), b.shutdown())
+            .await
+            .unwrap();
+        a_task.await.unwrap();
+        b_task.await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

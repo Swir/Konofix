@@ -243,4 +243,108 @@ mod tests {
         assert!(dials.waiting.is_empty());
         assert!(dials.pending.is_empty());
     }
+
+    #[tokio::test]
+    async fn helper_connection_cannot_discard_native_handoff() {
+        use futures::StreamExt;
+        use libp2p::{identity, noise, ping, swarm::SwarmEvent, tcp, yamux, SwarmBuilder};
+
+        fn local(key: identity::Keypair) -> Swarm<ping::Behaviour> {
+            SwarmBuilder::with_existing_identity(key)
+                .with_tokio()
+                .with_tcp(
+                    tcp::Config::default(),
+                    noise::Config::new,
+                    yamux::Config::default,
+                )
+                .unwrap()
+                .with_behaviour(|_| ping::Behaviour::default())
+                .unwrap()
+                .build()
+        }
+
+        async fn listen(swarm: &mut Swarm<ping::Behaviour>) -> Multiaddr {
+            swarm
+                .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+                .unwrap();
+            loop {
+                if let SwarmEvent::NewListenAddr { address, .. } = swarm.select_next_some().await {
+                    return address;
+                }
+            }
+        }
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            // A native endpoint and its isolated reader share an authenticated
+            // identity, as in production, but are different TCP/Noise swarms.
+            let key = identity::Keypair::generate_ed25519();
+            let mut target = local(key.clone());
+            let mut reader = local(key);
+            let mut client = local(identity::Keypair::generate_ed25519());
+            let peer = *target.local_peer_id();
+            let client_peer = *client.local_peer_id();
+            let target_address = listen(&mut target).await.with(Protocol::P2p(peer));
+            let client_address = listen(&mut client).await;
+            reader.dial(client_address).unwrap();
+            let mut client_ready = false;
+            let mut reader_ready = false;
+            while !client_ready || !reader_ready {
+                tokio::select! {
+                    event = client.select_next_some() => {
+                        if let SwarmEvent::ConnectionEstablished { peer_id, .. } = event {
+                            assert_eq!(peer_id, peer);
+                            client_ready = true;
+                        }
+                    }
+                    event = reader.select_next_some() => {
+                        if let SwarmEvent::ConnectionEstablished { peer_id, .. } = event {
+                            assert_eq!(peer_id, client_peer);
+                            reader_ready = true;
+                        }
+                    }
+                }
+            }
+            assert!(client.is_connected(&peer));
+            assert!(!target.is_connected(&client_peer));
+            let mut dials = DirectFirstDials::default();
+            dials.enqueue(peer, vec![target_address], Instant::now());
+            dials.drive(&mut client, Instant::now(), |_, _, _| {});
+            assert_eq!(
+                dials.waiting.len(),
+                1,
+                "temporary helper connection discarded the native endpoint plan"
+            );
+
+            reader.disconnect_peer_id(client_peer).unwrap();
+            while client.is_connected(&peer) {
+                tokio::select! {
+                    _ = client.select_next_some() => {}
+                    _ = reader.select_next_some() => {}
+                }
+            }
+            dials.drive(&mut client, Instant::now(), |_, _, _| {});
+            let mut native_ready = false;
+            client_ready = false;
+            while !native_ready || !client_ready {
+                tokio::select! {
+                    event = client.select_next_some() => {
+                        if let SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } = event {
+                            assert_eq!(peer_id, peer);
+                            assert!(endpoint.is_dialer());
+                            client_ready = true;
+                        }
+                    }
+                    event = target.select_next_some() => {
+                        if let SwarmEvent::ConnectionEstablished { peer_id, .. } = event {
+                            assert_eq!(peer_id, client_peer);
+                            native_ready = true;
+                        }
+                    }
+                    _ = reader.select_next_some() => {}
+                }
+            }
+        })
+        .await
+        .expect("bounded loopback native handoff exceeded 10 seconds");
+    }
 }

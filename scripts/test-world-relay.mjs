@@ -166,4 +166,57 @@ await new Promise(resolve => setTimeout(resolve, 20));
 assert.equal(bobOffline, 1, 'signed goodbye must remove relay presence once');
 bob.stop();
 
-console.log('WORLD relay unit test passed: signed public chat, NIP-44 private chat/file fallback, deduplication and cleanup.');
+globalThis.localStorage = new MemoryStorage();
+const staleAlice = new WorldRelayBridge();
+globalThis.localStorage = new MemoryStorage();
+const freshAlice = new WorldRelayBridge();
+globalThis.localStorage = new MemoryStorage();
+const observerBob = new WorldRelayBridge();
+const rotatedAlicePeer = '12D3KooWRotatedAlice3333333333333333333333333333';
+const observerBobPeer = '12D3KooWObserverBob4444444444444444444444444444';
+let activeAliceRelayPeer = '';
+let staleAliceRetired = 0;
+let staleAlicePrivate = 0;
+let freshAlicePrivate = 0;
+
+observerBob.start(observerBobPeer, 'Bob_observer', '#4f7cff', {
+  onPresence(peer) {
+    if (peer.claimed_peer_id === rotatedAlicePeer) activeAliceRelayPeer = peer.peer_id;
+  },
+  onOffline(peerId) {
+    if (peerId === staleAlice.virtualPeerId()) staleAliceRetired += 1;
+  },
+  onChat() {},
+  onState() {},
+});
+staleAlice.start(rotatedAlicePeer, 'Alice_old', '#35d07f', {
+  onPresence() {},
+  onOffline() {},
+  onChat() {},
+  onState() {},
+  onPrivate() { staleAlicePrivate += 1; },
+});
+await new Promise(resolve => setTimeout(resolve, 40));
+assert.equal(activeAliceRelayPeer, staleAlice.virtualPeerId());
+
+freshAlice.start(rotatedAlicePeer, 'Alice_new', '#35d07f', {
+  onPresence() {},
+  onOffline() {},
+  onChat() {},
+  onState() {},
+  onPrivate() { freshAlicePrivate += 1; },
+});
+await new Promise(resolve => setTimeout(resolve, 40));
+assert.equal(staleAliceRetired, 1, 'a newer relay identity for the same native peer must retire the stale route');
+assert.equal(activeAliceRelayPeer, freshAlice.virtualPeerId(), 'private actions must target the newest relay identity');
+
+observerBob.publishPrivate(activeAliceRelayPeer, 'identity rotation private test');
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(freshAlicePrivate, 1, 'private delivery must reach the newest relay identity');
+assert.equal(staleAlicePrivate, 0, 'private delivery must not target the retired relay identity');
+
+staleAlice.stop();
+freshAlice.stop();
+observerBob.stop();
+
+console.log('WORLD relay unit test passed: signed public chat, NIP-44 private chat/file fallback, identity rotation, deduplication and cleanup.');

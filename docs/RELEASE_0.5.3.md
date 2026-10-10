@@ -8,6 +8,12 @@ still preferred. When a participant is visible only through the public WORLD rel
 the UI now enables private chat and a bounded encrypted file route instead of sending
 an unreachable native request.
 
+RC 2 also retires stale relay identities when the same installed peer announces a
+newer session. This prevents private actions and encrypted file offers from targeting
+an obsolete encryption key left visible briefly by a public relay after an update,
+reinstall or restart. Encrypted events are accepted only from the currently announced
+session for that peer.
+
 Do not publish 0.5.3 as stable until the exact Windows candidate passes the physical
 two-PC LAN/WAN test below. Automated tests prove implementation behavior, not public
 relay availability on the tester's networks.

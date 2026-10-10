@@ -29,13 +29,21 @@ SHA-256 `a8b6c7d28e45e61ce6127cfdd60223779048022fdc1289948c7e269dd2c22564`.
 Neither result evaluates physical WAN acceptance; the source field names the clean
 base commit and the filenames explicitly retain that the tested fix was uncommitted.
 
+The later WORLD relay fallback does not change those Amino records. The isolated
+Amino client remains the native direct-first discovery path. When it cannot form a
+native room across NAT/CGNAT, the same visible public-discovery choice also enables
+the independently documented signed, expiring public-text path in
+[`WORLD_RELAY_FALLBACK.md`](WORLD_RELAY_FALLBACK.md). That fallback is not a native
+PeerID connection, circuit reservation, file route or physical WAN acceptance result.
+
 ## Session choices
 
 The ordinary libp2p stack and zero-configuration LAN mDNS remain active. Expand
 **Public WORLD discovery and participant relay** on the login screen to choose,
 separately:
 
-- public WORLD discovery for this session; on by default with a visible opt-out;
+- public WORLD discovery and the public-text fallback for this session; on by
+  default with a visible opt-out;
 - permission to host a bounded participant relay when current public reachability
   has been demonstrated; on by default with a visible opt-out, independent of the
   first checkbox.
@@ -45,7 +53,10 @@ relay service; reconnect uses the visible login-screen settings. The current UI 
 checkbox choices while editing the same login view; a fresh application starts with
 the automatic defaults selected.
 KNP remains an optional, separate contact/identity path, never an automatic fallback
-for a libp2p recipient. No account, central message history or message server is added.
+for a libp2p recipient. No account, Konofix-owned VPS or intended central history is
+added. The WORLD text fallback does use third-party public Nostr relays; their
+operators can observe or copy public WORLD traffic, and they are never authorization
+authorities for private chat, rooms or files.
 
 The public adapter uses the same libp2p identity on an isolated Amino client swarm.
 Only after a Noise/QUIC authenticated response passes the signed-ad policy does

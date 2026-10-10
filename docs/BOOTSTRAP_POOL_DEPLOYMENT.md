@@ -11,8 +11,11 @@ file/restart acceptance campaign.
 At main `d14bc36d0da003e1d85e55cb004f36f53572eded`, the build-owned
 `src-tauri/bootstrap-pool.json` has zero seeds. Frontend localStorage also starts
 with no custom bootstrap. Retry, DHT, AutoNAT and hole punching cannot find an
-unknown Internet mesh from no reachable first contact. This is a product
-release blocker for the automatic WORLD requirement.
+unknown native Internet mesh from no reachable first contact. The later public
+Nostr fallback can carry signed WORLD presence/text through restrictive NAT
+without filling this pool, but it does not supply native temporary rooms,
+private control or file paths. Physical exact-build automatic-WORLD acceptance
+remains a release blocker.
 
 Upstream KonoNexus was refreshed at
 `ea9cc5dfffa7480ab5a1bb0f79e8b5649fdeea3e`, including issue #7, the SDK, CLI and
@@ -21,10 +24,11 @@ peers and the tester supplies no default public pool. No verified reachable
 public seeds were found in those sources. KNP socket endpoints/NodeIDs are
 not libp2p bootstrap multiaddresses/PeerIDs and cannot fill this pool.
 
-No public hosts, operator access or verified endpoints are available in this
-handoff. No VPS was provisioned and no external reachability check was run.
-The production pool deliberately stays empty until real peers are deployed.
-Code and a parser cannot complete automatic Internet WORLD by themselves.
+No public native hosts, operator access or verified libp2p endpoints are
+available in this handoff. No VPS was provisioned. The production pool
+deliberately stays empty until real peers are deployed. Code and a parser cannot
+complete the native Internet mesh by themselves; `WORLD_RELAY_FALLBACK.md`
+documents the separate replaceable public-text path and its trust boundary.
 
 ## Deployment: three independent participants
 

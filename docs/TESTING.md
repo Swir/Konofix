@@ -2,7 +2,7 @@
 
 This document defines the minimum test set required before closing the first release stage intended for communication between different countries and independent networks.
 
-The default chat uses the primary **rust-libp2p** stack. [KNP_CHAT_BETA.md](KNP_CHAT_BETA.md) adds an optional KNP contact panel and a combined two-installation acceptance checklist. The installed-app CI exercises automatic local discovery and WORLD messages, concurrent optional KNP messages, profile exclusivity and both lifecycle paths. It uses two processes on one Windows runner; physical LAN, direct WAN and controlled relay fallback still require field observations.
+The default direct chat uses the primary **rust-libp2p** stack. [WORLD_RELAY_FALLBACK.md](WORLD_RELAY_FALLBACK.md) documents the signed public WORLD presence/text fallback for restrictive NAT, and [KNP_CHAT_BETA.md](KNP_CHAT_BETA.md) adds an optional KNP contact panel plus combined two-installation acceptance. CI and live protocol probes do not replace physical LAN, independent-network WORLD, direct WAN or controlled native-relay field observations.
 
 ## 1. Local validation
 

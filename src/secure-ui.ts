@@ -8,6 +8,7 @@ import {
   type SecureRoomInfo,
   roomSecurity,
 } from './private-chat-state';
+import { sendFileToPeer, worldRelay } from './main';
 import './secure-ui.css';
 
 const conversations = new PrivateConversationStore();
@@ -136,12 +137,11 @@ function augmentMainUi(): void {
   augmentPrivateSettings();
 
   document.querySelectorAll<HTMLElement>('#peerList .user').forEach(row => {
-    const fileButton = row.querySelector<HTMLButtonElement>('[data-send-peer]');
-    if (!fileButton) return;
-    const peerId = fileButton.dataset.sendPeer ?? '';
+    const fileButton = row.querySelector<HTMLButtonElement>('[data-send-peer], [data-send-relay-peer]');
+    const peerId = row.dataset.peerId ?? fileButton?.dataset.sendPeer ?? fileButton?.dataset.sendRelayPeer ?? '';
     if (!peerId) return;
-    const nick = row.querySelector('strong')?.textContent?.trim() || peerId;
-    const color = row.querySelector<HTMLElement>('strong')?.style.color || '';
+    const nick = row.dataset.peerNick || row.querySelector('strong')?.textContent?.trim() || peerId;
+    const color = row.dataset.peerColor || row.querySelector<HTMLElement>('strong')?.style.color || '';
     let button = row.querySelector<HTMLButtonElement>(`[data-private-peer="${CSS.escape(peerId)}"]`);
     if (!button) {
       button = document.createElement('button');
@@ -149,7 +149,8 @@ function augmentMainUi(): void {
       button.className = 'mini-private';
       button.dataset.privatePeer = peerId;
       button.textContent = '💬';
-      fileButton.insertAdjacentElement('beforebegin', button);
+      if (fileButton) fileButton.insertAdjacentElement('beforebegin', button);
+      else row.appendChild(button);
     }
     button.dataset.privateNick = nick;
     button.dataset.privateColor = color;
@@ -473,6 +474,10 @@ function openPrivateChat(peerId: string, nick: string, color: string): void {
 
 async function sendPrivateFile(): Promise<void> {
   if (!activePrivatePeerId || offlinePeers.has(activePrivatePeerId)) return;
+  if (activePrivatePeerId.startsWith('nostr:')) {
+    await sendFileToPeer(activePrivatePeerId);
+    return;
+  }
   try {
     await invoke('offer_file', {
       peerId: activePrivatePeerId,
@@ -491,12 +496,11 @@ async function sendPrivateMessage(): Promise<void> {
   if (!text) return;
   input.disabled = true;
   try {
-    const message = await invoke<PrivateChatMessage>('send_private_message', {
-      peerId: activePrivatePeerId,
-      text,
-    });
+    const message = activePrivatePeerId.startsWith('nostr:')
+      ? worldRelay.publishPrivate(activePrivatePeerId, text)
+      : await invoke<PrivateChatMessage>('send_private_message', { peerId: activePrivatePeerId, text });
     localPeerId = localPeerId || message.peer_id;
-    conversations.push(message, localPeerId);
+    conversations.push(message, message.peer_id);
     input.value = '';
     renderPrivateModal();
   } catch (error) {
@@ -571,7 +575,7 @@ async function wireSecureEvents(): Promise<void> {
   await listen<PrivateChatMessage>('private-message', event => {
     const message = event.payload;
     localPeerId = localPeerId || message.target_peer_id;
-    const result = conversations.push(message, localPeerId);
+    const result = conversations.push(message, message.target_peer_id);
     if (!result?.inserted) return;
     const peerButton = document.querySelector<HTMLButtonElement>(`[data-private-peer="${CSS.escape(result.peerId)}"]`);
     const nick = peerButton?.dataset.privateNick || message.nick;
@@ -584,6 +588,35 @@ async function wireSecureEvents(): Promise<void> {
     } else {
       showPrivateNotification(message, result.peerId, nick, color);
     }
+    queueAugment();
+  });
+  window.addEventListener('konofix-relay-private-message', event => {
+    if (!privateMessagesEnabled()) return;
+    const message = (event as CustomEvent<PrivateChatMessage>).detail;
+    const result = conversations.push(message, message.target_peer_id);
+    if (!result?.inserted) return;
+    const peerButton = document.querySelector<HTMLButtonElement>(`[data-private-peer="${CSS.escape(result.peerId)}"]`);
+    const nick = peerButton?.dataset.privateNick || message.nick;
+    const color = peerButton?.dataset.privateColor || message.nick_color || '';
+    if (activePrivatePeerId === result.peerId) {
+      activePrivateNick = nick;
+      activePrivateColor = color;
+      conversations.open(result.peerId);
+      renderPrivateModal();
+    } else {
+      showPrivateNotification(message, result.peerId, nick, color);
+    }
+    queueAugment();
+  });
+  window.addEventListener('konofix-relay-peer-offline', event => {
+    const peerId = (event as CustomEvent<{ peer_id: string }>).detail.peer_id;
+    offlinePeers.add(peerId);
+    if (activePrivatePeerId === peerId) renderPrivateModal();
+  });
+  window.addEventListener('konofix-relay-peer-online', event => {
+    const peerId = (event as CustomEvent<{ peer_id: string }>).detail.peer_id;
+    offlinePeers.delete(peerId);
+    if (activePrivatePeerId === peerId) renderPrivateModal();
     queueAugment();
   });
   await listen<{ phase?: string }>('network-status', event => {

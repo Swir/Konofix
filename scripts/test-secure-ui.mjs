@@ -18,8 +18,11 @@ requireText("invoke<SecureRoomInfo>('create_secure_room'", 'password-protected r
 requireText("invoke('authorize_room_entry'", 'locked-room admission must explicitly authorize before legacy room entry');
 requireText("invoke<SecureRoomInfo>('update_room_password'", 'room owners must be able to change/remove protection');
 requireText("invoke<PrivateChatMessage>('send_private_message'", 'private messages must use the dedicated P2P command');
+requireText('worldRelay.publishPrivate(activePrivatePeerId, text)', 'WAN-only private peers must use authenticated NIP-44 relay encryption');
+requireText("window.addEventListener('konofix-relay-private-message'", 'encrypted relay private messages must reach the private conversation store');
 requireText("data-private-file", 'private 1:1 chat must expose a direct attachment control');
 requireText("invoke('offer_file'", 'private attachments must reuse the bounded direct P2P file-transfer command');
+requireText('await sendFileToPeer(activePrivatePeerId);', 'WAN-only private attachments must use the encrypted relay file fallback');
 requireText("peerId: activePrivatePeerId", 'private attachments must target the active authenticated conversation peer without a recipient picker');
 requireText("roomId: null", 'private attachments must remain direct peer transfers, not room GossipSub transfers');
 requireText("data-private-emoji-code", 'private chat must reuse the Konofix emoji picker without unsafe message rendering');

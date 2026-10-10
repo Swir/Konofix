@@ -41,10 +41,12 @@ field bounds and event ID, then deduplicate delivery across relays. Presence exp
 locally and text is queued only within a short bounded window during reconnect.
 
 The relay identity is displayed as `nostr:<public-key>`. A payload's native PeerID is
-only a de-duplication hint and never authorizes native control, files, protected rooms
-or KNP. Temporary rooms, private messages and file bytes are never copied to this
-fallback. Public relay operators can observe or copy WORLD text and connection
-metadata even though WSS protects traffic in transit. See
+only a de-duplication hint and never authorizes native control, protected rooms or
+KNP. Version 0.5.3 addresses relay-only private text and accepted files up to 2 MiB
+to that signed Nostr identity using NIP-44 encryption. Native libp2p remains preferred
+for private text and larger streamed files. Temporary rooms are never copied to the
+fallback. Public relay operators can observe or copy WORLD text and connection/file
+metadata, but receive only ciphertext for private text and file bytes. See
 `WORLD_RELAY_FALLBACK.md` for the trust and availability contract.
 
 ## NAT / Relay
@@ -79,7 +81,7 @@ The ordinary login starts the primary libp2p session. Opening **Optional KNP con
 | --- | --- | --- |
 | WORLD presence and public text | Signed libp2p GossipSub first; signed ephemeral multi-relay Nostr fallback when the native mesh is unavailable | Event-ID deduplication; relay identity never authorizes native operations; no KNP copy |
 | Temporary-room announcements and membership | Existing signed libp2p GossipSub, authenticated PeerID/source checks | Existing libp2p discovery and connection recovery; no public-relay copy |
-| Private control, protected room grants and direct files | Existing peer-bound libp2p request/response and authorization | Preserve replay, membership, consent, bounds and hash checks; no public GossipSub fallback |
+| Private text and files | Peer-bound libp2p request/response when connected; NIP-44 recipient-addressed relay fallback for private text and accepted files up to 2 MiB | Signed relay identity, bounded encrypted events, explicit file consent and receiver-side size/SHA-256 verification; room control never falls back |
 | Optional KNP direct text | Explicitly admitted KNP NodeID + exact endpoint; separate UI and session | Distinct queued, transport-delivered and application-received states; no silent libp2p resend |
 
 A KNP NodeID is **not** currently authenticated as the same identity as a libp2p PeerID. Automatic cross-protocol fallback would change recipient/security semantics and risk duplicate or misdirected delivery. This integration therefore selects the route by explicit conversation type, while retaining existing discovery, direct TCP/QUIC, relay and recovery within libp2p. Any future shared-recipient router needs authenticated identity binding, equivalent authorization and message deduplication before it can be enabled.

@@ -38,7 +38,7 @@
 
 The active `0.4.3 — Real Internet Test` / Global Beta readiness scope has **56 of 67 tasks complete**. The Global Beta expansion added eight many-computer release gates to the five original real-network gates. The reviewed public-Node admission-limit gate and the Rooms 2.0 production membership/count implementation gate are now verified after exact-head Windows/Linux qualification; the other six Global Beta gates and the five original real-world gates remain open. The Rooms 2.0 credit covers production runtime wiring and application-loop convergence only: CI, documentation or local/same-host tests cannot credit the remaining participant-topology, real 50/100/250 load, cross-country, field-soak, failover or qualified prerelease gates.
 
-Published packages and their actual availability are listed on [GitHub Releases](https://github.com/Swir/Konofix/releases). [0.5.2 Beta 1 notes](docs/RELEASE_0.5.2_BETA1.md) describe the chat/file-transfer and Windows installer corrections, participant networking and current testing scope. Update both participants to the same package. Beta previews collect real-world results; they do not declare the Global Beta network gates complete. Historical `test1`/`test2` packages predate current runtime fixes and must not be mixed with newer binaries or evidence tools.
+Published packages and their actual availability are listed on [GitHub Releases](https://github.com/Swir/Konofix/releases). The physically accepted 0.5.2 installer is the current stable WORLD-text build. [0.5.3 candidate notes](docs/RELEASE_0.5.3.md) describe the encrypted WAN private-chat/file correction now awaiting an exact two-PC retest. Update both participants to the same package. A stable chat release does not declare the separate Global Beta infrastructure/load/failover gates complete. Historical `test1`/`test2` packages predate current runtime fixes and must not be mixed with newer binaries or evidence tools.
 
 ## What is Konofix?
 
@@ -48,7 +48,7 @@ Konofix does not use a traditional account, email address, or phone number. **Ev
 
 To form a network, start the app on each computer and connect with a nickname. Participants on one LAN discover each other automatically through mDNS. The product target is automatic entry into **#WORLD over the Internet** without pasted addresses or a mandatory operator-owned VPS. [Public discovery](docs/COLD_START_DESKTOP.md), enabled by default with a visible opt-out, uses the shared Amino DHT to find untrusted contact hints, then verifies short-lived signed advertisements before native direct-first libp2p routing. Publicly reachable applications may provide bounded participant relay service. Public IPFS bootstrappers are not Konofix relays, and the optional native bootstrap pool remains empty.
 
-When ordinary NAT/CGNAT prevents that native mesh from forming, the same visible public-discovery choice now enables a [multi-relay WORLD fallback](docs/WORLD_RELAY_FALLBACK.md). Four replaceable public Nostr relays carry cryptographically signed, expiring **WORLD presence and public text only**; duplicate delivery is suppressed. They do not carry private chat, temporary-room control or files, which retain their authenticated P2P paths. There is no Konofix-owned VPS, account service or intended server-side history, but public relay operators can observe or copy WORLD text, IP addresses, identifiers and timing. A live two-client implementation probe passed across all four configured relays. The user then confirmed that the exact `8f6772b8…` Windows candidate restored normal typed communication on the two physical installations across their independent-network test; the route subtype was not recorded, so broader WAN/route/restart qualification in [#165](https://github.com/Swir/Konofix/issues/165) remains open. See the [limited acceptance record](docs/evidence/WORLD_WAN_20261010.md) and [participant-network beta plan](docs/GLOBAL_BETA.md).
+When ordinary NAT/CGNAT prevents that native mesh from forming, the same visible public-discovery choice enables a [multi-relay WORLD fallback](docs/WORLD_RELAY_FALLBACK.md). Four replaceable public Nostr relays carry cryptographically signed, expiring WORLD presence/public text with duplicate suppression. Version 0.5.3 adds NIP-44 end-to-end encrypted private text and explicitly accepted files up to 2 MiB for relay-only participants; temporary-room control does not use this route, and native libp2p remains preferred. There is no Konofix-owned VPS, account service or intended server-side history. Relay operators can read public WORLD text and observe IPs, identifiers, ciphertext sizes and timing, but private text/file content is encrypted to the recipient. The user confirmed that the exact `8f6772b8…` 0.5.2 Windows candidate restored normal typed WORLD communication across the two physical independent networks; the new private/file fallback still requires the exact 0.5.3 two-PC retest. See the [limited acceptance record](docs/evidence/WORLD_WAN_20261010.md), [0.5.3 test scope](docs/RELEASE_0.5.3.md) and [participant-network beta plan](docs/GLOBAL_BETA.md).
 
 KonoNexus/KNP adds an **optional contact-text panel** alongside the primary libp2p network. WORLD, rooms, discovery and files keep their existing routes and security contracts. KNP requires separately verified NodeIDs and endpoints in this initial integration; it does not silently replace or impersonate a libp2p peer. See [the coexistence and installed-app test guide](docs/KNP_CHAT_BETA.md). Cloud tests do not complete the two-physical-installation or WAN gates.
 
@@ -60,7 +60,7 @@ KonoNexus/KNP adds an **optional contact-text panel** alongside the primary libp
 | 🌐 Global discovery | Kademlia DHT, Identify, mDNS, peer caching and bootstrap nodes help peers find each other. |
 | 💬 Distributed rooms | Global `#WORLD` plus temporary user-created rooms. |
 | 🔒 Authenticated transport | libp2p Noise transport identity plus source-bound GossipSub validation. |
-| 📦 P2P file transfer | Recipient approval, 256 KiB chunks, cancellation, size limits and SHA-256 verification. |
+| 📦 P2P file transfer | Native streaming plus a 2 MiB NIP-44 encrypted relay fallback, recipient approval, cancellation and SHA-256 verification. |
 | 🛰️ NAT traversal stack | AutoNAT, Circuit Relay, DCUtR, UPnP, TCP and QUIC-v1 support. |
 | 🧭 Public Node tooling | Windows and Linux Node builds, readiness checks, health telemetry and soak validation. |
 | 🧪 Evidence-driven release gate | Exact-build manifests, Netprobe evidence, provenance verification and fail-closed promotion checks. |
@@ -68,12 +68,12 @@ KonoNexus/KNP adds an **optional contact-text panel** alongside the primary libp
 
 ## Quick Start
 
-### Public preview
+### Current stable and 0.5.3 test candidate
 
-1. Open [GitHub Releases](https://github.com/Swir/Konofix/releases) and choose the newest published beta preview.
-2. Choose `v0.5.2-beta.1`, read its limited qualification notes and download the setup executable. The prerelease is bound to the physically accepted exact candidate and is not Global Beta or stable.
+1. Open [GitHub Releases](https://github.com/Swir/Konofix/releases). `v0.5.2` is the current stable Windows WORLD-chat release.
+2. For the private-chat/file correction, use only an exact 0.5.3 CI candidate identified by its full source commit, workflow run and installer checksum; do not mix it with 0.5.2 on the other PC.
 3. Verify the checksum, install it, then open **Konofix Chat** from the Start menu. Do not start Netprobe to open the chat.
-4. Choose a nickname and connect. LAN discovery is automatic. Leave the visible public discovery option selected on both PCs for automatic Internet WORLD. The exact preview restored public WORLD text in the user's physical independent-network test, but private chat, rooms and files still require native P2P routes and the broader recovery matrix remains unqualified.
+4. Choose a nickname and connect. LAN discovery is automatic. Leave the visible public discovery option selected on both PCs for automatic Internet WORLD. Stable 0.5.2 restored public WORLD text in the user's physical independent-network test. The 0.5.3 candidate adds encrypted private text and small-file fallback for the relay-only WAN users and must pass the procedure in `docs/RELEASE_0.5.3.md` before promotion.
 
 Follow [the two-PC Poland–Norway procedure](docs/TWO_PC_TEST.md) and record actual results before any WAN claim.
 
@@ -261,7 +261,7 @@ The broader Global Beta scope adds fleet, multi-seed fallback, capacity, Rooms 2
 
 ## Releases
 
-See [published releases](https://github.com/Swir/Konofix/releases) for available downloads and [0.5.2 Beta 1 notes](docs/RELEASE_0.5.2_BETA1.md) for the current preview scope. Beta previews use verified exact-commit installers to gather the still-missing live evidence. Fully qualified Global Beta/stable promotion continues to require the real network, load and failover gates; publishing a preview does not complete any remaining gate or raise the verified fraction on its own.
+See [published releases](https://github.com/Swir/Konofix/releases) for available downloads. `v0.5.2` is the current stable WORLD-text release; [0.5.3 notes](docs/RELEASE_0.5.3.md) define the exact physical retest required for encrypted WAN private text and small files. Fully qualified Global Beta promotion continues to require the separate real-network, load and failover gates; publishing a chat release does not complete those remaining gates or raise the verified fraction on its own.
 
 Windows CI can publish `v0.5.2-beta.1` only from a trusted `main` push. The source-owned policy binds publication to the physically accepted exact candidate, its successful Windows workflow and installer SHA-256; candidate Windows/Linux/RustSec checks and the sealed archive are verified again. Assets are uploaded to a draft and their server-reported SHA-256 digests are checked before publication. Existing published releases are never overwritten. The ordinary application version is `0.5.2`; `beta.1` identifies the preview release channel.
 

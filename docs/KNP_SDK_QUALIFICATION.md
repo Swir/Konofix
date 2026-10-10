@@ -24,7 +24,9 @@ no wire format, delivery timeout or retransmission budget.
 
 The Konofix regression sets the SDK event capacity to one, fills the sender's bridge
 output with a real inbound message, sends two real messages while that output remains
-blocked, then requires both delivery receipts in order. This covers the sender-side
+blocked, then requires both delivery receipts exactly once. Authenticated UDP ACKs for
+separate messages may arrive in either order; the SDK FIFO guarantee applies to the
+order ACKs are observed, not the original send order. This covers the sender-side
 condition missing from the earlier receiver-backpressure test. It is expected to fail
 on the previous pin because the second receipt is discarded after the first fills the
 SDK channel.

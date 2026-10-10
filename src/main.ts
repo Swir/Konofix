@@ -4,7 +4,16 @@ import { t } from './i18n';
 import { DEFAULT_NICK_COLOR, KONOFIX_EMOJI, NICK_COLORS, normalizeNickColor, renderChatText } from './chat-expression';
 import './style.css';
 import { openKnpChatUi, closeKnpChatUi } from './knp-chat-ui';
-import { WorldRelayBridge, type RelayPeer, type RelayState } from './world-relay';
+import {
+  WorldRelayBridge,
+  type RelayFileOffer,
+  type RelayFileProgress,
+  type RelayFileReady,
+  type RelayFileSelection,
+  type RelayPeer,
+  type RelayPrivateMessage,
+  type RelayState,
+} from './world-relay';
 
 type PublicShareOffer = {
   offer_id: string;
@@ -74,7 +83,7 @@ const state = {
   nick: '',
   nickColor: normalizeNickColor(localStorage.getItem('konofix.nickColor')),
   peerId: '',
-  version: '0.4.3',
+  version: '0.5.3',
   room: 'world',
   connected: false,
   peers: new Map<string, PeerInfo>(),
@@ -89,7 +98,7 @@ const state = {
 let sessionRevision = 0;
 let connectPending = false;
 let roomChangePending = false;
-const worldRelay = new WorldRelayBridge();
+export const worldRelay = new WorldRelayBridge();
 const worldRelayPeers = new Map<string, RelayPeer>();
 let worldRelayState: RelayState = { connected: 0, total: 0 };
 
@@ -340,6 +349,7 @@ function renderChat() {
   wireCredit();
   document.querySelectorAll<HTMLElement>('[data-room]').forEach(el => el.addEventListener('click', () => switchRoom(el.dataset.room!)));
   document.querySelectorAll<HTMLElement>('[data-send-peer]').forEach(el => el.addEventListener('click', () => sendFileToPeer(el.dataset.sendPeer!)));
+  document.querySelectorAll<HTMLElement>('[data-send-relay-peer]').forEach(el => el.addEventListener('click', () => sendFileToPeer(el.dataset.sendRelayPeer!)));
   document.querySelectorAll<HTMLElement>('[data-cancel-transfer]').forEach(el => el.addEventListener('click', () => cancelTransfer(el.dataset.cancelTransfer!)));
   document.querySelector('#newRoom')?.addEventListener('click', createRoom);
   document.querySelector('#send')?.addEventListener('click', sendMessage);
@@ -428,9 +438,9 @@ function peerHtml(peer: PeerInfo): string {
   const initial = peer.nick[0]?.toUpperCase() ?? '?';
   const color = normalizeNickColor(peer.nick_color);
   const fileAction = peer.peer_id.startsWith('nostr:')
-    ? `<span class="relay-only" title="${esc(t('network.worldRelayTextOnly'))}">🌐</span>`
+    ? `<button class="mini-file relay-file" data-send-relay-peer="${esc(peer.peer_id)}" title="${esc(t('transfer.sendEncryptedRelayFileTo', { nick: peer.nick }))}">📎</button>`
     : `<button class="mini-file" data-send-peer="${esc(peer.peer_id)}" title="${esc(t('transfer.sendFileTo', { nick: peer.nick }))}">📎</button>`;
-  return `<div class="user"><div class="avatar" style="--nick-color:${color}">${esc(initial)}</div><div><strong style="color:${color}">${esc(peer.nick)}</strong><span>${shortPeer(peer.peer_id)}</span></div>${fileAction}</div>`;
+  return `<div class="user" data-peer-id="${esc(peer.peer_id)}" data-peer-nick="${esc(peer.nick)}" data-peer-color="${esc(color)}"><div class="avatar" style="--nick-color:${color}">${esc(initial)}</div><div><strong style="color:${color}">${esc(peer.nick)}</strong><span>${shortPeer(peer.peer_id)}</span></div>${fileAction}</div>`;
 }
 
 function shortPeer(v: string): string { return v ? `${v.slice(0, 6)}…${v.slice(-4)}` : 'local'; }
@@ -645,7 +655,7 @@ async function switchRoom(room: string) {
 }
 
 function offerFile() {
-  if (![...state.peers.keys()].some(peerId => !peerId.startsWith('nostr:'))) {
+  if (state.peers.size === 0) {
     alert(t('transfer.noPeers'));
     return;
   }
@@ -654,7 +664,7 @@ function offerFile() {
 
 function showRecipientModal() {
   document.querySelector('#recipientModal')?.remove();
-  const peers = [...state.peers.values()].filter(peer => !peer.peer_id.startsWith('nostr:')).sort((a,b) => a.nick.localeCompare(b.nick));
+  const peers = [...state.peers.values()].sort((a,b) => a.nick.localeCompare(b.nick));
   const modal = document.createElement('div');
   modal.id = 'recipientModal';
   modal.className = 'modal-wrap';
@@ -679,10 +689,33 @@ function showRecipientModal() {
   }));
 }
 
-async function sendFileToPeer(peerId: string) {
+export async function sendFileToPeer(peerId: string) {
   const peer = state.peers.get(peerId);
   if (!peer) {
     alert(t('transfer.peerOffline'));
+    return;
+  }
+  if (peerId.startsWith('nostr:')) {
+    try {
+      const selection = await invoke<RelayFileSelection | null>('pick_relay_file');
+      if (!selection) return;
+      const offer = worldRelay.offerFile(peerId, selection);
+      state.transfers.set(offer.transfer_id, {
+        transfer_id: offer.transfer_id,
+        direction: 'outgoing',
+        peer_id: peerId,
+        nick: peer.nick,
+        file_name: offer.file_name,
+        size: offer.size,
+        transferred: 0,
+        progress: 0,
+        status: 'waiting',
+      });
+      addSystem(state.room, t('transfer.offerSent', { file: offer.file_name, nick: peer.nick }));
+      renderChat();
+    } catch (error) {
+      alert(t('transfer.startError', { error: String(error) }));
+    }
     return;
   }
   try {
@@ -701,6 +734,11 @@ async function sendFileToPeer(peerId: string) {
 }
 
 async function cancelTransfer(transferId: string) {
+  const transfer = state.transfers.get(transferId);
+  if (transfer?.peer_id.startsWith('nostr:')) {
+    worldRelay.cancelFile(transferId);
+    return;
+  }
   try {
     await invoke('cancel_file', { transferId });
   } catch (e) {
@@ -750,6 +788,101 @@ function showFileOfferModal(offer: FileOffer) {
       close();
     }
   });
+}
+
+function relayTransferView(progress: RelayFileProgress, path?: string): FileTransfer {
+  const status = progress.status === 'transferring'
+    ? (progress.direction === 'outgoing' ? 'sending' : 'receiving')
+    : progress.status;
+  return {
+    transfer_id: progress.transfer_id,
+    direction: progress.direction,
+    peer_id: progress.peer_id,
+    nick: progress.nick,
+    file_name: progress.file_name,
+    size: progress.size,
+    transferred: progress.transferred,
+    progress: progress.progress,
+    status,
+    path,
+    error: progress.error,
+  };
+}
+
+function updateRelayTransfer(progress: RelayFileProgress): void {
+  const previous = state.transfers.get(progress.transfer_id);
+  state.transfers.set(progress.transfer_id, relayTransferView(progress, previous?.path));
+  if (progress.status === 'rejected' || progress.status === 'failed') {
+    addSystem('world', t('transfer.problem', { file: progress.file_name, error: progress.error || transferStatus(progress.status) }));
+  } else if (progress.status === 'completed') {
+    addSystem('world', t('transfer.finished', { file: progress.file_name, saved: previous?.path ? t('transfer.saved', { path: previous.path }) : '' }));
+  } else if (state.connected) {
+    renderChat();
+  }
+}
+
+function showRelayFileOfferModal(offer: RelayFileOffer): void {
+  document.querySelector(`#relay-file-offer-${CSS.escape(offer.transfer_id)}`)?.remove();
+  const modal = document.createElement('div');
+  modal.id = `relay-file-offer-${offer.transfer_id}`;
+  modal.className = 'modal-wrap file-offer-wrap';
+  const dangerous = dangerousFile(offer.file_name);
+  modal.innerHTML = `<div class="modal glass file-offer-modal">
+    <div class="offer-icon">🔐</div>
+    <span class="eyebrow">${esc(t('transfer.encryptedRelay'))}</span>
+    <h3>${esc(t('transfer.wantsToSend', { nick: offer.nick }))}</h3>
+    <div class="offer-file"><strong>${esc(offer.file_name)}</strong><span>${formatBytes(offer.size)}</span></div>
+    ${dangerous ? `<div class="danger-note">${esc(t('transfer.dangerous'))}</div>` : `<div class="safe-note">${esc(t('transfer.safe'))}</div>`}
+    <div class="safe-note">${esc(t('transfer.encryptedRelayHelp'))}</div>
+    <div class="offer-actions"><button data-relay-reject class="ghost">${esc(t('transfer.reject'))}</button><button data-relay-accept class="primary compact">${esc(t('transfer.accept'))}</button></div>
+  </div>`;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('[data-relay-reject]')?.addEventListener('click', () => {
+    worldRelay.rejectFile(offer.transfer_id);
+    close();
+  });
+  modal.querySelector('[data-relay-accept]')?.addEventListener('click', () => {
+    try {
+      worldRelay.acceptFile(offer.transfer_id);
+      close();
+    } catch (error) {
+      alert(String(error));
+      close();
+    }
+  });
+}
+
+async function saveRelayFile(file: RelayFileReady): Promise<void> {
+  try {
+    const path = await invoke<string>('save_relay_file', {
+      fileName: file.file_name,
+      size: file.size,
+      sha256: file.sha256,
+      dataBase64: file.data_base64,
+    });
+    const completed: RelayFileProgress = {
+      ...file,
+      direction: 'incoming',
+      transferred: file.size,
+      progress: 100,
+      status: 'completed',
+    };
+    state.transfers.set(file.transfer_id, relayTransferView(completed, path));
+    worldRelay.confirmFileSaved(file.transfer_id, file.peer_id);
+    addSystem('world', t('transfer.finished', { file: file.file_name, saved: t('transfer.saved', { path }) }));
+  } catch (error) {
+    worldRelay.rejectFile(file.transfer_id, String(error));
+    const failed: RelayFileProgress = {
+      ...file,
+      direction: 'incoming',
+      transferred: 0,
+      progress: 0,
+      status: 'failed',
+      error: String(error),
+    };
+    updateRelayTransfer(failed);
+  }
 }
 
 function resetSessionView(errorMessage?: string) {
@@ -813,11 +946,13 @@ function startWorldRelay() {
         nick: peer.nick,
         nick_color: peer.nick_color,
       });
+      window.dispatchEvent(new CustomEvent('konofix-relay-peer-online', { detail: { peer_id: peer.peer_id } }));
       if (state.connected) renderChat();
     },
     onOffline(peerId: string) {
       worldRelayPeers.delete(peerId);
       state.peers.delete(peerId);
+      window.dispatchEvent(new CustomEvent('konofix-relay-peer-offline', { detail: { peer_id: peerId } }));
       if (state.connected) renderChat();
     },
     onChat(message: ChatMessage) {
@@ -827,6 +962,18 @@ function startWorldRelay() {
       const changed = next.connected !== worldRelayState.connected || next.total !== worldRelayState.total;
       worldRelayState = next;
       if (changed && state.connected) renderChat();
+    },
+    onPrivate(message: RelayPrivateMessage) {
+      window.dispatchEvent(new CustomEvent<RelayPrivateMessage>('konofix-relay-private-message', { detail: message }));
+    },
+    onFileOffer(offer: RelayFileOffer) {
+      showRelayFileOfferModal(offer);
+    },
+    onFileProgress(progress: RelayFileProgress) {
+      updateRelayTransfer(progress);
+    },
+    onFileReady(file: RelayFileReady) {
+      void saveRelayFile(file);
     },
   });
 }

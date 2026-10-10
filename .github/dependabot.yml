@@ -82,6 +82,11 @@ updates:
           - "hex"
         update-types:
           - "major"
+      base64-major:
+        patterns:
+          - "base64"
+        update-types:
+          - "major"
       dirs-major:
         patterns:
           - "dirs"

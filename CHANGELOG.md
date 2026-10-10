@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.3 — encrypted WAN private chat and file fallback
+
+- extend the existing signed multi-relay WORLD bridge with NIP-44 end-to-end encrypted private 1:1 messages addressed to the recipient's persistent relay identity; public relay operators receive ciphertext rather than private message text,
+- add an explicit Accept/Reject encrypted file fallback for relay-only WAN participants, bounded to 2 MiB, split into signed encrypted chunks, deduplicated across relays, reassembled in memory and saved only after receiver-side size and SHA-256 verification,
+- keep native libp2p private messaging and file streaming as the preferred route for directly connected peers, including its existing 32 GiB limit and disk-streaming behavior,
+- add multi-relay tests covering encrypted private delivery, multi-chunk file assembly, duplicate suppression and receiver saved acknowledgement; physical two-PC validation is still required before publishing 0.5.3 as stable.
+
 ## 0.5.2 — Windows beta preview
 
 - add an automatic multi-relay WORLD fallback for ordinary NAT/CGNAT clients: four independent public Nostr relays carry signed, expiring presence and public WORLD text only when direct libp2p cannot form the room; events are bounded, verified and deduplicated across relays, while private chat, temporary rooms and files remain on their existing authenticated direct/participant-relay paths,

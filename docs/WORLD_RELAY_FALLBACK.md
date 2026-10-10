@@ -10,11 +10,12 @@ libp2p relay. In that state, both clients can search forever without appearing i
 WORLD.
 
 The WORLD relay fallback provides automatic public presence and public WORLD text
-without requiring a Konofix-owned VPS. It is enabled by the existing visible public
-discovery session checkbox. A live two-client implementation probe has demonstrated
-mutual presence and one deduplicated message through the configured public relays.
-That probe is not the required physical two-PC independent-network acceptance test;
-the previous LAN-to-LTE result remains FAIL until an exact new installer passes.
+without requiring a Konofix-owned VPS. Version 0.5.3 also carries recipient-addressed
+NIP-44 encrypted private text and an explicit small-file fallback when the two native
+libp2p peers cannot form a route. It is enabled by the existing visible public
+discovery session checkbox. The exact 0.5.2 build passed physical two-PC WORLD text;
+the new encrypted private/file paths remain candidate functionality until the same
+physical topology validates an exact 0.5.3 installer.
 
 ## Replaceable public relays
 
@@ -36,12 +37,15 @@ multiple relays reduce dependence on any single operator.
 - NIP-01 ephemeral event kind: `28733`
 - subscription tag: `t = konofix-world-v1`
 - application namespace: `konofix/world-relay/1`
-- event types: `presence`, `chat`, `goodbye`
+- public event types: `presence`, `chat`, `goodbye`
+- encrypted event types: `private`, `file_offer`, `file_accept`, `file_reject`, `file_chunk`, `file_chunks_complete`, `file_missing`, `file_saved`
 - presence heartbeat / local expiry: 30 / 75 seconds
 - chat validity and reconnect queue: 120 seconds
 - maximum chat text: 4,000 characters
-- maximum content: 12 KiB
-- reconnect queue: at most 32 chat events
+- maximum public content: 12 KiB
+- maximum encrypted file: 2 MiB, divided into 16 KiB plaintext chunks
+- reconnect queue: at most 512 short-lived public/encrypted events; an explicit
+  completion/missing-index exchange retries lost file chunks for at most three rounds
 - replay/deduplication window: at most 2,048 event IDs
 
 Each installation creates a persistent local Nostr signing key. Every received event
@@ -53,27 +57,33 @@ Relay participants use `nostr:<public-key>` identities in the local UI. The enve
 also carries the sender's current native libp2p PeerID as a convenience hint so a
 later native connection can replace a duplicate relay-only presence entry. That
 claim is not cryptographic proof of a native PeerID and is never passed to native
-authorization, file transfer, protected-room or private-message code.
+authorization, protected-room or native request/response code. Relay-only private
+messages and small files bind to the independently signed `nostr:<public-key>`
+identity instead.
 
 ## Scope and privacy
 
-The fallback carries only WORLD presence and public WORLD text. It does not carry:
+The fallback carries WORLD presence/public text plus recipient-addressed encrypted
+private text and accepted encrypted files up to 2 MiB. It does not carry:
 
-- private 1:1 messages;
 - temporary-room announcements, membership or passwords;
-- public file offers, file bytes or image previews;
+- public room file offers or image previews;
 - KNP contacts or NodeIDs;
 - native bootstrap or relay authorization.
 
-WSS encrypts the connection to each relay, and Nostr signatures authenticate the
-event key, but WORLD is public. Relay operators can read, copy, retain or correlate
-WORLD text, IP addresses, Nostr keys, claimed PeerIDs and timing even though events
-are marked ephemeral and include expiration tags. Users who do not accept this can
+WSS encrypts each relay connection, Nostr signatures authenticate the event key, and
+NIP-44 encrypts private text and file envelopes end to end to the recipient relay
+key. WORLD remains public. Relay operators can read/copy WORLD text and can retain or
+correlate ciphertext, IP addresses, Nostr keys, claimed PeerIDs, sizes and timing even
+though events are marked ephemeral and include expiration tags. Receiver-side Rust
+code independently verifies file size and SHA-256 before an exclusive no-clobber
+save to `Downloads/Konofix Chat`. Users who do not accept relay metadata exposure can
 clear the public discovery checkbox and retain LAN/configured-peer P2P only.
 
 ## Verification
 
-Deterministic coverage uses an in-memory four-relay model:
+Deterministic coverage uses an in-memory four-relay model, including NIP-44 private
+delivery and a multi-chunk encrypted file with saved acknowledgement:
 
 ```text
 npm run test:world-relay

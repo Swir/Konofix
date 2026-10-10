@@ -24,13 +24,14 @@ servers. Native configured pools and the headless Node remain optional operator
 alternatives. See [COLD_START_DESKTOP.md](COLD_START_DESKTOP.md) for limits,
 observable public metadata and the visible default-on session controls.
 
-For WORLD presence and public text only, the same session choice also enables the
+For WORLD presence and public text, the same session choice also enables the
 [replaceable public Nostr relay fallback](WORLD_RELAY_FALLBACK.md). It provides a
 NAT-safe live path while the native mesh is unavailable, with signed ephemeral
-events and multi-relay deduplication. It is not an authority for native PeerIDs,
-rooms, private messages or files. Relay operators can observe or copy public WORLD
-content and metadata; the design avoids dependence on any one relay rather than
-claiming that no third-party transport exists.
+events and multi-relay deduplication. Version 0.5.3 adds recipient-addressed NIP-44
+private text and accepted encrypted files up to 2 MiB without making the relay an
+authority for native PeerIDs or rooms. Relay operators can observe or copy public
+WORLD content and connection/ciphertext metadata; the design avoids dependence on
+any one relay rather than claiming that no third-party transport exists.
 
 **Current evidence:** the original candidate's empty pool explained the physical
 LAN-to-LTE [WAN FAIL #165](https://github.com/Swir/Konofix/issues/165). The four
@@ -41,8 +42,9 @@ independent-network test. The physical route subtype and restart recovery were
 not recorded, so this limited PASS authorizes a preview but does not complete
 the broader WAN gate. Preserve the original failure and append each new attempt
 separately. Direct TCP/QUIC remains preferred where NAT allows, without promising
-universal hole punching; native rooms/files still need a direct or compatible
-participant circuit path.
+universal hole punching; native rooms and larger streamed files still need a direct
+or compatible participant circuit path, while the new encrypted private/small-file
+fallback remains pending an exact 0.5.3 physical retest.
 
 Qualification must exercise at least three participant nodes across at least two independent networks, with at least two reachable contact/relay paths, then demonstrate recovery when one leaves. Participants may keep the app open or optionally run the headless Node. Ephemeral desktop identities and addresses are valid for the running session. After all compatible participants leave, automatic public rediscovery must recover when participants return; an invitation-only recovery is diagnostic and cannot satisfy automatic WORLD.
 

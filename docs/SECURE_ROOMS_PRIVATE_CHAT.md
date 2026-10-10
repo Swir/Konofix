@@ -57,7 +57,7 @@ Private messages are never represented as a public `WireEvent::Chat` and never u
 - Old room announcements without lock metadata are interpreted as unlocked rooms.
 - New protected rooms never downgrade to unlocked operation merely because a peer lacks the control protocol.
 - Older peers cannot obtain a protected-room grant; new peers reject their unauthorized membership/chat claims for that protected room.
-- Private messaging to a peer that does not support `/konofix/control/1.0.0` fails explicitly and never leaks the message to `#WORLD`.
+- Private messaging to a native peer that does not support `/konofix/control/1.0.0` fails explicitly and never leaks the message to `#WORLD`. A relay-only `nostr:<public-key>` participant is a separate authenticated recipient type: version 0.5.3 encrypts that private text with NIP-44 instead of treating a claimed native PeerID as authorization.
 
 ## Verification gates before merge
 
@@ -72,7 +72,7 @@ The implementation PR must prove at minimum:
 - unauthorized/stale/replayed protected-room state is rejected;
 - private sender/target identity binding;
 - private stale/oversize/replayed/rate-limited messages are rejected;
-- private messages have no GossipSub fallback;
+- private messages have no public GossipSub fallback; the relay-only route must remain recipient-addressed NIP-44 ciphertext;
 - UI lock state, password join flow, separate private conversations and unread state;
 - all seven locales include the new user-visible strings with English fallback;
 - exact-head Windows CI, Linux Node CI and RustSec are green before merge.

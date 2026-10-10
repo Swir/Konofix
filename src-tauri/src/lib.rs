@@ -7,6 +7,7 @@ use std::{
 };
 
 use futures::StreamExt;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use libp2p::{
     autonat, dcutr, gossipsub, identify,
     kad::{self, store::MemoryStore, GetRecordOk, Quorum, Record, RecordKey},
@@ -81,6 +82,7 @@ const MAX_FILE_REQUEST_WIRE_BYTES: u64 = 2 * FILE_CHUNK_SIZE as u64 + 4096;
 const MAX_FILE_RESPONSE_WIRE_BYTES: u64 = 16 * 1024;
 const MAX_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_PUBLIC_IMAGE_SIZE: u64 = 8 * 1024 * 1024;
+const MAX_RELAY_FILE_SIZE: u64 = 2 * 1024 * 1024;
 const PUBLIC_OFFER_TTL_SECS: u64 = 10 * 60;
 const PUBLIC_CLAIM_TTL_SECS: u64 = 45;
 const MAX_PUBLIC_OFFERS_LOCAL: usize = 8;
@@ -758,6 +760,14 @@ struct FileTransferView {
     error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct RelayFileSelection {
+    file_name: String,
+    size: u64,
+    sha256: String,
+    data_base64: String,
+}
+
 #[derive(Debug)]
 struct OutgoingTransfer {
     peer: PeerId,
@@ -1318,6 +1328,23 @@ fn safe_filename(raw: &str) -> String {
         name = format!("_{name}");
     }
     name
+}
+
+fn decode_relay_file(data_base64: &str, size: u64, sha256: &str) -> Result<Vec<u8>, String> {
+    if size > MAX_RELAY_FILE_SIZE || !matches!(sha256.len(), 64) {
+        return Err("Nieprawidłowy zaszyfrowany plik WORLD.".into());
+    }
+    let data = BASE64
+        .decode(data_base64)
+        .map_err(|_| "Nieprawidłowe kodowanie pliku WORLD.".to_string())?;
+    if data.len() as u64 != size {
+        return Err("Rozmiar odebranego pliku WORLD jest niezgodny z ofertą.".into());
+    }
+    let actual_sha256 = hex::encode(Sha256::digest(&data));
+    if !actual_sha256.eq_ignore_ascii_case(sha256) {
+        return Err("Suma SHA-256 odebranego pliku WORLD jest niezgodna.".into());
+    }
+    Ok(data)
 }
 
 fn download_directory() -> Result<PathBuf, String> {
@@ -1981,6 +2008,75 @@ async fn offer_file(
         .await
         .map_err(|_| "Brak odpowiedzi modułu transferu.".to_string())??;
     Ok(Some(transfer))
+}
+
+#[tauri::command]
+async fn pick_relay_file() -> Result<Option<RelayFileSelection>, String> {
+    let path = tokio::task::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Wyślij zaszyfrowany plik przez WORLD")
+            .pick_file()
+    })
+    .await
+    .map_err(|error| format!("Błąd okna wyboru pliku: {error}"))?;
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let metadata = tokio::fs::metadata(&path)
+        .await
+        .map_err(|error| format!("Nie można odczytać pliku: {error}"))?;
+    if !metadata.is_file() {
+        return Err("Można wysyłać tylko zwykłe pliki.".into());
+    }
+    if metadata.len() > MAX_RELAY_FILE_SIZE {
+        return Err("Szyfrowany transfer awaryjny WORLD obsługuje pliki do 2 MiB. Większe pliki wymagają bezpośredniego połączenia P2P.".into());
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(safe_filename)
+        .ok_or("Nieprawidłowa nazwa pliku.")?;
+    let data = tokio::fs::read(&path)
+        .await
+        .map_err(|error| format!("Nie można odczytać pliku: {error}"))?;
+    let sha256 = hex::encode(Sha256::digest(&data));
+    Ok(Some(RelayFileSelection {
+        file_name,
+        size: data.len() as u64,
+        sha256,
+        data_base64: BASE64.encode(data),
+    }))
+}
+
+#[tauri::command]
+async fn save_relay_file(
+    file_name: String,
+    size: u64,
+    sha256: String,
+    data_base64: String,
+) -> Result<String, String> {
+    let data = decode_relay_file(&data_base64, size, &sha256)?;
+    let directory = download_directory()?;
+    tokio::fs::create_dir_all(&directory)
+        .await
+        .map_err(|error| format!("Nie można utworzyć folderu pobierania: {error}"))?;
+    let reservation = reserve_incoming_file(&directory, &safe_filename(&file_name)).await?;
+    let final_path = reservation.final_path.clone();
+    let temp_path = reservation.temp_path.clone();
+    let mut file = reservation.file;
+    let write_result: std::io::Result<()> = async {
+        file.write_all(&data).await?;
+        file.flush().await?;
+        file.sync_all().await
+    }
+    .await;
+    drop(file);
+    if let Err(error) = write_result {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(format!("Nie można zapisać odebranego pliku WORLD: {error}"));
+    }
+    commit_reserved_file(&temp_path, &final_path).await?;
+    Ok(final_path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -5384,6 +5480,30 @@ mod file_offer_admission_tests {
         assert!(!incoming_transfer_is_expired(fresh, now));
         assert!(incoming_transfer_is_expired(expired, now));
     }
+
+    #[test]
+    fn encrypted_relay_file_requires_exact_size_and_sha256() {
+        let data = b"relay file";
+        let encoded = BASE64.encode(data);
+        let sha256 = hex::encode(Sha256::digest(data));
+        assert_eq!(
+            decode_relay_file(&encoded, data.len() as u64, &sha256).unwrap(),
+            data
+        );
+        assert!(decode_relay_file(&encoded, data.len() as u64 + 1, &sha256).is_err());
+        assert!(decode_relay_file(&encoded, data.len() as u64, &"0".repeat(64)).is_err());
+        assert!(decode_relay_file("not-base64", 1, &sha256).is_err());
+    }
+
+    #[test]
+    fn encrypted_relay_file_limit_is_enforced_before_decode() {
+        assert!(decode_relay_file(
+            "",
+            MAX_RELAY_FILE_SIZE + 1,
+            &hex::encode(Sha256::digest([]))
+        )
+        .is_err());
+    }
 }
 
 #[cfg(test)]
@@ -5820,6 +5940,8 @@ pub fn run() {
         add_bootstrap,
         refresh_discovery,
         offer_file,
+        pick_relay_file,
+        save_relay_file,
         publish_public_file,
         claim_public_file,
         load_image_preview,
@@ -5843,6 +5965,8 @@ pub fn run() {
         add_bootstrap,
         refresh_discovery,
         offer_file,
+        pick_relay_file,
+        save_relay_file,
         publish_public_file,
         claim_public_file,
         load_image_preview,

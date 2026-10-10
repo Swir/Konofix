@@ -3,10 +3,10 @@
 ## 0.5.2 — Windows beta preview
 
 - add an automatic multi-relay WORLD fallback for ordinary NAT/CGNAT clients: four independent public Nostr relays carry signed, expiring presence and public WORLD text only when direct libp2p cannot form the room; events are bounded, verified and deduplicated across relays, while private chat, temporary rooms and files remain on their existing authenticated direct/participant-relay paths,
-- add deterministic multi-relay signature/deduplication/cleanup coverage plus a bounded live two-client public-relay acceptance probe; the live probe proved mutual presence and one deduplicated WORLD message through the public relay path, but is not a substitute for the required physical Poland–Norway/LTE installed-build retest,
+- add deterministic multi-relay signature/deduplication/cleanup coverage plus a bounded live two-client public-relay acceptance probe; after the automated probe passed, the user confirmed that exact candidate `8f6772b8…` restored normal typed communication on two physical installations across their independent-network test,
 - version the libp2p plus optional KNP coexistence candidate separately from published 0.5.1; preserve earlier releases and publish only after exact-main Windows/Linux/RustSec checks,
 - include the short two-PC Poland–Norway installation, checksum, route-status and private observation procedure in the sealed Windows bundle,
-- retain direct/circuit observations, bounded direct-first remembered reconnects and installed-app lifecycle coverage; physical LAN, WAN/NAT and relay acceptance remain NOT RUN until user evidence arrives,
+- bind `v0.5.2-beta.1` publication to the exact accepted source, Windows run and installer digest; the physical transport subtype, restart, file, private-room and KNP results remain unrecorded and are not inferred,
 - no Global Beta or production-readiness claim; qualification stays 56/67 = 83.6%.
 
 ## 0.5.1 — in development

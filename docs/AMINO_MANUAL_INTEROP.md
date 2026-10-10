@@ -52,8 +52,9 @@ application identity files, credentials or user message data are collected.
 
 `RPC_INTEROPERABILITY_PASS` means only authenticated public routing RPCs completed.
 It does **not** qualify signed participant discovery, reachability, relay service,
-message delivery, network-change recovery or a physical two-PC WAN test. #165 remains
-the real WAN FAIL and publication stays HELD until the separate acceptance gates pass.
+message delivery, network-change recovery or a physical two-PC WAN test. The later
+exact WORLD candidate received a limited physical text PASS and may be published as
+a prerelease, but #165 route/restart gates remain separate and open.
 Public DHT services are best effort; metadata observers can see source IP, ephemeral
 PeerID, test namespace and timing. A read-only test requests no remote record TTL.
 

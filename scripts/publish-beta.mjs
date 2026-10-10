@@ -28,11 +28,19 @@ export function assertChecks(checks, commit) {
   }
 }
 
-export function assertPlan(plan, env, readFile) {
+export function assertPlan(plan, env, readFile, policy = betaPublicationPolicy) {
   assert.equal(plan.tag, tag);
   assert.equal(plan.version, '0.5.2');
-  assert.equal(plan.commit, env.GITHUB_SHA);
-  assert.equal(plan.workflow_run, env.GITHUB_RUN_ID);
+  if (policy.mode === 'qualified-preview') {
+    assert.match(policy.candidate?.sourceCommit ?? '', /^[0-9a-f]{40}$/, 'Qualified candidate source commit is invalid');
+    assert.match(policy.candidate?.windowsRun ?? '', /^[1-9][0-9]*$/, 'Qualified candidate Windows run is invalid');
+    assert.equal(plan.commit, policy.candidate.sourceCommit, 'Release plan is not bound to the physically accepted candidate');
+    assert.equal(plan.workflow_run, policy.candidate.windowsRun, 'Release plan uses the wrong candidate Windows run');
+    assert.equal(policy.candidate.artifact, `Konofix-Chat-0.5.2-Windows-${plan.commit}`, 'Qualified artifact name is not bound to the accepted source');
+  } else {
+    assert.equal(plan.commit, env.GITHUB_SHA);
+    assert.equal(plan.workflow_run, env.GITHUB_RUN_ID);
+  }
   assert(plan.body.includes('<!-- KONOFIX-BETA-PREVIEW -->'));
   assert(plan.body.includes('56/67'));
   const archive = `Konofix-Chat-0.5.2-Windows-${plan.commit}.zip`;
@@ -42,6 +50,10 @@ export function assertPlan(plan, env, readFile) {
     const bytes = readFile(file.name);
     assert.equal(bytes.length, file.bytes, `Wrong size: ${file.name}`);
     assert.equal(sha256(bytes), file.sha256, `Wrong digest: ${file.name}`);
+  }
+  if (policy.mode === 'qualified-preview') {
+    const installer = plan.files.find((file) => file.name === 'Konofix-Chat-0.5.2-beta.1-setup.exe');
+    assert.equal(installer?.sha256, policy.candidate.installerSha256, 'Release installer is not the physically accepted binary');
   }
   const info = JSON.parse(readFile('BUILD_INFO.json'));
   assert.equal(info.commit, plan.commit);
@@ -107,6 +119,8 @@ async function main() {
     if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n${hold}\n`);
     return;
   }
+  assert(Object.isFrozen(betaPublicationPolicy.candidate), 'Qualified candidate policy must be immutable');
+  assert(fs.existsSync(betaPublicationPolicy.candidate.acceptance), 'Qualified physical acceptance record is missing');
   assert(process.env.GH_TOKEN, 'Workflow token is required');
   const api = async (method, endpoint, body, allowMissing = false) => {
     const upload = method === 'UPLOAD';

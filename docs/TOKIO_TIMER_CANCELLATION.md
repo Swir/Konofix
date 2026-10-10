@@ -24,8 +24,9 @@ This is a dependency regression, not network evidence. Upstream explicitly
 states ordinary Tokio task wakers have not been shown to trigger this defect.
 The historical KNP hangs in 37415648734 and 37511929284 therefore remain
 unexplained unless their own trace proves this lock cycle. Original captured
-KNP stress and installed-app Windows checks remain necessary. Public beta
-publication remains HELD and the existing physical WAN FAIL remains open.
+KNP stress and installed-app Windows checks remain necessary. The later WORLD
+text result qualifies only the exact public preview; it does not resolve these
+historical KNP hangs or the broader route/restart evidence in #165.
 
 ## Recorded baseline
 

@@ -1,4 +1,4 @@
-# Konofix Chat — Architecture 0.5.2 (tester-only)
+# Konofix Chat — Architecture 0.5.2 beta preview
 
 ## Windows client
 

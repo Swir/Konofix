@@ -32,16 +32,17 @@ rooms, private messages or files. Relay operators can observe or copy public WOR
 content and metadata; the design avoids dependence on any one relay rather than
 claiming that no third-party transport exists.
 
-**Current blocker:** the original candidate's empty pool explained the physical
-LAN-to-LTE [WAN FAIL #165](https://github.com/Swir/Konofix/issues/165). The new
-experimental alternative still has no physical automatic-WORLD/recovery PASS.
-The four configured Nostr relays passed a bounded two-client presence/text probe,
-but that is not an installed two-PC test. Run the exact-build application with
-clean settings and no pasted addresses. A manual invitation can diagnose native
-transport but cannot pass automatic WORLD. Preserve the original failure and
-append each new attempt separately. Direct TCP/QUIC remains preferred where NAT
-allows, without promising universal hole punching; native rooms/files still need
-a direct or compatible participant circuit path.
+**Current evidence:** the original candidate's empty pool explained the physical
+LAN-to-LTE [WAN FAIL #165](https://github.com/Swir/Konofix/issues/165). The four
+configured Nostr relays later passed a bounded two-client presence/text probe,
+and the user then confirmed that exact candidate `8f6772b8…` restored normal
+typed communication on the two physical installations across their
+independent-network test. The physical route subtype and restart recovery were
+not recorded, so this limited PASS authorizes a preview but does not complete
+the broader WAN gate. Preserve the original failure and append each new attempt
+separately. Direct TCP/QUIC remains preferred where NAT allows, without promising
+universal hole punching; native rooms/files still need a direct or compatible
+participant circuit path.
 
 Qualification must exercise at least three participant nodes across at least two independent networks, with at least two reachable contact/relay paths, then demonstrate recovery when one leaves. Participants may keep the app open or optionally run the headless Node. Ephemeral desktop identities and addresses are valid for the running session. After all compatible participants leave, automatic public rediscovery must recover when participants return; an invitation-only recovery is diagnostic and cannot satisfy automatic WORLD.
 

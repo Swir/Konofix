@@ -1,24 +1,25 @@
-# 0.5.2 public publication hold
+# 0.5.2 public preview qualification
 
-The 0.5.2 Windows candidate is **tester-only**. The ordinary Windows workflow
-may build, verify and upload an installable Actions bundle, but the publisher's
-CLI records HELD and exits before reading a token, release plan or GitHub API.
-No release, tag or public asset is created by that entry point.
+The earlier tester-only publication hold is lifted **only** for the immutable
+0.5.2 candidate recorded in `scripts/beta-publication-policy.mjs`. Its exact
+source commit, Windows workflow, artifact name and installer SHA-256 are bound
+in source. The physical user report is preserved in
+[`evidence/WORLD_WAN_20261010.md`](evidence/WORLD_WAN_20261010.md).
 
-The source-owned policy is `scripts/beta-publication-policy.mjs`. There is no
-environment-variable switch or scheduled task that releases this hold.
-Removing it requires a reviewed code change, reliable exact-main Windows CI
-(including the unresolved KNP lifecycle failure) and the user's actual physical
-two-installation results. Those results must identify the exact candidate,
-checksums, topology and observed direct/circuit behavior; cloud two-process
-acceptance is insufficient. See [TWO_PC_TEST.md](TWO_PC_TEST.md).
+That report confirms ordinary public WORLD text communication on two physical
+installations across the user's independent-network test. It does not record the
+transport subtype, message markers, PeerIDs, restart recovery, file transfer,
+private rooms or KNP. Publication is therefore authorized only as a prerelease;
+it is not Global Beta or stable qualification and does not raise the verified
+56/67 roadmap fraction.
 
-This hold does not modify existing immutable releases or their tags/assets.
-It does not disable builds, tests, artifact verification or tester downloads.
-The retained publisher qualification tests still cover exact source/CI,
-asset integrity, resumable drafts and immutable published releases. A new test
-executes the real held CLI without a token or release plan and checks that it
-only writes its hold summary.
+The trusted-main publisher downloads the already accepted Windows artifact by
+its immutable workflow run instead of silently substituting a newly compiled
+binary. It verifies the inner exact-build archive, `BUILD_INFO.json`, installer
+digest and exact candidate Windows/Linux/RustSec checks. Assets are uploaded to
+a draft and checked before the prerelease becomes public. Existing published
+releases, tags and assets remain immutable.
 
-Main Windows qualification and physical LAN/WAN/relay results remain separate
-gates. Neither this policy nor a later green build marks any field test PASS.
+The unresolved optional KNP lifecycle investigation and every broader field,
+load, soak, failover and route-level gate remain open. The original WAN failure
+in issue #165 is retained as historical evidence beside the later limited PASS.

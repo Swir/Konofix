@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
 import { betaPublicationPolicy } from './beta-publication-policy.mjs';
 import { assertContext, assertChecks, assertPlan, publishBeta } from './publish-beta.mjs';
 
@@ -26,14 +22,26 @@ const bytes = new Map(['BUILD_INFO.json', 'Konofix-Chat-0.5.2-beta.1-setup.exe',
 bytes.set('BUILD_INFO.json', Buffer.from(JSON.stringify({ commit, version: '0.5.2', workflow_run: '1234' })));
 const read = (name) => bytes.get(name);
 const plan = { tag: 'v0.5.2-beta.1', version: '0.5.2', commit, workflow_run: '1234', body: '<!-- KONOFIX-BETA-PREVIEW --> 56/67', files: [...bytes].map(([name, value]) => ({ name, bytes: value.length, sha256: createHash('sha256').update(value).digest('hex') })) };
-assertPlan(plan, env, read);
-assert.throws(() => assertPlan({ ...plan, commit: 'b'.repeat(40) }, env, read));
-assert.throws(() => assertPlan({ ...plan, version: '0.4.3' }, env, read));
-assert.throws(() => assertPlan({ ...plan, version: '0.5.1' }, env, read));
-assert.throws(() => assertPlan({ ...plan, tag: 'v0.5.1-beta.1' }, env, read));
-assert.throws(() => assertPlan({ ...plan, tag: 'v0.4.3-beta.1' }, env, read));
-assert.throws(() => assertPlan({ ...plan, files: [...plan.files, plan.files[0]] }, env, read));
-assert.throws(() => assertPlan(plan, env, () => Buffer.from('tampered')));
+const qualifiedPolicy = Object.freeze({
+  version: '0.5.2',
+  mode: 'qualified-preview',
+  candidate: Object.freeze({
+    sourceCommit: commit,
+    windowsRun: '1234',
+    artifact: `Konofix-Chat-0.5.2-Windows-${commit}`,
+    installerSha256: plan.files.find((file) => file.name === 'Konofix-Chat-0.5.2-beta.1-setup.exe').sha256,
+  }),
+});
+assertPlan(plan, env, read, qualifiedPolicy);
+assert.throws(() => assertPlan({ ...plan, commit: 'b'.repeat(40) }, env, read, qualifiedPolicy));
+assert.throws(() => assertPlan({ ...plan, workflow_run: '5678' }, env, read, qualifiedPolicy));
+assert.throws(() => assertPlan({ ...plan, version: '0.4.3' }, env, read, qualifiedPolicy));
+assert.throws(() => assertPlan({ ...plan, version: '0.5.1' }, env, read, qualifiedPolicy));
+assert.throws(() => assertPlan({ ...plan, tag: 'v0.5.1-beta.1' }, env, read, qualifiedPolicy));
+assert.throws(() => assertPlan({ ...plan, tag: 'v0.4.3-beta.1' }, env, read, qualifiedPolicy));
+assert.throws(() => assertPlan({ ...plan, files: [...plan.files, plan.files[0]] }, env, read, qualifiedPolicy));
+assert.throws(() => assertPlan(plan, env, () => Buffer.from('tampered'), qualifiedPolicy));
+assert.throws(() => assertPlan(plan, env, read, { ...qualifiedPolicy, candidate: { ...qualifiedPolicy.candidate, installerSha256: '0'.repeat(64) } }));
 
 function service({ existing, tagCommit, failUpload, corruptDigest, seedAssets = [] } = {}) {
   const state = { release: existing, assets: [...seedAssets], calls: [], tagCommit };
@@ -82,28 +90,18 @@ assert.equal((await publishBeta(plan, immutable.api, read)).skipped, true);
 assert(!immutable.state.calls.some((call) => call.method !== 'GET'), 'Published releases must never be rewritten');
 console.log('Beta publishing: trusted context, exact CI/build, 0.5.2 intent, draft upload verification, resume and immutable release tests PASS.');
 
-assert.equal(betaPublicationPolicy.mode, 'tester-only');
+assert.equal(betaPublicationPolicy.mode, 'qualified-preview');
 assert.equal(betaPublicationPolicy.version, '0.5.2');
 assert(Object.isFrozen(betaPublicationPolicy));
-const holdRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'konofix-publication-hold-'));
-try {
-  const summary = path.join(holdRoot, 'summary.md');
-  // This directory has no release plan and the subprocess has no token.
-  // Successful HELD output proves the real CLI exits before those prerequisites,
-  // rather than calling the publisher's mocked API.
-  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./publish-beta.mjs', import.meta.url))], {
-    cwd: holdRoot,
-    env: { ...process.env, ...env, GH_TOKEN: '', GITHUB_STEP_SUMMARY: summary },
-    encoding: 'utf8',
-    timeout: 10_000,
-  });
-  assert.ifError(result.error);
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Public beta publication HELD:/);
-  assert.match(result.stdout, /tester-only; no release, tag or asset is created/);
-  assert.match(fs.readFileSync(summary, 'utf8'), /physical two-PC acceptance/);
-  assert.deepEqual(fs.readdirSync(holdRoot), ['summary.md']);
-} finally {
-  fs.rmSync(holdRoot, { recursive: true, force: true });
-}
-console.log('Tester-only hold: actual CLI exits before token, release plan and GitHub API access PASS.');
+assert(Object.isFrozen(betaPublicationPolicy.candidate));
+assert.match(betaPublicationPolicy.candidate.sourceCommit, /^[0-9a-f]{40}$/);
+assert.match(betaPublicationPolicy.candidate.windowsRun, /^[1-9][0-9]*$/);
+assert.match(betaPublicationPolicy.candidate.installerSha256, /^[0-9a-f]{64}$/);
+assert.equal(betaPublicationPolicy.candidate.artifact, `Konofix-Chat-0.5.2-Windows-${betaPublicationPolicy.candidate.sourceCommit}`);
+assert(fs.existsSync(new URL(`../${betaPublicationPolicy.candidate.acceptance}`, import.meta.url)));
+const workflow = fs.readFileSync(new URL('../.github/workflows/windows-ci.yml', import.meta.url), 'utf8');
+assert(workflow.includes(`BETA_SOURCE_SHA: ${betaPublicationPolicy.candidate.sourceCommit}`));
+assert(workflow.includes(`BETA_SOURCE_RUN: '${betaPublicationPolicy.candidate.windowsRun}'`));
+assert(workflow.includes('github-token: ${{ github.token }}'));
+assert(workflow.includes('run-id: ${{ env.BETA_SOURCE_RUN }}'));
+console.log('Qualified-preview policy: immutable exact source/run/installer acceptance binding PASS.');

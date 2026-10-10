@@ -1,8 +1,9 @@
 # Experimental public cold-start desktop integration
 
-Status: enabled by default with a visible session opt-out; still unqualified.
-Public beta publication remains HELD. The original
-physical LAN-to-LTE WAN FAIL in #165 remains open. A single read-only public Amino
+Status: enabled by default with a visible session opt-out. Exact candidate
+`8f6772b8…` has a limited user-reported physical independent-network WORLD text
+PASS and is qualified for a prerelease; route and restart qualification remain
+open beside the original LAN-to-LTE WAN FAIL in #165. A single read-only public Amino
 trial on #177 head `b398bf941bad1e1f8b75ab0a61dd33ed2d0e003c` ended without an
 authenticated connection or successful RPC. Its complete, non-overwritten record
 is [attempt 1](evidence/amino/amino-public-20261007-attempt1.json), SHA-256
@@ -15,7 +16,7 @@ query-scoped seeds, verified locally against received Kademlia requests. A later
 bounded probe found a concrete compatibility defect: the application lacked RSA
 identity decoding required by legacy Qm IPFS bootstrappers. The current implementation
 enables that feature and pins the complete AutoConf 2025080401 bootstrap set. This
-code change is not a physical WAN PASS or qualified new Windows handoff.
+code change alone was not a physical WAN PASS or qualified Windows handoff.
 
 One authorized read-only probe of that RSA-enabled working tree completed the Amino
 provider query with 14 authenticated connections and 14 successful RPC peers. The

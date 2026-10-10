@@ -4,6 +4,7 @@ import { t } from './i18n';
 import { DEFAULT_NICK_COLOR, KONOFIX_EMOJI, NICK_COLORS, normalizeNickColor, renderChatText } from './chat-expression';
 import './style.css';
 import { openKnpChatUi, closeKnpChatUi } from './knp-chat-ui';
+import { WorldRelayBridge, type RelayPeer, type RelayState } from './world-relay';
 
 type PublicShareOffer = {
   offer_id: string;
@@ -88,6 +89,9 @@ const state = {
 let sessionRevision = 0;
 let connectPending = false;
 let roomChangePending = false;
+const worldRelay = new WorldRelayBridge();
+const worldRelayPeers = new Map<string, RelayPeer>();
+let worldRelayState: RelayState = { connected: 0, total: 0 };
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -242,6 +246,7 @@ async function connect() {
     state.peerId = result.peer_id;
     state.version = result.version;
     state.connected = true;
+    if (publicDiscoveryOptIn) startWorldRelay();
     renderChat();
     addSystem('world', t('login.connectedAs', { nick: state.nick }));
   } catch (e) {
@@ -258,7 +263,7 @@ function renderChat() {
   const messages = state.messages.get(state.room) ?? [];
   const onlineCount = Math.max(1, state.peers.size + 1);
   const activeRoomCount = state.room === 'world' ? onlineCount : Math.max(0, Number(currentRoom.users) || 0);
-  const networkClass = state.status.phase === 'online' ? 'good' : state.status.phase === 'searching' ? 'searching' : 'off';
+  const networkClass = state.status.phase === 'online' || worldRelayState.connected > 0 ? 'good' : state.status.phase === 'searching' ? 'searching' : 'off';
   const transfers = [...state.transfers.values()].slice(-5).reverse();
 
   app.innerHTML = `
@@ -389,11 +394,15 @@ function renderChat() {
 
 function networkLabel(): string {
   if (state.status.phase === 'online') return t('network.online');
+  if (worldRelayState.connected > 0) return t('network.worldRelayOnline');
   if (state.status.phase === 'searching') return t('network.searching');
   return t('network.offline');
 }
 
 function internetEntryLabel(): string {
+  if (publicDiscoveryOptIn && state.connected && worldRelayState.connected > 0) {
+    return t('network.worldRelayConnected', { count: worldRelayState.connected });
+  }
   if (publicDiscoveryOptIn && state.connected) return discoveryLabel();
   if (!state.status.bootstrap_count) return t('network.entryMissing');
   if (!state.status.bootstrap_connected) return t('network.entrySearching');
@@ -404,6 +413,7 @@ function networkSubtitle(): string {
   const parts = [t('network.connectionsCount', { count: state.status.connected_peers }), `DHT ${state.status.dht_peers}`];
   parts.push(t('network.directCount', { count: state.status.routes.filter(r => r.path === 'direct').length }));
   parts.push(t('network.relayCount', { count: state.status.routes.filter(r => r.path === 'relay').length }));
+  if (worldRelayState.total > 0) parts.push(t('network.worldRelayCount', { connected: worldRelayState.connected, total: worldRelayState.total }));
   if (state.status.nat && state.status.nat !== 'unknown') parts.push(`NAT ${state.status.nat}`);
   return parts.join(' · ');
 }
@@ -417,7 +427,10 @@ function roomButton(room: RoomInfo): string {
 function peerHtml(peer: PeerInfo): string {
   const initial = peer.nick[0]?.toUpperCase() ?? '?';
   const color = normalizeNickColor(peer.nick_color);
-  return `<div class="user"><div class="avatar" style="--nick-color:${color}">${esc(initial)}</div><div><strong style="color:${color}">${esc(peer.nick)}</strong><span>${shortPeer(peer.peer_id)}</span></div><button class="mini-file" data-send-peer="${esc(peer.peer_id)}" title="${esc(t('transfer.sendFileTo', { nick: peer.nick }))}">📎</button></div>`;
+  const fileAction = peer.peer_id.startsWith('nostr:')
+    ? `<span class="relay-only" title="${esc(t('network.worldRelayTextOnly'))}">🌐</span>`
+    : `<button class="mini-file" data-send-peer="${esc(peer.peer_id)}" title="${esc(t('transfer.sendFileTo', { nick: peer.nick }))}">📎</button>`;
+  return `<div class="user"><div class="avatar" style="--nick-color:${color}">${esc(initial)}</div><div><strong style="color:${color}">${esc(peer.nick)}</strong><span>${shortPeer(peer.peer_id)}</span></div>${fileAction}</div>`;
 }
 
 function shortPeer(v: string): string { return v ? `${v.slice(0, 6)}…${v.slice(-4)}` : 'local'; }
@@ -632,7 +645,7 @@ async function switchRoom(room: string) {
 }
 
 function offerFile() {
-  if (!state.peers.size) {
+  if (![...state.peers.keys()].some(peerId => !peerId.startsWith('nostr:'))) {
     alert(t('transfer.noPeers'));
     return;
   }
@@ -641,7 +654,7 @@ function offerFile() {
 
 function showRecipientModal() {
   document.querySelector('#recipientModal')?.remove();
-  const peers = [...state.peers.values()].sort((a,b) => a.nick.localeCompare(b.nick));
+  const peers = [...state.peers.values()].filter(peer => !peer.peer_id.startsWith('nostr:')).sort((a,b) => a.nick.localeCompare(b.nick));
   const modal = document.createElement('div');
   modal.id = 'recipientModal';
   modal.className = 'modal-wrap';
@@ -740,6 +753,9 @@ function showFileOfferModal(offer: FileOffer) {
 }
 
 function resetSessionView(errorMessage?: string) {
+  worldRelay.stop();
+  worldRelayPeers.clear();
+  worldRelayState = { connected: 0, total: 0 };
   closeKnpChatUi();
   sessionRevision += 1;
   connectPending = false;
@@ -784,6 +800,48 @@ function addSystem(room: string, text: string) {
   pushMessage({ id: crypto.randomUUID(), kind: 'system', nick: 'SYSTEM', room, text, timestamp: Date.now() });
 }
 
+function startWorldRelay() {
+  worldRelay.start(state.peerId, state.nick, state.nickColor, {
+    onPresence(peer: RelayPeer) {
+      worldRelayPeers.set(peer.peer_id, peer);
+      if (state.peers.has(peer.claimed_peer_id)) {
+        state.peers.delete(peer.peer_id);
+        return;
+      }
+      state.peers.set(peer.peer_id, {
+        peer_id: peer.peer_id,
+        nick: peer.nick,
+        nick_color: peer.nick_color,
+      });
+      if (state.connected) renderChat();
+    },
+    onOffline(peerId: string) {
+      worldRelayPeers.delete(peerId);
+      state.peers.delete(peerId);
+      if (state.connected) renderChat();
+    },
+    onChat(message: ChatMessage) {
+      pushMessage(message);
+    },
+    onState(next: RelayState) {
+      const changed = next.connected !== worldRelayState.connected || next.total !== worldRelayState.total;
+      worldRelayState = next;
+      if (changed && state.connected) renderChat();
+    },
+  });
+}
+
+function restoreRelayPresenceFor(nativePeerId: string) {
+  for (const peer of worldRelayPeers.values()) {
+    if (peer.claimed_peer_id !== nativePeerId) continue;
+    state.peers.set(peer.peer_id, {
+      peer_id: peer.peer_id,
+      nick: peer.nick,
+      nick_color: peer.nick_color,
+    });
+  }
+}
+
 function scrollBottom() {
   requestAnimationFrame(() => {
     const el = document.querySelector<HTMLDivElement>('#messages');
@@ -807,6 +865,7 @@ function showNetworkModal() {
         <div><span>${esc(t('network.directRoutes'))}</span><strong>${state.status.routes.filter(r => r.path === 'direct').length}</strong></div>
         <div><span>${esc(t('network.relayRoutes'))}</span><strong>${state.status.routes.filter(r => r.path === 'relay').length}</strong></div>
         <div><span>${esc(t('network.relayReservations'))}</span><strong>${state.status.listen_addresses.filter(a => a.includes('/p2p-circuit')).length}</strong></div>
+        <div><span>${esc(t('network.worldRelays'))}</span><strong>${worldRelayState.connected}/${worldRelayState.total}</strong></div>
         <div><span>NAT</span><strong>${esc(state.status.nat)}</strong></div>
       </div>
       <div class="listen-block" id="observedRoutes"><span>${esc(t('network.observedRoutes'))}</span>${state.status.routes.map(r => `<div data-route-peer="${esc(r.peer_id)}" data-route-path="${r.path}"><code>${esc(r.peer_id)} · ${esc(r.path)} / ${esc(r.transport)} · ${esc(r.remote_address)}</code></div>`).join('')}</div>
@@ -855,13 +914,22 @@ function showNetworkModal() {
 }
 
 async function wireEvents() {
-  await listen<ChatMessage>('chat-message', event => pushMessage(event.payload));
+  await listen<ChatMessage>('chat-message', event => {
+    pushMessage(event.payload);
+    if (event.payload.peer_id === state.peerId && event.payload.room === 'world' && event.payload.kind === 'chat') {
+      worldRelay.publishChat(event.payload);
+    }
+  });
   await listen<PeerInfo>('peer-online', event => {
+    for (const peer of worldRelayPeers.values()) {
+      if (peer.claimed_peer_id === event.payload.peer_id) state.peers.delete(peer.peer_id);
+    }
     state.peers.set(event.payload.peer_id, event.payload);
     if (state.connected) renderChat();
   });
   await listen<{ peer_id: string }>('peer-offline', event => {
     state.peers.delete(event.payload.peer_id);
+    restoreRelayPresenceFor(event.payload.peer_id);
     if (state.connected) renderChat();
   });
   await listen<RoomInfo>('room-created', event => {

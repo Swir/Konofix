@@ -30,6 +30,23 @@ The client `Swarm` includes:
 
 Public WORLD discovery is enabled by default with a visible session opt-out. It uses a dedicated WORLD namespace, bounded untrusted provider hints and authenticated, signed short-lived advertisements. Network changes discard pending queries/contacts/witnesses while retaining anti-replay tombstones and the global dial budget. Visible bounded-relay consent defaults on but only a fresh public inbound/AutoNAT witness can activate service. Public DHT metadata (IP, PeerID, namespace interest and timing) is observable; short local ad acceptance does not erase remote provider records. See `COLD_START_DESKTOP.md` for bounds and remaining qualification. Default-on discovery is not completed automatic-WORLD acceptance, and public IPFS bootstrappers are not assumed to be relays.
 
+## Public WORLD text fallback
+
+The native libp2p mesh remains the preferred WORLD path. If NAT/CGNAT prevents it
+from forming, a browser-side Nostr adapter connects to four replaceable public
+relays over WSS. It publishes NIP-01 ephemeral kind `28733` events tagged
+`konofix-world-v1`. A persistent local Nostr key signs bounded presence, goodbye and
+WORLD text envelopes; receivers verify the event signature, namespace, timestamps,
+field bounds and event ID, then deduplicate delivery across relays. Presence expires
+locally and text is queued only within a short bounded window during reconnect.
+
+The relay identity is displayed as `nostr:<public-key>`. A payload's native PeerID is
+only a de-duplication hint and never authorizes native control, files, protected rooms
+or KNP. Temporary rooms, private messages and file bytes are never copied to this
+fallback. Public relay operators can observe or copy WORLD text and connection
+metadata even though WSS protects traffic in transit. See
+`WORLD_RELAY_FALLBACK.md` for the trust and availability contract.
+
 ## NAT / Relay
 
 The client first attempts direct TCP/QUIC connectivity. AutoNAT estimates reachability. UPnP may expose a port. DCUtR attempts hole punching. If direct P2P cannot be established, the client may use Circuit Relay.
@@ -60,7 +77,8 @@ The ordinary login starts the primary libp2p session. Opening **Optional KNP con
 
 | Conversation / operation | Route and identity | Failure semantics |
 | --- | --- | --- |
-| WORLD and public room announcements | Existing signed libp2p GossipSub, authenticated PeerID/source checks | Existing libp2p discovery and connection recovery; no KNP copy |
+| WORLD presence and public text | Signed libp2p GossipSub first; signed ephemeral multi-relay Nostr fallback when the native mesh is unavailable | Event-ID deduplication; relay identity never authorizes native operations; no KNP copy |
+| Temporary-room announcements and membership | Existing signed libp2p GossipSub, authenticated PeerID/source checks | Existing libp2p discovery and connection recovery; no public-relay copy |
 | Private control, protected room grants and direct files | Existing peer-bound libp2p request/response and authorization | Preserve replay, membership, consent, bounds and hash checks; no public GossipSub fallback |
 | Optional KNP direct text | Explicitly admitted KNP NodeID + exact endpoint; separate UI and session | Distinct queued, transport-delivered and application-received states; no silent libp2p resend |
 

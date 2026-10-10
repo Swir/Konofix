@@ -7,9 +7,10 @@ Global Beta means a public, many-computer network. A two-PC test is only the sma
 The product remains **participant-operated P2P**: every connected desktop is a
 network node, with TCP/QUIC, signed GossipSub, discovery and Circuit Relay.
 The clarified requirement of 2026-10-06 is zero-config mDNS on LAN and automatic
-Internet entry into WORLD without pasting an invitation address. No central
-account, message server or history store is permitted. libp2p is the foundation;
-KNP is an optional additional contact path with its own identity boundary.
+Internet entry into WORLD without pasting an invitation address. No single
+mandatory central account, message/history authority or Konofix-owned VPS is
+permitted. libp2p is the foundation; KNP is an optional additional contact path
+with its own identity boundary.
 
 Two fresh Internet nodes need a reachable first contact, but **operator-owned
 VPSs and a dedicated server are not product prerequisites**. The experimental
@@ -23,17 +24,24 @@ servers. Native configured pools and the headless Node remain optional operator
 alternatives. See [COLD_START_DESKTOP.md](COLD_START_DESKTOP.md) for limits,
 observable public metadata and the visible default-on session controls.
 
+For WORLD presence and public text only, the same session choice also enables the
+[replaceable public Nostr relay fallback](WORLD_RELAY_FALLBACK.md). It provides a
+NAT-safe live path while the native mesh is unavailable, with signed ephemeral
+events and multi-relay deduplication. It is not an authority for native PeerIDs,
+rooms, private messages or files. Relay operators can observe or copy public WORLD
+content and metadata; the design avoids dependence on any one relay rather than
+claiming that no third-party transport exists.
+
 **Current blocker:** the original candidate's empty pool explained the physical
 LAN-to-LTE [WAN FAIL #165](https://github.com/Swir/Konofix/issues/165). The new
 experimental alternative still has no physical automatic-WORLD/recovery PASS.
-No real compatible public
-participant pool or relay availability is asserted. Qualify public RPCs first,
-then run the exact-build installed-app test with clean settings and no pasted
-addresses. A manual invitation can diagnose transport but cannot pass this gate.
-Preserve the original failure and append each new attempt separately. Two fresh
-restrictive-CGNAT peers cannot connect without some reachable compatible
-rendezvous/relay path; discovery alone does not supply it. Direct TCP/QUIC remains
-preferred where NAT allows, without promising universal hole punching.
+The four configured Nostr relays passed a bounded two-client presence/text probe,
+but that is not an installed two-PC test. Run the exact-build application with
+clean settings and no pasted addresses. A manual invitation can diagnose native
+transport but cannot pass automatic WORLD. Preserve the original failure and
+append each new attempt separately. Direct TCP/QUIC remains preferred where NAT
+allows, without promising universal hole punching; native rooms/files still need
+a direct or compatible participant circuit path.
 
 Qualification must exercise at least three participant nodes across at least two independent networks, with at least two reachable contact/relay paths, then demonstrate recovery when one leaves. Participants may keep the app open or optionally run the headless Node. Ephemeral desktop identities and addresses are valid for the running session. After all compatible participants leave, automatic public rediscovery must recover when participants return; an invitation-only recovery is diagnostic and cannot satisfy automatic WORLD.
 

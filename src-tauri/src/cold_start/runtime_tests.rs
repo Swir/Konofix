@@ -372,6 +372,164 @@ async fn public_amino_read_only_once() {
 }
 
 #[tokio::test]
+#[ignore = "manual one-shot public relay capability probe; never run in CI"]
+async fn public_ipfs_relay_capability_once() {
+    use libp2p::{connection_limits, relay, swarm::NetworkBehaviour, SwarmBuilder};
+    use std::io::Write;
+
+    #[derive(NetworkBehaviour)]
+    struct ProbeBehaviour {
+        relay: relay::client::Behaviour,
+        identify: identify::Behaviour,
+        ping: ping::Behaviour,
+        limits: connection_limits::Behaviour,
+    }
+
+    assert_eq!(
+        std::env::var("KONOFIX_ALLOW_PUBLIC_RELAY_PROBE").as_deref(),
+        Ok("identify-and-one-reservation-per-seed")
+    );
+    let output = std::env::var("KONOFIX_RELAY_PROBE_OUTPUT")
+        .expect("new evidence file path required");
+    let mut evidence = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(output)
+        .unwrap();
+    let started = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    // Current IPFS AutoConf Amino bootstrappers. This probe is deliberately
+    // bounded and does not assume that a bootstrap also offers relay service.
+    let seeds: [&str; 5] = [
+        "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+        "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+        "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+        "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+        "/dnsaddr/va1.bootstrap.libp2p.io/p2p/12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8",
+    ];
+    let key = identity::Keypair::generate_ed25519();
+    let mut swarm = SwarmBuilder::with_existing_identity(key)
+        .with_tokio()
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )
+        .unwrap()
+        .with_quic()
+        .with_dns()
+        .unwrap()
+        .with_relay_client(noise::Config::new, yamux::Config::default)
+        .unwrap()
+        .with_behaviour(|key, relay| ProbeBehaviour {
+            relay,
+            identify: identify::Behaviour::new(
+                identify::Config::new("/konofix/public-relay-probe/1".into(), key.public())
+                    .with_interval(Duration::from_secs(300)),
+            ),
+            ping: ping::Behaviour::default(),
+            limits: connection_limits::Behaviour::new(
+                connection_limits::ConnectionLimits::default()
+                    .with_max_established(Some(8))
+                    .with_max_pending_outgoing(Some(8)),
+            ),
+        })
+        .unwrap()
+        .with_swarm_config(|config| {
+            config.with_idle_connection_timeout(Duration::from_secs(30))
+        })
+        .build();
+
+    let mut expected = HashMap::new();
+    for raw in seeds {
+        let address: Multiaddr = raw.parse().unwrap();
+        let Some(libp2p::multiaddr::Protocol::P2p(peer)) = address.iter().last() else {
+            unreachable!("pinned seed without PeerID")
+        };
+        expected.insert(peer, address.clone());
+        // A circuit listener asks the remote node for one bounded reservation.
+        // Failure is evidence too; no retry occurs in this test.
+        swarm
+            .listen_on(address.with(libp2p::multiaddr::Protocol::P2pCircuit))
+            .unwrap();
+    }
+
+    let begin = Instant::now();
+    let mut identified = serde_json::Map::new();
+    let mut accepted = HashSet::new();
+    let mut listener_errors = Vec::new();
+    let mut outgoing_errors = Vec::new();
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            match swarm.select_next_some().await {
+                SwarmEvent::Behaviour(ProbeBehaviourEvent::Identify(
+                    identify::Event::Received { peer_id, info, .. },
+                )) if expected.contains_key(&peer_id) => {
+                    identified.insert(
+                        peer_id.to_string(),
+                        serde_json::json!({
+                            "agent": info.agent_version,
+                            "protocols": info.protocols.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                            "listen_addresses": info.listen_addrs.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                        }),
+                    );
+                }
+                SwarmEvent::Behaviour(ProbeBehaviourEvent::Relay(
+                    relay::client::Event::ReservationReqAccepted {
+                        relay_peer_id, ..
+                    },
+                )) => {
+                    accepted.insert(relay_peer_id);
+                }
+                SwarmEvent::ListenerError { error, .. } => {
+                    listener_errors.push(error.to_string());
+                }
+                SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+                    outgoing_errors.push(serde_json::json!({
+                        "peer": peer_id.map(|peer| peer.to_string()),
+                        "error": error.to_string(),
+                    }));
+                }
+                _ => {}
+            }
+            if accepted.len() + listener_errors.len() >= expected.len() {
+                break;
+            }
+        }
+    })
+    .await;
+    drop(swarm);
+
+    let report = serde_json::json!({
+        "schema": 1,
+        "kind": "konofix-public-ipfs-relay-capability",
+        "source_commit": env!("KONOFIX_SOURCE_COMMIT"),
+        "started_unix": started,
+        "elapsed_ms": begin.elapsed().as_millis(),
+        "outcome": if accepted.is_empty() { "NO_PUBLIC_RELAY_RESERVATION" } else { "PUBLIC_RELAY_RESERVATION_OBSERVED" },
+        "seeds_requested": expected.len(),
+        "identified": identified,
+        "accepted_relay_peers": accepted.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "listener_errors": listener_errors,
+        "outgoing_errors": outgoing_errors,
+        "deadline_exceeded": result.is_err(),
+        "chat_messages": 0,
+        "physical_wan_acceptance": "NOT_EVALUATED",
+        "limits": {"seconds": 30, "reservations_per_seed": 1, "retries": 0}
+    });
+    writeln!(evidence, "{}", serde_json::to_string_pretty(&report).unwrap()).unwrap();
+    evidence.sync_all().unwrap();
+    println!("{report}");
+    assert!(
+        !accepted.is_empty(),
+        "no public IPFS bootstrap accepted a relay reservation; evidence preserved, no retry"
+    );
+}
+
+#[tokio::test]
 async fn native_probe_bridge_needs_inbound_evidence_and_discards_old_interface_ports() {
     let mut client = Discovery::new(identity::Keypair::generate_ed25519()).unwrap();
     client.observed_hosts.push("/ip4/8.8.8.8".parse().unwrap());

@@ -481,15 +481,24 @@ mod tests {
                 other => panic!("expected the event that filled output, got {other:?}"),
             }
 
-            for expected in [first, second] {
+            let mut received = Vec::with_capacity(2);
+            for _ in 0..2 {
                 match a_events.recv().await.expect("receipt stream is open") {
                     RelayAppEvent::Delivered(receipt) => {
                         assert_eq!(receipt.peer_node_id, b.node_id());
-                        assert_eq!(receipt.message_id, expected);
+                        received.push(receipt.message_id);
                     }
-                    other => panic!("expected ordered delivery receipt, got {other:?}"),
+                    other => panic!("expected a delivery receipt, got {other:?}"),
                 }
             }
+
+            // The SDK retains receipt events FIFO in the order authenticated UDP
+            // ACKs arrive. Separate messages may be acknowledged in either order,
+            // so prove exact membership rather than imposing send-order on UDP.
+            received.sort_unstable();
+            let mut expected = [first, second];
+            expected.sort_unstable();
+            assert_eq!(received, expected, "both receipts must arrive exactly once");
         })
         .await
         .expect("both receipts must survive sender-side output backpressure");

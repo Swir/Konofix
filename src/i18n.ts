@@ -6,11 +6,11 @@ const STORAGE_KEY = 'konofix.locale';
 type Params = Record<string, string | number>;
 
 const EN = {
-  "network.experimentalOptions": "Optional public discovery and relay",
-  "network.coldOptIn": "Enable experimental public WORLD discovery for this session",
+  "network.experimentalOptions": "Public WORLD discovery and participant relay",
+  "network.coldOptIn": "Use public WORLD discovery for this session (recommended)",
   "network.coldPrivacy": "Uses the public Amino DHT for first contact. Public observers can learn your IP, PeerID, WORLD interest and timing. Provider metadata can remain for 48 hours. No chat history is stored there.",
-  "network.relayConsent": "I agree to help other participants as a bounded relay when publicly reachable",
-  "network.relayBudget": "Up to 8 reservations and 2 circuits, 8 MiB / 120 seconds per circuit, at most 8 new circuits per minute. Disconnect to withdraw consent. Off by default.",
+  "network.relayConsent": "Allow this device to help other participants as a bounded relay when publicly reachable",
+  "network.relayBudget": "Enabled by default for automatic WORLD. Up to 8 reservations and 2 circuits, 8 MiB / 120 seconds per circuit, at most 8 new circuits per minute. Clear the checkbox or disconnect to opt out.",
   "network.coldOff": "Public discovery is off",
   "network.coldSearching": "Looking for public WORLD participants",
   "network.coldRecovering": "Network changed — refreshing public discovery",
@@ -193,11 +193,11 @@ export type MessageKey = keyof typeof EN;
 type Dictionary = Partial<Record<MessageKey, string>>;
 
 const PL: Dictionary = {
-  "network.experimentalOptions": "Opcjonalne publiczne discovery i relay",
-  "network.coldOptIn": "Włącz eksperymentalne publiczne wyszukiwanie WORLD w tej sesji",
+  "network.experimentalOptions": "Publiczne wyszukiwanie WORLD i relay uczestników",
+  "network.coldOptIn": "Używaj publicznego wyszukiwania WORLD w tej sesji (zalecane)",
   "network.coldPrivacy": "Publiczna sieć Amino DHT służy do pierwszego kontaktu. Obserwatorzy mogą poznać IP, PeerID, zainteresowanie WORLD i czas aktywności. Metadane providera mogą pozostać przez 48 godzin. Historia czatu nie jest tam zapisywana.",
-  "network.relayConsent": "Zgadzam się pomagać innym jako ograniczony relay, gdy mój komputer jest publicznie osiągalny",
-  "network.relayBudget": "Do 8 rezerwacji i 2 obwodów, 8 MiB / 120 sekund na obwód, do 8 nowych obwodów na minutę. Rozłącz się, aby wycofać zgodę. Domyślnie wyłączone.",
+  "network.relayConsent": "Pozwól temu urządzeniu pomagać innym jako ograniczony relay, gdy jest publicznie osiągalne",
+  "network.relayBudget": "Domyślnie włączone dla automatycznego WORLD. Do 8 rezerwacji i 2 obwodów, 8 MiB / 120 sekund na obwód, do 8 nowych obwodów na minutę. Odznacz pole lub rozłącz się, aby zrezygnować.",
   "network.coldOff": "Publiczne wyszukiwanie wyłączone",
   "network.coldSearching": "Szukanie publicznych uczestników WORLD",
   "network.coldRecovering": "Zmiana sieci — odświeżanie publicznego wyszukiwania",

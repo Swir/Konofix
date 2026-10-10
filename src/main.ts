@@ -134,8 +134,8 @@ function wireCredit() {
   });
 }
 
-let publicDiscoveryOptIn = false;
-let relayConsent = false;
+let publicDiscoveryOptIn = true;
+let relayConsent = true;
 let discoveryStatus = { phase: 'off', relay_enabled: false, public_reachability: false };
 function discoveryLabel(): string {
   const labels: Record<string, string> = {
@@ -757,8 +757,8 @@ function resetSessionView(errorMessage?: string) {
   state.publicIntents.clear();
   state.status = { ...EMPTY_STATUS };
   discoveryStatus = { phase: 'off', relay_enabled: false, public_reachability: false };
-  publicDiscoveryOptIn = false;
-  relayConsent = false;
+  publicDiscoveryOptIn = true;
+  relayConsent = true;
   state.room = 'world';
   renderLogin();
   if (errorMessage) {

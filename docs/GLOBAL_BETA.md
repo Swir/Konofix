@@ -16,16 +16,17 @@ VPSs and a dedicated server are not product prerequisites**. The experimental
 public cold-start adapter uses shared Amino provider routing only to find
 untrusted contact hints. It then authenticates and verifies bounded, short-lived
 signed advertisements before handing contacts to native direct-first libp2p.
-A publicly reachable desktop can separately consent to bounded relay service.
+A publicly reachable desktop can provide bounded relay service unless the visible
+session option is cleared; a fresh reachability witness is still mandatory.
 Public IPFS peers are not Konofix relays, room-membership authorities or history
 servers. Native configured pools and the headless Node remain optional operator
 alternatives. See [COLD_START_DESKTOP.md](COLD_START_DESKTOP.md) for limits,
-observable public metadata and the explicit session opt-in (off by default).
+observable public metadata and the visible default-on session controls.
 
 **Current blocker:** the original candidate's empty pool explained the physical
 LAN-to-LTE [WAN FAIL #165](https://github.com/Swir/Konofix/issues/165). The new
-experimental alternative still has no completed public RPC interoperability
-proof and no physical automatic-WORLD/recovery PASS. No real compatible public
+experimental alternative still has no physical automatic-WORLD/recovery PASS.
+No real compatible public
 participant pool or relay availability is asserted. Qualify public RPCs first,
 then run the exact-build installed-app test with clean settings and no pasted
 addresses. A manual invitation can diagnose transport but cannot pass this gate.

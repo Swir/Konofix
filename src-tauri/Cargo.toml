@@ -43,6 +43,7 @@ libp2p = { version = "0.57", features = [
   "upnp",
   "request-response",
   "cbor",
+  "rsa",
   "macros"
 ] }
 

@@ -1,8 +1,8 @@
 # Experimental cold-start advertisement admission
 
-This module is the application trust boundary for the experimental opt-in Amino
+This module is the application trust boundary for the public Amino
 adapter. Desktop wiring and qualification limits are documented in
-[COLD_START_DESKTOP.md](COLD_START_DESKTOP.md); it is off by default.
+[COLD_START_DESKTOP.md](COLD_START_DESKTOP.md); it is on by default with a visible opt-out.
 Draft #175 remains an earlier isolated wire experiment. Local tests do not qualify
 public interoperability or automatic Internet WORLD.
 
@@ -51,7 +51,7 @@ hide those metadata. No public interoperability or two-PC WAN PASS is claimed.
 
 The client adapter now owns a separate Amino swarm using the application's libp2p
 key. It has no GossipSub, native DHT, KNP or relay-server behaviour, listens on no
-ports and explicitly stays a DHT client. The opt-in native application serves the
+ports and explicitly stays a DHT client. The default-on native application serves the
 v2 advertisement protocol on its own witnessed endpoints; the isolated swarm
 never becomes the application's message transport.
 
@@ -60,13 +60,14 @@ earlier lookup but retains the shared budget of 64 resolved dials per five minut
 At most 16 established connections, four pending dials, four ad requests and eight
 provider candidates per lookup are allowed. Queries expire after 15 seconds;
 requests after five seconds. TCP+Noise/Yamux and QUIC use the existing dependencies.
-Public IP filtering is below DNS, and only the three pinned official bootstrap
-DNS multiaddresses may enter DNS resolution. DHT-supplied DNS names are rejected.
-These bootstrap names are best-effort community utilities, not three independently
-operated Konofix relays or a production availability guarantee.
+Public IP filtering is below DNS, and only the seven pinned official AutoConf
+bootstrap multiaddresses may enter DNS resolution. DHT-supplied DNS names are
+rejected. RSA identity support is enabled for the legacy Qm bootstrap peers.
+These addresses are best-effort community utilities, not independently operated
+Konofix relays or a production availability guarantee.
 
 The isolated client uses manual routing-table insertion. Each explicitly scheduled
-lookup/publication snapshots the three pinned entry peers into the iterative query
+lookup/publication snapshots the pinned entry peers into the iterative query
 and removes them from the routing table before polling. Query-local closer-peer
 addresses continue the traversal; the bounded address cache resolves the seed dials.
 The empty table prevents libp2p-kad 0.49's insertion-triggered bootstrap, which is

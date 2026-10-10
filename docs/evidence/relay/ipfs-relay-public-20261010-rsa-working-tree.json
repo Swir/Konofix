@@ -1,0 +1,111 @@
+{
+  "accepted_relay_peers": [],
+  "chat_messages": 0,
+  "deadline_exceeded": true,
+  "elapsed_ms": 30017,
+  "identified": {
+    "QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN": {
+      "agent": "kubo/0.43.1/acc53c0/bootstrap.ipni.io",
+      "listen_addresses": [
+        "/ip4/84.32.48.211/tcp/4011",
+        "/ip4/84.32.48.211/udp/4011/webrtc-direct/certhash/uEiBh0Mykgp6CERgqnvpmsfY4MsCFsiD8yvjwJRhun9ciRA",
+        "/ip4/84.32.48.211/udp/4011/quic-v1",
+        "/ip4/84.32.48.211/udp/4011/quic-v1/webtransport/certhash/uEiBMsCQJ6fwphwojs0EF0i1VfyyUx6w3B6odUrV7VG0fBQ/certhash/uEiApHzajKbuhYYaLWZlzWYsY2CVtsf7QfHdPa0xJnwHJAg",
+        "/dns4/chic-1-b.bootstrap.ipni.io/tcp/4453/wss"
+      ],
+      "protocols": [
+        "/ipfs/id/1.0.0",
+        "/ipfs/id/push/1.0.0",
+        "/ipfs/kad/1.0.0",
+        "/ipfs/lan/kad/1.0.0",
+        "/ipfs/ping/1.0.0",
+        "/libp2p/circuit/relay/0.2.0/hop",
+        "/libp2p/circuit/relay/0.2.0/stop",
+        "/libp2p/dcutr",
+        "/x/"
+      ]
+    },
+    "QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa": {
+      "agent": "kubo/0.43.1/acc53c0/bootstrap.ipni.io",
+      "listen_addresses": [
+        "/ip4/84.32.48.211/tcp/4001",
+        "/ip4/84.32.48.211/udp/4001/webrtc-direct/certhash/uEiC3xHeHMD7QZLMSEPOwKAtgCGqvgdJtrF75KjjJVJxDkw",
+        "/ip4/84.32.48.211/udp/4001/quic-v1",
+        "/ip4/84.32.48.211/udp/4001/quic-v1/webtransport/certhash/uEiD_JBNaR_PlQ-iQ3qeC8wWEm9rwf3bH2D8RPCP8PV1kCw/certhash/uEiBt6LiYsL3L-zZHESXMtysEMd77-1P5pOzOeZrif-_1VQ",
+        "/dns4/chic-1.bootstrap.ipni.io/tcp/4443/wss"
+      ],
+      "protocols": [
+        "/ipfs/id/1.0.0",
+        "/ipfs/id/push/1.0.0",
+        "/ipfs/kad/1.0.0",
+        "/ipfs/lan/kad/1.0.0",
+        "/ipfs/ping/1.0.0",
+        "/libp2p/circuit/relay/0.2.0/hop",
+        "/libp2p/circuit/relay/0.2.0/stop",
+        "/libp2p/dcutr",
+        "/x/"
+      ]
+    },
+    "QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb": {
+      "agent": "kubo/0.43.1/acc53c0/bootstrap.ipni.io",
+      "listen_addresses": [
+        "/ip4/46.166.169.131/tcp/4001",
+        "/ip4/46.166.169.131/udp/4001/webrtc-direct/certhash/uEiDD4_rWDWZ8mj_zfeJ-EG68goDrJJaaJPXIn0DRGVH2ng",
+        "/ip4/46.166.169.131/udp/4001/quic-v1",
+        "/ip4/46.166.169.131/udp/4001/quic-v1/webtransport/certhash/uEiA7a1XAJy3Zv2o3DNGoKTjl9I9eWbBsZbL1UUR03JOdZQ/certhash/uEiCfOAn3Xttha9joRwxcdJlGxmGM70FISbOC2DTuBfsNWw",
+        "/dns4/lith-1.bootstrap.ipni.io/tcp/4443/wss"
+      ],
+      "protocols": [
+        "/ipfs/id/1.0.0",
+        "/ipfs/id/push/1.0.0",
+        "/ipfs/kad/1.0.0",
+        "/ipfs/lan/kad/1.0.0",
+        "/ipfs/ping/1.0.0",
+        "/libp2p/circuit/relay/0.2.0/hop",
+        "/libp2p/circuit/relay/0.2.0/stop",
+        "/libp2p/dcutr",
+        "/x/"
+      ]
+    },
+    "QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt": {
+      "agent": "kubo/0.43.1/acc53c0/bootstrap.ipni.io",
+      "listen_addresses": [
+        "/ip4/5.199.165.77/tcp/4001",
+        "/ip4/5.199.165.77/udp/4001/webrtc-direct/certhash/uEiDdEdIgkVZvi3cPnioAjNoa_lqzF2wbkiW0VUghhEF0tg",
+        "/ip4/5.199.165.77/udp/4001/quic-v1",
+        "/ip4/5.199.165.77/udp/4001/quic-v1/webtransport/certhash/uEiAN5L8z-lHqmJh7nAESjRsCHN-1w0GZmhDi3j4o3oJoGA/certhash/uEiAt5Ww2Fc68hXpxFOVbqETnLvNRKdn3IilUo6w5jd5gQA",
+        "/dns4/sing-1.bootstrap.ipni.io/tcp/4443/wss"
+      ],
+      "protocols": [
+        "/ipfs/id/1.0.0",
+        "/ipfs/id/push/1.0.0",
+        "/ipfs/kad/1.0.0",
+        "/ipfs/lan/kad/1.0.0",
+        "/ipfs/ping/1.0.0",
+        "/libp2p/circuit/relay/0.2.0/hop",
+        "/libp2p/circuit/relay/0.2.0/stop",
+        "/libp2p/dcutr",
+        "/x/"
+      ]
+    }
+  },
+  "kind": "konofix-public-ipfs-relay-capability",
+  "limits": {
+    "reservations_per_seed": 1,
+    "retries": 0,
+    "seconds": 30
+  },
+  "listener_errors": [],
+  "outcome": "NO_PUBLIC_RELAY_RESERVATION",
+  "outgoing_errors": [
+    {
+      "error": "Failed to negotiate transport protocol(s): [(/dnsaddr/va1.bootstrap.libp2p.io/p2p/12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8: : Timeout has been reached)]",
+      "peer": "12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8"
+    }
+  ],
+  "physical_wan_acceptance": "NOT_EVALUATED",
+  "schema": 1,
+  "seeds_requested": 5,
+  "source_commit": "960b1fe61b42c6ece296883f5d7fcf74670b39f0",
+  "started_unix": 1791613521
+}

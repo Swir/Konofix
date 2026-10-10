@@ -1495,8 +1495,11 @@ async fn start_network(
             nick_color_for_task,
             bootstrap_list,
             DiscoveryOptions {
-                public_discovery: enable_public_discovery.unwrap_or(false),
-                relay_consent: consent_relay.unwrap_or(false),
+                // WORLD is a zero-configuration product path. Older frontends
+                // may omit these fields, so preserve the automatic defaults at
+                // the command boundary; the visible checkboxes can still opt out.
+                public_discovery: enable_public_discovery.unwrap_or(true),
+                relay_consent: consent_relay.unwrap_or(true),
             },
             app_for_task.clone(),
             rx,

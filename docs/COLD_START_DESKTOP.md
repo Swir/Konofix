@@ -1,6 +1,7 @@
 # Experimental public cold-start desktop integration
 
-Status: experimental opt-in. Public beta publication remains HELD. The original
+Status: enabled by default with a visible session opt-out; still unqualified.
+Public beta publication remains HELD. The original
 physical LAN-to-LTE WAN FAIL in #165 remains open. A single read-only public Amino
 trial on #177 head `b398bf941bad1e1f8b75ab0a61dd33ed2d0e003c` ended without an
 authenticated connection or successful RPC. Its complete, non-overwritten record
@@ -10,22 +11,39 @@ The trace cannot distinguish pending DNS, dial or network-access failure.
 Its schema-1 counter covered only the selected provider query. Consequently
 `limits.queries: 1` cannot prove the absence of insertion-triggered bootstrap
 queries; the original JSON remains unchanged. The corrected isolated client uses
-query-scoped seeds, verified locally against received Kademlia requests. A new
-public attempt still requires separate authorization; no such attempt is claimed.
-No public interoperability PASS or qualified new Windows handoff is asserted.
+query-scoped seeds, verified locally against received Kademlia requests. A later
+bounded probe found a concrete compatibility defect: the application lacked RSA
+identity decoding required by legacy Qm IPFS bootstrappers. The current implementation
+enables that feature and pins the complete AutoConf 2025080401 bootstrap set. This
+code change is not a physical WAN PASS or qualified new Windows handoff.
+
+One authorized read-only probe of that RSA-enabled working tree completed the Amino
+provider query with 14 authenticated connections and 14 successful RPC peers. The
+immutable record is [the 2026-10-10 RSA/bootstrap attempt](evidence/amino/amino-public-20261010-rsa-seeds-working-tree.json),
+SHA-256 `1da940a17b17efcfd545ca2ef9aff889bc3f026ceb441b7160547425eafe9b5a`.
+It wrote no provider/value record and did not send chat. A separate one-reservation-
+per-seed probe authenticated four IPFS bootstrappers, observed their relay protocol,
+but received no relay reservation within its single 30-second window. Its record is
+[the 2026-10-10 relay attempt](evidence/relay/ipfs-relay-public-20261010-rsa-working-tree.json),
+SHA-256 `a8b6c7d28e45e61ce6127cfdd60223779048022fdc1289948c7e269dd2c22564`.
+Neither result evaluates physical WAN acceptance; the source field names the clean
+base commit and the filenames explicitly retain that the tested fix was uncommitted.
 
 ## Session choices
 
 The ordinary libp2p stack and zero-configuration LAN mDNS remain active. Expand
-**Optional public discovery and relay** on the login screen to choose, separately:
+**Public WORLD discovery and participant relay** on the login screen to choose,
+separately:
 
-- experimental public WORLD discovery for this session; off by default;
-- consent to host a bounded participant relay when current public reachability
-  has been demonstrated; off by default, independent of the first checkbox.
+- public WORLD discovery for this session; on by default with a visible opt-out;
+- permission to host a bounded participant relay when current public reachability
+  has been demonstrated; on by default with a visible opt-out, independent of the
+  first checkbox.
 
-Consent is not silently persisted. Disconnect destroys the session and withdraws
-relay service; reconnect requires the chosen session setting. The current UI keeps
-checkbox choices while editing the same login view; a fresh application starts off.
+The choices are not silently persisted. Disconnect destroys the session and withdraws
+relay service; reconnect uses the visible login-screen settings. The current UI keeps
+checkbox choices while editing the same login view; a fresh application starts with
+the automatic defaults selected.
 KNP remains an optional, separate contact/identity path, never an automatic fallback
 for a libp2p recipient. No account, central message history or message server is added.
 
@@ -76,7 +94,7 @@ admission remain owned by the existing native behaviours and are left alone.
 This prevents a cleared witness from leaving its old interface advertised by
 Identify/Kademlia; no socket rebind or public reachability is claimed by cleanup.
 
-The relay requires explicit consent plus reachability refreshed within five minutes.
+The relay requires the visible session permission plus reachability refreshed within five minutes.
 Limits: eight reservations, one per peer, two circuits total, one per peer,
 120-second reservation/circuit lifetime, 8 MiB per circuit and eight new circuits
 per minute globally, with additional peer/IP rates. Desktop connection admission
@@ -114,18 +132,20 @@ erasure, public-bootstrap SLA or independent operator diversity are made.
 
 1. Green exact-head and post-merge Windows/Linux/security gates and preserved KNP,
    native LAN, private control, file and lifecycle regressions.
-2. Diagnose the first public trial's DNS/dial boundary before another explicitly
-   authorized external attempt. No repeated-until-green test and no default public
-   rollout from the current failed interoperability record.
+2. Run public interoperability once for each materially changed exact source and
+   preserve every result. Do not repeat an unchanged probe until green. Public
+   discovery success does not qualify a relay or physical WORLD delivery.
 3. On a qualified exact-build installer, two clean physical PCs on different
    operators opt into the experiment, start without pasted contacts, meet in WORLD,
    exchange unique markers both directions, record actual direct/circuit routes,
    and recover after Wi-Fi/LTE switching. Append every attempt; retain #165 FAIL.
 
-No operator-owned VPS is mandated. LAN uses mDNS; Internet cold start uses a shared
-public overlay and rotating consenting participants. Discovery alone cannot connect
+No operator-owned VPS is mandated. LAN uses mDNS; Internet cold start uses shared
+public discovery and rotating consenting participants. Discovery alone cannot connect
 two fresh restrictive-CGNAT peers if no reachable compatible participant can provide
 a rendezvous/relay path. Public IPFS bootstrappers are not substitute Konofix relays.
+A bounded five-node reservation probe observed no accepted public-IPFS relay and is
+not treated as a service guarantee in either direction.
 
 ## Additional review findings
 
@@ -145,7 +165,7 @@ available then, and no retrospective DNS/failure cause is invented. A dial call
 counter is not a completed socket, handshake, RPC or WAN proof.
 
 
-The desktop regression suite also runs an opt-in discovery session alongside an
+The desktop regression suite also runs a public-discovery session alongside an
 ordinary mDNS-only session, exchanges WORLD messages both directions and checks
 that local consent without a public witness cannot enable the relay. Its discovery
 transport is seedless and local-only under `cfg(test)`, including after recovery;

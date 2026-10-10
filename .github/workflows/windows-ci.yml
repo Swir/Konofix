@@ -484,7 +484,7 @@ jobs:
 
   publish-beta:
     needs: check-windows
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Swir/Konofix'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Swir/Konofix' && github.sha == '8f6772b8cc0ea448fc31bea74923cee86920ae27'
     runs-on: windows-latest
     timeout-minutes: 10
     env:

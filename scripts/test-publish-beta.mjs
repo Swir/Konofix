@@ -102,6 +102,7 @@ assert(fs.existsSync(new URL(`../${betaPublicationPolicy.candidate.acceptance}`,
 const workflow = fs.readFileSync(new URL('../.github/workflows/windows-ci.yml', import.meta.url), 'utf8');
 assert(workflow.includes(`BETA_SOURCE_SHA: ${betaPublicationPolicy.candidate.sourceCommit}`));
 assert(workflow.includes(`BETA_SOURCE_RUN: '${betaPublicationPolicy.candidate.windowsRun}'`));
+assert(workflow.includes(`github.sha == '${betaPublicationPolicy.candidate.sourceCommit}'`));
 assert(workflow.includes('github-token: ${{ github.token }}'));
 assert(workflow.includes('run-id: ${{ env.BETA_SOURCE_RUN }}'));
 console.log('Qualified-preview policy: immutable exact source/run/installer acceptance binding PASS.');

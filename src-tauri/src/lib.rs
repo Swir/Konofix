@@ -6,8 +6,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use futures::StreamExt;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use futures::StreamExt;
 use libp2p::{
     autonat, dcutr, gossipsub, identify,
     kad::{self, store::MemoryStore, GetRecordOk, Quorum, Record, RecordKey},

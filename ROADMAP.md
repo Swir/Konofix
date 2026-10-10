@@ -221,6 +221,14 @@ This short feature-freeze package is completed before the next user-led publicat
 
 These four status bullets are deliberately not roadmap checkboxes: the authoritative 56/67 fraction measures Real Internet Test / Global Beta qualification, while this temporary feature-freeze has its own stop gate. Automatic feature development stops after all four items are **VERIFIED on main** with green exact-head CI; publication remains a separate manual decision.
 
+## 0.5.3 — Encrypted WAN private chat and small files
+
+- keep native libp2p private messages and streamed files as the preferred connected-peer route
+- add recipient-addressed NIP-44 private text for relay-only WORLD participants
+- add explicit Accept/Reject encrypted file fallback up to 2 MiB with missing-chunk retries, size/SHA-256 verification and exclusive no-clobber save
+- require an exact-build two-PC independent-network private-message/file retest before stable publication
+- this repair adds no Global Beta checklist credit by itself; qualification remains **56/67 = 83.6%**
+
 ## 0.5.2 — Two-PC preview / Optional KNP coexistence
 
 - uniquely versioned Windows preview with exact-commit installers, checksums and a Poland–Norway tester procedure

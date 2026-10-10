@@ -389,8 +389,8 @@ async fn public_ipfs_relay_capability_once() {
         std::env::var("KONOFIX_ALLOW_PUBLIC_RELAY_PROBE").as_deref(),
         Ok("identify-and-one-reservation-per-seed")
     );
-    let output = std::env::var("KONOFIX_RELAY_PROBE_OUTPUT")
-        .expect("new evidence file path required");
+    let output =
+        std::env::var("KONOFIX_RELAY_PROBE_OUTPUT").expect("new evidence file path required");
     let mut evidence = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -438,9 +438,7 @@ async fn public_ipfs_relay_capability_once() {
             ),
         })
         .unwrap()
-        .with_swarm_config(|config| {
-            config.with_idle_connection_timeout(Duration::from_secs(30))
-        })
+        .with_swarm_config(|config| config.with_idle_connection_timeout(Duration::from_secs(30)))
         .build();
 
     let mut expected = HashMap::new();
@@ -520,7 +518,12 @@ async fn public_ipfs_relay_capability_once() {
         "physical_wan_acceptance": "NOT_EVALUATED",
         "limits": {"seconds": 30, "reservations_per_seed": 1, "retries": 0}
     });
-    writeln!(evidence, "{}", serde_json::to_string_pretty(&report).unwrap()).unwrap();
+    writeln!(
+        evidence,
+        "{}",
+        serde_json::to_string_pretty(&report).unwrap()
+    )
+    .unwrap();
     evidence.sync_all().unwrap();
     println!("{report}");
     assert!(

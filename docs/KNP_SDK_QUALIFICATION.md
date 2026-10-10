@@ -64,7 +64,8 @@ batch, timer-cancellation regression, socket/profile cleanup assertions and all
 deadlines. A failure must remain recorded and be investigated; it cannot be replaced
 with a passing rerun of unchanged code.
 
-Public beta publication remains HELD. Physical automatic-WORLD WAN FAIL #165 remains
-open; public Amino RPC qualification, physical independent-network messaging and
-Wi-Fi/LTE recovery are separate from these local KNP results. Existing evidence and
-historical SDK references in `KNP_STOP_BARRIER.md` remain unchanged.
+The exact WORLD candidate is qualified for a public prerelease after the user's
+limited physical independent-network text PASS. That result does not qualify KNP;
+public Amino RPC qualification, route evidence and Wi-Fi/LTE recovery remain
+separate from these local KNP results. Existing evidence and historical SDK
+references in `KNP_STOP_BARRIER.md` remain unchanged.

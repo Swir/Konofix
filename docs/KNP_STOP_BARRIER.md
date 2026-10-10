@@ -35,4 +35,6 @@ KNP timeout. Failed attempts remain evidence and are not rerun away.
 The PR includes #178's two-file CI order correction: all-target compilation/tests
 precede the standalone timer regression. All existing deadlines, test selection,
 original parallelism/capture and the production SDK pin are unchanged.
-Publication remains HELD and real WAN FAIL #165 remains unresolved.
+The later exact WORLD candidate is qualified for a public prerelease by a limited
+physical text PASS. This historical KNP barrier remains unresolved and is not
+reclassified by the WORLD result.

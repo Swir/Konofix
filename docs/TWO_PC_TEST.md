@@ -1,10 +1,10 @@
 # Two-PC Windows test — Poland and Norway
 
-Use this short procedure for two actual installations. It collects observations; it never grants WAN, Global Beta or production qualification automatically. The reported LAN-to-LTE attempt is **WAN FAIL** ([#165](https://github.com/Swir/Konofix/issues/165)); preserve that result. Start each new retest as **NOT RUN**, without replacing earlier observations.
+Use this short procedure for two actual installations. It collects observations; it never grants WAN, Global Beta or production qualification automatically. Preserve both the original reported LAN-to-LTE **WAN FAIL** and the later exact-candidate limited WORLD text **PASS** ([#165](https://github.com/Swir/Konofix/issues/165)); the latter did not record route subtype or restart recovery. Start each new retest as **NOT RUN**, without replacing earlier observations.
 
 ## 1. Match the build
 
-Candidate 0.5.2 is tester-only. Both people download the same agreed green Actions bundle and agree on its exact workflow, source SHA and checksum. A green build does not close the reported WAN failure or the earlier KNP lifecycle investigation.
+Candidate 0.5.2 is published as a prerelease bound to the accepted exact source, workflow and installer checksum. Both people download the same release and compare its source SHA and checksum. The limited physical WORLD text PASS does not close the broader route/restart evidence or the earlier KNP lifecycle investigation.
 
 After verifying and extracting the inner release ZIP as below, compare the installer's SHA-256 with its entry in BUILD_INFO.json:
 

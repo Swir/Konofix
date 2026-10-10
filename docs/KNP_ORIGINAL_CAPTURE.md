@@ -3,8 +3,9 @@
 The two Windows job timeouts remain unresolved: main run 37415648734 and
 PR #169 run 37511929284 stopped at
 `real_chat_is_bidirectional_acknowledged_and_restarts_without_old_session`.
-A green diagnostic run is not a fix. Publication remains HELD; real WAN FAIL
-#165 and the empty public peer pool are separate blockers.
+A green diagnostic run is not a fix. The later exact WORLD candidate's limited
+physical text PASS permits only its prerelease; this KNP investigation and the
+broader #165 route/restart gates remain separate and open.
 
 Draft #163 adds detailed synchronous traces, nocapture and supervised stress.
 Those are useful probes but alter scheduling. This complementary experiment

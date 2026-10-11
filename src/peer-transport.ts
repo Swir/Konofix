@@ -117,24 +117,36 @@ export class PeerTransport {
     if (this.outgoing.size >= MAX_FILES_PER_DIRECTION) throw new Error('All direct outgoing file slots are busy.');
     const file = await invoke<RtcFileDescriptor | null>('pick_rtc_file');
     if (!file) return null;
-    const session = this.createSession(crypto.randomUUID(), peerId, true, false);
-    this.outgoing.set(file.token, { file, sessionId: session.id, peerId });
-    this.callbacks?.onFileProgress({ ...file, peer_id: peerId, direction: 'outgoing', transferred: 0, progress: 0, status: 'waiting' });
-    await this.negotiate(session);
-    return { ...file, peer_id: peerId };
+    let session: Session | undefined;
+    try {
+      session = this.createSession(crypto.randomUUID(), peerId, true, false);
+      this.outgoing.set(file.token, { file, sessionId: session.id, peerId });
+      this.callbacks?.onFileProgress({ ...file, peer_id: peerId, direction: 'outgoing', transferred: 0, progress: 0, status: 'waiting' });
+      await this.negotiate(session);
+      return { ...file, peer_id: peerId };
+    } catch (error) {
+      this.outgoing.delete(file.token);
+      if (session) this.closeSession(session);
+      await invoke('close_rtc_file', { token: file.token }).catch(() => undefined);
+      throw error;
+    }
   }
 
   async acceptFile(token: string): Promise<void> {
     const incoming = this.incoming.get(token);
     if (!incoming) throw new Error('Oferta dużego pliku wygasła.');
+    const session = this.sessions.get(incoming.sessionId);
+    if (!session?.channel || session.channel.readyState !== 'open') throw new Error('Bezpośredni kanał pliku został zamknięty.');
     await invoke('begin_rtc_file_receive', {
       token,
       fileName: incoming.offer.file_name,
       size: incoming.offer.size,
       sha256: incoming.offer.sha256,
     });
-    const session = this.sessions.get(incoming.sessionId);
-    if (!session?.channel || session.channel.readyState !== 'open') throw new Error('Bezpośredni kanał pliku został zamknięty.');
+    if (session.channel.readyState !== 'open') {
+      await invoke('close_rtc_file', { token }).catch(() => undefined);
+      throw new Error('Bezpośredni kanał pliku został zamknięty.');
+    }
     this.sendWire(session.channel, { type: 'file_accept', token });
     this.callbacks?.onFileProgress({ ...incoming.offer, direction: 'incoming', transferred: 0, progress: 0, status: 'transferring' });
   }
@@ -170,7 +182,7 @@ export class PeerTransport {
   }
 
   async startCall(peerId: string): Promise<void> {
-    if ([...this.pendingCalls.values()].some(call => call.peerId === peerId)) throw new Error('Rozmowa z tym użytkownikiem już trwa.');
+    if (this.pendingCalls.size > 0) throw new Error('Only one audio call can be active at a time.');
     const connectionId = crypto.randomUUID();
     this.pendingCalls.set(connectionId, { peerId, direction: 'outgoing' });
     this.callbacks?.sendSignal(peerId, { connection_id: connectionId, action: 'call_request' });
@@ -181,10 +193,15 @@ export class PeerTransport {
     const call = this.pendingCalls.get(connectionId);
     if (!call || call.direction !== 'incoming') throw new Error('Zaproszenie audio wygasło.');
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
-    const session = this.createSession(connectionId, call.peerId, false, true, stream);
-    this.callbacks?.sendSignal(call.peerId, { connection_id: connectionId, action: 'call_accept' });
-    this.callbacks?.onCallState(call.peerId, 'connecting');
-    session.audio = true;
+    try {
+      const session = this.createSession(connectionId, call.peerId, false, true, stream);
+      this.callbacks?.sendSignal(call.peerId, { connection_id: connectionId, action: 'call_accept' });
+      this.callbacks?.onCallState(call.peerId, 'connecting');
+      session.audio = true;
+    } catch (error) {
+      stream.getTracks().forEach(track => track.stop());
+      throw error;
+    }
   }
 
   rejectCall(connectionId: string): void {
@@ -216,10 +233,19 @@ export class PeerTransport {
     }
   }
 
+  peerOffline(peerId: string): void {
+    this.hangup(peerId);
+    for (const session of [...this.sessions.values()]) {
+      if (session.peerId !== peerId || session.audio) continue;
+      this.failSessionFiles(session, 'Peer went offline during the direct file transfer.');
+      this.closeSession(session);
+    }
+  }
+
   async handleSignal(peerId: string, signal: RtcSignal): Promise<void> {
     if (signal.action === 'call_request') {
       if (this.pendingCalls.has(signal.connection_id)) return;
-      if (this.pendingCalls.size >= 4) {
+      if (this.pendingCalls.size > 0) {
         this.callbacks?.sendSignal(peerId, { connection_id: signal.connection_id, action: 'call_reject' });
         return;
       }
@@ -273,6 +299,11 @@ export class PeerTransport {
     }
     if (signal.action === 'offer') {
       if (!signal.sdp) return;
+      if (!session && /(?:^|\r?\n)m=audio\s/im.test(signal.sdp)) {
+        this.callbacks?.sendSignal(peerId, { connection_id: signal.connection_id, action: 'hangup' });
+        this.earlyIce.delete(signal.connection_id);
+        return;
+      }
       if (!session) session = this.createSession(signal.connection_id, peerId, false, false);
       if (session.peerId !== peerId) return;
       await session.pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp });
@@ -392,7 +423,10 @@ export class PeerTransport {
   private async waitForBuffer(channel: RTCDataChannel): Promise<void> {
     if (channel.bufferedAmount <= DATA_HIGH_WATER) return;
     await new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(() => reject(new Error('Kanał pliku nie opróżnił bufora na czas.')), 30_000);
+      const timeout = window.setTimeout(() => {
+        channel.removeEventListener('bufferedamountlow', ready);
+        reject(new Error('Kanał pliku nie opróżnił bufora na czas.'));
+      }, 30_000);
       const ready = () => {
         window.clearTimeout(timeout);
         channel.removeEventListener('bufferedamountlow', ready);
@@ -498,13 +532,13 @@ export class PeerTransport {
       if (outgoing.sessionId !== session.id) continue;
       this.callbacks?.onFileProgress({ ...outgoing.file, peer_id: outgoing.peerId, direction: 'outgoing', transferred: 0, progress: 0, status: 'failed', error: reason });
       this.outgoing.delete(token);
-      void invoke('close_rtc_file', { token });
+      void invoke('close_rtc_file', { token }).catch(() => undefined);
     }
     for (const [token, incoming] of this.incoming) {
       if (incoming.sessionId !== session.id) continue;
       this.callbacks?.onFileProgress({ ...incoming.offer, direction: 'incoming', transferred: 0, progress: 0, status: 'failed', error: reason });
       this.incoming.delete(token);
-      void invoke('close_rtc_file', { token });
+      void invoke('close_rtc_file', { token }).catch(() => undefined);
     }
   }
 

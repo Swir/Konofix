@@ -510,6 +510,7 @@ function showIncomingAudioCall(peerId: string, connectionId: string): void {
   const modal = document.createElement('div');
   modal.id = `audio-call-${connectionId}`;
   modal.className = 'modal-wrap file-offer-wrap audio-call-wrap';
+  modal.dataset.peerId = peerId;
   modal.innerHTML = `<section class="modal glass file-offer-modal audio-call-modal" role="dialog" aria-modal="true">
     <div class="offer-icon">☎</div>
     <span class="eyebrow">PRIVATE P2P AUDIO</span>
@@ -691,7 +692,7 @@ async function wireSecureEvents(): Promise<void> {
     const peerId = (event as CustomEvent<{ peer_id: string }>).detail.peer_id;
     offlinePeers.add(peerId);
     if (activePrivatePeerId === peerId) renderPrivateModal();
-    peerTransport.hangup(peerId);
+    peerTransport.peerOffline(peerId);
   });
   window.addEventListener('konofix-relay-peer-online', event => {
     const peerId = (event as CustomEvent<{ peer_id: string }>).detail.peer_id;
@@ -706,7 +707,12 @@ async function wireSecureEvents(): Promise<void> {
   window.addEventListener('konofix-audio-call-state', event => {
     const detail = (event as CustomEvent<{ peerId: string; state: AudioCallState; error?: string }>).detail;
     audioStates.set(detail.peerId, { state: detail.state, error: detail.error });
-    if (['ended', 'rejected', 'failed'].includes(detail.state)) mutedAudioPeers.delete(detail.peerId);
+    if (['ended', 'rejected', 'failed'].includes(detail.state)) {
+      mutedAudioPeers.delete(detail.peerId);
+      document.querySelectorAll<HTMLElement>('.audio-call-wrap').forEach(modal => {
+        if (modal.dataset.peerId === detail.peerId) modal.remove();
+      });
+    }
     if (activePrivatePeerId === detail.peerId) renderPrivateModal();
   });
   window.addEventListener('konofix-remote-audio', event => {

@@ -107,6 +107,7 @@ let roomChangePending = false;
 export const worldRelay = new WorldRelayBridge();
 export const peerTransport = new PeerTransport();
 const worldRelayPeers = new Map<string, RelayPeer>();
+const directTransferIds = new Set<string>();
 let worldRelayState: RelayState = { connected: 0, total: 0 };
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -741,8 +742,12 @@ export async function sendFileToPeer(peerId: string) {
 
 async function cancelTransfer(transferId: string) {
   const transfer = state.transfers.get(transferId);
-  if (transfer?.peer_id.startsWith('nostr:')) {
+  if (directTransferIds.has(transferId)) {
     await peerTransport.cancelFile(transferId);
+    return;
+  }
+  if (transfer?.peer_id.startsWith('nostr:')) {
+    worldRelay.cancelFile(transferId);
     return;
   }
   try {
@@ -847,6 +852,7 @@ function directTransferView(progress: DirectFileProgress): FileTransfer {
 }
 
 function updateDirectTransfer(progress: DirectFileProgress): void {
+  directTransferIds.add(progress.token);
   state.transfers.set(progress.token, directTransferView(progress));
   if (progress.status === 'rejected' || progress.status === 'failed') {
     addSystem('world', t('transfer.problem', { file: progress.file_name, error: progress.error || transferStatus(progress.status) }));
@@ -963,6 +969,7 @@ function resetSessionView(errorMessage?: string) {
   state.rooms = new Map([['world', { id: 'world', title: '# WORLD' }]]);
   state.messages = new Map([['world', []]]);
   state.transfers.clear();
+  directTransferIds.clear();
   state.publicOffers.clear();
   state.publicIntents.clear();
   state.status = { ...EMPTY_STATUS };

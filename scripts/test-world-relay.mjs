@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 
 class MemoryStorage {
   values = new Map();
@@ -234,3 +235,8 @@ freshAlice.stop();
 observerBob.stop();
 
 console.log('WORLD relay unit test passed: signed public chat, NIP-44 private chat/file/signaling, identity rotation, deduplication and cleanup.');
+const peerTransport = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/test-peer-transport.mjs'], {
+  cwd: process.cwd(),
+  stdio: 'inherit',
+});
+assert.equal(peerTransport.status, 0, 'peer transport integration test must pass');

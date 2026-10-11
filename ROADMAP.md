@@ -34,7 +34,7 @@ The active milestone now has 56 of 67 tasks complete. The Global Beta expansion 
 
 - Distributed nickname trust hardening now treats unsigned Kademlia nickname leases as bounded, non-authoritative hints; only source-authenticated GossipSub claims can enforce a nickname conflict. This security fix adds no Real Internet Test credit.
 
-## 0.6.0-1 (alpha 1) — Direct large files and private audio 🚧
+## 0.6.0-1 — Direct large files and private audio (alpha 1) 🚧
 
 - [x] carry bounded WebRTC offers, answers and ICE candidates through recipient-addressed NIP-44 encrypted WORLD signaling,
 - [x] stream explicitly accepted files directly over ordered WebRTC data channels with backpressure, disk-backed chunks, no-clobber reservation and final SHA-256 verification,

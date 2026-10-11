@@ -34,6 +34,19 @@ The active milestone now has 56 of 67 tasks complete. The Global Beta expansion 
 
 - Distributed nickname trust hardening now treats unsigned Kademlia nickname leases as bounded, non-authoritative hints; only source-authenticated GossipSub claims can enforce a nickname conflict. This security fix adds no Real Internet Test credit.
 
+## 0.6.0-alpha.1 — Direct large files and private audio 🚧
+
+- [x] carry bounded WebRTC offers, answers and ICE candidates through recipient-addressed NIP-44 encrypted WORLD signaling,
+- [x] stream explicitly accepted files directly over ordered WebRTC data channels with backpressure, disk-backed chunks, no-clobber reservation and final SHA-256 verification,
+- [x] add consent-based private one-to-one WebRTC audio with mute and hangup controls,
+- [x] keep stable `v0.5.3` and its 2 MiB encrypted relay fallback intact while the alpha is qualified,
+- [ ] pass exact-head Windows/Linux/RustSec CI,
+- [ ] pass a two-PC independent-network large-file test with matching SHA-256,
+- [ ] pass a two-PC independent-network bidirectional audio test,
+- [ ] document NAT types and any case that requires an optional TURN design; do not claim universal reachability without evidence.
+
+This development stage uses public STUN for NAT discovery and the existing public WORLD relay set only for encrypted signaling. File and audio bytes are not placed on those relays. It does not add Real Internet Test checklist credit until the physical evidence items pass.
+
 ## 0.1.0 — Foundation ✅
 - Tauri + Rust + libp2p
 - modern desktop GUI

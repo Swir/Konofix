@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0-alpha.1 — direct large files and private audio
+
+- add encrypted, recipient-addressed WebRTC signaling over the existing WORLD bridge; public Nostr relays carry only bounded NIP-44 ciphertext used to establish a peer connection,
+- stream explicitly accepted files up to the existing 32 GiB product limit over an ordered WebRTC data channel with backpressure, disk-backed chunk reads/writes, no-clobber destination reservation and final SHA-256 verification instead of sending large file bytes through public relays,
+- add private one-to-one WebRTC audio with incoming-call consent, microphone permission on explicit user action, mute and hangup controls, echo cancellation and noise suppression,
+- use replaceable public STUN endpoints for NAT discovery without adding a Konofix-owned server; TURN is deliberately absent in this alpha, so restrictive/symmetric NAT pairs are not claimed to work universally,
+- keep stable `v0.5.3` behavior intact on `main`; automated tests validate encrypted signaling and build wiring, while large-file/audio promotion still requires an exact two-PC independent-network test.
+
 ## 0.5.3 — encrypted WAN private chat and file fallback
 
 - extend the existing signed multi-relay WORLD bridge with NIP-44 end-to-end encrypted private 1:1 messages addressed to the recipient's persistent relay identity; public relay operators receive ciphertext rather than private message text,

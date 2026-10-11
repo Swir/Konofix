@@ -77,6 +77,15 @@ export type RelayFileProgress = RelayFileOffer & {
 
 export type RelayFileReady = RelayFileOffer & { data_base64: string };
 
+export type RtcSignal = {
+  connection_id: string;
+  action: 'offer' | 'answer' | 'ice' | 'call_request' | 'call_accept' | 'call_reject' | 'hangup';
+  sdp?: string;
+  candidate?: string;
+  sdp_mid?: string | null;
+  sdp_mline_index?: number | null;
+};
+
 type Callbacks = {
   onPresence(peer: RelayPeer): void;
   onOffline(peerId: string): void;
@@ -86,6 +95,7 @@ type Callbacks = {
   onFileOffer?(offer: RelayFileOffer): void;
   onFileProgress?(progress: RelayFileProgress): void;
   onFileReady?(file: RelayFileReady): void;
+  onRtcSignal?(peerId: string, signal: RtcSignal): void;
 };
 
 type PresencePayload = {
@@ -167,7 +177,16 @@ type EncryptedFileChunkPayload = {
   data: string;
 };
 
-type EncryptedPayload = EncryptedPrivatePayload | EncryptedFileOfferPayload | EncryptedFileControlPayload | EncryptedFileMissingPayload | EncryptedFileChunkPayload;
+type EncryptedRtcSignalPayload = {
+  v: 1;
+  ns: typeof NAMESPACE;
+  type: 'rtc_signal';
+  session: string;
+  sent_at: number;
+  signal: RtcSignal;
+};
+
+type EncryptedPayload = EncryptedPrivatePayload | EncryptedFileOfferPayload | EncryptedFileControlPayload | EncryptedFileMissingPayload | EncryptedFileChunkPayload | EncryptedRtcSignalPayload;
 
 type RemotePresence = {
   peer: RelayPeer;
@@ -309,7 +328,7 @@ function parseEncryptedPayload(content: string, now: number): EncryptedPayload |
   if (!isObject(raw)
     || raw.v !== 1
     || raw.ns !== NAMESPACE
-    || !['private', 'file_offer', 'file_accept', 'file_reject', 'file_chunk', 'file_saved', 'file_chunks_complete', 'file_missing'].includes(String(raw.type))
+    || !['private', 'file_offer', 'file_accept', 'file_reject', 'file_chunk', 'file_saved', 'file_chunks_complete', 'file_missing', 'rtc_signal'].includes(String(raw.type))
     || !boundedString(raw.session, 8, 64)
     || typeof raw.sent_at !== 'number'
     || !Number.isSafeInteger(raw.sent_at)
@@ -318,6 +337,20 @@ function parseEncryptedPayload(content: string, now: number): EncryptedPayload |
   if (raw.type === 'private') {
     if (!validUuid(raw.id) || !boundedString(raw.text, 1, 4_000)) return undefined;
     return raw as unknown as EncryptedPrivatePayload;
+  }
+  if (raw.type === 'rtc_signal') {
+    if (!isObject(raw.signal)
+      || !validUuid(raw.signal.connection_id)
+      || !['offer', 'answer', 'ice', 'call_request', 'call_accept', 'call_reject', 'hangup'].includes(String(raw.signal.action))) return undefined;
+    const signal = raw.signal;
+    if ((signal.action === 'offer' || signal.action === 'answer')
+      && !boundedString(signal.sdp, 1, 32_000)) return undefined;
+    if (signal.action === 'ice'
+      && (!boundedString(signal.candidate, 1, 4_000)
+        || (signal.sdp_mid !== undefined && signal.sdp_mid !== null && !boundedString(signal.sdp_mid, 0, 256))
+        || (signal.sdp_mline_index !== undefined && signal.sdp_mline_index !== null
+          && (!Number.isSafeInteger(signal.sdp_mline_index) || Number(signal.sdp_mline_index) < 0)))) return undefined;
+    return raw as unknown as EncryptedRtcSignalPayload;
   }
   if (!validUuid(raw.transfer_id)) return undefined;
   if (raw.type === 'file_offer') {
@@ -463,6 +496,20 @@ export class WorldRelayBridge {
       text: message.text,
     });
     return message;
+  }
+
+  publishRtcSignal(targetPeerId: string, signal: RtcSignal): void {
+    if (!this.running) throw new Error('WORLD relay is offline.');
+    const targetKey = relayPublicKey(targetPeerId);
+    if (!targetKey || !this.presence.has(targetPeerId)) throw new Error('RTC recipient is no longer available.');
+    this.publishEncrypted(targetKey, {
+      v: 1,
+      ns: NAMESPACE,
+      type: 'rtc_signal',
+      session: this.session,
+      sent_at: Date.now(),
+      signal,
+    });
   }
 
   offerFile(targetPeerId: string, selection: RelayFileSelection): RelayFileOffer {
@@ -819,6 +866,10 @@ export class WorldRelayBridge {
         text: payload.text,
         timestamp: payload.sent_at,
       });
+      return;
+    }
+    if (payload.type === 'rtc_signal') {
+      this.callbacks?.onRtcSignal?.(senderPeerId, payload.signal);
       return;
     }
     if (payload.type === 'file_offer') {

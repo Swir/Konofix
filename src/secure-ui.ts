@@ -8,7 +8,8 @@ import {
   type SecureRoomInfo,
   roomSecurity,
 } from './private-chat-state';
-import { sendFileToPeer, worldRelay } from './main';
+import { peerTransport, sendFileToPeer, worldRelay } from './main';
+import type { AudioCallState } from './peer-transport';
 import './secure-ui.css';
 
 const conversations = new PrivateConversationStore();
@@ -17,6 +18,8 @@ const authorizedRoomRevision = new Map<string, number>();
 const ownedRooms = new Set<string>();
 const offlinePeers = new Set<string>();
 const ignoredPrivatePeers = new Set<string>();
+const audioStates = new Map<string, { state: AudioCallState; error?: string }>();
+const mutedAudioPeers = new Set<string>();
 const PRIVATE_MESSAGES_ENABLED_KEY = 'konofix.privateMessagesEnabled';
 
 let lastSyncedPrivateMessagesEnabled: boolean | null = null;
@@ -388,10 +391,25 @@ function renderPrivateModal(): void {
   const messages = conversations.conversation(activePrivatePeerId);
   const offline = offlinePeers.has(activePrivatePeerId);
   const color = normalizeNickColor(activePrivateColor);
+  const audio = audioStates.get(activePrivatePeerId);
+  const audioActive = audio && ['calling', 'ringing', 'connecting', 'connected', 'muted'].includes(audio.state);
+  const audioStatus = audio?.state === 'calling' ? t('audio.calling')
+    : audio?.state === 'ringing' ? t('audio.ringing')
+      : audio?.state === 'connecting' ? t('audio.connecting')
+        : audio?.state === 'connected' ? t('audio.connected')
+          : audio?.state === 'muted' ? t('audio.muted')
+            : audio?.state === 'failed' ? t('audio.failed', { error: audio.error ?? 'WebRTC' })
+              : (offline ? t('private.offline') : t('private.subtitle'));
+  const audioCapable = activePrivatePeerId.startsWith('nostr:') && 'RTCPeerConnection' in window && navigator.mediaDevices?.getUserMedia;
   wrap.innerHTML = `<section class="private-chat-modal glass" role="dialog" aria-modal="true" aria-labelledby="privateChatTitle">
     <header class="private-chat-head">
-      <div><span class="eyebrow">PRIVATE P2P</span><h3 id="privateChatTitle" style="color:${color}">${esc(activePrivateNick)}</h3><span class="private-peer-status ${offline ? 'offline' : ''}"><i></i>${esc(offline ? t('private.offline') : t('private.subtitle'))}</span></div>
-      <button type="button" data-private-close aria-label="${esc(t('common.cancel'))}">×</button>
+      <div><span class="eyebrow">PRIVATE P2P</span><h3 id="privateChatTitle" style="color:${color}">${esc(activePrivateNick)}</h3><span class="private-peer-status ${offline ? 'offline' : ''}"><i></i>${esc(audioStatus)}</span></div>
+      <div class="private-call-actions">
+        ${audioCapable && !audioActive ? `<button type="button" data-audio-call title="${esc(t('audio.start'))}" aria-label="${esc(t('audio.start'))}" ${offline ? 'disabled' : ''}>☎</button>` : ''}
+        ${audioActive && (audio?.state === 'connected' || audio?.state === 'muted') ? `<button type="button" data-audio-mute title="${esc(mutedAudioPeers.has(activePrivatePeerId) ? t('audio.unmute') : t('audio.mute'))}" aria-label="${esc(mutedAudioPeers.has(activePrivatePeerId) ? t('audio.unmute') : t('audio.mute'))}">${mutedAudioPeers.has(activePrivatePeerId) ? '🔇' : '🎙'}</button>` : ''}
+        ${audioActive ? `<button type="button" data-audio-hangup title="${esc(t('audio.hangup'))}" aria-label="${esc(t('audio.hangup'))}">⏹</button>` : ''}
+        <button type="button" data-private-close aria-label="${esc(t('common.cancel'))}">×</button>
+      </div>
     </header>
     <div class="private-messages" data-private-messages>
       ${messages.length ? messages.map(message => privateMessageHtml(message, activePrivatePeerId)).join('') : `<div class="private-empty">${esc(t('private.subtitle'))}</div>`}
@@ -421,6 +439,19 @@ function renderPrivateModal(): void {
     });
   };
   wrap.querySelector('[data-private-close]')?.addEventListener('click', close);
+  wrap.querySelector('[data-audio-call]')?.addEventListener('click', () => {
+    void peerTransport.startCall(activePrivatePeerId).catch(error => {
+      audioStates.set(activePrivatePeerId, { state: 'failed', error: String(error) });
+      renderPrivateModal();
+    });
+  });
+  wrap.querySelector('[data-audio-hangup]')?.addEventListener('click', () => peerTransport.hangup(activePrivatePeerId));
+  wrap.querySelector('[data-audio-mute]')?.addEventListener('click', () => {
+    const peerId = activePrivatePeerId;
+    const muted = !mutedAudioPeers.has(peerId);
+    if (muted) mutedAudioPeers.add(peerId); else mutedAudioPeers.delete(peerId);
+    peerTransport.setMuted(peerId, muted);
+  });
   wrap.onkeydown = event => {
     if (event.key === 'Tab') trapDialogFocus(wrap, event);
     if (event.key === 'Escape') {
@@ -470,6 +501,54 @@ function openPrivateChat(peerId: string, nick: string, color: string): void {
   conversations.open(peerId);
   renderPrivateModal();
   queueAugment();
+}
+
+function showIncomingAudioCall(peerId: string, connectionId: string): void {
+  document.querySelector(`#audio-call-${CSS.escape(connectionId)}`)?.remove();
+  const peerButton = document.querySelector<HTMLButtonElement>(`[data-private-peer="${CSS.escape(peerId)}"]`);
+  const nick = peerButton?.dataset.privateNick || peerId;
+  const modal = document.createElement('div');
+  modal.id = `audio-call-${connectionId}`;
+  modal.className = 'modal-wrap file-offer-wrap audio-call-wrap';
+  modal.innerHTML = `<section class="modal glass file-offer-modal audio-call-modal" role="dialog" aria-modal="true">
+    <div class="offer-icon">☎</div>
+    <span class="eyebrow">PRIVATE P2P AUDIO</span>
+    <h3>${esc(t('audio.incomingTitle', { nick }))}</h3>
+    <div class="safe-note">${esc(t('audio.incomingHelp'))}</div>
+    <div class="offer-actions"><button type="button" class="ghost" data-audio-reject>${esc(t('audio.reject'))}</button><button type="button" class="primary compact" data-audio-accept>${esc(t('audio.accept'))}</button></div>
+  </section>`;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('[data-audio-reject]')?.addEventListener('click', () => { peerTransport.rejectCall(connectionId); close(); });
+  modal.querySelector('[data-audio-accept]')?.addEventListener('click', () => {
+    const button = modal.querySelector<HTMLButtonElement>('[data-audio-accept]');
+    if (button) button.disabled = true;
+    void peerTransport.acceptCall(connectionId).then(() => {
+      close();
+      openPrivateChat(peerId, nick, peerButton?.dataset.privateColor || '');
+    }).catch(error => {
+      peerTransport.rejectCall(connectionId);
+      close();
+      alert(t('audio.failed', { error: String(error) }));
+    });
+  });
+}
+
+function attachRemoteAudio(peerId: string, stream: MediaStream | null): void {
+  let audio = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
+  if (!stream) {
+    if (audio) { audio.pause(); audio.srcObject = null; audio.remove(); }
+    return;
+  }
+  if (!audio) {
+    audio = document.createElement('audio');
+    audio.id = 'konofixRemoteAudio';
+    audio.autoplay = true;
+    audio.dataset.peerId = peerId;
+    document.body.appendChild(audio);
+  }
+  audio.srcObject = stream;
+  void audio.play().catch(() => undefined);
 }
 
 async function sendPrivateFile(): Promise<void> {
@@ -612,12 +691,27 @@ async function wireSecureEvents(): Promise<void> {
     const peerId = (event as CustomEvent<{ peer_id: string }>).detail.peer_id;
     offlinePeers.add(peerId);
     if (activePrivatePeerId === peerId) renderPrivateModal();
+    peerTransport.hangup(peerId);
   });
   window.addEventListener('konofix-relay-peer-online', event => {
     const peerId = (event as CustomEvent<{ peer_id: string }>).detail.peer_id;
     offlinePeers.delete(peerId);
     if (activePrivatePeerId === peerId) renderPrivateModal();
     queueAugment();
+  });
+  window.addEventListener('konofix-incoming-audio-call', event => {
+    const detail = (event as CustomEvent<{ peerId: string; connectionId: string }>).detail;
+    showIncomingAudioCall(detail.peerId, detail.connectionId);
+  });
+  window.addEventListener('konofix-audio-call-state', event => {
+    const detail = (event as CustomEvent<{ peerId: string; state: AudioCallState; error?: string }>).detail;
+    audioStates.set(detail.peerId, { state: detail.state, error: detail.error });
+    if (['ended', 'rejected', 'failed'].includes(detail.state)) mutedAudioPeers.delete(detail.peerId);
+    if (activePrivatePeerId === detail.peerId) renderPrivateModal();
+  });
+  window.addEventListener('konofix-remote-audio', event => {
+    const detail = (event as CustomEvent<{ peerId: string; stream: MediaStream | null }>).detail;
+    attachRemoteAudio(detail.peerId, detail.stream);
   });
   await listen<{ phase?: string }>('network-status', event => {
     if (event.payload?.phase === 'offline') {

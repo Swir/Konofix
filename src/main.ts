@@ -13,7 +13,13 @@ import {
   type RelayPeer,
   type RelayPrivateMessage,
   type RelayState,
+  type RtcSignal,
 } from './world-relay';
+import {
+  PeerTransport,
+  type DirectFileOffer,
+  type DirectFileProgress,
+} from './peer-transport';
 
 type PublicShareOffer = {
   offer_id: string;
@@ -83,7 +89,7 @@ const state = {
   nick: '',
   nickColor: normalizeNickColor(localStorage.getItem('konofix.nickColor')),
   peerId: '',
-  version: '0.5.3',
+  version: '0.6.0-alpha.1',
   room: 'world',
   connected: false,
   peers: new Map<string, PeerInfo>(),
@@ -99,6 +105,7 @@ let sessionRevision = 0;
 let connectPending = false;
 let roomChangePending = false;
 export const worldRelay = new WorldRelayBridge();
+export const peerTransport = new PeerTransport();
 const worldRelayPeers = new Map<string, RelayPeer>();
 let worldRelayState: RelayState = { connected: 0, total: 0 };
 
@@ -697,11 +704,10 @@ export async function sendFileToPeer(peerId: string) {
   }
   if (peerId.startsWith('nostr:')) {
     try {
-      const selection = await invoke<RelayFileSelection | null>('pick_relay_file');
-      if (!selection) return;
-      const offer = worldRelay.offerFile(peerId, selection);
-      state.transfers.set(offer.transfer_id, {
-        transfer_id: offer.transfer_id,
+      const offer = await peerTransport.sendFile(peerId);
+      if (!offer) return;
+      state.transfers.set(offer.token, {
+        transfer_id: offer.token,
         direction: 'outgoing',
         peer_id: peerId,
         nick: peer.nick,
@@ -736,7 +742,7 @@ export async function sendFileToPeer(peerId: string) {
 async function cancelTransfer(transferId: string) {
   const transfer = state.transfers.get(transferId);
   if (transfer?.peer_id.startsWith('nostr:')) {
-    worldRelay.cancelFile(transferId);
+    await peerTransport.cancelFile(transferId);
     return;
   }
   try {
@@ -821,6 +827,60 @@ function updateRelayTransfer(progress: RelayFileProgress): void {
   }
 }
 
+function directTransferView(progress: DirectFileProgress): FileTransfer {
+  const peer = state.peers.get(progress.peer_id);
+  return {
+    transfer_id: progress.token,
+    direction: progress.direction,
+    peer_id: progress.peer_id,
+    nick: peer?.nick ?? progress.peer_id,
+    file_name: progress.file_name,
+    size: progress.size,
+    transferred: progress.transferred,
+    progress: progress.progress,
+    status: progress.status === 'transferring'
+      ? (progress.direction === 'outgoing' ? 'sending' : 'receiving')
+      : progress.status,
+    path: progress.path,
+    error: progress.error,
+  };
+}
+
+function updateDirectTransfer(progress: DirectFileProgress): void {
+  state.transfers.set(progress.token, directTransferView(progress));
+  if (progress.status === 'rejected' || progress.status === 'failed') {
+    addSystem('world', t('transfer.problem', { file: progress.file_name, error: progress.error || transferStatus(progress.status) }));
+  } else if (progress.status === 'completed') {
+    addSystem('world', t('transfer.finished', { file: progress.file_name, saved: progress.path ? t('transfer.saved', { path: progress.path }) : '' }));
+  } else if (state.connected) renderChat();
+}
+
+function showDirectFileOfferModal(offer: DirectFileOffer): void {
+  document.querySelector(`#direct-file-offer-${CSS.escape(offer.token)}`)?.remove();
+  const modal = document.createElement('div');
+  modal.id = `direct-file-offer-${offer.token}`;
+  modal.className = 'modal-wrap file-offer-wrap';
+  const dangerous = dangerousFile(offer.file_name);
+  const nick = state.peers.get(offer.peer_id)?.nick ?? offer.peer_id;
+  modal.innerHTML = `<div class="modal glass file-offer-modal">
+    <div class="offer-icon">⚡</div>
+    <span class="eyebrow">DIRECT P2P · WEBRTC</span>
+    <h3>${esc(t('transfer.wantsToSend', { nick }))}</h3>
+    <div class="offer-file"><strong>${esc(offer.file_name)}</strong><span>${formatBytes(offer.size)}</span></div>
+    ${dangerous ? `<div class="danger-note">${esc(t('transfer.dangerous'))}</div>` : `<div class="safe-note">${esc(t('transfer.safe'))}</div>`}
+    <div class="safe-note">${esc(t('transfer.directHelp'))}</div>
+    <div class="offer-actions"><button data-direct-reject class="ghost">${esc(t('transfer.reject'))}</button><button data-direct-accept class="primary compact">${esc(t('transfer.accept'))}</button></div>
+  </div>`;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('[data-direct-reject]')?.addEventListener('click', () => { void peerTransport.rejectFile(offer.token); close(); });
+  modal.querySelector('[data-direct-accept]')?.addEventListener('click', () => {
+    const button = modal.querySelector<HTMLButtonElement>('[data-direct-accept]');
+    if (button) button.disabled = true;
+    void peerTransport.acceptFile(offer.token).then(close).catch(error => { alert(String(error)); close(); });
+  });
+}
+
 function showRelayFileOfferModal(offer: RelayFileOffer): void {
   document.querySelector(`#relay-file-offer-${CSS.escape(offer.transfer_id)}`)?.remove();
   const modal = document.createElement('div');
@@ -887,6 +947,7 @@ async function saveRelayFile(file: RelayFileReady): Promise<void> {
 
 function resetSessionView(errorMessage?: string) {
   worldRelay.stop();
+  peerTransport.stop();
   worldRelayPeers.clear();
   worldRelayState = { connected: 0, total: 0 };
   closeKnpChatUi();
@@ -934,6 +995,22 @@ function addSystem(room: string, text: string) {
 }
 
 function startWorldRelay() {
+  peerTransport.start({
+    sendSignal(peerId: string, signal: RtcSignal) {
+      try { worldRelay.publishRtcSignal(peerId, signal); } catch {}
+    },
+    onIncomingCall(peerId: string, connectionId: string) {
+      window.dispatchEvent(new CustomEvent('konofix-incoming-audio-call', { detail: { peerId, connectionId } }));
+    },
+    onCallState(peerId, callState, error) {
+      window.dispatchEvent(new CustomEvent('konofix-audio-call-state', { detail: { peerId, state: callState, error } }));
+    },
+    onRemoteAudio(peerId, stream) {
+      window.dispatchEvent(new CustomEvent('konofix-remote-audio', { detail: { peerId, stream } }));
+    },
+    onFileOffer(offer) { showDirectFileOfferModal(offer); },
+    onFileProgress(progress) { updateDirectTransfer(progress); },
+  });
   worldRelay.start(state.peerId, state.nick, state.nickColor, {
     onPresence(peer: RelayPeer) {
       worldRelayPeers.set(peer.peer_id, peer);
@@ -974,6 +1051,11 @@ function startWorldRelay() {
     },
     onFileReady(file: RelayFileReady) {
       void saveRelayFile(file);
+    },
+    onRtcSignal(peerId: string, signal: RtcSignal) {
+      void peerTransport.handleSignal(peerId, signal).catch(error => {
+        window.dispatchEvent(new CustomEvent('konofix-audio-call-state', { detail: { peerId, state: 'failed', error: String(error) } }));
+      });
     },
   });
 }

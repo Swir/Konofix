@@ -91,6 +91,7 @@ let bobConnections = 0;
 let bobPrivate = 0;
 let bobFileReady = 0;
 let aliceFileCompleted = 0;
+let bobRtcSignals = 0;
 let expectedRelayFile;
 
 alice.start(alicePeer, 'Alice_test', '#35d07f', {
@@ -111,6 +112,11 @@ bob.start(bobPeer, 'Bob_test', '#4f7cff', {
     if (message.text === 'encrypted private test'
       && message.peer_id === alice.virtualPeerId()
       && message.target_peer_id === bob.virtualPeerId()) bobPrivate += 1;
+  },
+  onRtcSignal(peerId, signal) {
+    if (peerId === alice.virtualPeerId()
+      && signal.action === 'offer'
+      && signal.sdp === 'v=0\r\nunit-test') bobRtcSignals += 1;
   },
   onFileOffer(offer) {
     MockWebSocket.dropNextTarget = bob.virtualPeerId().slice('nostr:'.length);
@@ -146,6 +152,14 @@ assert.equal(bobChats, 1, 'one signed chat must be emitted once across duplicate
 alice.publishPrivate(bob.virtualPeerId(), 'encrypted private test');
 await new Promise(resolve => setTimeout(resolve, 20));
 assert.equal(bobPrivate, 1, 'one NIP-44 private message must be decrypted only by its recipient');
+
+alice.publishRtcSignal(bob.virtualPeerId(), {
+  connection_id: crypto.randomUUID(),
+  action: 'offer',
+  sdp: 'v=0\r\nunit-test',
+});
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(bobRtcSignals, 1, 'encrypted WebRTC signaling must reach only the addressed live identity once');
 
 const relayFile = Buffer.alloc(40 * 1024);
 for (let index = 0; index < relayFile.length; index += 1) relayFile[index] = index % 251;
@@ -219,4 +233,4 @@ staleAlice.stop();
 freshAlice.stop();
 observerBob.stop();
 
-console.log('WORLD relay unit test passed: signed public chat, NIP-44 private chat/file fallback, identity rotation, deduplication and cleanup.');
+console.log('WORLD relay unit test passed: signed public chat, NIP-44 private chat/file/signaling, identity rotation, deduplication and cleanup.');

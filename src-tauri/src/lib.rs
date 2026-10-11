@@ -2175,7 +2175,12 @@ async fn pick_rtc_file(state: State<'_, AppState>) -> Result<Option<RtcFileDescr
         .lock()
         .map_err(|_| "Błąd blokady plików P2P.")?
         .insert(token.clone(), selected);
-    Ok(Some(RtcFileDescriptor { token, file_name, size: metadata.len(), sha256 }))
+    Ok(Some(RtcFileDescriptor {
+        token,
+        file_name,
+        size: metadata.len(),
+        sha256,
+    }))
 }
 
 #[tauri::command]
@@ -2282,7 +2287,11 @@ async fn write_rtc_file_chunk(
             return Err("Fragment pliku P2P jest poza kolejnością.".into());
         }
         transfer.next_offset += data.len() as u64;
-        (transfer.temp_path.clone(), transfer.next_offset, transfer.size)
+        (
+            transfer.temp_path.clone(),
+            transfer.next_offset,
+            transfer.size,
+        )
     };
     let write_result: Result<(), String> = async {
         let mut file = OpenOptions::new()
@@ -2314,7 +2323,10 @@ async fn write_rtc_file_chunk(
 }
 
 #[tauri::command]
-async fn finish_rtc_file_receive(token: String, state: State<'_, AppState>) -> Result<String, String> {
+async fn finish_rtc_file_receive(
+    token: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     let incoming = state
         .rtc_incoming_files
         .lock()

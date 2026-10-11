@@ -98,6 +98,7 @@ export class PeerTransport {
   private readonly outgoing = new Map<string, { file: RtcFileDescriptor; sessionId: string; peerId: string }>();
   private readonly incoming = new Map<string, { offer: DirectFileOffer; sessionId: string }>();
   private readonly pendingCalls = new Map<string, { peerId: string; direction: 'incoming' | 'outgoing' }>();
+  private readonly earlyIce = new Map<string, { peerId: string; candidates: RTCIceCandidateInit[] }>();
   private callbacks?: Callbacks;
 
   start(callbacks: Callbacks): void { this.callbacks = callbacks; }
@@ -108,6 +109,7 @@ export class PeerTransport {
     this.outgoing.clear();
     this.incoming.clear();
     this.pendingCalls.clear();
+    this.earlyIce.clear();
     this.callbacks = undefined;
   }
 
@@ -255,6 +257,20 @@ export class PeerTransport {
       return;
     }
     let session = this.sessions.get(signal.connection_id);
+    if (signal.action === 'ice' && signal.candidate && !session) {
+      const queued = this.earlyIce.get(signal.connection_id);
+      if (queued && queued.peerId !== peerId) return;
+      if (!queued && this.earlyIce.size >= MAX_ACTIVE_SESSIONS) return;
+      const candidates = queued?.candidates ?? [];
+      if (candidates.length >= 32) return;
+      candidates.push({
+        candidate: signal.candidate,
+        sdpMid: signal.sdp_mid,
+        sdpMLineIndex: signal.sdp_mline_index,
+      });
+      this.earlyIce.set(signal.connection_id, { peerId, candidates });
+      return;
+    }
     if (signal.action === 'offer') {
       if (!signal.sdp) return;
       if (!session) session = this.createSession(signal.connection_id, peerId, false, false);
@@ -287,7 +303,18 @@ export class PeerTransport {
     if (existing) return existing;
     if (this.sessions.size >= MAX_ACTIVE_SESSIONS) throw new Error('Too many active direct peer sessions.');
     const pc = new RTCPeerConnection(RTC_CONFIG);
-    const session: Session = { id, peerId, pc, pendingIce: [], localStream: stream, audio, closed: false, receiveChain: Promise.resolve() };
+    const earlyIce = this.earlyIce.get(id);
+    if (earlyIce?.peerId === peerId) this.earlyIce.delete(id);
+    const session: Session = {
+      id,
+      peerId,
+      pc,
+      pendingIce: earlyIce?.peerId === peerId ? earlyIce.candidates : [],
+      localStream: stream,
+      audio,
+      closed: false,
+      receiveChain: Promise.resolve(),
+    };
     this.sessions.set(id, session);
     stream?.getTracks().forEach(track => pc.addTrack(track, stream));
     pc.onicecandidate = event => {
@@ -490,6 +517,7 @@ export class PeerTransport {
     session.localStream?.getTracks().forEach(track => track.stop());
     this.sessions.delete(session.id);
     this.pendingCalls.delete(session.id);
+    this.earlyIce.delete(session.id);
   }
 
   private touchSession(session: Session): void {

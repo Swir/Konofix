@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0-alpha.1 — direct large files and private audio
+## 0.6.0-1 (alpha 1) — direct large files and private audio
 
 - add encrypted, recipient-addressed WebRTC signaling over the existing WORLD bridge; public Nostr relays carry only bounded NIP-44 ciphertext used to establish a peer connection,
 - stream explicitly accepted files up to the existing 32 GiB product limit over an ordered WebRTC data channel with backpressure, disk-backed chunk reads/writes, no-clobber destination reservation and final SHA-256 verification instead of sending large file bytes through public relays,

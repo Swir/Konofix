@@ -89,7 +89,7 @@ const state = {
   nick: '',
   nickColor: normalizeNickColor(localStorage.getItem('konofix.nickColor')),
   peerId: '',
-  version: '0.6.0-alpha.1',
+  version: '0.6.0-1',
   room: 'world',
   connected: false,
   peers: new Map<string, PeerInfo>(),

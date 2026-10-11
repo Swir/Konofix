@@ -169,7 +169,12 @@ type EncryptedFileChunkPayload = {
 
 type EncryptedPayload = EncryptedPrivatePayload | EncryptedFileOfferPayload | EncryptedFileControlPayload | EncryptedFileMissingPayload | EncryptedFileChunkPayload;
 
-type RemotePresence = { peer: RelayPeer; seenAt: number };
+type RemotePresence = {
+  peer: RelayPeer;
+  seenAt: number;
+  announcedAt: number;
+  session: string;
+};
 
 type RelaySocket = {
   url: string;
@@ -743,7 +748,13 @@ export class WorldRelayBridge {
     if (payload.type !== 'chat' && Math.abs(Date.now() - payload.sent_at) > PRESENCE_TTL_MS) return;
     const virtualPeerId = `nostr:${event.pubkey}`;
     if (payload.type === 'goodbye') {
-      if (this.presence.delete(virtualPeerId)) this.callbacks?.onOffline(virtualPeerId);
+      const current = this.presence.get(virtualPeerId);
+      if (current
+        && current.session === payload.session
+        && payload.sent_at >= current.announcedAt
+        && this.presence.delete(virtualPeerId)) {
+        this.callbacks?.onOffline(virtualPeerId);
+      }
       return;
     }
     const peer: RelayPeer = {
@@ -752,12 +763,31 @@ export class WorldRelayBridge {
       nick: payload.nick,
       nick_color: payload.nick_color,
     };
-    const previous = this.presence.get(virtualPeerId)?.peer;
-    this.presence.set(virtualPeerId, { peer, seenAt: Date.now() });
+    const previousPresence = this.presence.get(virtualPeerId);
+    if (previousPresence && payload.sent_at < previousPresence.announcedAt) return;
+    const superseded: string[] = [];
+    for (const [peerId, candidate] of this.presence) {
+      if (peerId === virtualPeerId || candidate.peer.claimed_peer_id !== peer.claimed_peer_id) continue;
+      if (candidate.announcedAt > payload.sent_at) return;
+      superseded.push(peerId);
+    }
+    for (const peerId of superseded) {
+      this.presence.delete(peerId);
+      this.callbacks?.onOffline(peerId);
+    }
+    const previous = previousPresence?.peer;
+    const previousSession = previousPresence?.session;
+    this.presence.set(virtualPeerId, {
+      peer,
+      seenAt: Date.now(),
+      announcedAt: payload.sent_at,
+      session: payload.session,
+    });
     if (!previous
       || previous.claimed_peer_id !== peer.claimed_peer_id
       || previous.nick !== peer.nick
-      || previous.nick_color !== peer.nick_color) {
+      || previous.nick_color !== peer.nick_color
+      || previousSession !== payload.session) {
       this.callbacks?.onPresence(peer);
     }
     // Ephemeral Nostr events are not retained. Answer the first sighting so a
@@ -776,8 +806,9 @@ export class WorldRelayBridge {
 
   private receiveEncrypted(senderPublicKey: string, payload: EncryptedPayload): void {
     const senderPeerId = `nostr:${senderPublicKey}`;
-    const presence = this.presence.get(senderPeerId)?.peer;
-    if (!presence) return;
+    const remote = this.presence.get(senderPeerId);
+    if (!remote || remote.session !== payload.session) return;
+    const presence = remote.peer;
     if (payload.type === 'private') {
       this.callbacks?.onPrivate?.({
         id: payload.id,

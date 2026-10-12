@@ -2199,10 +2199,8 @@ async fn prepare_public_rtc_file(
     transfer_token: String,
     state: State<'_, AppState>,
 ) -> Result<RtcFileDescriptor, String> {
-    Uuid::parse_str(&offer_id)
-        .map_err(|_| "Nieprawidłowy identyfikator publicznej oferty.")?;
-    Uuid::parse_str(&transfer_token)
-        .map_err(|_| "Nieprawidłowy identyfikator transferu P2P.")?;
+    Uuid::parse_str(&offer_id).map_err(|_| "Nieprawidłowy identyfikator publicznej oferty.")?;
+    Uuid::parse_str(&transfer_token).map_err(|_| "Nieprawidłowy identyfikator transferu P2P.")?;
     let mut files = state
         .rtc_outgoing_files
         .lock()

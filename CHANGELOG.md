@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0-3 (alpha 3) — bidirectional audio output and playful call tones
+
+- route remote call audio through the user-unlocked Web Audio output, retaining the HTML audio element only as a fallback, so the caller no longer depends on a second autoplay gesture after the recipient accepts,
+- require an active microphone track on both endpoints, enable echo cancellation, noise suppression, automatic gain control and mono capture, and cleanly release local/remote audio after negotiation failure or network termination,
+- strengthen the WebRTC regression to require that both caller and recipient receive the other endpoint's stream rather than validating only recipient-side audio,
+- replace the plain telephone beeps with a short six-note triangular-wave incoming melody and a separate two-chord outgoing ringback,
+- keep the `0.6.0-2` WAN public-room behavior and stable `v0.5.3` unchanged; exact physical two-PC confirmation remains required before promotion.
+
 ## 0.6.0-2 (alpha 2) — WAN rooms and call-progress tones
 
 - announce public, unprotected temporary rooms through the signed, expiring multi-relay WORLD fallback so users on independent networks can discover the same room without a Konofix-owned server,

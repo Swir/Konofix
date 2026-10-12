@@ -34,7 +34,20 @@ The active milestone now has 56 of 67 tasks complete. The Global Beta expansion 
 
 - Distributed nickname trust hardening now treats unsigned Kademlia nickname leases as bounded, non-authoritative hints; only source-authenticated GossipSub claims can enforce a nickname conflict. This security fix adds no Real Internet Test credit.
 
-## 0.6.0-2 — WAN rooms and call-progress tones (alpha 2) 🚧
+## 0.6.0-3 — Bidirectional audio output and playful call tones (alpha 3) 🚧
+
+- [x] route remote audio through an output context unlocked by the user's call/accept interaction,
+- [x] retain an HTML audio fallback without silently depending on autoplay for the primary path,
+- [x] require active microphone capture with echo cancellation, noise suppression and automatic gain control,
+- [x] validate both caller-to-recipient and recipient-to-caller stream delivery in deterministic WebRTC coverage,
+- [x] replace the plain beeps with distinct generated incoming and outgoing melodies,
+- [x] stop microphone, remote output and tones on hangup, rejection, failure and network shutdown,
+- [ ] pass exact-head Windows/Linux/RustSec CI,
+- [ ] confirm bidirectional voice plus both call melodies on two physical Windows installations.
+
+This follow-up addresses the reported one-way installed-app audio observation. Automated media-track delivery and output routing are covered, but stable promotion remains blocked on the exact `0.6.0-3` installer passing the physical two-PC check.
+
+## 0.6.0-2 — WAN rooms and call-progress tones (alpha 2)
 
 - [x] publish signed, expiring announcements for public, unprotected rooms through the multi-relay WORLD fallback,
 - [x] carry public-room text for relay-only participants with duplicate suppression and owner-bound room lifecycle cleanup,

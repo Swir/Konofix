@@ -32,6 +32,7 @@ let activePrivateColor = '';
 let bypassRoomClick = '';
 let roomOperationPending = false;
 let augmentQueued = false;
+let remoteAudioRevision = 0;
 
 function esc(value: string): string {
   return value.replace(/[&<>'"]/g, character => ({
@@ -539,20 +540,31 @@ function showIncomingAudioCall(peerId: string, connectionId: string): void {
 }
 
 function attachRemoteAudio(peerId: string, stream: MediaStream | null): void {
+  const revision = ++remoteAudioRevision;
   let audio = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
   if (!stream) {
+    callTones.stopRemoteAudio();
     if (audio) { audio.pause(); audio.srcObject = null; audio.remove(); }
     return;
   }
-  if (!audio) {
-    audio = document.createElement('audio');
-    audio.id = 'konofixRemoteAudio';
-    audio.autoplay = true;
-    audio.dataset.peerId = peerId;
-    document.body.appendChild(audio);
-  }
-  audio.srcObject = stream;
-  void audio.play().catch(() => undefined);
+  void callTones.playRemoteAudio(stream).then(playing => {
+    if (!playing || revision !== remoteAudioRevision) return;
+    const fallback = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
+    if (fallback) { fallback.pause(); fallback.srcObject = null; fallback.remove(); }
+  }).catch(() => {
+    if (revision !== remoteAudioRevision) return;
+    audio = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
+    if (!audio) {
+      audio = document.createElement('audio');
+      audio.id = 'konofixRemoteAudio';
+      audio.autoplay = true;
+      audio.setAttribute('playsinline', '');
+      audio.dataset.peerId = peerId;
+      document.body.appendChild(audio);
+    }
+    audio.srcObject = stream;
+    void audio.play().catch(() => undefined);
+  });
 }
 
 async function sendPrivateFile(): Promise<void> {
@@ -714,6 +726,7 @@ async function wireSecureEvents(): Promise<void> {
     else if (detail.state === 'ringing') callTones.start('incoming');
     else callTones.stop();
     if (['ended', 'rejected', 'failed'].includes(detail.state)) {
+      callTones.stopRemoteAudio();
       mutedAudioPeers.delete(detail.peerId);
       document.querySelectorAll<HTMLElement>('.audio-call-wrap').forEach(modal => {
         if (modal.dataset.peerId === detail.peerId) modal.remove();
@@ -728,6 +741,7 @@ async function wireSecureEvents(): Promise<void> {
   await listen<{ phase?: string }>('network-status', event => {
     if (event.payload?.phase === 'offline') {
       callTones.stop();
+      callTones.stopRemoteAudio();
       lastSyncedPrivateMessagesEnabled = null;
       return;
     }
@@ -744,6 +758,7 @@ async function wireSecureEvents(): Promise<void> {
   });
   await listen('network-error', () => {
     callTones.stop();
+    callTones.stopRemoteAudio();
     conversations.reset();
     roomState.clear();
     authorizedRoomRevision.clear();

@@ -141,12 +141,13 @@ const aliceStates = [];
 const bobStates = [];
 const fileStates = [];
 let bobRemoteAudio = 0;
+let aliceRemoteAudio = 0;
 
 alice.start({
   sendSignal(_peerId, signal) { queueMicrotask(() => void bob.handleSignal(aliceId, signal)); },
   onIncomingCall() {},
   onCallState(_peerId, state) { aliceStates.push(state); },
-  onRemoteAudio() {},
+  onRemoteAudio(_peerId, stream) { if (stream) aliceRemoteAudio += 1; },
   onFileOffer() {},
   onFileProgress(progress) { fileStates.push(`alice:${progress.status}`); },
 });
@@ -195,9 +196,10 @@ for (let attempt = 0; attempt < 100 && !aliceStates.includes('connected'); attem
 }
 assert.ok(aliceStates.includes('connected'), 'caller audio must reach connected state');
 assert.ok(bobStates.includes('connected'), 'recipient audio must reach connected state');
+assert.equal(aliceRemoteAudio, 1, 'caller must receive the recipient microphone stream');
 assert.equal(bobRemoteAudio, 1, 'recipient must receive one remote audio stream');
 
 alice.hangup(bobId);
 alice.stop();
 bob.stop();
-console.log('Peer transport test passed: >2 MiB streamed file integrity and consent-based direct audio signaling.');
+console.log('Peer transport test passed: >2 MiB streamed file integrity and bidirectional consent-based audio.');

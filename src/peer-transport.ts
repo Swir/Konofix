@@ -13,6 +13,15 @@ const RTC_CONFIG: RTCConfiguration = {
   ],
   iceCandidatePoolSize: 4,
 };
+const MICROPHONE_CONSTRAINTS: MediaStreamConstraints = {
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1,
+  },
+  video: false,
+};
 
 type RtcFileDescriptor = { token: string; file_name: string; size: number; sha256: string };
 type RtcFileChunk = { offset: number; data_base64: string; eof: boolean };
@@ -97,14 +106,24 @@ export class PeerTransport {
   private readonly sessions = new Map<string, Session>();
   private readonly outgoing = new Map<string, { file: RtcFileDescriptor; sessionId: string; peerId: string }>();
   private readonly incoming = new Map<string, { offer: DirectFileOffer; sessionId: string }>();
-  private readonly pendingCalls = new Map<string, { peerId: string; direction: 'incoming' | 'outgoing' }>();
+  private readonly pendingCalls = new Map<string, {
+    peerId: string;
+    direction: 'incoming' | 'outgoing';
+    stream?: MediaStream;
+  }>();
   private readonly earlyIce = new Map<string, { peerId: string; candidates: RTCIceCandidateInit[] }>();
   private callbacks?: Callbacks;
 
   start(callbacks: Callbacks): void { this.callbacks = callbacks; }
 
   stop(): void {
-    for (const session of this.sessions.values()) this.closeSession(session);
+    const audioPeers = new Set<string>();
+    for (const session of this.sessions.values()) {
+      if (session.audio) audioPeers.add(session.peerId);
+      this.closeSession(session);
+    }
+    for (const peerId of audioPeers) this.callbacks?.onRemoteAudio(peerId, null);
+    for (const call of this.pendingCalls.values()) call.stream?.getTracks().forEach(track => track.stop());
     this.sessions.clear();
     this.outgoing.clear();
     this.incoming.clear();
@@ -183,8 +202,13 @@ export class PeerTransport {
 
   async startCall(peerId: string): Promise<void> {
     if (this.pendingCalls.size > 0) throw new Error('Only one audio call can be active at a time.');
+    const stream = await this.captureMicrophone();
+    if (this.pendingCalls.size > 0) {
+      stream.getTracks().forEach(track => track.stop());
+      throw new Error('Only one audio call can be active at a time.');
+    }
     const connectionId = crypto.randomUUID();
-    this.pendingCalls.set(connectionId, { peerId, direction: 'outgoing' });
+    this.pendingCalls.set(connectionId, { peerId, direction: 'outgoing', stream });
     this.callbacks?.sendSignal(peerId, { connection_id: connectionId, action: 'call_request' });
     this.callbacks?.onCallState(peerId, 'calling');
   }
@@ -192,8 +216,9 @@ export class PeerTransport {
   async acceptCall(connectionId: string): Promise<void> {
     const call = this.pendingCalls.get(connectionId);
     if (!call || call.direction !== 'incoming') throw new Error('Zaproszenie audio wygasło.');
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+    const stream = await this.captureMicrophone();
     try {
+      call.stream = stream;
       const session = this.createSession(connectionId, call.peerId, false, true, stream);
       this.callbacks?.sendSignal(call.peerId, { connection_id: connectionId, action: 'call_accept' });
       this.callbacks?.onCallState(call.peerId, 'connecting');
@@ -208,6 +233,7 @@ export class PeerTransport {
     const call = this.pendingCalls.get(connectionId);
     if (!call) return;
     this.callbacks?.sendSignal(call.peerId, { connection_id: connectionId, action: 'call_reject' });
+    if (!this.sessions.has(connectionId)) call.stream?.getTracks().forEach(track => track.stop());
     this.pendingCalls.delete(connectionId);
     this.callbacks?.onCallState(call.peerId, 'rejected');
   }
@@ -216,9 +242,10 @@ export class PeerTransport {
     for (const [id, call] of this.pendingCalls) {
       if (call.peerId !== peerId) continue;
       this.callbacks?.sendSignal(peerId, { connection_id: id, action: 'hangup' });
-      this.pendingCalls.delete(id);
       const session = this.sessions.get(id);
       if (session) this.closeSession(session);
+      else call.stream?.getTracks().forEach(track => track.stop());
+      this.pendingCalls.delete(id);
     }
     this.callbacks?.onRemoteAudio(peerId, null);
     this.callbacks?.onCallState(peerId, 'ended');
@@ -255,14 +282,18 @@ export class PeerTransport {
       return;
     }
     if (signal.action === 'call_reject') {
+      const call = this.pendingCalls.get(signal.connection_id);
+      if (!this.sessions.has(signal.connection_id)) call?.stream?.getTracks().forEach(track => track.stop());
       this.pendingCalls.delete(signal.connection_id);
       this.callbacks?.onCallState(peerId, 'rejected');
       return;
     }
     if (signal.action === 'hangup') {
-      this.pendingCalls.delete(signal.connection_id);
+      const call = this.pendingCalls.get(signal.connection_id);
       const session = this.sessions.get(signal.connection_id);
       if (session) this.closeSession(session);
+      else call?.stream?.getTracks().forEach(track => track.stop());
+      this.pendingCalls.delete(signal.connection_id);
       this.callbacks?.onRemoteAudio(peerId, null);
       this.callbacks?.onCallState(peerId, 'ended');
       return;
@@ -270,14 +301,19 @@ export class PeerTransport {
     if (signal.action === 'call_accept') {
       const call = this.pendingCalls.get(signal.connection_id);
       if (!call || call.peerId !== peerId || call.direction !== 'outgoing') return;
+      let stream: MediaStream | undefined;
+      let session: Session | undefined;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
-        const session = this.createSession(signal.connection_id, peerId, true, true, stream);
+        stream = call.stream ?? await this.captureMicrophone();
+        session = this.createSession(signal.connection_id, peerId, true, true, stream);
         this.callbacks?.onCallState(peerId, 'connecting');
         await this.negotiate(session);
       } catch (error) {
+        if (session) this.closeSession(session);
+        else stream?.getTracks().forEach(track => track.stop());
         this.callbacks?.sendSignal(peerId, { connection_id: signal.connection_id, action: 'hangup' });
         this.pendingCalls.delete(signal.connection_id);
+        this.callbacks?.onRemoteAudio(peerId, null);
         this.callbacks?.onCallState(peerId, 'failed', String(error));
       }
       return;
@@ -368,6 +404,7 @@ export class PeerTransport {
       if (pc.connectionState === 'connected' && session.audio) this.callbacks?.onCallState(peerId, 'connected');
       if (pc.connectionState === 'failed') {
         if (session.audio) this.callbacks?.onCallState(peerId, 'failed', 'Nie udało się zestawić bezpośredniego połączenia audio.');
+        if (session.audio) this.callbacks?.onRemoteAudio(peerId, null);
         this.closeSession(session);
       }
     };
@@ -408,6 +445,17 @@ export class PeerTransport {
     const offer = await session.pc.createOffer();
     await session.pc.setLocalDescription(offer);
     this.callbacks?.sendSignal(session.peerId, { connection_id: session.id, action: 'offer', sdp: offer.sdp ?? '' });
+  }
+
+  private async captureMicrophone(): Promise<MediaStream> {
+    const stream = await navigator.mediaDevices.getUserMedia(MICROPHONE_CONSTRAINTS);
+    const tracks = stream.getAudioTracks();
+    if (tracks.length === 0 || tracks.every(track => track.readyState === 'ended')) {
+      stream.getTracks().forEach(track => track.stop());
+      throw new Error('Nie udało się uruchomić aktywnego mikrofonu.');
+    }
+    tracks.forEach(track => { track.enabled = true; });
+    return stream;
   }
 
   private async flushIce(session: Session): Promise<void> {

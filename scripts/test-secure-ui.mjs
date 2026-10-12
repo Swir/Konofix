@@ -24,6 +24,8 @@ requireText("data-private-file", 'private 1:1 chat must expose a direct attachme
 requireText("invoke('offer_file'", 'private attachments must reuse the bounded direct P2P file-transfer command');
 requireText('await sendFileToPeer(activePrivatePeerId);', 'WAN-only private attachments must use the encrypted relay file fallback');
 requireText("peerId: activePrivatePeerId", 'private attachments must target the active authenticated conversation peer without a recipient picker');
+requireText('callTones.playRemoteAudio(stream)', 'remote call audio must use the user-unlocked audio output instead of relying only on autoplay');
+requireText('callTones.stopRemoteAudio()', 'remote audio output must be disconnected on call/network termination');
 requireText("roomId: null", 'private attachments must remain direct peer transfers, not room GossipSub transfers');
 requireText("data-private-emoji-code", 'private chat must reuse the Konofix emoji picker without unsafe message rendering');
 requireText("showPrivateNotification(message, result.peerId, nick, color);", 'incoming private conversations must show a visible attention modal');

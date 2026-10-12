@@ -348,6 +348,7 @@ async fn public_transfer(
             path: path.into(),
             file_name: path.file_name().unwrap().to_str().unwrap().into(),
             size: bytes.len() as u64,
+            sha256: hex::encode(Sha256::digest(bytes)),
             kind: kind.into(),
             mime: mime.map(str::to_string),
             room_id: None,
@@ -359,6 +360,7 @@ async fn public_transfer(
     assert_eq!(offer.nick_color.as_deref(), Some(sender.color.as_str()));
     assert_eq!(offer.kind, kind);
     assert_eq!(offer.mime.as_deref(), mime);
+    assert_eq!(offer.sha256, hex::encode(Sha256::digest(bytes)));
 
     let announced = receiver
         .event("public-file-offer", |value| {

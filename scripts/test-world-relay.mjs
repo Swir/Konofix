@@ -72,6 +72,15 @@ class MockWebSocket {
   }
 }
 
+async function waitFor(predicate, timeoutMs = 2_000, intervalMs = 10) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) return false;
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  return true;
+}
+
 globalThis.window = globalThis;
 globalThis.WebSocket = MockWebSocket;
 const { WorldRelayBridge } = await import('../src/world-relay.ts');
@@ -285,6 +294,7 @@ let activeAliceRelayPeer = '';
 let staleAliceRetired = 0;
 let staleAlicePrivate = 0;
 let freshAlicePrivate = 0;
+let freshAliceSeesObserver = false;
 
 observerBob.start(observerBobPeer, 'Bob_observer', '#4f7cff', {
   onPresence(peer) {
@@ -303,23 +313,35 @@ staleAlice.start(rotatedAlicePeer, 'Alice_old', '#35d07f', {
   onState() {},
   onPrivate() { staleAlicePrivate += 1; },
 });
-await new Promise(resolve => setTimeout(resolve, 40));
-assert.equal(activeAliceRelayPeer, staleAlice.virtualPeerId());
+assert.equal(
+  await waitFor(() => activeAliceRelayPeer === staleAlice.virtualPeerId()),
+  true,
+  'observer must discover the original relay identity',
+);
 
 freshAlice.start(rotatedAlicePeer, 'Alice_new', '#35d07f', {
-  onPresence() {},
+  onPresence(peer) {
+    if (peer.claimed_peer_id === observerBobPeer) freshAliceSeesObserver = true;
+  },
   onOffline() {},
   onChat() {},
   onState() {},
   onPrivate() { freshAlicePrivate += 1; },
 });
-await new Promise(resolve => setTimeout(resolve, 40));
-assert.equal(staleAliceRetired, 1, 'a newer relay identity for the same native peer must retire the stale route');
-assert.equal(activeAliceRelayPeer, freshAlice.virtualPeerId(), 'private actions must target the newest relay identity');
+assert.equal(
+  await waitFor(() => staleAliceRetired === 1
+    && activeAliceRelayPeer === freshAlice.virtualPeerId()
+    && freshAliceSeesObserver),
+  true,
+  'a newer relay identity must retire the stale route and become active',
+);
 
 observerBob.publishPrivate(activeAliceRelayPeer, 'identity rotation private test');
-await new Promise(resolve => setTimeout(resolve, 20));
-assert.equal(freshAlicePrivate, 1, 'private delivery must reach the newest relay identity');
+assert.equal(
+  await waitFor(() => freshAlicePrivate === 1),
+  true,
+  'private delivery must reach the newest relay identity',
+);
 assert.equal(staleAlicePrivate, 0, 'private delivery must not target the retired relay identity');
 
 staleAlice.stop();

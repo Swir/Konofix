@@ -294,6 +294,7 @@ let activeAliceRelayPeer = '';
 let staleAliceRetired = 0;
 let staleAlicePrivate = 0;
 let freshAlicePrivate = 0;
+let staleAliceSeesObserver = false;
 let freshAliceSeesObserver = false;
 
 observerBob.start(observerBobPeer, 'Bob_observer', '#4f7cff', {
@@ -307,17 +308,22 @@ observerBob.start(observerBobPeer, 'Bob_observer', '#4f7cff', {
   onState() {},
 });
 staleAlice.start(rotatedAlicePeer, 'Alice_old', '#35d07f', {
-  onPresence() {},
+  onPresence(peer) {
+    if (peer.claimed_peer_id === observerBobPeer) staleAliceSeesObserver = true;
+  },
   onOffline() {},
   onChat() {},
   onState() {},
   onPrivate() { staleAlicePrivate += 1; },
 });
 assert.equal(
-  await waitFor(() => activeAliceRelayPeer === staleAlice.virtualPeerId()),
+  await waitFor(() => activeAliceRelayPeer === staleAlice.virtualPeerId() && staleAliceSeesObserver),
   true,
-  'observer must discover the original relay identity',
+  'the observer and original relay identity must discover each other',
 );
+// Model an abrupt restart: the old socket is gone, but observers did not
+// receive a goodbye and must retire its cached route when the new key appears.
+staleAlice.stop(false);
 
 freshAlice.start(rotatedAlicePeer, 'Alice_new', '#35d07f', {
   onPresence(peer) {

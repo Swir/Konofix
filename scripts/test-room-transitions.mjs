@@ -17,6 +17,7 @@ function harness() {
   };
   const context = vm.createContext({
     state, sessionRevision: 1, roomChangePending: false,
+    relayOnlyRoomIds: new Set(),
     invoke: (command, args) => new Promise((resolve, reject) => pending.push({ command, args, resolve, reject })),
     renderChat() {}, prompt: () => 'new room', t: key => key,
     alert: message => alerts.push(message),
@@ -41,6 +42,13 @@ function harness() {
   await rejected;
   assert.equal(h.state.room, 'alpha', 'failed selection preserves active room');
   assert.equal(h.alerts.length, 1);
+}
+{
+  const h = harness();
+  h.context.relayOnlyRoomIds.add('alpha');
+  await h.context.switchRoom('alpha');
+  assert.equal(h.pending.length, 0, 'a relay-only room must not be sent to the native room backend');
+  assert.equal(h.state.room, 'alpha', 'a discovered WAN relay room can be selected locally');
 }
 {
   const h = harness();

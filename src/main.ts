@@ -12,6 +12,7 @@ import {
   type RelayFileSelection,
   type RelayPeer,
   type RelayPrivateMessage,
+  type RelayRoomInfo,
   type RelayState,
   type RtcSignal,
 } from './world-relay';
@@ -89,7 +90,7 @@ const state = {
   nick: '',
   nickColor: normalizeNickColor(localStorage.getItem('konofix.nickColor')),
   peerId: '',
-  version: '0.6.0-1',
+  version: '0.6.0-2',
   room: 'world',
   connected: false,
   peers: new Map<string, PeerInfo>(),
@@ -107,6 +108,7 @@ let roomChangePending = false;
 export const worldRelay = new WorldRelayBridge();
 export const peerTransport = new PeerTransport();
 const worldRelayPeers = new Map<string, RelayPeer>();
+const relayOnlyRoomIds = new Set<string>();
 const directTransferIds = new Set<string>();
 let worldRelayState: RelayState = { connected: 0, total: 0 };
 
@@ -614,6 +616,21 @@ async function sendMessage() {
   if (!text) return;
   input.value = '';
   try {
+    if (relayOnlyRoomIds.has(state.room)) {
+      const message: ChatMessage = {
+        id: crypto.randomUUID(),
+        kind: 'chat',
+        peer_id: state.peerId,
+        nick: state.nick,
+        nick_color: state.nickColor,
+        room: state.room,
+        text,
+        timestamp: Date.now(),
+      };
+      worldRelay.publishRoomChat(message);
+      pushMessage(message);
+      return;
+    }
     await invoke('send_message', { room: state.room, text });
   } catch (e) {
     addSystem(state.room, t('chat.sendError', { error: String(e) }));
@@ -650,7 +667,7 @@ async function switchRoom(room: string) {
   const revision = sessionRevision;
   roomChangePending = true;
   try {
-    await invoke('enter_room', { roomId: room });
+    if (!relayOnlyRoomIds.has(room)) await invoke('enter_room', { roomId: room });
     if (revision !== sessionRevision || !state.connected || !state.rooms.has(room)) return;
     state.room = room;
     if (!state.messages.has(room)) state.messages.set(room, []);
@@ -955,6 +972,7 @@ function resetSessionView(errorMessage?: string) {
   worldRelay.stop();
   peerTransport.stop();
   worldRelayPeers.clear();
+  relayOnlyRoomIds.clear();
   worldRelayState = { connected: 0, total: 0 };
   closeKnpChatUi();
   sessionRevision += 1;
@@ -1041,6 +1059,21 @@ function startWorldRelay() {
     },
     onChat(message: ChatMessage) {
       pushMessage(message);
+    },
+    onRoom(room: RelayRoomInfo) {
+      if (state.rooms.has(room.id) && !relayOnlyRoomIds.has(room.id)) return;
+      relayOnlyRoomIds.add(room.id);
+      state.rooms.set(room.id, room);
+      if (!state.messages.has(room.id)) state.messages.set(room.id, []);
+      if (state.connected) renderChat();
+    },
+    onRoomClosed(roomId: string) {
+      if (!relayOnlyRoomIds.delete(roomId)) return;
+      state.rooms.delete(roomId);
+      if (state.room === roomId) {
+        state.room = 'world';
+        addSystem('world', t('rooms.closed'));
+      } else if (state.connected) renderChat();
     },
     onState(next: RelayState) {
       const changed = next.connected !== worldRelayState.connected || next.total !== worldRelayState.total;
@@ -1152,8 +1185,11 @@ function showNetworkModal() {
 async function wireEvents() {
   await listen<ChatMessage>('chat-message', event => {
     pushMessage(event.payload);
-    if (event.payload.peer_id === state.peerId && event.payload.room === 'world' && event.payload.kind === 'chat') {
-      worldRelay.publishChat(event.payload);
+    if (event.payload.peer_id === state.peerId && event.payload.kind === 'chat') {
+      if (event.payload.room === 'world') worldRelay.publishChat(event.payload);
+      else if (state.rooms.get(event.payload.room)?.password_protected !== true) {
+        worldRelay.publishRoomChat(event.payload);
+      }
     }
   });
   await listen<PeerInfo>('peer-online', event => {
@@ -1169,12 +1205,29 @@ async function wireEvents() {
     if (state.connected) renderChat();
   });
   await listen<RoomInfo>('room-created', event => {
+    relayOnlyRoomIds.delete(event.payload.id);
     state.rooms.set(event.payload.id, event.payload);
     if (!state.messages.has(event.payload.id)) state.messages.set(event.payload.id, []);
+    if (event.payload.owner === state.peerId && event.payload.password_protected !== true) {
+      try { worldRelay.publishRoom(event.payload); } catch {}
+    }
+    if (state.connected) renderChat();
+  });
+  await listen<RoomInfo>('room-security-updated', event => {
+    relayOnlyRoomIds.delete(event.payload.id);
+    state.rooms.set(event.payload.id, event.payload);
+    if (event.payload.owner === state.peerId) {
+      if (event.payload.password_protected) worldRelay.closeRoom(event.payload.id);
+      else {
+        try { worldRelay.publishRoom(event.payload); } catch {}
+      }
+    }
     if (state.connected) renderChat();
   });
   await listen<{ room_id: string }>('room-closed', event => {
     if (event.payload.room_id === 'world') return;
+    relayOnlyRoomIds.delete(event.payload.room_id);
+    worldRelay.closeRoom(event.payload.room_id);
     state.rooms.delete(event.payload.room_id);
     if (state.room === event.payload.room_id) {
       state.room = 'world';

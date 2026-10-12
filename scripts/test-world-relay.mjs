@@ -93,12 +93,15 @@ let bobPrivate = 0;
 let bobFileReady = 0;
 let aliceFileCompleted = 0;
 let bobRtcSignals = 0;
+let bobRooms = 0;
+let bobRoomMessages = 0;
+let bobRoomClosed = 0;
 let expectedRelayFile;
 
 alice.start(alicePeer, 'Alice_test', '#35d07f', {
   onPresence(peer) { if (peer.claimed_peer_id === bobPeer) alicePresence += 1; },
   onOffline() {},
-  onChat() {},
+  onChat(message) { if (message.text === 'public room relay test') bobRoomMessages += 1; },
   onState(state) { aliceConnections = state.connected; },
   onFileProgress(progress) {
     if (progress.status === 'completed') aliceFileCompleted += 1;
@@ -106,8 +109,10 @@ alice.start(alicePeer, 'Alice_test', '#35d07f', {
 });
 bob.start(bobPeer, 'Bob_test', '#4f7cff', {
   onPresence(peer) { if (peer.claimed_peer_id === alicePeer) bobPresence += 1; },
-  onOffline() { bobOffline += 1; },
+  onOffline(peerId) { if (peerId === alice.virtualPeerId()) bobOffline += 1; },
   onChat(message) { if (message.text === 'signed relay test') bobChats += 1; },
+  onRoom(room) { if (room.id === 'norway' && room.title === '# Norway') bobRooms += 1; },
+  onRoomClosed(roomId) { if (roomId === 'norway') bobRoomClosed += 1; },
   onState(state) { bobConnections = state.connected; },
   onPrivate(message) {
     if (message.text === 'encrypted private test'
@@ -149,6 +154,46 @@ alice.publishChat({
 });
 await new Promise(resolve => setTimeout(resolve, 20));
 assert.equal(bobChats, 1, 'one signed chat must be emitted once across duplicate relays');
+
+alice.publishRoom({ id: 'norway', title: '# Norway', password_protected: false });
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(bobRooms, 1, 'a public room announcement must be emitted once across duplicate relays');
+assert.throws(
+  () => alice.publishRoom({ id: 'private-room', title: '# Private room', password_protected: true }),
+  /not announced publicly/,
+  'password-protected rooms must fail closed instead of entering the public fallback',
+);
+
+globalThis.localStorage = new MemoryStorage();
+const latePeer = new WorldRelayBridge();
+let lateRooms = 0;
+latePeer.start('12D3KooWLatePeer555555555555555555555555555555', 'Late_peer', '#bb66ff', {
+  onPresence() {},
+  onOffline() {},
+  onChat() {},
+  onRoom(room) { if (room.id === 'norway') lateRooms += 1; },
+  onState() {},
+});
+await new Promise(resolve => setTimeout(resolve, 120));
+assert.equal(lateRooms, 1, 'a late WAN peer must receive owned public rooms with the presence response');
+
+bob.publishRoomChat({
+  id: crypto.randomUUID(),
+  kind: 'chat',
+  peer_id: bobPeer,
+  nick: 'Bob_test',
+  nick_color: '#4f7cff',
+  room: 'norway',
+  text: 'public room relay test',
+  timestamp: Date.now(),
+});
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(bobRoomMessages, 1, 'public room chat must reach another WAN relay peer once');
+
+alice.closeRoom('norway');
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(bobRoomClosed, 1, 'closing a public room must remove it from relay peers');
+latePeer.stop();
 
 alice.publishPrivate(bob.virtualPeerId(), 'encrypted private test');
 await new Promise(resolve => setTimeout(resolve, 20));
@@ -234,9 +279,14 @@ staleAlice.stop();
 freshAlice.stop();
 observerBob.stop();
 
-console.log('WORLD relay unit test passed: signed public chat, NIP-44 private chat/file/signaling, identity rotation, deduplication and cleanup.');
+console.log('WORLD relay unit test passed: public rooms/chat, late discovery, signed WORLD, NIP-44 private chat/file/signaling, deduplication and cleanup.');
 const peerTransport = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/test-peer-transport.mjs'], {
   cwd: process.cwd(),
   stdio: 'inherit',
 });
 assert.equal(peerTransport.status, 0, 'peer transport integration test must pass');
+const callTones = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/test-call-tones.mjs'], {
+  cwd: process.cwd(),
+  stdio: 'inherit',
+});
+assert.equal(callTones.status, 0, 'call tone integration test must pass');

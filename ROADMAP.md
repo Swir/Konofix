@@ -34,7 +34,21 @@ The active milestone now has 56 of 67 tasks complete. The Global Beta expansion 
 
 - Distributed nickname trust hardening now treats unsigned Kademlia nickname leases as bounded, non-authoritative hints; only source-authenticated GossipSub claims can enforce a nickname conflict. This security fix adds no Real Internet Test credit.
 
-## 0.6.0-1 — Direct large files and private audio (alpha 1) 🚧
+## 0.6.0-2 — WAN rooms and call-progress tones (alpha 2) 🚧
+
+- [x] publish signed, expiring announcements for public, unprotected rooms through the multi-relay WORLD fallback,
+- [x] carry public-room text for relay-only participants with duplicate suppression and owner-bound room lifecycle cleanup,
+- [x] reannounce locally owned public rooms when a late WAN peer appears,
+- [x] keep password-protected room metadata and messages off the public room fallback,
+- [x] generate incoming ringtone and outgoing ringback locally and stop them on every terminal/connected call state,
+- [x] cover two-client room discovery/chat/close and call-tone lifecycle with deterministic tests,
+- [ ] pass exact-head Windows/Linux/RustSec CI,
+- [ ] pass a two-PC independent-network test proving room discovery and bidirectional room text,
+- [ ] confirm incoming ringtone and outgoing ringback on both physical Windows installations.
+
+This alpha adds no Konofix-owned server and stores no room history. Public room names and text are public to the replaceable relay operators, just like WORLD; password-protected rooms remain native-only. Stable promotion requires the exact installer and physical observations above.
+
+## 0.6.0-1 — Direct large files and private audio (alpha 1)
 
 - [x] carry bounded WebRTC offers, answers and ICE candidates through recipient-addressed NIP-44 encrypted WORLD signaling,
 - [x] stream explicitly accepted files directly over ordered WebRTC data channels with backpressure, disk-backed chunks, no-clobber reservation and final SHA-256 verification,

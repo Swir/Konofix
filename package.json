@@ -1,7 +1,7 @@
 {
   "name": "konofix-chat",
   "private": true,
-  "version": "0.6.0-1",
+  "version": "0.6.0-2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -43,7 +43,8 @@
     "audit:secure-runtime-wiring": "node scripts/check-secure-runtime-wiring.mjs",
     "test:knp-chat-session": "node scripts/test-knp-chat-session.mjs",
     "test:world-relay": "node --experimental-strip-types scripts/test-world-relay.mjs",
-    "test:peer-transport": "node --experimental-strip-types scripts/test-peer-transport.mjs"
+    "test:peer-transport": "node --experimental-strip-types scripts/test-peer-transport.mjs",
+    "test:call-tones": "node --experimental-strip-types scripts/test-call-tones.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",

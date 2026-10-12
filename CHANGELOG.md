@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0-2 (alpha 2) — WAN rooms and call-progress tones
+
+- announce public, unprotected temporary rooms through the signed, expiring multi-relay WORLD fallback so users on independent networks can discover the same room without a Konofix-owned server,
+- relay public-room text through the same deduplicated signed path when no native libp2p room route exists, reannounce rooms to late peers and remove relay-only rooms when the owner closes or leaves,
+- keep password-protected rooms on the authenticated native path; their names, passwords and messages are not moved into the public room fallback,
+- add generated local incoming ringtone and outgoing ringback cadences, with audio-context warmup after user interaction and immediate cleanup on connect, reject, hangup, failure or disconnect,
+- add deterministic two-client room lifecycle/chat tests and call-tone lifecycle tests; physical two-PC WAN confirmation is still required before stable promotion.
+
 ## 0.6.0-1 (alpha 1) — direct large files and private audio
 
 - add encrypted, recipient-addressed WebRTC signaling over the existing WORLD bridge; public Nostr relays carry only bounded NIP-44 ciphertext used to establish a peer connection,

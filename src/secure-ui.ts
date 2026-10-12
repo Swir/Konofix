@@ -10,6 +10,7 @@ import {
 } from './private-chat-state';
 import { peerTransport, sendFileToPeer, worldRelay } from './main';
 import type { AudioCallState } from './peer-transport';
+import { CallTonePlayer } from './call-tones';
 import './secure-ui.css';
 
 const conversations = new PrivateConversationStore();
@@ -20,6 +21,7 @@ const offlinePeers = new Set<string>();
 const ignoredPrivatePeers = new Set<string>();
 const audioStates = new Map<string, { state: AudioCallState; error?: string }>();
 const mutedAudioPeers = new Set<string>();
+const callTones = new CallTonePlayer();
 const PRIVATE_MESSAGES_ENABLED_KEY = 'konofix.privateMessagesEnabled';
 
 let lastSyncedPrivateMessagesEnabled: boolean | null = null;
@@ -441,6 +443,7 @@ function renderPrivateModal(): void {
   wrap.querySelector('[data-private-close]')?.addEventListener('click', close);
   wrap.querySelector('[data-audio-call]')?.addEventListener('click', () => {
     void peerTransport.startCall(activePrivatePeerId).catch(error => {
+      callTones.stop();
       audioStates.set(activePrivatePeerId, { state: 'failed', error: String(error) });
       renderPrivateModal();
     });
@@ -707,6 +710,9 @@ async function wireSecureEvents(): Promise<void> {
   window.addEventListener('konofix-audio-call-state', event => {
     const detail = (event as CustomEvent<{ peerId: string; state: AudioCallState; error?: string }>).detail;
     audioStates.set(detail.peerId, { state: detail.state, error: detail.error });
+    if (detail.state === 'calling') callTones.start('outgoing');
+    else if (detail.state === 'ringing') callTones.start('incoming');
+    else callTones.stop();
     if (['ended', 'rejected', 'failed'].includes(detail.state)) {
       mutedAudioPeers.delete(detail.peerId);
       document.querySelectorAll<HTMLElement>('.audio-call-wrap').forEach(modal => {
@@ -721,6 +727,7 @@ async function wireSecureEvents(): Promise<void> {
   });
   await listen<{ phase?: string }>('network-status', event => {
     if (event.payload?.phase === 'offline') {
+      callTones.stop();
       lastSyncedPrivateMessagesEnabled = null;
       return;
     }
@@ -736,6 +743,7 @@ async function wireSecureEvents(): Promise<void> {
     queueAugment();
   });
   await listen('network-error', () => {
+    callTones.stop();
     conversations.reset();
     roomState.clear();
     authorizedRoomRevision.clear();
@@ -748,6 +756,10 @@ async function wireSecureEvents(): Promise<void> {
     document.querySelector('#privateChatModal')?.remove();
   });
 }
+
+const unlockCallTones = () => { void callTones.unlock().catch(() => undefined); };
+window.addEventListener('pointerdown', unlockCallTones, { capture: true });
+window.addEventListener('keydown', unlockCallTones, { capture: true });
 
 installCaptureRouter();
 new MutationObserver(queueAugment).observe(document.body, { childList: true, subtree: true });

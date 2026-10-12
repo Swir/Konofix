@@ -40,6 +40,15 @@ export type RelayPeer = {
 
 export type RelayState = { connected: number; total: number };
 
+export type RelayRoomInfo = {
+  id: string;
+  title: string;
+  owner: string;
+  users: number;
+  password_protected: false;
+  auth_revision: 0;
+};
+
 export type RelayPrivateMessage = {
   id: string;
   peer_id: string;
@@ -90,6 +99,8 @@ type Callbacks = {
   onPresence(peer: RelayPeer): void;
   onOffline(peerId: string): void;
   onChat(message: RelayChatMessage): void;
+  onRoom?(room: RelayRoomInfo): void;
+  onRoomClosed?(roomId: string): void;
   onState(state: RelayState): void;
   onPrivate?(message: RelayPrivateMessage): void;
   onFileOffer?(offer: RelayFileOffer): void;
@@ -112,7 +123,7 @@ type PresencePayload = {
 type ChatPayload = {
   v: 1;
   ns: typeof NAMESPACE;
-  type: 'chat';
+  type: 'chat' | 'room_chat';
   session: string;
   peer_id: string;
   nick: string;
@@ -121,7 +132,31 @@ type ChatPayload = {
   message: RelayChatMessage;
 };
 
-type Payload = PresencePayload | ChatPayload;
+type RoomPayload = {
+  v: 1;
+  ns: typeof NAMESPACE;
+  type: 'room';
+  session: string;
+  peer_id: string;
+  nick: string;
+  nick_color: string;
+  sent_at: number;
+  room: { id: string; title: string };
+};
+
+type RoomClosePayload = {
+  v: 1;
+  ns: typeof NAMESPACE;
+  type: 'room_close';
+  session: string;
+  peer_id: string;
+  nick: string;
+  nick_color: string;
+  sent_at: number;
+  room_id: string;
+};
+
+type Payload = PresencePayload | ChatPayload | RoomPayload | RoomClosePayload;
 
 type EncryptedPrivatePayload = {
   v: 1;
@@ -195,6 +230,13 @@ type RemotePresence = {
   session: string;
 };
 
+type RemoteRoom = {
+  room: RelayRoomInfo;
+  ownerPeerId: string;
+  session: string;
+  seenAt: number;
+};
+
 type RelaySocket = {
   url: string;
   socket?: WebSocket;
@@ -250,6 +292,22 @@ function validUuid(value: unknown): value is string {
     && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
+function validRoomId(value: unknown): value is string {
+  return typeof value === 'string'
+    && value !== 'world'
+    && value.length >= 1
+    && value.length <= 64
+    && /^[a-zA-Z0-9_-]+$/.test(value);
+}
+
+function validRoomTitle(value: unknown): value is string {
+  if (typeof value !== 'string' || !value.startsWith('# ')) return false;
+  const title = value.slice(2);
+  return title.length >= 3
+    && title.length <= 32
+    && !/[\u0000-\u001f\u007f]/.test(title);
+}
+
 function validSha256(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value);
 }
@@ -291,7 +349,7 @@ function parsePayload(content: string, now: number): Payload | undefined {
   if (!isObject(raw)
     || raw.v !== 1
     || raw.ns !== NAMESPACE
-    || !['presence', 'goodbye', 'chat'].includes(String(raw.type))
+    || !['presence', 'goodbye', 'chat', 'room', 'room_close', 'room_chat'].includes(String(raw.type))
     || !boundedString(raw.session, 8, 64)
     || !boundedString(raw.peer_id, 16, 128)
     || !boundedString(raw.nick, 3, 24)
@@ -301,12 +359,22 @@ function parsePayload(content: string, now: number): Payload | undefined {
     || Math.abs(now - raw.sent_at) > MESSAGE_TTL_MS) {
     return undefined;
   }
-  if (raw.type !== 'chat') return raw as unknown as PresencePayload;
+  if (raw.type === 'room') {
+    if (!isObject(raw.room)
+      || !validRoomId(raw.room.id)
+      || !validRoomTitle(raw.room.title)) return undefined;
+    return raw as unknown as RoomPayload;
+  }
+  if (raw.type === 'room_close') {
+    if (!validRoomId(raw.room_id)) return undefined;
+    return raw as unknown as RoomClosePayload;
+  }
+  if (raw.type !== 'chat' && raw.type !== 'room_chat') return raw as unknown as PresencePayload;
   if (!isObject(raw.message)) return undefined;
   const message = raw.message;
   if (!boundedString(message.id, 8, 64)
     || message.kind !== 'chat'
-    || message.room !== 'world'
+    || (raw.type === 'chat' ? message.room !== 'world' : !validRoomId(message.room))
     || message.peer_id !== raw.peer_id
     || !boundedString(message.nick, 3, 24)
     || message.nick !== raw.nick
@@ -409,6 +477,8 @@ export class WorldRelayBridge {
   private readonly sockets = new Map<string, RelaySocket>();
   private readonly seen = new Set<string>();
   private readonly presence = new Map<string, RemotePresence>();
+  private readonly localRooms = new Map<string, { id: string; title: string }>();
+  private readonly remoteRooms = new Map<string, RemoteRoom>();
   private readonly pending: PendingEvent[] = [];
   private readonly outgoingFiles = new Map<string, OutgoingRelayFile>();
   private readonly offeredFiles = new Map<string, RelayFileOffer>();
@@ -442,7 +512,7 @@ export class WorldRelayBridge {
   }
 
   stop(sendGoodbye = true): void {
-    if (sendGoodbye && this.running) this.publish('goodbye');
+    if (sendGoodbye && this.running) this.publishPublic('goodbye');
     this.running = false;
     if (this.heartbeat !== undefined) window.clearInterval(this.heartbeat);
     if (this.sweeper !== undefined) window.clearInterval(this.sweeper);
@@ -455,8 +525,11 @@ export class WorldRelayBridge {
       state.socket?.close(1000, 'Konofix session ended');
     }
     this.sockets.clear();
+    for (const room of this.remoteRooms.values()) this.callbacks?.onRoomClosed?.(room.room.id);
     for (const peer of this.presence.values()) this.callbacks?.onOffline(peer.peer.peer_id);
     this.presence.clear();
+    this.localRooms.clear();
+    this.remoteRooms.clear();
     this.pending.length = 0;
     this.seen.clear();
     this.outgoingFiles.clear();
@@ -468,7 +541,29 @@ export class WorldRelayBridge {
 
   publishChat(message: RelayChatMessage): void {
     if (!this.running || message.room !== 'world' || message.peer_id !== this.peerId) return;
-    this.publish('chat', message);
+    this.publishPublic('chat', message);
+  }
+
+  publishRoom(room: { id: string; title: string; password_protected?: boolean }): void {
+    if (!this.running) throw new Error('WORLD relay is offline.');
+    if (room.password_protected) throw new Error('Password-protected rooms are not announced publicly.');
+    if (!validRoomId(room.id) || !validRoomTitle(room.title)) throw new Error('Invalid public room.');
+    const descriptor = { id: room.id, title: room.title };
+    this.localRooms.set(room.id, descriptor);
+    this.publishPublic('room', undefined, descriptor);
+  }
+
+  closeRoom(roomId: string): void {
+    if (!this.running || !this.localRooms.delete(roomId)) return;
+    this.publishPublic('room_close', undefined, undefined, roomId);
+  }
+
+  publishRoomChat(message: RelayChatMessage): void {
+    if (!this.running
+      || message.room === 'world'
+      || message.peer_id !== this.peerId
+      || (!this.localRooms.has(message.room) && !this.remoteRooms.has(message.room))) return;
+    this.publishPublic('room_chat', message);
   }
 
   publishPrivate(targetPeerId: string, text: string): RelayPrivateMessage {
@@ -638,11 +733,21 @@ export class WorldRelayBridge {
     }, delay);
   }
 
-  private publishPresence(): void { this.publish('presence'); }
+  private publishPresence(): void {
+    this.publishPublic('presence');
+    for (const room of this.localRooms.values()) this.publishPublic('room', undefined, room);
+  }
 
-  private publish(type: Payload['type'], message?: RelayChatMessage): void {
+  private publishPublic(
+    type: Payload['type'],
+    message?: RelayChatMessage,
+    room?: { id: string; title: string },
+    roomId?: string,
+  ): void {
     if (!this.running) return;
-    if (type === 'chat' && !message) return;
+    if ((type === 'chat' || type === 'room_chat') && !message) return;
+    if (type === 'room' && !room) return;
+    if (type === 'room_close' && !validRoomId(roomId)) return;
     const sentAt = Date.now();
     const base = {
       v: 1 as const,
@@ -654,10 +759,15 @@ export class WorldRelayBridge {
       nick_color: this.nickColor,
       sent_at: sentAt,
     };
-    const payload: Payload = type === 'chat'
-      ? { ...base, type: 'chat', message: message as RelayChatMessage }
-      : { ...base, type };
-    const expiryMs = type === 'chat' ? MESSAGE_TTL_MS : PRESENCE_TTL_MS;
+    const payload: Payload = type === 'chat' || type === 'room_chat'
+      ? { ...base, type, message: message as RelayChatMessage }
+      : type === 'room'
+        ? { ...base, type, room: room as { id: string; title: string } }
+        : type === 'room_close'
+          ? { ...base, type, room_id: roomId as string }
+        : { ...base, type };
+    const queued = type === 'chat' || type === 'room_chat' || type === 'room' || type === 'room_close';
+    const expiryMs = type === 'chat' || type === 'room_chat' ? MESSAGE_TTL_MS : PRESENCE_TTL_MS;
     const nostrEvent = finalizeEvent({
       kind: EVENT_KIND,
       created_at: Math.floor(sentAt / 1000),
@@ -665,7 +775,7 @@ export class WorldRelayBridge {
       content: JSON.stringify(payload),
     }, this.secret);
     const wire = JSON.stringify(['EVENT', nostrEvent]);
-    const pending = type === 'chat' ? { wire, until: sentAt + MESSAGE_TTL_MS, sent: new Set<string>() } : undefined;
+    const pending = queued ? { wire, until: sentAt + expiryMs, sent: new Set<string>() } : undefined;
     for (const state of this.sockets.values()) {
       if (state.socket?.readyState === WebSocket.OPEN) {
         state.socket.send(wire);
@@ -674,7 +784,7 @@ export class WorldRelayBridge {
     }
     if (pending) {
       this.pending.push(pending);
-      if (this.pending.length > 32) this.pending.splice(0, this.pending.length - 32);
+      if (this.pending.length > 64) this.pending.splice(0, this.pending.length - 64);
     }
   }
 
@@ -792,15 +902,15 @@ export class WorldRelayBridge {
     const payload = parsePayload(event.content, Date.now());
     if (!payload) return;
     if (Math.abs(event.created_at * 1_000 - payload.sent_at) > 5_000) return;
-    if (payload.type !== 'chat' && Math.abs(Date.now() - payload.sent_at) > PRESENCE_TTL_MS) return;
+    if (payload.type !== 'chat' && payload.type !== 'room_chat'
+      && Math.abs(Date.now() - payload.sent_at) > PRESENCE_TTL_MS) return;
     const virtualPeerId = `nostr:${event.pubkey}`;
     if (payload.type === 'goodbye') {
       const current = this.presence.get(virtualPeerId);
       if (current
         && current.session === payload.session
-        && payload.sent_at >= current.announcedAt
-        && this.presence.delete(virtualPeerId)) {
-        this.callbacks?.onOffline(virtualPeerId);
+        && payload.sent_at >= current.announcedAt) {
+        this.retirePeer(virtualPeerId);
       }
       return;
     }
@@ -819,8 +929,7 @@ export class WorldRelayBridge {
       superseded.push(peerId);
     }
     for (const peerId of superseded) {
-      this.presence.delete(peerId);
-      this.callbacks?.onOffline(peerId);
+      this.retirePeer(peerId);
     }
     const previous = previousPresence?.peer;
     const previousSession = previousPresence?.session;
@@ -846,9 +955,56 @@ export class WorldRelayBridge {
         this.publishPresence();
       }, 50);
     }
-    if (payload.type === 'chat') {
+    if (payload.type === 'room') {
+      if (this.localRooms.has(payload.room.id)) return;
+      const current = this.remoteRooms.get(payload.room.id);
+      if (current && current.ownerPeerId !== virtualPeerId) return;
+      const changed = !current
+        || current.room.title !== payload.room.title
+        || current.session !== payload.session;
+      const room: RelayRoomInfo = {
+        id: payload.room.id,
+        title: payload.room.title,
+        owner: virtualPeerId,
+        users: 1,
+        password_protected: false,
+        auth_revision: 0,
+      };
+      this.remoteRooms.set(room.id, {
+        room,
+        ownerPeerId: virtualPeerId,
+        session: payload.session,
+        seenAt: Date.now(),
+      });
+      if (changed) this.callbacks?.onRoom?.(room);
+      return;
+    }
+    if (payload.type === 'room_close') {
+      const current = this.remoteRooms.get(payload.room_id);
+      if (current
+        && current.ownerPeerId === virtualPeerId
+        && current.session === payload.session
+        && this.remoteRooms.delete(payload.room_id)) {
+        this.callbacks?.onRoomClosed?.(payload.room_id);
+      }
+      return;
+    }
+    if (payload.type === 'chat' || payload.type === 'room_chat') {
+      if (payload.type === 'room_chat'
+        && !this.localRooms.has(payload.message.room)
+        && !this.remoteRooms.has(payload.message.room)) return;
       this.callbacks?.onChat({ ...payload.message, peer_id: virtualPeerId });
     }
+  }
+
+  private retirePeer(peerId: string): void {
+    if (!this.presence.delete(peerId)) return;
+    for (const [roomId, room] of this.remoteRooms) {
+      if (room.ownerPeerId !== peerId) continue;
+      this.remoteRooms.delete(roomId);
+      this.callbacks?.onRoomClosed?.(roomId);
+    }
+    this.callbacks?.onOffline(peerId);
   }
 
   private receiveEncrypted(senderPublicKey: string, payload: EncryptedPayload): void {
@@ -995,9 +1151,12 @@ export class WorldRelayBridge {
     const cutoff = now - PRESENCE_TTL_MS;
     for (const [peerId, presence] of this.presence) {
       if (presence.seenAt < cutoff) {
-        this.presence.delete(peerId);
-        this.callbacks?.onOffline(peerId);
+        this.retirePeer(peerId);
       }
+    }
+    for (const [roomId, room] of this.remoteRooms) {
+      if (room.seenAt >= cutoff || !this.remoteRooms.delete(roomId)) continue;
+      this.callbacks?.onRoomClosed?.(roomId);
     }
     while (this.pending.length && this.pending[0].until <= now) this.pending.shift();
   }

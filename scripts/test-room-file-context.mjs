@@ -16,6 +16,8 @@ requireText(core, 'mime: Option<String>,\n    #[serde(default)]\n    room_id: Op
 requireText(core, 'room_id: offer.view.room_id.clone()', 'on-demand P2P download must preserve the room authorization context');
 requireText(core, 'Dropped room-scoped file offer from unauthorized or unknown context', 'protected room offer metadata must fail closed when local authoritative state rejects it');
 requireText(main, 'offer.room_id', 'incoming file UI must expose room context');
+requireText(main, "listen<RoomInfo>('room-security-updated'", 'room security changes must update the main room transport state');
+requireText(main, 'if (event.payload.password_protected) worldRelay.closeRoom(event.payload.id);', 'adding a password must immediately remove the room from the public WAN fallback');
 requireText(core, '#[serde(default)]\n        room_id: Option<String>', 'file protocol room context must remain backward-compatible');
 requireText(core, 'secure_runtime.room_authorized(room_id, &target_peer, now_ms())', 'protected owner send must verify recipient room authorization');
 requireText(core, 'secure_client.room_authorized(room_id, &local_peer)', 'protected non-owner send/receive must require local authorization');

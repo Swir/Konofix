@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0-5 (alpha 5) — WAN media reliability and signed stable updates
+
+- Added shared STUN/TURN ICE configuration for private audio, group audio and direct large-file transfers. Direct paths remain preferred; TURN forwards encrypted WebRTC traffic when direct NAT traversal fails.
+- Added an authenticated direct WORLD release signal and a regression test proving that the next queued speaker can take over immediately after an early finish.
+- Added persistent WORLD-voice mute, a speaker test, a live microphone meter/test and a visible retry path when Windows blocks audio playback.
+- Added explicit public-file claim rejection and a 45-second receiver timeout so WAN failures no longer remain stuck in “requesting”.
+- Added a signed stable updater: stable-only version filtering, explicit user confirmation, public-key verification and an exact-tag GitHub release workflow that produces `latest.json` and signed NSIS updater artifacts.
+- This remains an alpha candidate. Stable promotion still requires a physical two-PC WAN PASS of the exact Windows installer.
+
 ## 0.6.0-4 (alpha 4) — WAN public files and group voice
 
 - replace the separate public file/image actions with one file picker that recognizes bounded PNG, JPEG, GIF and WebP previews from magic bytes instead of trusting file extensions,

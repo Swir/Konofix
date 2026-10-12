@@ -1,18 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { RtcSignal } from './world-relay';
+import { RTC_CONFIG } from './rtc-config.ts';
 
 const FILE_CHUNK_BYTES = 32 * 1024;
 const DATA_HIGH_WATER = 4 * 1024 * 1024;
 const MAX_ACTIVE_SESSIONS = 12;
 const MAX_FILES_PER_DIRECTION = 4;
 const FILE_SESSION_IDLE_MS = 120_000;
-const RTC_CONFIG: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'stun:stun.l.google.com:19302' },
-  ],
-  iceCandidatePoolSize: 4,
-};
 const MICROPHONE_CONSTRAINTS: MediaStreamConstraints = {
   audio: {
     echoCancellation: true,

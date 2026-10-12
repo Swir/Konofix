@@ -1,7 +1,7 @@
 {
   "name": "konofix-chat",
   "private": true,
-  "version": "0.6.0-4",
+  "version": "0.6.0-5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -46,10 +46,13 @@
     "test:peer-transport": "node --experimental-strip-types scripts/test-peer-transport.mjs",
     "test:group-voice": "node --experimental-strip-types scripts/test-group-voice.mjs",
     "test:i18n": "node --experimental-strip-types scripts/test-i18n.mjs",
-    "test:call-tones": "node --experimental-strip-types scripts/test-call-tones.mjs"
+    "test:call-tones": "node --experimental-strip-types scripts/test-call-tones.mjs",
+    "test:audio-diagnostics": "node --experimental-strip-types scripts/test-audio-diagnostics.mjs",
+    "test:stable-updater": "node --experimental-strip-types scripts/test-stable-updater.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-updater": "^2.13.3",
     "nostr-tools": "2.25.2"
   },
   "devDependencies": {

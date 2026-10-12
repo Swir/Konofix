@@ -347,3 +347,13 @@ const callTones = spawnSync(process.execPath, ['--experimental-strip-types', 'sc
   stdio: 'inherit',
 });
 assert.equal(callTones.status, 0, 'call tone integration test must pass');
+const audioDiagnostics = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/test-audio-diagnostics.mjs'], {
+  cwd: process.cwd(),
+  stdio: 'inherit',
+});
+assert.equal(audioDiagnostics.status, 0, 'audio diagnostics test must pass');
+const stableUpdater = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/test-stable-updater.mjs'], {
+  cwd: process.cwd(),
+  stdio: 'inherit',
+});
+assert.equal(stableUpdater.status, 0, 'stable updater policy test must pass');

@@ -34,7 +34,16 @@ The active milestone now has 56 of 67 tasks complete. The Global Beta expansion 
 
 - Distributed nickname trust hardening now treats unsigned Kademlia nickname leases as bounded, non-authoritative hints; only source-authenticated GossipSub claims can enforce a nickname conflict. This security fix adds no Real Internet Test credit.
 
-## 0.6.0-4 — WAN public files and group voice (alpha 4) 🚧
+## 0.6.0-5 — WAN media reliability and signed stable updates (alpha 5) 🚧
+
+- Added encrypted TURN fallback for file and audio WebRTC paths behind LTE, symmetric NAT and restrictive firewalls.
+- WORLD now sends an immediate authenticated release signal so the next queued speaker can start without waiting for relay state expiry.
+- Added WORLD-only mute plus speaker and microphone tests with explicit blocked-output feedback.
+- Public file claims now time out visibly or receive an encrypted sender rejection instead of hanging forever.
+- Added stable-only, signed GitHub updater support with mandatory user confirmation and exact-tag publishing controls.
+- Physical two-PC WAN acceptance of this exact installer remains required before stable promotion.
+
+## 0.6.0-4 — WAN public files and group voice (alpha 4)
 
 - [x] replace separate file/image actions with one magic-byte-aware file picker and safe image preview,
 - [x] propagate signed, metadata-only WORLD/public-room file offers to relay-only WAN participants,

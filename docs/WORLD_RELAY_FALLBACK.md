@@ -17,7 +17,7 @@ unprotected temporary-room announcements and text. It is enabled by the existing
 visible public discovery session checkbox. Password-protected rooms remain on the
 authenticated native path.
 
-Version 0.6.0-4 additionally carries signed, expiring public-file metadata and WORLD
+Version 0.6.0-5 additionally carries signed, expiring public-file metadata and WORLD
 speaking-queue state. File bytes and audio remain direct WebRTC traffic. Public-room
 group voice uses encrypted, recipient-addressed setup messages; protected-room group
 voice is deliberately not placed on this fallback in the alpha.

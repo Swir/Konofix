@@ -26,6 +26,8 @@ import {
   type RtcFileDescriptor,
 } from './peer-transport';
 import { GroupVoice, type GroupVoiceSnapshot } from './group-voice';
+import { testMicrophone, testSpeakers } from './audio-diagnostics';
+import { checkForStableUpdate } from './updater';
 
 type PublicShareOffer = {
   offer_id: string;
@@ -96,7 +98,7 @@ const state = {
   nick: '',
   nickColor: normalizeNickColor(localStorage.getItem('konofix.nickColor')),
   peerId: '',
-  version: '0.6.0-4',
+  version: '0.6.0-5',
   room: 'world',
   connected: false,
   peers: new Map<string, PeerInfo>(),
@@ -118,11 +120,18 @@ const worldRelayPeers = new Map<string, RelayPeer>();
 const relayOnlyRoomIds = new Set<string>();
 const directTransferIds = new Set<string>();
 const publicTransferTokens = new Map<string, { offerId: string; intent: 'download' | 'preview' }>();
+const publicClaimTimers = new Map<string, number>();
+const PUBLIC_CLAIM_TIMEOUT_MS = 45_000;
 let worldRelayState: RelayState = { connected: 0, total: 0 };
 let groupVoiceSnapshot: GroupVoiceSnapshot = {
   world: [], canStartWorld: false, secondsLeft: 0, roomActive: false, roomPeers: 0,
 };
 const groupAudio = new Map<string, HTMLAudioElement>();
+const blockedGroupAudio = new Set<string>();
+const WORLD_AUDIO_MUTED_KEY = 'konofix.worldAudioMuted';
+let worldAudioMuted = localStorage.getItem(WORLD_AUDIO_MUTED_KEY) === 'true';
+let groupAudioWarningShown = false;
+let updateCheckPending = false;
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -215,11 +224,14 @@ function playGroupAudio(scope: string, peerId: string, stream: MediaStream | nul
       existing.srcObject = null;
       existing.remove();
       groupAudio.delete(key);
+      blockedGroupAudio.delete(key);
     }
     return;
   }
   const audio = existing ?? document.createElement('audio');
   audio.autoplay = true;
+  audio.volume = 1;
+  audio.muted = scope === 'world' && worldAudioMuted;
   audio.setAttribute('playsinline', '');
   audio.hidden = true;
   audio.srcObject = stream;
@@ -227,8 +239,33 @@ function playGroupAudio(scope: string, peerId: string, stream: MediaStream | nul
     document.body.appendChild(audio);
     groupAudio.set(key, audio);
   }
-  void audio.play().catch(() => undefined);
+  void audio.play().then(() => {
+    blockedGroupAudio.delete(key);
+  }).catch(() => {
+    blockedGroupAudio.add(key);
+    if (!audio.muted && !groupAudioWarningShown) {
+      groupAudioWarningShown = true;
+      addSystem(state.room, t('audio.outputBlocked'));
+      if (state.connected) renderChat();
+    }
+  });
 }
+
+function resumeGroupAudio(): void {
+  if (blockedGroupAudio.size === 0) return;
+  groupAudioWarningShown = false;
+  for (const key of [...blockedGroupAudio]) {
+    const audio = groupAudio.get(key);
+    if (!audio || audio.muted) {
+      blockedGroupAudio.delete(key);
+      continue;
+    }
+    void audio.play().then(() => blockedGroupAudio.delete(key)).catch(() => blockedGroupAudio.add(key));
+  }
+}
+
+window.addEventListener('pointerdown', resumeGroupAudio, { passive: true });
+window.addEventListener('keydown', resumeGroupAudio);
 
 function clearGroupAudio(): void {
   for (const audio of groupAudio.values()) {
@@ -237,6 +274,43 @@ function clearGroupAudio(): void {
     audio.remove();
   }
   groupAudio.clear();
+  blockedGroupAudio.clear();
+  groupAudioWarningShown = false;
+}
+
+async function runStableUpdateCheck(manual = false): Promise<void> {
+  if (updateCheckPending) return;
+  updateCheckPending = true;
+  const status = (message: string) => {
+    const element = document.querySelector<HTMLElement>('#updateStatus');
+    if (element) element.textContent = message;
+  };
+  try {
+    const result = await checkForStableUpdate({
+      ask: update => Promise.resolve(window.confirm(t('update.available', { version: update.version }))),
+      onStatus: (phase, percent) => {
+        if (phase === 'checking') status(t('update.checking'));
+        else if (phase === 'downloading') status(t('update.downloading', { percent: percent ?? '…' }));
+        else status(t('update.installing'));
+      },
+    });
+    if (result === 'current') {
+      status(t('update.current'));
+      if (manual) window.alert(t('update.current'));
+    } else if (result === 'declined') {
+      status(t('update.declined'));
+    } else if (result === 'unsupported') {
+      status(t('update.desktopOnly'));
+      if (manual) window.alert(t('update.desktopOnly'));
+    }
+  } catch (error) {
+    const message = t('update.failed', { error: String(error) });
+    status(message);
+    if (manual) window.alert(message);
+    else console.error(message);
+  } finally {
+    updateCheckPending = false;
+  }
 }
 
 function loadBootstraps(): string[] {
@@ -677,6 +751,10 @@ async function claimPublicOffer(offerId: string, intent: 'download' | 'preview')
         transfer_token: transferToken,
         preview_only: intent === 'preview',
       });
+      const timer = window.setTimeout(() => {
+        failPublicClaim(transferToken, t('publicShare.timeout'));
+      }, PUBLIC_CLAIM_TIMEOUT_MS);
+      publicClaimTimers.set(transferToken, timer);
     } else {
       await invoke('claim_public_file', { offerId, previewOnly: intent === 'preview' });
     }
@@ -689,6 +767,27 @@ async function claimPublicOffer(offerId: string, intent: 'download' | 'preview')
     if (state.connected) renderChat();
     alert(t('publicShare.error', { error: String(error) }));
   }
+}
+
+function clearPublicClaimTimer(transferToken: string): void {
+  const timer = publicClaimTimers.get(transferToken);
+  if (timer !== undefined) window.clearTimeout(timer);
+  publicClaimTimers.delete(transferToken);
+}
+
+function failPublicClaim(transferToken: string, reason: string): void {
+  clearPublicClaimTimer(transferToken);
+  const pending = publicTransferTokens.get(transferToken);
+  if (!pending) return;
+  publicTransferTokens.delete(transferToken);
+  state.publicIntents.delete(pending.offerId);
+  state.transfers.delete(`claim:${pending.offerId}`);
+  const offer = state.publicOffers.get(pending.offerId);
+  addSystem('world', t('transfer.problem', {
+    file: offer?.file_name ?? t('publicShare.file'),
+    error: reason,
+  }));
+  if (state.connected) renderChat();
 }
 
 function showImagePreview(offer: PublicShareOffer) {
@@ -1004,6 +1103,7 @@ function directTransferView(progress: DirectFileProgress): FileTransfer {
 function updateDirectTransfer(progress: DirectFileProgress): void {
   directTransferIds.add(progress.token);
   const publicTransfer = publicTransferTokens.get(progress.token);
+  if (publicTransfer) clearPublicClaimTimer(progress.token);
   if (publicTransfer) state.transfers.delete(`claim:${publicTransfer.offerId}`);
   state.transfers.set(progress.token, directTransferView(progress));
   if (progress.status === 'rejected' || progress.status === 'failed') {
@@ -1025,6 +1125,7 @@ async function finishRelayPublicDownload(
   progress: DirectFileProgress,
   pending: { offerId: string; intent: 'download' | 'preview' },
 ): Promise<void> {
+  clearPublicClaimTimer(progress.token);
   publicTransferTokens.delete(progress.token);
   state.publicIntents.delete(pending.offerId);
   const offer = state.publicOffers.get(pending.offerId);
@@ -1158,6 +1259,8 @@ function resetSessionView(errorMessage?: string) {
   state.publicOffers.clear();
   state.publicIntents.clear();
   publicTransferTokens.clear();
+  for (const timer of publicClaimTimers.values()) window.clearTimeout(timer);
+  publicClaimTimers.clear();
   state.status = { ...EMPTY_STATUS };
   discoveryStatus = { phase: 'off', relay_enabled: false, public_reachability: false };
   publicDiscoveryOptIn = true;
@@ -1228,22 +1331,19 @@ function startWorldRelay() {
         showDirectFileOfferModal(offer);
         return;
       }
+      clearPublicClaimTimer(offer.token);
       const announced = state.publicOffers.get(pending.offerId);
       if (!announced
         || announced.peer_id !== offer.peer_id
         || announced.file_name !== offer.file_name
         || announced.size !== offer.size
         || announced.sha256.toLowerCase() !== offer.sha256.toLowerCase()) {
-        publicTransferTokens.delete(offer.token);
-        state.publicIntents.delete(pending.offerId);
         void peerTransport.rejectFile(offer.token, 'Public file metadata did not match the signed announcement.');
-        addSystem('world', t('publicShare.error', { error: t('publicShare.metadataMismatch') }));
+        failPublicClaim(offer.token, t('publicShare.metadataMismatch'));
         return;
       }
       void peerTransport.acceptFile(offer.token, pending.intent === 'preview').catch(error => {
-        publicTransferTokens.delete(offer.token);
-        state.publicIntents.delete(pending.offerId);
-        addSystem('world', t('publicShare.error', { error: String(error) }));
+        failPublicClaim(offer.token, String(error));
       });
     },
     onFileProgress(progress) { updateDirectTransfer(progress); },
@@ -1319,7 +1419,24 @@ function startWorldRelay() {
         void invoke<RtcFileDescriptor>('prepare_public_rtc_file', {
           offerId: announced.offer_id,
           transferToken: signal.transfer_token,
-        }).then(descriptor => peerTransport.sendPreparedFile(peerId, descriptor)).catch(() => undefined);
+        }).then(descriptor => peerTransport.sendPreparedFile(peerId, descriptor)).catch(error => {
+          try {
+            worldRelay.publishRtcSignal(peerId, {
+              connection_id: crypto.randomUUID(),
+              action: 'public_file_reject',
+              offer_id: announced.offer_id,
+              transfer_token: signal.transfer_token,
+              reason: String(error).slice(0, 300) || 'The sender could not prepare the file.',
+            });
+          } catch {}
+        });
+        return;
+      }
+      if (signal.action === 'public_file_reject' && signal.transfer_token) {
+        const pending = publicTransferTokens.get(signal.transfer_token);
+        if (pending && pending.offerId === signal.offer_id) {
+          failPublicClaim(signal.transfer_token, signal.reason || t('publicShare.senderUnavailable'));
+        }
         return;
       }
       void peerTransport.handleSignal(peerId, signal).catch(error => {
@@ -1388,6 +1505,23 @@ function showNetworkModal() {
       <p class="modal-note" id="publicDiscoveryStatus"><strong>${esc(discoveryLabel())}</strong><br/>${esc(discoveryStatus.relay_enabled ? t('network.relayActive') : t('network.relayInactive'))}</p>
       <p class="modal-note">${esc(t('network.coldProofLimit'))}</p>
       <p class="modal-note">${esc(t('network.participantNode'))}</p>
+      <section class="audio-settings-card">
+        <strong>${esc(t('audio.settingsTitle'))}</strong>
+        <label><input id="muteWorldAudio" type="checkbox" ${worldAudioMuted ? 'checked' : ''}/> ${esc(t('audio.muteWorld'))}</label>
+        <small>${esc(t('audio.muteWorldHelp'))}</small>
+        <div class="audio-test-actions">
+          <button id="testSpeakers" class="ghost">${esc(t('audio.testSpeakers'))}</button>
+          <button id="testMicrophone" class="ghost">${esc(t('audio.testMicrophone'))}</button>
+        </div>
+        <div class="audio-test-meter" aria-hidden="true"><i id="microphoneLevel"></i></div>
+        <p id="audioTestStatus" class="modal-note">${esc(t('audio.testReady'))}</p>
+      </section>
+      <section class="audio-settings-card">
+        <strong>${esc(t('update.title'))}</strong>
+        <small>${esc(t('update.help'))}</small>
+        <div class="audio-test-actions"><button id="checkUpdates" class="ghost">${esc(t('update.checkNow'))}</button></div>
+        <p id="updateStatus" class="modal-note">${esc(t('update.ready'))}</p>
+      </section>
       <label>${esc(t('network.bootstrapAddress'))}</label>
       <div class="inline-form"><input id="bootstrapInput" placeholder="/ip4/.../tcp/.../p2p/12D3KooW..."/><button id="addBootstrap" class="primary compact">${esc(t('common.add'))}</button></div>
       <div class="bootstrap-list">${bootstraps.length ? bootstraps.map(b => `<div><code>${esc(b)}</code><button data-remove-bootstrap="${esc(b)}">×</button></div>`).join('') : `<p>${esc(t('network.noBootstraps'))}</p>`}</div>
@@ -1396,9 +1530,58 @@ function showNetworkModal() {
     </div>`;
   document.body.appendChild(modal);
 
-  const close = () => modal.remove();
+  const audioTestAbort = new AbortController();
+  const close = () => {
+    audioTestAbort.abort();
+    modal.remove();
+  };
   modal.addEventListener('click', e => { if (e.target === modal) close(); });
   modal.querySelector('#closeModal')?.addEventListener('click', close);
+  modal.querySelector<HTMLInputElement>('#muteWorldAudio')?.addEventListener('change', event => {
+    worldAudioMuted = (event.currentTarget as HTMLInputElement).checked;
+    localStorage.setItem(WORLD_AUDIO_MUTED_KEY, String(worldAudioMuted));
+    for (const [key, audio] of groupAudio) {
+      if (key.startsWith('world\u0000')) audio.muted = worldAudioMuted;
+      if (worldAudioMuted && key.startsWith('world\u0000')) blockedGroupAudio.delete(key);
+    }
+    if (!worldAudioMuted) {
+      for (const key of groupAudio.keys()) {
+        if (key.startsWith('world\u0000')) blockedGroupAudio.add(key);
+      }
+      resumeGroupAudio();
+    }
+  });
+  const audioStatus = modal.querySelector<HTMLElement>('#audioTestStatus')!;
+  const microphoneLevel = modal.querySelector<HTMLElement>('#microphoneLevel')!;
+  modal.querySelector<HTMLButtonElement>('#testSpeakers')?.addEventListener('click', async event => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true;
+    audioStatus.textContent = t('audio.testingSpeakers');
+    try {
+      await testSpeakers(audioTestAbort.signal);
+      audioStatus.textContent = t('audio.speakersOk');
+    } catch (error) {
+      if (!audioTestAbort.signal.aborted) audioStatus.textContent = t('audio.testFailed', { error: String(error) });
+    } finally {
+      button.disabled = false;
+    }
+  });
+  modal.querySelector<HTMLButtonElement>('#testMicrophone')?.addEventListener('click', async event => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true;
+    audioStatus.textContent = t('audio.testingMicrophone');
+    try {
+      const peak = await testMicrophone(level => {
+        microphoneLevel.style.width = `${Math.round(level * 100)}%`;
+      }, audioTestAbort.signal);
+      audioStatus.textContent = peak >= 0.025 ? t('audio.microphoneOk') : t('audio.microphoneSilent');
+    } catch (error) {
+      if (!audioTestAbort.signal.aborted) audioStatus.textContent = t('audio.testFailed', { error: String(error) });
+    } finally {
+      button.disabled = false;
+    }
+  });
+  modal.querySelector('#checkUpdates')?.addEventListener('click', () => void runStableUpdateCheck(true));
   modal.querySelectorAll<HTMLButtonElement>('[data-copy-address]').forEach(btn => btn.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(btn.dataset.copyAddress!);
@@ -1583,3 +1766,4 @@ async function wireEvents() {
 
 wireEvents();
 renderLogin();
+window.setTimeout(() => void runStableUpdateCheck(false), 2_500);

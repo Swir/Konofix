@@ -1,14 +1,8 @@
 import type { VoiceSignal, WorldVoiceState } from './world-relay';
+import { RTC_CONFIG } from './rtc-config.ts';
 
 const WORLD_TURN_MS = 60_000;
 const MAX_GROUP_SESSIONS = 32;
-const RTC_CONFIG: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'stun:stun.l.google.com:19302' },
-  ],
-  iceCandidatePoolSize: 4,
-};
 const MICROPHONE_CONSTRAINTS: MediaStreamConstraints = {
   audio: {
     echoCancellation: true,
@@ -75,7 +69,7 @@ export class GroupVoice {
   }
 
   stop(): void {
-    if (this.localWorld) this.publishIdle(this.localWorld);
+    if (this.localWorld) this.publishWorldRelease(this.localWorld);
     if (this.roomScope) this.broadcast({
       connection_id: crypto.randomUUID(), action: 'leave', scope: this.roomScope,
     });
@@ -175,7 +169,7 @@ export class GroupVoice {
   leaveWorld(): void {
     const current = this.localWorld;
     if (!current) return;
-    this.publishIdle(current);
+    this.publishWorldRelease(current);
     this.localWorld = undefined;
     this.worldStates.delete(this.localPeerId);
     this.worldSeen.delete(this.localPeerId);
@@ -250,6 +244,17 @@ export class GroupVoice {
   }
 
   async handleSignal(peerId: string, signal: VoiceSignal): Promise<void> {
+    if (signal.action === 'world_release') {
+      const state = this.worldStates.get(peerId);
+      if (state && state.request_id !== signal.request_id) return;
+      this.worldStates.delete(peerId);
+      this.worldSeen.delete(peerId);
+      for (const session of [...this.sessions.values()]) {
+        if (session.peerId === peerId && session.scope === 'world') this.closeSession(session);
+      }
+      this.emit();
+      return;
+    }
     if (signal.action === 'join') {
       if (!this.roomScope || signal.scope !== this.roomScope || !this.localStream) return;
       if (!signal.reply) this.callbacks?.sendSignal(peerId, {
@@ -413,6 +418,16 @@ export class GroupVoice {
     this.callbacks?.publishWorld({
       status: 'idle', request_id: state.request_id, joined_at: state.joined_at,
     });
+  }
+
+  private publishWorldRelease(state: WorldVoiceState): void {
+    this.broadcast({
+      connection_id: crypto.randomUUID(),
+      action: 'world_release',
+      scope: 'world',
+      request_id: state.request_id,
+    });
+    this.publishIdle(state);
   }
 
   private broadcast(signal: VoiceSignal): void {

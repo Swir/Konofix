@@ -1,7 +1,7 @@
 [package]
 name = "konofix-chat"
 default-run = "konofix-chat"
-version = "0.6.0-4"
+version = "0.6.0-5"
 description = "Ephemeral global peer-to-peer chat for Windows"
 authors = ["Swir"]
 edition = "2021"
@@ -50,5 +50,6 @@ libp2p = { version = "0.57", features = [
 
 [target.'cfg(windows)'.dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-updater = "2"
 rfd = "0.17.2"
 kononexus = { git = "https://github.com/Swir/KonoNexus.git", rev = "ee97b8b6c56467eeff9aee9f93e9375582005541", default-features = false }

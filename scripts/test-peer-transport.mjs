@@ -43,6 +43,7 @@ class MockChannel extends EventTarget {
 class MockPeerConnection {
   static nextId = 1;
   static registry = new Map();
+  static configs = [];
   id = MockPeerConnection.nextId++;
   localDescription = null;
   remoteDescription = null;
@@ -55,7 +56,10 @@ class MockPeerConnection {
   tracks = [];
   candidates = [];
   remote;
-  constructor() { MockPeerConnection.registry.set(this.id, this); }
+  constructor(config) {
+    MockPeerConnection.configs.push(config);
+    MockPeerConnection.registry.set(this.id, this);
+  }
   addTrack(track, stream) { this.tracks.push({ track, stream }); }
   createDataChannel() { this.channel = new MockChannel(); return this.channel; }
   async createOffer() {
@@ -133,6 +137,7 @@ globalThis.__TAURI_INTERNALS__ = {
 };
 
 const { PeerTransport } = await import('../src/peer-transport.ts');
+assert.ok(MockPeerConnection.configs.length === 0, 'peer connections must be created only when a transfer or call begins');
 const alice = new PeerTransport();
 const bob = new PeerTransport();
 const aliceId = `nostr:${'a'.repeat(64)}`;
@@ -202,4 +207,7 @@ assert.equal(bobRemoteAudio, 1, 'recipient must receive one remote audio stream'
 alice.hangup(bobId);
 alice.stop();
 bob.stop();
-console.log('Peer transport test passed: >2 MiB streamed file integrity and bidirectional consent-based audio.');
+const configuredPeerConnections = MockPeerConnection.configs.filter(Boolean);
+assert.ok(configuredPeerConnections.length > 0, 'the test must create configured WebRTC transports');
+assert.ok(configuredPeerConnections.every(config => config.iceServers.some(server => String(server.urls).includes('turn:openrelay.metered.ca'))), 'files and private calls must offer TURN fallback for LTE and symmetric NAT');
+console.log('Peer transport test passed: TURN fallback, >2 MiB streamed file integrity and bidirectional consent-based audio.');

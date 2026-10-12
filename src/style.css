@@ -331,3 +331,17 @@ button:disabled { opacity:.45; cursor:not-allowed; }
   .voice-main { align-items:flex-start; }
   .voice-main button { max-width:45%; white-space:normal; }
 }
+.audio-settings-card {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+}
+.audio-settings-card label { display: flex; gap: 8px; align-items: center; }
+.audio-settings-card small { color: var(--muted); }
+.audio-test-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.audio-test-meter { height: 8px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.08); }
+.audio-test-meter i { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), #ffd166); transition: width 70ms linear; }

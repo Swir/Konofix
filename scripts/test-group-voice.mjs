@@ -17,6 +17,7 @@ class MockStream {
 class MockPeerConnection {
   static nextId = 1;
   static registry = new Map();
+  static configs = [];
   id = MockPeerConnection.nextId++;
   tracks = [];
   candidates = [];
@@ -27,7 +28,10 @@ class MockPeerConnection {
   ontrack;
   onconnectionstatechange;
   remote;
-  constructor() { MockPeerConnection.registry.set(this.id, this); }
+  constructor(config) {
+    MockPeerConnection.configs.push(config);
+    MockPeerConnection.registry.set(this.id, this);
+  }
   addTrack(track, stream) { this.tracks.push({ track, stream }); }
   async createOffer() { return { type: 'offer', sdp: `v=0\r\na=mock-group:${this.id}\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111` }; }
   async createAnswer() { return { type: 'answer', sdp: `v=0\r\na=mock-group:${this.id}\r\na=answer` }; }
@@ -67,15 +71,23 @@ const bob = new GroupVoice();
 const aliceId = `nostr:${'a'.repeat(64)}`;
 const bobId = `nostr:${'b'.repeat(64)}`;
 let bobWorldAudio = 0;
+let aliceWorldAudio = 0;
 let aliceRoomAudio = 0;
 let bobRoomAudio = 0;
 let bobSnapshot;
 
 alice.start(aliceId, 'Alice', '#35d07f', {
   sendSignal(_peerId, signal) { queueMicrotask(() => void bob.handleSignal(aliceId, signal)); },
-  publishWorld(state) { bob.updateWorldState({ ...state, peer_id: aliceId, nick: 'Alice', nick_color: '#35d07f' }); },
+  publishWorld(state) {
+    // The public relay idle event can arrive later. The direct world_release
+    // signal must still unlock the next person immediately.
+    if (state.status !== 'idle') bob.updateWorldState({ ...state, peer_id: aliceId, nick: 'Alice', nick_color: '#35d07f' });
+  },
   peers() { return [bobId]; },
-  onRemoteStream(scope, _peerId, stream) { if (scope === 'test-room' && stream) aliceRoomAudio += 1; },
+  onRemoteStream(scope, _peerId, stream) {
+    if (scope === 'world' && stream) aliceWorldAudio += 1;
+    if (scope === 'test-room' && stream) aliceRoomAudio += 1;
+  },
   onState() {},
 });
 bob.start(bobId, 'Bob', '#4f7cff', {
@@ -96,10 +108,23 @@ for (let attempt = 0; attempt < 200 && bobWorldAudio === 0; attempt += 1) {
 assert.equal(bobSnapshot.speaker?.nick, 'Alice', 'signed queue state must identify the current WORLD speaker');
 assert.ok(bobSnapshot.secondsLeft > 0 && bobSnapshot.secondsLeft <= 60, 'WORLD turn must expose a bounded visible countdown');
 assert.equal(bobWorldAudio, 1, 'WORLD speaker audio must reach a passive listener');
+assert.ok(MockPeerConnection.configs[0].iceServers.some(server => String(server.urls).includes('turn:openrelay.metered.ca')), 'group audio must offer a TURN route for LTE and symmetric NAT');
+
+await bob.requestWorldTurn();
+assert.equal(bob.snapshot().localWorld?.status, 'queued', 'a second speaker must wait while the current turn is active');
+assert.equal(bob.snapshot().canStartWorld, false);
 
 alice.leaveWorld();
 await new Promise(resolve => setTimeout(resolve, 10));
 assert.equal(bob.snapshot().speaker, undefined, 'leaving a turn must release WORLD for the next queued person');
+assert.equal(bob.snapshot().canStartWorld, true, 'a direct release must immediately unlock the next queued speaker');
+
+await bob.startWorldTurn();
+for (let attempt = 0; attempt < 200 && aliceWorldAudio === 0; attempt += 1) {
+  await new Promise(resolve => setTimeout(resolve, 5));
+}
+assert.equal(aliceWorldAudio, 1, 'the next queued speaker must take over and reach the previous speaker');
+bob.leaveWorld();
 
 await alice.joinRoom('test-room');
 await bob.joinRoom('test-room');
@@ -112,4 +137,4 @@ assert.equal(alice.snapshot().secondsLeft, 0, 'private room group voice must not
 
 alice.stop();
 bob.stop();
-console.log('Group voice test passed: authenticated WORLD queue/countdown and simultaneous room audio.');
+console.log('Group voice test passed: TURN audio, immediate early release, queued takeover and simultaneous room audio.');

@@ -103,7 +103,7 @@ export type RelayPublicFileOffer = {
 
 export type RtcSignal = {
   connection_id: string;
-  action: 'offer' | 'answer' | 'ice' | 'call_request' | 'call_accept' | 'call_reject' | 'hangup' | 'public_file_request';
+  action: 'offer' | 'answer' | 'ice' | 'call_request' | 'call_accept' | 'call_reject' | 'hangup' | 'public_file_request' | 'public_file_reject';
   sdp?: string;
   candidate?: string;
   sdp_mid?: string | null;
@@ -111,6 +111,7 @@ export type RtcSignal = {
   offer_id?: string;
   transfer_token?: string;
   preview_only?: boolean;
+  reason?: string;
 };
 
 export type WorldVoiceState = {
@@ -125,8 +126,9 @@ export type WorldVoiceState = {
 
 export type VoiceSignal = {
   connection_id: string;
-  action: 'join' | 'leave' | 'offer' | 'answer' | 'ice' | 'hangup';
+  action: 'join' | 'leave' | 'offer' | 'answer' | 'ice' | 'hangup' | 'world_release';
   scope: string;
+  request_id?: string;
   reply?: boolean;
   sdp?: string;
   candidate?: string;
@@ -521,7 +523,7 @@ function parseEncryptedPayload(content: string, now: number): EncryptedPayload |
   if (raw.type === 'rtc_signal') {
     if (!isObject(raw.signal)
       || !validUuid(raw.signal.connection_id)
-      || !['offer', 'answer', 'ice', 'call_request', 'call_accept', 'call_reject', 'hangup', 'public_file_request'].includes(String(raw.signal.action))) return undefined;
+      || !['offer', 'answer', 'ice', 'call_request', 'call_accept', 'call_reject', 'hangup', 'public_file_request', 'public_file_reject'].includes(String(raw.signal.action))) return undefined;
     const signal = raw.signal;
     if ((signal.action === 'offer' || signal.action === 'answer')
       && !boundedString(signal.sdp, 1, 32_000)) return undefined;
@@ -534,12 +536,16 @@ function parseEncryptedPayload(content: string, now: number): EncryptedPayload |
       && (!validUuid(signal.offer_id)
         || !validUuid(signal.transfer_token)
         || typeof signal.preview_only !== 'boolean')) return undefined;
+    if (signal.action === 'public_file_reject'
+      && (!validUuid(signal.offer_id)
+        || !validUuid(signal.transfer_token)
+        || !boundedString(signal.reason, 1, 300))) return undefined;
     return raw as unknown as EncryptedRtcSignalPayload;
   }
   if (raw.type === 'voice_signal') {
     if (!isObject(raw.signal)
       || !validUuid(raw.signal.connection_id)
-      || !['join', 'leave', 'offer', 'answer', 'ice', 'hangup'].includes(String(raw.signal.action))
+      || !['join', 'leave', 'offer', 'answer', 'ice', 'hangup', 'world_release'].includes(String(raw.signal.action))
       || !(raw.signal.scope === 'world' || validRoomId(raw.signal.scope))) return undefined;
     const signal = raw.signal;
     if ((signal.action === 'offer' || signal.action === 'answer')
@@ -549,6 +555,8 @@ function parseEncryptedPayload(content: string, now: number): EncryptedPayload |
         || (signal.sdp_mid !== undefined && signal.sdp_mid !== null && !boundedString(signal.sdp_mid, 0, 256))
         || (signal.sdp_mline_index !== undefined && signal.sdp_mline_index !== null
           && (!Number.isSafeInteger(signal.sdp_mline_index) || Number(signal.sdp_mline_index) < 0)))) return undefined;
+    if (signal.action === 'world_release'
+      && (signal.scope !== 'world' || !validUuid(signal.request_id))) return undefined;
     if (signal.reply !== undefined && typeof signal.reply !== 'boolean') return undefined;
     return raw as unknown as EncryptedVoiceSignalPayload;
   }

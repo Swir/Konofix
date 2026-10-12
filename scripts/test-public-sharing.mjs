@@ -3,6 +3,7 @@ import fs from 'node:fs';
 const rust = fs.readFileSync('src-tauri/src/lib.rs', 'utf8').replaceAll('\r\n', '\n');
 const frontend = fs.readFileSync('src/main.ts', 'utf8').replaceAll('\r\n', '\n');
 const relay = fs.readFileSync('src/world-relay.ts', 'utf8').replaceAll('\r\n', '\n');
+const rtc = fs.readFileSync('src/rtc-config.ts', 'utf8').replaceAll('\r\n', '\n');
 
 const requireText = (source, needle, label) => {
   if (!source.includes(needle)) throw new Error(`Public-sharing contract missing: ${label}`);
@@ -50,6 +51,9 @@ for (const [needle, label] of [
   ["listen<PublicShareOffer>('public-file-offer'", 'incoming metadata listener'],
   ["const placeholderId = `claim:${offerId}`;", 'receiver-side claim placeholder'],
   ["status: 'requesting'", 'visible receiver negotiation state'],
+  ["action: 'public_file_reject'", 'encrypted sender-side failure response'],
+  ['PUBLIC_CLAIM_TIMEOUT_MS = 45_000', 'bounded receiver claim timeout'],
+  ["failPublicClaim(transferToken, t('publicShare.timeout'))", 'visible timeout cleanup'],
   ["state.transfers.delete(`claim:${event.payload.public_offer_id}`);", 'claim placeholder reconciliation'],
 ]) requireText(frontend, needle, label);
 
@@ -58,7 +62,15 @@ for (const [needle, label] of [
   ['onPublicFile?(offer: RelayPublicFileOffer)', 'WAN offer callback'],
   ['publishPublicFile(offer: RelayPublicFileOffer)', 'WAN announcement API'],
   ["type: 'rtc_signal'", 'encrypted direct claim signaling envelope'],
+  ["'public_file_reject'", 'validated encrypted claim rejection'],
 ]) requireText(relay, needle, label);
+
+for (const [needle, label] of [
+  ['turn:openrelay.metered.ca:80?transport=udp', 'TURN UDP/80 fallback'],
+  ['turn:openrelay.metered.ca:443?transport=tcp', 'TURN TCP/443 fallback'],
+  ['turns:openrelay.metered.ca:443?transport=tcp', 'TURN TLS/443 fallback'],
+  ["iceTransportPolicy: 'all'", 'direct path remains preferred'],
+]) requireText(rtc, needle, label);
 
 if (frontend.includes('id="shareWorldImage"') || frontend.includes("sharePublic('image'")) {
   throw new Error('The separate Share image action must be removed; the file picker auto-detects supported images.');

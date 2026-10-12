@@ -6299,7 +6299,10 @@ mod authenticated_event_tests {
 }
 
 pub fn run() {
-    let builder = tauri::Builder::default().manage(AppState::default());
+    let builder = tauri::Builder::default();
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = builder.manage(AppState::default());
     #[cfg(windows)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         start_network,

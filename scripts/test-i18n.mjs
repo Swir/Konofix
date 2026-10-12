@@ -24,7 +24,7 @@ for (const locale of ['PL', 'NO', 'DE', 'FR', 'ES', 'UK']) {
   const start = source.indexOf(`const ${locale}: Dictionary`);
   const end = source.indexOf('\n};', start);
   const dictionary = source.slice(start, end);
-  for (const key of ['voice.worldTitle', 'voice.wantToSpeak', 'voice.roomTitle', 'voice.joinRoom']) {
+  for (const key of ['voice.worldTitle', 'voice.wantToSpeak', 'voice.roomTitle', 'voice.joinRoom', 'audio.settingsTitle', 'audio.muteWorld', 'audio.testSpeakers', 'audio.testMicrophone']) {
     assert.ok(dictionary.includes(`'${key}'`), `${locale} must translate ${key}`);
   }
 }

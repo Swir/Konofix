@@ -34,7 +34,22 @@ The active milestone now has 56 of 67 tasks complete. The Global Beta expansion 
 
 - Distributed nickname trust hardening now treats unsigned Kademlia nickname leases as bounded, non-authoritative hints; only source-authenticated GossipSub claims can enforce a nickname conflict. This security fix adds no Real Internet Test credit.
 
-## 0.6.0-3 — Bidirectional audio output and playful call tones (alpha 3) 🚧
+## 0.6.0-4 — WAN public files and group voice (alpha 4) 🚧
+
+- [x] replace separate file/image actions with one magic-byte-aware file picker and safe image preview,
+- [x] propagate signed, metadata-only WORLD/public-room file offers to relay-only WAN participants,
+- [x] request each public file explicitly and stream its bytes directly over WebRTC with SHA-256 continuity,
+- [x] add a signed WORLD speaking queue, visible current speaker/queue and enforced 60-second microphone turn,
+- [x] add simultaneous group WebRTC audio to public temporary rooms without the WORLD timer,
+- [x] keep password-protected room voice off public fallback and private one-to-one calls unchanged,
+- [x] select seven supported UI languages from the Windows/system locale, including Norwegian `nb`/`nn` aliases,
+- [x] cover relay metadata, queue/countdown, bidirectional room audio, automatic language selection and frontend compilation deterministically,
+- [ ] pass exact-head Windows/Linux/RustSec CI and produce the exact Windows installer,
+- [ ] pass a two-PC independent-network test for WORLD file download/preview, the 60-second queue and public-room group audio.
+
+This alpha keeps public file bytes and every audio stream peer-to-peer. Public relays see signed WORLD/public-room metadata and WORLD queue state, plus encrypted recipient-addressed WebRTC setup; they do not carry the file or media bytes. STUN-only WebRTC still cannot promise universal symmetric-NAT reachability without TURN, so stable promotion remains blocked on the exact physical test.
+
+## 0.6.0-3 — Bidirectional audio output and playful call tones (alpha 3)
 
 - [x] route remote audio through an output context unlocked by the user's call/accept interaction,
 - [x] retain an HTML audio fallback without silently depending on autoplay for the primary path,

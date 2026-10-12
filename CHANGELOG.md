@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0-4 (alpha 4) — WAN public files and group voice
+
+- replace the separate public file/image actions with one file picker that recognizes bounded PNG, JPEG, GIF and WebP previews from magic bytes instead of trusting file extensions,
+- announce signed, expiring WORLD/public-room file metadata through the WAN relay fallback while keeping file bytes off relays; an explicit Download or Preview starts a unique direct WebRTC stream and verifies the signed size, name and SHA-256 before completion,
+- preserve disk-backed streaming up to the existing 32 GiB product limit, use temporary verified storage for previews and allow one public offer to serve independent receiver requests,
+- add a signed WORLD speaking queue with one active speaker, a visible 60-second countdown and automatic microphone/session release at the turn boundary,
+- add simultaneous WebRTC group voice to public temporary rooms; password-protected rooms remain off the public fallback in this alpha,
+- keep private one-to-one audio unchanged, add deterministic WORLD queue/group-audio tests, and automatically select Polish, English, Norwegian, German, French, Spanish or Ukrainian from the system locale (including Windows `nb`/`nn` aliases),
+- keep stable `v0.5.3` unchanged; exact-head CI and a physical two-PC WAN test of this installer remain mandatory before promotion.
+
 ## 0.6.0-3 (alpha 3) — bidirectional audio output and playful call tones
 
 - route remote call audio through the user-unlocked Web Audio output, retaining the HTML audio element only as a fallback, so the caller no longer depends on a second autoplay gesture after the recipient accepts,

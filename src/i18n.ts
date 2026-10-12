@@ -136,6 +136,21 @@ const EN = {
   'audio.incomingHelp': 'Encrypted direct WebRTC audio. Public WORLD relays carry only encrypted connection setup.',
   'audio.accept': 'Answer',
   'audio.reject': 'Reject',
+  'voice.worldTitle': 'WORLD VOICE · 60 SECOND TURNS',
+  'voice.worldIdle': 'Nobody is speaking now',
+  'voice.wantToSpeak': '🎙 I want to speak',
+  'voice.startTurn': 'Start my 60 seconds',
+  'voice.leaveQueue': 'Leave queue',
+  'voice.finish': 'Finish speaking',
+  'voice.queue': 'Queue',
+  'voice.queueEmpty': 'The speaking queue is empty',
+  'voice.roomTitle': 'GROUP VOICE · NO TIME LIMIT',
+  'voice.roomHelp': 'Join to speak and listen together in this room.',
+  'voice.roomActive': 'Group voice active · {count} connected',
+  'voice.joinRoom': 'Join voice',
+  'voice.leaveRoom': 'Leave voice',
+  'voice.protectedUnavailable': 'Group voice for password-protected rooms stays off the public fallback in this alpha.',
+  'voice.unavailable': 'Voice needs public WORLD discovery enabled for encrypted peer setup.',
   'transfer.directHelp': 'The file is sent directly and saved in chunks; public relays do not carry or store its bytes.',
   'roomShare.shared': 'Shared in this room',
   'roomShare.error': 'Room sharing: {error}',
@@ -149,6 +164,7 @@ const EN = {
   'publicShare.dangerous': 'Executable/script file — download only if you trust the sender.',
   'publicShare.error': 'Public sharing: {error}',
   'publicShare.previewError': 'Image preview: {error}',
+  'publicShare.metadataMismatch': 'File metadata did not match the signed announcement.',
   'user.selfReserved': 'You · nickname reserved',
   'network.refresh': 'Refresh discovery',
   'network.settings': 'P2P network',
@@ -292,6 +308,13 @@ const PL: Dictionary = {
   'private.allowNewHelp': 'Po wyłączeniu nowe przychodzące wiadomości prywatne są odrzucane. Lokalna historia bieżącej sesji nie jest usuwana.',
   'private.blocked': 'Ten użytkownik nie przyjmuje nowych rozmów prywatnych.', 'roomShare.shared': 'Udostępniono w tym pokoju', 'roomShare.error': 'Udostępnianie w pokoju: {error}',
   'audio.start': 'Rozpocznij rozmowę audio', 'audio.hangup': 'Zakończ rozmowę', 'audio.mute': 'Wycisz mikrofon', 'audio.unmute': 'Włącz mikrofon',
+  'voice.worldTitle': 'GŁOS WORLD · KOLEJKA PO 60 SEKUND', 'voice.worldIdle': 'Teraz nikt nie mówi',
+  'voice.wantToSpeak': '🎙 Chcę mówić', 'voice.startTurn': 'Zacznij moje 60 sekund', 'voice.leaveQueue': 'Opuść kolejkę',
+  'voice.finish': 'Zakończ mówienie', 'voice.queue': 'Kolejka', 'voice.queueEmpty': 'Kolejka do mówienia jest pusta',
+  'voice.roomTitle': 'ROZMOWA GRUPOWA · BEZ LIMITU', 'voice.roomHelp': 'Dołącz, aby wspólnie mówić i słuchać w tym pokoju.',
+  'voice.roomActive': 'Rozmowa grupowa aktywna · połączonych: {count}', 'voice.joinRoom': 'Dołącz do rozmowy', 'voice.leaveRoom': 'Opuść rozmowę',
+  'voice.protectedUnavailable': 'W tej alfie rozmowy grupowe w pokojach z hasłem nie korzystają z publicznej trasy awaryjnej.',
+  'voice.unavailable': 'Głos wymaga włączonego publicznego odkrywania WORLD do szyfrowanego zestawienia połączeń.',
   'audio.calling': 'Dzwonienie…', 'audio.ringing': 'Przychodząca rozmowa audio', 'audio.connecting': 'Łączenie audio…', 'audio.connected': 'Rozmowa audio połączona', 'audio.muted': 'Mikrofon wyciszony',
   'audio.failed': 'Błąd rozmowy audio: {error}', 'audio.incomingTitle': '{nick} dzwoni', 'audio.incomingHelp': 'Szyfrowane, bezpośrednie audio WebRTC. Publiczna sieć WORLD przenosi tylko zaszyfrowane dane zestawiania połączenia.', 'audio.accept': 'Odbierz', 'audio.reject': 'Odrzuć',
   'transfer.directHelp': 'Plik jest przesyłany bezpośrednio i zapisywany fragmentami; publiczne przekaźniki nie przenoszą ani nie przechowują jego danych.',
@@ -335,6 +358,7 @@ const PL: Dictionary = {
   'publicShare.shared': 'Udostępniono na #WORLD', 'publicShare.expired': 'Oferta wygasła',
   'publicShare.dangerous': 'Plik wykonywalny/skrypt — pobieraj tylko od zaufanego nadawcy.',
   'publicShare.error': 'Udostępnianie publiczne: {error}', 'publicShare.previewError': 'Podgląd obrazu: {error}',
+  'publicShare.metadataMismatch': 'Metadane pliku nie zgadzają się z podpisaną ofertą.',
   'user.selfReserved': 'Ty · nick zarezerwowany',
   'network.refresh': 'Odśwież discovery',
   'network.settings': 'Sieć P2P',
@@ -441,6 +465,11 @@ const NO: Dictionary = {
   'transfer.completed': 'Ferdig', 'transfer.rejected': 'Avvist', 'transfer.failed': 'Feil', 'transfer.cancelled': 'Avbrutt',
   'transfer.reject': 'Avvis', 'transfer.accept': 'Godta',
   'transfer.offerCancelled': '🚫 Avsenderen avbrøt det innkommende filtilbudet.',
+  'voice.worldTitle': 'WORLD-TALE · 60 SEKUNDER PER TUR', 'voice.worldIdle': 'Ingen snakker nå',
+  'voice.wantToSpeak': '🎙 Jeg vil snakke', 'voice.startTurn': 'Start mine 60 sekunder', 'voice.leaveQueue': 'Forlat køen',
+  'voice.finish': 'Avslutt talen', 'voice.queue': 'Kø', 'voice.queueEmpty': 'Talekøen er tom',
+  'voice.roomTitle': 'GRUPPETALE · INGEN TIDSGRENSE', 'voice.roomHelp': 'Bli med for å snakke og lytte i dette rommet.',
+  'voice.roomActive': 'Gruppetale aktiv · {count} tilkoblet', 'voice.joinRoom': 'Bli med i tale', 'voice.leaveRoom': 'Forlat tale',
 };
 
 const DE: Dictionary = {
@@ -474,6 +503,11 @@ const DE: Dictionary = {
   'transfer.sendFilePlain': 'Datei senden', 'transfer.reject': 'Ablehnen', 'transfer.accept': 'Akzeptieren',
   'transfer.requesting': 'Download wird angefordert', 'transfer.failed': 'Fehler', 'transfer.completed': 'Fertig', 'common.cancel': 'Abbrechen',
   'transfer.offerCancelled': '🚫 Der Absender hat das eingehende Dateiangebot abgebrochen.',
+  'voice.worldTitle': 'WORLD-SPRACHE · 60 SEKUNDEN PRO RUNDE', 'voice.worldIdle': 'Gerade spricht niemand',
+  'voice.wantToSpeak': '🎙 Ich möchte sprechen', 'voice.startTurn': 'Meine 60 Sekunden starten', 'voice.leaveQueue': 'Warteschlange verlassen',
+  'voice.finish': 'Sprechen beenden', 'voice.queue': 'Warteschlange', 'voice.queueEmpty': 'Die Warteschlange ist leer',
+  'voice.roomTitle': 'GRUPPENGESPRÄCH · OHNE ZEITLIMIT', 'voice.roomHelp': 'Beitreten, um in diesem Raum gemeinsam zu sprechen und zuzuhören.',
+  'voice.roomActive': 'Gruppengespräch aktiv · {count} verbunden', 'voice.joinRoom': 'Gespräch beitreten', 'voice.leaveRoom': 'Gespräch verlassen',
 };
 
 const FR: Dictionary = {
@@ -507,6 +541,11 @@ const FR: Dictionary = {
   'transfer.sendFilePlain': 'Envoyer un fichier', 'transfer.reject': 'Refuser', 'transfer.accept': 'Accepter',
   'transfer.requesting': 'Demande de téléchargement', 'transfer.failed': 'Erreur', 'transfer.completed': 'Terminé', 'common.cancel': 'Annuler',
   'transfer.offerCancelled': '🚫 L’expéditeur a annulé l’offre de fichier entrante.',
+  'voice.worldTitle': 'VOIX WORLD · TOURS DE 60 SECONDES', 'voice.worldIdle': 'Personne ne parle actuellement',
+  'voice.wantToSpeak': '🎙 Je veux parler', 'voice.startTurn': 'Démarrer mes 60 secondes', 'voice.leaveQueue': 'Quitter la file',
+  'voice.finish': 'Arrêter de parler', 'voice.queue': 'File', 'voice.queueEmpty': 'La file de parole est vide',
+  'voice.roomTitle': 'VOIX DE GROUPE · SANS LIMITE', 'voice.roomHelp': 'Rejoignez pour parler et écouter ensemble dans cette salle.',
+  'voice.roomActive': 'Voix de groupe active · {count} connectés', 'voice.joinRoom': 'Rejoindre la voix', 'voice.leaveRoom': 'Quitter la voix',
 };
 
 const ES: Dictionary = {
@@ -540,6 +579,11 @@ const ES: Dictionary = {
   'transfer.sendFilePlain': 'Enviar archivo', 'transfer.reject': 'Rechazar', 'transfer.accept': 'Aceptar',
   'transfer.requesting': 'Solicitando descarga', 'transfer.failed': 'Error', 'transfer.completed': 'Completado', 'common.cancel': 'Cancelar',
   'transfer.offerCancelled': '🚫 El remitente canceló la oferta de archivo entrante.',
+  'voice.worldTitle': 'VOZ WORLD · TURNOS DE 60 SEGUNDOS', 'voice.worldIdle': 'Nadie está hablando ahora',
+  'voice.wantToSpeak': '🎙 Quiero hablar', 'voice.startTurn': 'Iniciar mis 60 segundos', 'voice.leaveQueue': 'Salir de la cola',
+  'voice.finish': 'Dejar de hablar', 'voice.queue': 'Cola', 'voice.queueEmpty': 'La cola para hablar está vacía',
+  'voice.roomTitle': 'VOZ GRUPAL · SIN LÍMITE', 'voice.roomHelp': 'Únete para hablar y escuchar juntos en esta sala.',
+  'voice.roomActive': 'Voz grupal activa · {count} conectados', 'voice.joinRoom': 'Unirse a la voz', 'voice.leaveRoom': 'Salir de la voz',
 };
 
 const UK: Dictionary = {
@@ -573,16 +617,29 @@ const UK: Dictionary = {
   'transfer.sendFilePlain': 'Надіслати файл', 'transfer.reject': 'Відхилити', 'transfer.accept': 'Прийняти',
   'transfer.requesting': 'Запит на завантаження', 'transfer.failed': 'Помилка', 'transfer.completed': 'Готово', 'common.cancel': 'Скасувати',
   'transfer.offerCancelled': '🚫 Відправник скасував пропозицію вхідного файлу.',
+  'voice.worldTitle': 'ГОЛОС WORLD · 60 СЕКУНД НА ЧЕРГУ', 'voice.worldIdle': 'Зараз ніхто не говорить',
+  'voice.wantToSpeak': '🎙 Я хочу говорити', 'voice.startTurn': 'Почати мої 60 секунд', 'voice.leaveQueue': 'Вийти з черги',
+  'voice.finish': 'Завершити виступ', 'voice.queue': 'Черга', 'voice.queueEmpty': 'Черга на виступ порожня',
+  'voice.roomTitle': 'ГРУПОВИЙ ГОЛОС · БЕЗ ЛІМІТУ', 'voice.roomHelp': 'Приєднайтеся, щоб говорити й слухати разом у цій кімнаті.',
+  'voice.roomActive': 'Груповий голос активний · підключено: {count}', 'voice.joinRoom': 'Приєднатися до голосу', 'voice.leaveRoom': 'Вийти з голосу',
 };
 
 const DICTIONARIES: Record<Locale, Dictionary> = { en: EN, pl: PL, no: NO, de: DE, fr: FR, es: ES, uk: UK };
 
+export function resolveLocale(value: string | null | undefined): Locale | undefined {
+  const code = value?.trim().toLowerCase().replace('_', '-').split('-')[0];
+  if (!code) return undefined;
+  if (code === 'nb' || code === 'nn') return 'no';
+  if (code === 'ua') return 'uk';
+  return SUPPORTED.includes(code as Locale) ? code as Locale : undefined;
+}
+
 function systemLocale(): Locale {
-  const saved = localStorage.getItem(STORAGE_KEY)?.toLowerCase().split('-')[0] as Locale | undefined;
-  if (saved && SUPPORTED.includes(saved)) return saved;
+  const saved = resolveLocale(localStorage.getItem(STORAGE_KEY));
+  if (saved) return saved;
   for (const candidate of navigator.languages?.length ? navigator.languages : [navigator.language]) {
-    const code = candidate.toLowerCase().split('-')[0] as Locale;
-    if (SUPPORTED.includes(code)) return code;
+    const code = resolveLocale(candidate);
+    if (code) return code;
   }
   return 'en';
 }

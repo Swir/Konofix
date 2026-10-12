@@ -53,7 +53,7 @@ input:focus { border-color:#6576ff; box-shadow:0 0 0 3px rgba(101,118,255,.12); 
 .me-info strong { font-size:12px; overflow:hidden; text-overflow:ellipsis; }
 .me-info span { font-size:9px; color:#65708d; }
 .icon-btn { border:0; background:transparent; color:#6f7892; font-size:18px; }
-.chat-main { display:grid; grid-template-rows:auto 1fr auto; min-width:0; }
+.chat-main { display:grid; grid-template-rows:auto auto 1fr auto; min-width:0; }
 .chat-header { height:72px; padding:14px 20px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,.06); }
 .chat-header h2 { margin:0; font-size:17px; }
 .chat-header span { color:#707a96; font-size:11px; }
@@ -309,3 +309,25 @@ button:disabled { opacity:.45; cursor:not-allowed; }
 .network-options label { display: flex; align-items: flex-start; gap: 8px; }
 .network-options input[type="checkbox"] { width: auto; flex: none; margin-top: 2px; }
 .network-options .muted { font-size: 12px; line-height: 1.45; margin-bottom: 12px; }
+
+/* Timed WORLD speaking queue and room group voice. */
+.voice-panel { padding:10px 16px; border-bottom:1px solid rgba(255,255,255,.055); background:linear-gradient(90deg,rgba(94,82,255,.075),rgba(35,205,184,.035)); }
+.voice-main { display:flex; align-items:center; justify-content:space-between; gap:14px; }
+.voice-main > div { min-width:0; display:grid; gap:3px; }
+.voice-main .eyebrow { color:#626f91; font-size:8px; letter-spacing:.12em; }
+.voice-main button { min-height:34px; flex:none; }
+.voice-speaker { display:flex; align-items:center; gap:8px; color:#dce4f8; font-size:12px; }
+.voice-speaker > span { width:23px; height:23px; display:grid; place-items:center; border-radius:50%; background:rgba(255,91,135,.14); animation:voice-pulse 1.2s infinite; }
+.voice-speaker strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.voice-speaker b { min-width:34px; color:#ff87aa; font-variant-numeric:tabular-nums; }
+.voice-idle { color:#8290b2; font-size:11px; }
+.voice-queue { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:7px; color:#5e6a89; font-size:9px; }
+.voice-queue > span { font-weight:800; text-transform:uppercase; letter-spacing:.09em; }
+.voice-queue b { padding:3px 7px; border-radius:999px; background:#10172a; color:#98a5c7; font-weight:700; }
+.voice-queue.empty { margin-top:4px; }
+.voice-error { margin-top:6px; color:#ff98a8; font-size:9px; }
+@keyframes voice-pulse { 50% { box-shadow:0 0 0 6px rgba(255,91,135,0); transform:scale(1.05); } }
+@media (max-width:720px) {
+  .voice-main { align-items:flex-start; }
+  .voice-main button { max-width:45%; white-space:normal; }
+}

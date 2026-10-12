@@ -17,6 +17,11 @@ unprotected temporary-room announcements and text. It is enabled by the existing
 visible public discovery session checkbox. Password-protected rooms remain on the
 authenticated native path.
 
+Version 0.6.0-4 additionally carries signed, expiring public-file metadata and WORLD
+speaking-queue state. File bytes and audio remain direct WebRTC traffic. Public-room
+group voice uses encrypted, recipient-addressed setup messages; protected-room group
+voice is deliberately not placed on this fallback in the alpha.
+
 ## Replaceable public relays
 
 The candidate uses four WSS Nostr relays:
@@ -37,8 +42,8 @@ multiple relays reduce dependence on any single operator.
 - NIP-01 ephemeral event kind: `28733`
 - subscription tag: `t = konofix-world-v1`
 - application namespace: `konofix/world-relay/1`
-- public event types: `presence`, `chat`, `room`, `room_chat`, `room_close`, `goodbye`
-- encrypted event types: `private`, `file_offer`, `file_accept`, `file_reject`, `file_chunk`, `file_chunks_complete`, `file_missing`, `file_saved`, `rtc_signal`
+- public event types: `presence`, `chat`, `room`, `room_chat`, `room_close`, `public_file`, `voice_state`, `goodbye`
+- encrypted event types: `private`, `file_offer`, `file_accept`, `file_reject`, `file_chunk`, `file_chunks_complete`, `file_missing`, `file_saved`, `rtc_signal`, `voice_signal`
 - presence heartbeat / local expiry: 30 / 75 seconds
 - chat validity and reconnect queue: 120 seconds
 - maximum chat text: 4,000 characters
@@ -66,11 +71,15 @@ or its presence expires.
 ## Scope and privacy
 
 The fallback carries WORLD presence/public text, public unprotected-room names/text,
-recipient-addressed encrypted private text and accepted encrypted files up to 2 MiB.
+metadata-only public file offers, WORLD queue/current-speaker state,
+recipient-addressed encrypted private text, accepted encrypted files up to 2 MiB and
+encrypted WebRTC setup. A claimed public file is streamed directly between peers and
+verified against its signed size/name/SHA-256; audio media is also peer-to-peer.
 It does not carry:
 
 - password-protected room names, membership authorization or passwords;
-- public room file offers or image previews;
+- public file bytes, image bytes or audio media;
+- password-protected room voice setup;
 - KNP contacts or NodeIDs;
 - native bootstrap or relay authorization.
 

@@ -23,7 +23,7 @@ const MICROPHONE_CONSTRAINTS: MediaStreamConstraints = {
   video: false,
 };
 
-type RtcFileDescriptor = { token: string; file_name: string; size: number; sha256: string };
+export type RtcFileDescriptor = { token: string; file_name: string; size: number; sha256: string };
 type RtcFileChunk = { offset: number; data_base64: string; eof: boolean };
 export type DirectFileOffer = RtcFileDescriptor & { peer_id: string };
 export type DirectFileProgress = DirectFileOffer & {
@@ -105,7 +105,7 @@ function parseWireMessage(value: unknown): WireMessage | undefined {
 export class PeerTransport {
   private readonly sessions = new Map<string, Session>();
   private readonly outgoing = new Map<string, { file: RtcFileDescriptor; sessionId: string; peerId: string }>();
-  private readonly incoming = new Map<string, { offer: DirectFileOffer; sessionId: string }>();
+  private readonly incoming = new Map<string, { offer: DirectFileOffer; sessionId: string; previewOnly: boolean }>();
   private readonly pendingCalls = new Map<string, {
     peerId: string;
     direction: 'incoming' | 'outgoing';
@@ -136,6 +136,14 @@ export class PeerTransport {
     if (this.outgoing.size >= MAX_FILES_PER_DIRECTION) throw new Error('All direct outgoing file slots are busy.');
     const file = await invoke<RtcFileDescriptor | null>('pick_rtc_file');
     if (!file) return null;
+    return this.sendPreparedFile(peerId, file);
+  }
+
+  async sendPreparedFile(peerId: string, file: RtcFileDescriptor): Promise<DirectFileOffer> {
+    if (this.outgoing.size >= MAX_FILES_PER_DIRECTION) throw new Error('All direct outgoing file slots are busy.');
+    if (!validUuid(file.token) || !validFileName(file.file_name)
+      || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > 32 * 1024 * 1024 * 1024
+      || !validSha256(file.sha256)) throw new Error('Invalid prepared P2P file descriptor.');
     let session: Session | undefined;
     try {
       session = this.createSession(crypto.randomUUID(), peerId, true, false);
@@ -151,7 +159,7 @@ export class PeerTransport {
     }
   }
 
-  async acceptFile(token: string): Promise<void> {
+  async acceptFile(token: string, previewOnly = false): Promise<void> {
     const incoming = this.incoming.get(token);
     if (!incoming) throw new Error('Oferta dużego pliku wygasła.');
     const session = this.sessions.get(incoming.sessionId);
@@ -161,7 +169,9 @@ export class PeerTransport {
       fileName: incoming.offer.file_name,
       size: incoming.offer.size,
       sha256: incoming.offer.sha256,
+      previewOnly,
     });
+    incoming.previewOnly = previewOnly;
     if (session.channel.readyState !== 'open') {
       await invoke('close_rtc_file', { token }).catch(() => undefined);
       throw new Error('Bezpośredni kanał pliku został zamknięty.');
@@ -516,7 +526,7 @@ export class PeerTransport {
         return;
       }
       const offer: DirectFileOffer = { token: message.token, peer_id: session.peerId, file_name: message.file_name, size: message.size, sha256: message.sha256 };
-      this.incoming.set(message.token, { offer, sessionId: session.id });
+      this.incoming.set(message.token, { offer, sessionId: session.id, previewOnly: false });
       this.callbacks?.onFileOffer(offer);
       return;
     }

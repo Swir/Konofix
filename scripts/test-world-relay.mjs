@@ -96,6 +96,9 @@ let bobRtcSignals = 0;
 let bobRooms = 0;
 let bobRoomMessages = 0;
 let bobRoomClosed = 0;
+let bobPublicFiles = 0;
+let bobWorldVoice = 0;
+let bobVoiceSignals = 0;
 let expectedRelayFile;
 
 alice.start(alicePeer, 'Alice_test', '#35d07f', {
@@ -123,6 +126,21 @@ bob.start(bobPeer, 'Bob_test', '#4f7cff', {
     if (peerId === alice.virtualPeerId()
       && signal.action === 'offer'
       && signal.sdp === 'v=0\r\nunit-test') bobRtcSignals += 1;
+  },
+  onPublicFile(offer) {
+    if (offer.peer_id === alice.virtualPeerId()
+      && offer.file_name === 'world-large.zip'
+      && offer.sha256 === 'a'.repeat(64)) bobPublicFiles += 1;
+  },
+  onWorldVoice(state) {
+    if (state.peer_id === alice.virtualPeerId()
+      && state.status === 'queued'
+      && state.nick === 'Alice_test') bobWorldVoice += 1;
+  },
+  onVoiceSignal(peerId, signal) {
+    if (peerId === alice.virtualPeerId()
+      && signal.action === 'join'
+      && signal.scope === 'norway') bobVoiceSignals += 1;
   },
   onFileOffer(offer) {
     MockWebSocket.dropNextTarget = bob.virtualPeerId().slice('nostr:'.length);
@@ -207,6 +225,35 @@ alice.publishRtcSignal(bob.virtualPeerId(), {
 await new Promise(resolve => setTimeout(resolve, 20));
 assert.equal(bobRtcSignals, 1, 'encrypted WebRTC signaling must reach only the addressed live identity once');
 
+const publicFileNow = Date.now();
+alice.publishPublicFile({
+  offer_id: crypto.randomUUID(),
+  peer_id: alicePeer,
+  nick: 'Alice_test',
+  nick_color: '#35d07f',
+  file_name: 'world-large.zip',
+  size: 25 * 1024 * 1024,
+  sha256: 'a'.repeat(64),
+  kind: 'file',
+  timestamp: publicFileNow,
+  expires_at: publicFileNow + 10 * 60_000,
+});
+alice.publishWorldVoice({
+  status: 'queued',
+  request_id: crypto.randomUUID(),
+  joined_at: Date.now(),
+});
+alice.publishVoiceSignal(bob.virtualPeerId(), {
+  connection_id: crypto.randomUUID(),
+  action: 'join',
+  scope: 'norway',
+  reply: false,
+});
+await new Promise(resolve => setTimeout(resolve, 30));
+assert.equal(bobPublicFiles, 1, 'signed WORLD file metadata must cross WAN relays exactly once');
+assert.equal(bobWorldVoice, 1, 'signed WORLD speaking queue state must cross relays exactly once');
+assert.equal(bobVoiceSignals, 1, 'room voice signaling must stay encrypted and recipient-addressed');
+
 const relayFile = Buffer.alloc(40 * 1024);
 for (let index = 0; index < relayFile.length; index += 1) relayFile[index] = index % 251;
 expectedRelayFile = relayFile;
@@ -285,6 +332,16 @@ const peerTransport = spawnSync(process.execPath, ['--experimental-strip-types',
   stdio: 'inherit',
 });
 assert.equal(peerTransport.status, 0, 'peer transport integration test must pass');
+const groupVoice = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/test-group-voice.mjs'], {
+  cwd: process.cwd(),
+  stdio: 'inherit',
+});
+assert.equal(groupVoice.status, 0, 'group voice integration test must pass');
+const i18n = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/test-i18n.mjs'], {
+  cwd: process.cwd(),
+  stdio: 'inherit',
+});
+assert.equal(i18n.status, 0, 'automatic language selection test must pass');
 const callTones = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/test-call-tones.mjs'], {
   cwd: process.cwd(),
   stdio: 'inherit',

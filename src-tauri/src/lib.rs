@@ -213,6 +213,7 @@ struct RtcOutgoingFile {
     file_name: String,
     size: u64,
     sha256: String,
+    expires_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +223,7 @@ struct RtcIncomingFile {
     size: u64,
     sha256: String,
     next_offset: u64,
+    preview_only: bool,
 }
 
 fn install_network_sender(
@@ -390,6 +392,7 @@ struct PublicShareOffer {
     nick_color: Option<String>,
     file_name: String,
     size: u64,
+    sha256: String,
     kind: String,
     #[serde(default)]
     mime: Option<String>,
@@ -1050,6 +1053,7 @@ enum NetworkCommand {
         path: PathBuf,
         file_name: String,
         size: u64,
+        sha256: String,
         kind: String,
         mime: Option<String>,
         room_id: Option<String>,
@@ -1230,7 +1234,7 @@ fn image_mime_from_header(data: &[u8]) -> Option<&'static str> {
     }
 }
 
-async fn detect_image_mime(path: &Path) -> Result<String, String> {
+async fn probe_image_mime(path: &Path) -> Result<Option<String>, String> {
     let mut file = File::open(path)
         .await
         .map_err(|error| format!("Nie można otworzyć obrazu: {error}"))?;
@@ -1239,8 +1243,12 @@ async fn detect_image_mime(path: &Path) -> Result<String, String> {
         .read(&mut header)
         .await
         .map_err(|error| format!("Nie można sprawdzić obrazu: {error}"))?;
-    image_mime_from_header(&header[..read])
-        .map(str::to_string)
+    Ok(image_mime_from_header(&header[..read]).map(str::to_string))
+}
+
+async fn detect_image_mime(path: &Path) -> Result<String, String> {
+    probe_image_mime(path)
+        .await?
         .ok_or_else(|| "Obsługiwane obrazy: PNG, JPEG, GIF i WebP.".to_string())
 }
 
@@ -1293,6 +1301,7 @@ fn public_share_offer_is_well_formed(offer: &PublicShareOffer) -> bool {
         && file_offer_name_error(&offer.file_name).is_none()
         && offer.file_name == safe_filename(&offer.file_name)
         && offer.size <= MAX_FILE_SIZE
+        && valid_sha256(&offer.sha256)
         && offer.timestamp > 0
         && lifetime > 0
         && lifetime <= PUBLIC_OFFER_TTL_SECS * 1000
@@ -2169,6 +2178,7 @@ async fn pick_rtc_file(state: State<'_, AppState>) -> Result<Option<RtcFileDescr
         file_name: file_name.clone(),
         size: metadata.len(),
         sha256: sha256.clone(),
+        expires_at: None,
     };
     state
         .rtc_outgoing_files
@@ -2181,6 +2191,45 @@ async fn pick_rtc_file(state: State<'_, AppState>) -> Result<Option<RtcFileDescr
         size: metadata.len(),
         sha256,
     }))
+}
+
+#[tauri::command]
+async fn prepare_public_rtc_file(
+    offer_id: String,
+    transfer_token: String,
+    state: State<'_, AppState>,
+) -> Result<RtcFileDescriptor, String> {
+    Uuid::parse_str(&offer_id)
+        .map_err(|_| "Nieprawidłowy identyfikator publicznej oferty.")?;
+    Uuid::parse_str(&transfer_token)
+        .map_err(|_| "Nieprawidłowy identyfikator transferu P2P.")?;
+    let mut files = state
+        .rtc_outgoing_files
+        .lock()
+        .map_err(|_| "Błąd blokady plików P2P.")?;
+    let now = Instant::now();
+    files.retain(|_, file| file.expires_at.is_none_or(|expires_at| expires_at > now));
+    let source = files
+        .get(&offer_id)
+        .cloned()
+        .ok_or("Publiczna oferta pliku wygasła albo nie istnieje.")?;
+    if files.contains_key(&transfer_token) {
+        return Err("Identyfikator transferu P2P jest już używany.".into());
+    }
+    let descriptor = RtcFileDescriptor {
+        token: transfer_token.clone(),
+        file_name: source.file_name.clone(),
+        size: source.size,
+        sha256: source.sha256.clone(),
+    };
+    files.insert(
+        transfer_token,
+        RtcOutgoingFile {
+            expires_at: None,
+            ..source
+        },
+    );
+    Ok(descriptor)
 }
 
 #[tauri::command]
@@ -2229,6 +2278,7 @@ async fn begin_rtc_file_receive(
     file_name: String,
     size: u64,
     sha256: String,
+    preview_only: bool,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     Uuid::parse_str(&token).map_err(|_| "Nieprawidłowy identyfikator transferu P2P.")?;
@@ -2243,7 +2293,11 @@ async fn begin_rtc_file_receive(
     {
         return Err("Ten transfer P2P już istnieje.".into());
     }
-    let directory = download_directory()?;
+    let directory = if preview_only {
+        preview_directory()?
+    } else {
+        download_directory()?
+    };
     tokio::fs::create_dir_all(&directory)
         .await
         .map_err(|error| format!("Nie można utworzyć folderu pobierania: {error}"))?;
@@ -2254,6 +2308,7 @@ async fn begin_rtc_file_receive(
         size,
         sha256: sha256.to_ascii_lowercase(),
         next_offset: 0,
+        preview_only,
     };
     drop(reservation.file);
     state
@@ -2363,6 +2418,13 @@ async fn finish_rtc_file_receive(
         let _ = tokio::fs::remove_file(&incoming.temp_path).await;
         return Err("Suma SHA-256 odebranego pliku P2P jest niezgodna.".into());
     }
+    if incoming.preview_only {
+        let preview_root = preview_directory()?;
+        if !incoming.final_path.starts_with(&preview_root) {
+            let _ = tokio::fs::remove_file(&incoming.temp_path).await;
+            return Err("Nieprawidłowa ścieżka podglądu P2P.".into());
+        }
+    }
     commit_reserved_file(&incoming.temp_path, &incoming.final_path).await?;
     Ok(incoming.final_path.to_string_lossy().into_owned())
 }
@@ -2402,11 +2464,9 @@ async fn publish_public_file(
         .clone()
         .ok_or("Najpierw połącz się z siecią.")?;
 
-    let dialog_title = match (room_id.as_deref(), kind.as_str()) {
-        (Some(_), "image") => "Udostępnij obraz w pokoju".to_string(),
-        (Some(_), _) => "Udostępnij plik w pokoju".to_string(),
-        (None, "image") => "Udostępnij obraz na #WORLD".to_string(),
-        (None, _) => "Udostępnij plik na #WORLD".to_string(),
+    let dialog_title = match room_id.as_deref() {
+        Some(_) => "Udostępnij plik w pokoju".to_string(),
+        None => "Udostępnij plik na #WORLD".to_string(),
     };
     let path = tokio::task::spawn_blocking(move || {
         rfd::FileDialog::new().set_title(dialog_title).pick_file()
@@ -2426,25 +2486,25 @@ async fn publish_public_file(
     if metadata.len() > MAX_FILE_SIZE {
         return Err("Plik jest większy niż limit 32 GiB tej wersji.".into());
     }
-    let mime = if kind == "image" {
-        if metadata.len() > MAX_PUBLIC_IMAGE_SIZE {
-            return Err("Obraz do podglądu #WORLD może mieć maksymalnie 8 MiB.".into());
-        }
-        Some(detect_image_mime(&path).await?)
-    } else {
-        None
-    };
+    // A single file action automatically recognizes bounded PNG/JPEG/GIF/WebP
+    // previews by magic bytes. Bigger images remain ordinary downloadable files.
+    let detected_image = probe_image_mime(&path).await?;
+    let mime = detected_image.filter(|_| metadata.len() <= MAX_PUBLIC_IMAGE_SIZE);
+    let kind = if mime.is_some() { "image" } else { "file" }.to_string();
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
         .map(safe_filename)
         .ok_or("Nieprawidłowa nazwa pliku.")?;
 
+    let sha256 = sha256_file(&path).await?;
+    let rtc_path = path.clone();
     let (reply_tx, reply_rx) = oneshot::channel();
     tx.send(NetworkCommand::PublishPublicOffer {
         path,
         file_name,
         size: metadata.len(),
+        sha256: sha256.clone(),
         kind,
         mime,
         room_id,
@@ -2455,6 +2515,20 @@ async fn publish_public_file(
     let offer = reply_rx
         .await
         .map_err(|_| "Brak odpowiedzi modułu publicznych plików.".to_string())??;
+    state
+        .rtc_outgoing_files
+        .lock()
+        .map_err(|_| "Błąd blokady plików P2P.".to_string())?
+        .insert(
+            offer.offer_id.clone(),
+            RtcOutgoingFile {
+                path: rtc_path,
+                file_name: offer.file_name.clone(),
+                size: offer.size,
+                sha256,
+                expires_at: Some(Instant::now() + Duration::from_secs(PUBLIC_OFFER_TTL_SECS)),
+            },
+        );
     Ok(Some(offer))
 }
 
@@ -3844,6 +3918,7 @@ async fn network_task(
                         path,
                         file_name,
                         size,
+                        sha256,
                         kind,
                         mime,
                         room_id,
@@ -3881,6 +3956,7 @@ async fn network_task(
                                 nick_color: Some(nick_color.clone()),
                                 file_name: safe_filename(&file_name),
                                 size,
+                                sha256,
                                 kind,
                                 mime,
                                 room_id: room_id.clone(),
@@ -5828,6 +5904,7 @@ mod public_share_tests {
                 "notes.txt".into()
             },
             size,
+            sha256: "a".repeat(64),
             kind: kind.into(),
             mime: mime.map(str::to_string),
             room_id: None,
@@ -6176,6 +6253,7 @@ mod authenticated_event_tests {
                 nick_color: Some(DEFAULT_NICK_COLOR.into()),
                 file_name: "notes.txt".into(),
                 size: 42,
+                sha256: "a".repeat(64),
                 kind: "file".into(),
                 mime: None,
                 room_id: None,
@@ -6249,6 +6327,7 @@ pub fn run() {
         pick_relay_file,
         save_relay_file,
         pick_rtc_file,
+        prepare_public_rtc_file,
         read_rtc_file_chunk,
         begin_rtc_file_receive,
         write_rtc_file_chunk,
@@ -6280,6 +6359,7 @@ pub fn run() {
         pick_relay_file,
         save_relay_file,
         pick_rtc_file,
+        prepare_public_rtc_file,
         read_rtc_file_chunk,
         begin_rtc_file_receive,
         write_rtc_file_chunk,

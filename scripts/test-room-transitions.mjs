@@ -20,6 +20,10 @@ function harness() {
     relayOnlyRoomIds: new Set(),
     invoke: (command, args) => new Promise((resolve, reject) => pending.push({ command, args, resolve, reject })),
     renderChat() {}, prompt: () => 'new room', t: key => key,
+    groupVoice: {
+      leaveWorld() {}, leaveRoom() {},
+      snapshot() { return { roomActive: false }; },
+    },
     alert: message => alerts.push(message),
   });
   vm.runInContext(stripTypeScriptTypes(functions), context);

@@ -1,6 +1,6 @@
 import type { VoiceSignal, WorldVoiceState } from './world-relay';
 import { RTC_CONFIG } from './rtc-config.ts';
-import { t } from './i18n.ts';
+import { captureMicrophone, releaseMicrophoneStream, type MicrophoneCaptureScope } from './microphone-capture.ts';
 
 const WORLD_TURN_MS = 60_000;
 const MAX_GROUP_SESSIONS = 32;
@@ -20,15 +20,6 @@ const ROOM_JOIN_BURST_INTERVALS_MS = [1_000, 2_000] as const;
 const ROOM_JOIN_HEARTBEAT_MS = 30_000;
 const SESSION_RECOVERY_BACKOFF_MS = [1_000, 4_000, 12_000] as const;
 const MAX_SESSION_RECOVERY_STARTS_PER_TICK = 2;
-const MICROPHONE_CONSTRAINTS: MediaStreamConstraints = {
-  audio: {
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-    channelCount: 1,
-  },
-  video: false,
-};
 
 type Session = {
   id: string;
@@ -134,6 +125,11 @@ export class GroupVoice {
   private worldContentionUntil = 0;
   private worldStartInFlight?: string;
   private worldAutoStartEligible = false;
+  private readonly microphoneScope?: MicrophoneCaptureScope;
+
+  constructor(microphoneScope?: MicrophoneCaptureScope) {
+    this.microphoneScope = microphoneScope;
+  }
 
   start(localPeerId: string, nick: string, nickColor: string, callbacks: Callbacks): void {
     this.stop();
@@ -157,7 +153,7 @@ export class GroupVoice {
     if (this.ticker !== undefined) window.clearInterval(this.ticker);
     this.ticker = undefined;
     for (const session of [...this.sessions.values()]) this.closeSession(session);
-    this.localStream?.getTracks().forEach(track => track.stop());
+    releaseMicrophoneStream(this.localStream);
     this.localStream = undefined;
     this.roomScope = undefined;
     this.roomMembershipId = undefined;
@@ -229,12 +225,12 @@ export class GroupVoice {
     this.error = undefined;
     try {
       this.callbacks?.beforeMicrophoneCapture?.();
-      const stream = await this.captureMicrophone();
+      const stream = await captureMicrophone({ scope: this.microphoneScope, releaseOwnedStreams: () => this.stopLocalStream() });
       if (mediaEpoch !== this.mediaEpoch
         || !this.localWorld
         || this.localWorld.request_id !== queued.request_id
         || !this.snapshot().canStartWorld) {
-        stream.getTracks().forEach(track => track.stop());
+        releaseMicrophoneStream(stream);
         return;
       }
       this.stopLocalStream();
@@ -302,9 +298,9 @@ export class GroupVoice {
     this.error = undefined;
     try {
       this.callbacks?.beforeMicrophoneCapture?.();
-      const stream = await this.captureMicrophone();
+      const stream = await captureMicrophone({ scope: this.microphoneScope, releaseOwnedStreams: () => this.stopLocalStream() });
       if (mediaEpoch !== this.mediaEpoch || this.localWorld) {
-        stream.getTracks().forEach(track => track.stop());
+        releaseMicrophoneStream(stream);
         return;
       }
       this.stopLocalStream();
@@ -325,8 +321,10 @@ export class GroupVoice {
 
   leaveRoom(): void {
     const scope = this.roomScope;
-    if (!scope) return;
+    // A room capture can still be pending before roomScope is assigned. Always
+    // invalidate it so a private call can safely take ownership of the device.
     this.mediaEpoch += 1;
+    if (!scope) return;
     this.broadcast({
       connection_id: crypto.randomUUID(), action: 'leave', scope,
       ...this.localRoomMembershipSignal(),
@@ -1182,31 +1180,8 @@ export class GroupVoice {
   }
 
   private stopLocalStream(): void {
-    this.localStream?.getTracks().forEach(track => track.stop());
+    releaseMicrophoneStream(this.localStream);
     this.localStream = undefined;
-  }
-
-  private async captureMicrophone(): Promise<MediaStream> {
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia(MICROPHONE_CONSTRAINTS);
-    } catch (error) {
-      const name = (error as { name?: unknown })?.name;
-      if (name === 'OverconstrainedError') {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      } else if (name === 'NotAllowedError' || name === 'SecurityError') {
-        throw new Error(t('audio.microphonePermission'));
-      } else {
-        throw error;
-      }
-    }
-    const tracks = stream.getAudioTracks();
-    if (tracks.length === 0 || tracks.every(track => track.readyState === 'ended')) {
-      stream.getTracks().forEach(track => track.stop());
-      throw new Error('Nie udało się uruchomić aktywnego mikrofonu.');
-    }
-    tracks.forEach(track => { track.enabled = true; });
-    return stream;
   }
 
   private emit(): void {

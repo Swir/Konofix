@@ -150,6 +150,8 @@ const EN = {
   'audio.testFailed': 'Audio test failed: {error}',
   'audio.outputBlocked': 'Audio output was blocked. Click anywhere in the app to enable sound.',
   'audio.microphonePermission': 'Microphone access is blocked. Allow Konofix Chat to use the microphone in Windows settings.',
+  'audio.microphoneMissing': 'No microphone is available. Connect or enable an input device in Windows settings.',
+  'audio.microphoneBusy': 'The microphone is busy or Windows has not released it yet. Close other audio apps and try again.',
   'update.title': 'Stable updates',
   'update.help': 'Konofix checks only signed stable releases from the official GitHub repository. Installation always requires your confirmation.',
   'update.checkNow': 'Check for updates',
@@ -354,6 +356,8 @@ const PL: Dictionary = {
   'audio.microphoneSilent': 'Nie wykryto wyraźnego sygnału. Sprawdź prywatność i urządzenie wejściowe w Windows.',
   'audio.testFailed': 'Test dźwięku nie powiódł się: {error}', 'audio.outputBlocked': 'Odtwarzanie dźwięku zostało zablokowane. Kliknij w aplikacji, aby włączyć dźwięk.',
   'audio.microphonePermission': 'Dostęp do mikrofonu jest zablokowany. Zezwól Konofix Chat na używanie mikrofonu w ustawieniach Windows.',
+  'audio.microphoneMissing': 'Nie znaleziono dostępnego mikrofonu. Podłącz lub włącz urządzenie wejściowe w ustawieniach Windows.',
+  'audio.microphoneBusy': 'Mikrofon jest zajęty albo Windows jeszcze go nie zwolnił. Zamknij inne aplikacje korzystające z dźwięku i spróbuj ponownie.',
   'update.title': 'Aktualizacje stable', 'update.help': 'Konofix sprawdza wyłącznie podpisane wydania stable w oficjalnym repozytorium GitHub. Instalacja zawsze wymaga Twojej zgody.',
   'update.checkNow': 'Sprawdź aktualizacje', 'update.ready': 'Automatyczne sprawdzanie wersji stable jest włączone.',
   'update.checking': 'Sprawdzam podpisaną aktualizację stable…', 'update.available': 'Dostępny jest Konofix {version} stable. Pobrać, zweryfikować i zainstalować teraz?',
@@ -522,6 +526,8 @@ const NO: Dictionary = {
   'audio.microphoneOk': 'Mikrofonen virker — tale ble registrert.', 'audio.microphoneSilent': 'Ingen tydelig mikrofonlyd ble registrert.',
   'audio.testFailed': 'Lydtesten mislyktes: {error}', 'audio.outputBlocked': 'Lydavspilling ble blokkert. Klikk i appen for å slå på lyd.',
   'audio.microphonePermission': 'Mikrofontilgang er blokkert. Tillat at Konofix Chat bruker mikrofonen i Windows-innstillingene.',
+  'audio.microphoneMissing': 'Ingen mikrofon er tilgjengelig. Koble til eller aktiver en inngangsenhet i Windows-innstillingene.',
+  'audio.microphoneBusy': 'Mikrofonen er opptatt, eller Windows har ikke frigitt den ennå. Lukk andre lydapper og prøv igjen.',
 };
 
 const DE: Dictionary = {
@@ -567,6 +573,8 @@ const DE: Dictionary = {
   'audio.microphoneOk': 'Mikrofon funktioniert — Sprache erkannt.', 'audio.microphoneSilent': 'Kein deutliches Mikrofonsignal erkannt.',
   'audio.testFailed': 'Audiotest fehlgeschlagen: {error}', 'audio.outputBlocked': 'Audiowiedergabe wurde blockiert. Klicke in die App, um den Ton zu aktivieren.',
   'audio.microphonePermission': 'Der Mikrofonzugriff ist blockiert. Erlaube Konofix Chat den Mikrofonzugriff in den Windows-Einstellungen.',
+  'audio.microphoneMissing': 'Kein Mikrofon verfügbar. Schließe ein Eingabegerät an oder aktiviere es in den Windows-Einstellungen.',
+  'audio.microphoneBusy': 'Das Mikrofon ist belegt oder Windows hat es noch nicht freigegeben. Schließe andere Audio-Apps und versuche es erneut.',
 };
 
 const FR: Dictionary = {
@@ -612,6 +620,8 @@ const FR: Dictionary = {
   'audio.microphoneOk': 'Le microphone fonctionne — voix détectée.', 'audio.microphoneSilent': 'Aucun signal clair du microphone détecté.',
   'audio.testFailed': 'Échec du test audio : {error}', 'audio.outputBlocked': 'La lecture audio a été bloquée. Cliquez dans l’application pour activer le son.',
   'audio.microphonePermission': 'L’accès au microphone est bloqué. Autorisez Konofix Chat à utiliser le microphone dans les paramètres Windows.',
+  'audio.microphoneMissing': 'Aucun microphone n’est disponible. Connectez ou activez un périphérique d’entrée dans les paramètres Windows.',
+  'audio.microphoneBusy': 'Le microphone est occupé ou Windows ne l’a pas encore libéré. Fermez les autres applications audio et réessayez.',
 };
 
 const ES: Dictionary = {
@@ -657,6 +667,8 @@ const ES: Dictionary = {
   'audio.microphoneOk': 'El micrófono funciona — voz detectada.', 'audio.microphoneSilent': 'No se detectó una señal clara del micrófono.',
   'audio.testFailed': 'La prueba de audio falló: {error}', 'audio.outputBlocked': 'La reproducción de audio fue bloqueada. Haz clic en la aplicación para activar el sonido.',
   'audio.microphonePermission': 'El acceso al micrófono está bloqueado. Permite que Konofix Chat use el micrófono en la configuración de Windows.',
+  'audio.microphoneMissing': 'No hay ningún micrófono disponible. Conecta o activa un dispositivo de entrada en la configuración de Windows.',
+  'audio.microphoneBusy': 'El micrófono está ocupado o Windows aún no lo ha liberado. Cierra otras aplicaciones de audio e inténtalo de nuevo.',
 };
 
 const UK: Dictionary = {
@@ -702,6 +714,8 @@ const UK: Dictionary = {
   'audio.microphoneOk': 'Мікрофон працює — голос виявлено.', 'audio.microphoneSilent': 'Чіткого сигналу мікрофона не виявлено.',
   'audio.testFailed': 'Помилка перевірки звуку: {error}', 'audio.outputBlocked': 'Відтворення звуку заблоковано. Натисніть у застосунку, щоб увімкнути звук.',
   'audio.microphonePermission': 'Доступ до мікрофона заблоковано. Дозвольте Konofix Chat використовувати мікрофон у налаштуваннях Windows.',
+  'audio.microphoneMissing': 'Немає доступного мікрофона. Підключіть або ввімкніть пристрій введення в налаштуваннях Windows.',
+  'audio.microphoneBusy': 'Мікрофон зайнятий або Windows ще не звільнила його. Закрийте інші аудіозастосунки та повторіть спробу.',
 };
 
 const DICTIONARIES: Record<Locale, Dictionary> = { en: EN, pl: PL, no: NO, de: DE, fr: FR, es: ES, uk: UK };

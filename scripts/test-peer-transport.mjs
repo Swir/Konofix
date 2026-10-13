@@ -195,9 +195,11 @@ globalThis.__TAURI_INTERNALS__ = {
 };
 
 const { PeerTransport } = await import('../src/peer-transport.ts');
+const { createMicrophoneCaptureScope } = await import('../src/microphone-capture.ts');
+const newPeerTransport = () => new PeerTransport(createMicrophoneCaptureScope());
 assert.ok(MockPeerConnection.configs.length === 0, 'peer connections must be created only when a transfer or call begins');
-const alice = new PeerTransport();
-const bob = new PeerTransport();
+const alice = newPeerTransport();
+const bob = newPeerTransport();
 const aliceId = `nostr:${'a'.repeat(64)}`;
 const bobId = `nostr:${'b'.repeat(64)}`;
 const aliceStates = [];
@@ -433,7 +435,7 @@ assert.equal(failedBobTrack.stopped, true, 'failed connection hangup must releas
 alice.stop();
 bob.stop();
 
-const reorderedControlRecipient = new PeerTransport();
+const reorderedControlRecipient = newPeerTransport();
 const reorderedControlId = randomUUID();
 let ghostIncomingCalls = 0;
 let ghostRingingStates = 0;
@@ -451,7 +453,7 @@ assert.equal(ghostRingingStates, 0, 'a delayed call request after hangup must no
 assert.equal(tombstoneHangups, 1, 'a tombstoned delayed request should receive hangup again so its retries stop');
 reorderedControlRecipient.stop();
 
-const delayedRecipient = new PeerTransport();
+const delayedRecipient = newPeerTransport();
 const delayedConnectionId = randomUUID();
 const delayedStream = new MockStream();
 let resolveDelayedMicrophone;
@@ -463,7 +465,10 @@ delayedRecipient.start({
 });
 await delayedRecipient.handleSignal(aliceId, { connection_id: delayedConnectionId, action: 'call_request' });
 const delayedAccept = delayedRecipient.acceptCall(delayedConnectionId).catch(error => error);
-await Promise.resolve();
+for (let attempt = 0; attempt < 200 && !resolveDelayedMicrophone; attempt += 1) {
+  await new Promise(resolve => setTimeout(resolve, 2));
+}
+assert.ok(resolveDelayedMicrophone, 'the delayed acceptance regression must reach browser microphone capture');
 await delayedRecipient.handleSignal(aliceId, { connection_id: delayedConnectionId, action: 'hangup' });
 resolveDelayedMicrophone(delayedStream);
 const delayedAcceptError = await delayedAccept;
@@ -472,7 +477,7 @@ assert.equal(delayedStream.getTracks()[0].stopped, true, 'an expired acceptance 
 assert.equal(delayedSignals.some(signal => signal.action === 'call_accept'), false, 'an expired acceptance must not create an orphan audio session');
 delayedRecipient.stop();
 
-const captureRaceTransport = new PeerTransport();
+const captureRaceTransport = newPeerTransport();
 const captureRaceStream = new MockStream();
 const captureRaceSignals = [];
 let resolveCaptureRace;
@@ -482,7 +487,10 @@ captureRaceTransport.start({
   onIncomingCall() {}, onCallState() {}, onRemoteAudio() {}, onFileOffer() {}, onFileProgress() {},
 });
 const captureRaceCall = captureRaceTransport.startCall(bobId).catch(error => error);
-await Promise.resolve();
+for (let attempt = 0; attempt < 200 && !resolveCaptureRace; attempt += 1) {
+  await new Promise(resolve => setTimeout(resolve, 2));
+}
+assert.ok(resolveCaptureRace, 'the private/group race regression must reach browser microphone capture');
 captureRaceTransport.hangupAllCalls();
 resolveCaptureRace(captureRaceStream);
 const captureRaceError = await captureRaceCall;
@@ -490,6 +498,69 @@ assert.match(String(captureRaceError), /cancelled/, 'switching to group voice mu
 assert.equal(captureRaceStream.getTracks()[0].stopped, true, 'a cancelled private microphone request must release the late stream');
 assert.equal(captureRaceSignals.length, 0, 'a cancelled private microphone request must not emit a ghost call request');
 captureRaceTransport.stop();
+
+const serializedTransport = newPeerTransport();
+const serializedSignals = [];
+let serializedCaptureCalls = 0;
+let resolveFirstSerializedCapture;
+const firstSerializedStream = new MockStream();
+const secondSerializedStream = new MockStream();
+navigator.mediaDevices.getUserMedia = () => {
+  serializedCaptureCalls += 1;
+  if (serializedCaptureCalls === 1) return new Promise(resolve => { resolveFirstSerializedCapture = resolve; });
+  return Promise.resolve(secondSerializedStream);
+};
+serializedTransport.start({
+  sendSignal(peerId, signal) { serializedSignals.push({ peerId, signal }); },
+  onIncomingCall() {}, onCallState() {}, onRemoteAudio() {}, onFileOffer() {}, onFileProgress() {},
+});
+const supersededCall = serializedTransport.startCall(aliceId).catch(error => error);
+const winningCall = serializedTransport.startCall(bobId);
+for (let attempt = 0; attempt < 200 && !resolveFirstSerializedCapture; attempt += 1) {
+  await new Promise(resolve => setTimeout(resolve, 5));
+}
+assert.ok(resolveFirstSerializedCapture, 'the serialized private-call regression must reach the first browser capture');
+assert.equal(serializedCaptureCalls, 1, 'two rapid calls must not invoke getUserMedia concurrently');
+resolveFirstSerializedCapture(firstSerializedStream);
+const supersededError = await supersededCall;
+await winningCall;
+assert.match(String(supersededError), /cancelled/, 'the newer private call must cancel the unresolved earlier capture');
+assert.equal(firstSerializedStream.getTracks()[0].stopped, true, 'the superseded capture must release its late stream');
+assert.equal(serializedCaptureCalls, 2, 'the winning call may capture only after the superseded stream is released');
+assert.equal(
+  serializedSignals.filter(({ signal }) => signal.action === 'call_request').every(({ peerId }) => peerId === bobId),
+  true,
+  'only the winning rapid call may emit call requests',
+);
+serializedTransport.hangupAllCalls();
+serializedTransport.stop();
+
+const failedAcceptTransport = newPeerTransport();
+const failedAcceptSignals = [];
+const failedAcceptStates = [];
+let terminalCaptureCalls = 0;
+navigator.mediaDevices.getUserMedia = async () => {
+  terminalCaptureCalls += 1;
+  throw new DOMException('permission denied', 'NotAllowedError');
+};
+failedAcceptTransport.start({
+  sendSignal(_peerId, signal) { failedAcceptSignals.push(signal); },
+  onIncomingCall() {},
+  onCallState(_peerId, state, error) { failedAcceptStates.push({ state, error }); },
+  onRemoteAudio() {}, onFileOffer() {}, onFileProgress() {},
+});
+const failedAcceptId = randomUUID();
+await failedAcceptTransport.handleSignal(aliceId, { connection_id: failedAcceptId, action: 'call_request' });
+await assert.rejects(failedAcceptTransport.acceptCall(failedAcceptId), /microphone access is blocked/i);
+assert.equal(terminalCaptureCalls, 1, 'permission denial must not be retried as a transient device race');
+assert.equal(failedAcceptTransport.pendingCalls.has(failedAcceptId), false, 'failed answer capture must clear the incoming call and its timer');
+assert.equal(
+  failedAcceptSignals.filter(signal => signal.action === 'call_reject' && signal.connection_id === failedAcceptId).length,
+  1,
+  'failed answer capture must tell the caller to stop ringing',
+);
+assert.ok(failedAcceptStates.some(({ state }) => state === 'failed'), 'failed answer capture must expose a failed local state');
+failedAcceptTransport.stop();
 
 const configuredPeerConnections = MockPeerConnection.configs.filter(Boolean);
 assert.ok(configuredPeerConnections.length > 0, 'the test must create configured WebRTC transports');

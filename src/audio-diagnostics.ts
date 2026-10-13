@@ -1,14 +1,5 @@
 import { t } from './i18n.ts';
-
-const TEST_MICROPHONE_CONSTRAINTS: MediaStreamConstraints = {
-  audio: {
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-    channelCount: 1,
-  },
-  video: false,
-};
+import { captureMicrophone, releaseMicrophoneStream } from './microphone-capture.ts';
 
 function abortError(): DOMException {
   return new DOMException('Audio test cancelled.', 'AbortError');
@@ -56,18 +47,10 @@ export async function testMicrophone(
   durationMs = 4_000,
 ): Promise<number> {
   if (signal?.aborted) throw abortError();
-  let stream: MediaStream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia(TEST_MICROPHONE_CONSTRAINTS);
-  } catch (error) {
-    const name = (error as { name?: unknown })?.name;
-    if (name === 'OverconstrainedError') {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    } else if (name === 'NotAllowedError' || name === 'SecurityError') {
-      throw new Error(t('audio.microphonePermission'));
-    } else {
-      throw error;
-    }
+  const stream = await captureMicrophone();
+  if (signal?.aborted) {
+    releaseMicrophoneStream(stream);
+    throw abortError();
   }
   let context: AudioContext | undefined;
   let frame = 0;
@@ -105,7 +88,7 @@ export async function testMicrophone(
     return peak;
   } finally {
     if (frame) window.cancelAnimationFrame(frame);
-    stream.getTracks().forEach(track => track.stop());
+    releaseMicrophoneStream(stream);
     if (context) await context.close();
     onLevel(0);
   }

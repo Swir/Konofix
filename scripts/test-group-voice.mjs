@@ -115,8 +115,10 @@ Object.defineProperty(globalThis, 'navigator', {
 });
 
 const { GroupVoice } = await import('../src/group-voice.ts');
+const { createMicrophoneCaptureScope } = await import('../src/microphone-capture.ts');
+const newGroupVoice = () => new GroupVoice(createMicrophoneCaptureScope());
 
-const raceListener = new GroupVoice();
+const raceListener = newGroupVoice();
 const raceSpeakerId = `nostr:${'c'.repeat(64)}`;
 const raceListenerId = `nostr:${'d'.repeat(64)}`;
 const staleRequestId = crypto.randomUUID();
@@ -154,7 +156,7 @@ for (let attempt = 0; attempt < 100 && raceAnswers.length === 0; attempt += 1) {
 assert.equal(raceAnswers[0]?.connection_id, activeConnectionId, 'stale WORLD traffic must not replace the pending offer for the active request');
 raceListener.stop();
 
-const cancelledSpeaker = new GroupVoice();
+const cancelledSpeaker = newGroupVoice();
 let cancelledSpeakerOffers = 0;
 cancelledSpeaker.start(`nostr:${'e'.repeat(64)}`, 'Cancelled', '#35d07f', {
   sendSignal(_peerId, signal) { if (signal.action === 'offer') cancelledSpeakerOffers += 1; },
@@ -177,8 +179,8 @@ await new Promise(resolve => setTimeout(resolve, 5));
 assert.equal(cancelledSpeakerOffers, 0, 'leaving WORLD during ICE gathering must not emit a ghost SDP offer');
 cancelledSpeaker.stop();
 
-const alice = new GroupVoice();
-const bob = new GroupVoice();
+const alice = newGroupVoice();
+const bob = newGroupVoice();
 const aliceId = `nostr:${'a'.repeat(64)}`;
 const bobId = `nostr:${'b'.repeat(64)}`;
 let bobWorldAudio = 0;
@@ -356,7 +358,7 @@ assert.equal(alice.snapshot().roomActive, true, 'room audio must own the microph
 alice.stop();
 bob.stop();
 
-const rejoinListener = new GroupVoice();
+const rejoinListener = newGroupVoice();
 const rejoinListenerId = `nostr:${'f'.repeat(64)}`;
 const rejoiningPeerId = `nostr:${'1'.repeat(64)}`;
 const roomMembershipEpoch = crypto.randomUUID();
@@ -460,7 +462,7 @@ assert.equal(rejoinListener.sessions.has(newRoomConnectionId), false, 'the activ
 rejoinListener.stop();
 
 const heartbeatPeerId = `nostr:${'8'.repeat(64)}`;
-const heartbeatVoice = new GroupVoice();
+const heartbeatVoice = newGroupVoice();
 const heartbeatSignals = [];
 heartbeatVoice.start(`nostr:${'7'.repeat(64)}`, 'Heartbeat', '#35d07f', {
   sendSignal(peerId, signal) { heartbeatSignals.push({ peerId, signal: { ...signal } }); },
@@ -490,7 +492,7 @@ assert.equal(
 );
 heartbeatVoice.stop();
 
-const disconnectVoice = new GroupVoice();
+const disconnectVoice = newGroupVoice();
 const disconnectLocalId = `nostr:${'0'.repeat(64)}`;
 const disconnectPeerId = `nostr:${'8'.repeat(64)}`;
 const disconnectSignals = [];
@@ -607,7 +609,7 @@ try {
   globalThis.clearTimeout = nativeClearTimeout;
 }
 
-const recoveryVoice = new GroupVoice();
+const recoveryVoice = newGroupVoice();
 const recoveryLocalId = `nostr:${'0'.repeat(64)}`;
 const recoveryPeerId = `nostr:${'9'.repeat(64)}`;
 const recoverySignals = [];
@@ -668,7 +670,7 @@ assert.equal(
 );
 recoveryVoice.stop();
 
-const expiryVoice = new GroupVoice();
+const expiryVoice = newGroupVoice();
 const expiryPeerId = `nostr:${'5'.repeat(64)}`;
 const expirySignals = [];
 expiryVoice.start(`nostr:${'2'.repeat(64)}`, 'Expiry', '#35d07f', {
@@ -701,8 +703,8 @@ assert.equal(
 );
 expiryVoice.stop();
 
-const contentionAlice = new GroupVoice();
-const contentionBob = new GroupVoice();
+const contentionAlice = newGroupVoice();
+const contentionBob = newGroupVoice();
 const contentionAliceId = `nostr:${'3'.repeat(64)}`;
 const contentionBobId = `nostr:${'4'.repeat(64)}`;
 let contentionCaptures = 0;
@@ -745,7 +747,7 @@ assert.equal(contentionCaptures, 1, 'WORLD contention must not capture two micro
 contentionAlice.stop();
 contentionBob.stop();
 
-const demotionVoice = new GroupVoice();
+const demotionVoice = newGroupVoice();
 const demotionPeerId = `nostr:${'1'.repeat(64)}`;
 const demotionSignals = [];
 const demotionWorldStates = [];
@@ -784,4 +786,32 @@ assert.ok(
 );
 demotionVoice.stop();
 
-console.log('Group voice test passed: contention convergence, JOIN heartbeat, bounded recovery, exact hangup, room audio and stale-rejoin protection.');
+const pendingRoomVoice = newGroupVoice();
+const pendingRoomSignals = [];
+let resolvePendingRoomCapture;
+const pendingRoomStream = new MockStream();
+const originalGetUserMedia = navigator.mediaDevices.getUserMedia;
+navigator.mediaDevices.getUserMedia = () => new Promise(resolve => { resolvePendingRoomCapture = resolve; });
+pendingRoomVoice.start(`nostr:${'7'.repeat(64)}`, 'Pending_room', '#35d07f', {
+  sendSignal(_peerId, signal) { pendingRoomSignals.push(signal); },
+  publishWorld() {},
+  peers() { return [`nostr:${'8'.repeat(64)}`]; },
+  onRemoteStream() {},
+  onState() {},
+});
+const pendingJoin = pendingRoomVoice.joinRoom('pending-room');
+for (let attempt = 0; attempt < 200 && !resolvePendingRoomCapture; attempt += 1) {
+  await new Promise(resolve => setTimeout(resolve, 5));
+}
+assert.ok(resolvePendingRoomCapture, 'the pending-room regression must reach browser microphone capture');
+pendingRoomVoice.leaveRoom();
+resolvePendingRoomCapture(pendingRoomStream);
+await pendingJoin;
+assert.equal(pendingRoomStream.getAudioTracks()[0].readyState, 'ended', 'leaving before roomScope exists must release the late microphone stream');
+assert.equal(pendingRoomVoice.snapshot().roomActive, false, 'a cancelled pending capture must not join group voice');
+assert.equal(pendingRoomVoice.snapshot().roomScope, undefined, 'a cancelled pending capture must not become the room owner');
+assert.equal(pendingRoomSignals.some(signal => signal.action === 'join'), false, 'a cancelled pending capture must not announce a ghost membership');
+pendingRoomVoice.stop();
+navigator.mediaDevices.getUserMedia = originalGetUserMedia;
+
+console.log('Group voice test passed: capture cancellation, contention convergence, JOIN heartbeat, bounded recovery, exact hangup, room audio and stale-rejoin protection.');

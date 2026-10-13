@@ -10,6 +10,32 @@ concurrency:
   group: konofix-android-titanium-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  desktop-regression:
+    name: Existing Windows WORLD and voice regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Run unchanged regression suite, including desktop-only group voice
+        run: |
+          set -euo pipefail
+          mkdir -p regression-out
+          npm run test:world-relay 2>&1 | tee regression-out/world-relay-tests.txt
+      - name: Preserve the independent regression result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-regression-${{ github.sha }}
+          path: regression-out/
+          retention-days: 14
+          if-no-files-found: warn
   android:
     name: SDK APK and Android 15 startup
     runs-on: ubuntu-latest
@@ -39,12 +65,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-      - name: Test shared Windows WORLD transport and bundle mobile UI
+      - name: Check and bundle mobile UI with the shared WORLD source
         run: |
           set -euo pipefail
           mkdir -p out
           npm ci
-          npm run test:world-relay 2>&1 | tee out/world-relay-tests.txt
           node --check mobile/titanium/client.js
           python -m py_compile mobile/titanium/android_build.py mobile/titanium/smoke_android.py
           node mobile/titanium/build-web.mjs

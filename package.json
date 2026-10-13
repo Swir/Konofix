@@ -47,6 +47,7 @@
     "test:group-voice": "node --experimental-strip-types scripts/test-group-voice.mjs",
     "test:i18n": "node --experimental-strip-types scripts/test-i18n.mjs",
     "test:call-tones": "node --experimental-strip-types scripts/test-call-tones.mjs",
+    "test:private-audio-output": "node --experimental-strip-types scripts/test-private-audio-output.mjs",
     "test:audio-diagnostics": "node --experimental-strip-types scripts/test-audio-diagnostics.mjs",
     "test:stable-updater": "node --experimental-strip-types scripts/test-stable-updater.mjs"
   },

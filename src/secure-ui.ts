@@ -11,6 +11,7 @@ import {
 import { peerTransport, sendFileToPeer, worldRelay } from './main';
 import type { AudioCallState } from './peer-transport';
 import { CallTonePlayer } from './call-tones';
+import { PrivateAudioOutput } from './private-audio-output';
 import './secure-ui.css';
 
 const conversations = new PrivateConversationStore();
@@ -22,6 +23,18 @@ const ignoredPrivatePeers = new Set<string>();
 const audioStates = new Map<string, { state: AudioCallState; error?: string }>();
 const mutedAudioPeers = new Set<string>();
 const callTones = new CallTonePlayer();
+const privateAudioOutput = new PrivateAudioOutput({
+  onPlaybackState(peerId, blocked) {
+    const state = audioStates.get(peerId);
+    if (!state || ['ended', 'rejected', 'failed'].includes(state.state)) return;
+    if (blocked) {
+      audioStates.set(peerId, { ...state, error: t('audio.outputBlocked') });
+    } else if (state.error === t('audio.outputBlocked')) {
+      audioStates.set(peerId, { state: state.state });
+    } else return;
+    if (activePrivatePeerId === peerId) renderPrivateModal();
+  },
+});
 const PRIVATE_MESSAGES_ENABLED_KEY = 'konofix.privateMessagesEnabled';
 
 let lastSyncedPrivateMessagesEnabled: boolean | null = null;
@@ -32,8 +45,6 @@ let activePrivateColor = '';
 let bypassRoomClick = '';
 let roomOperationPending = false;
 let augmentQueued = false;
-let remoteAudioRevision = 0;
-let privateAudioBlocked = false;
 
 function esc(value: string): string {
   return value.replace(/[&<>'"]/g, character => ({
@@ -541,67 +552,11 @@ function showIncomingAudioCall(peerId: string, connectionId: string): void {
 }
 
 function attachRemoteAudio(peerId: string, stream: MediaStream | null): void {
-  const revision = ++remoteAudioRevision;
-  let audio = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
-  if (!stream) {
-    privateAudioBlocked = false;
-    callTones.stopRemoteAudio();
-    if (audio) { audio.pause(); audio.srcObject = null; audio.remove(); }
-    return;
-  }
-  const playFallback = () => {
-    if (revision !== remoteAudioRevision) return;
-    audio = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
-    if (!audio) {
-      audio = document.createElement('audio');
-      audio.id = 'konofixRemoteAudio';
-      audio.autoplay = true;
-      audio.setAttribute('playsinline', '');
-      audio.dataset.peerId = peerId;
-      document.body.appendChild(audio);
-    }
-    audio.srcObject = stream;
-    void audio.play().then(() => {
-      privateAudioBlocked = false;
-      const state = audioStates.get(peerId);
-      if (state?.state === 'connected' && state.error === t('audio.outputBlocked')) {
-        audioStates.set(peerId, { state: 'connected' });
-        if (activePrivatePeerId === peerId) renderPrivateModal();
-      }
-    }).catch(() => {
-      privateAudioBlocked = true;
-      audioStates.set(peerId, { state: 'connected', error: t('audio.outputBlocked') });
-      if (activePrivatePeerId === peerId) renderPrivateModal();
-    });
-  };
-  void callTones.playRemoteAudio(stream).then(playing => {
-    if (revision !== remoteAudioRevision) return;
-    if (!playing) {
-      playFallback();
-      return;
-    }
-    privateAudioBlocked = false;
-    const fallback = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
-    if (fallback) { fallback.pause(); fallback.srcObject = null; fallback.remove(); }
-  }).catch(playFallback);
+  privateAudioOutput.attach(peerId, stream);
 }
 
 function resumePrivateAudio(): void {
-  if (!privateAudioBlocked) return;
-  const audio = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
-  if (!audio) {
-    privateAudioBlocked = false;
-    return;
-  }
-  const peerId = audio.dataset.peerId ?? '';
-  void audio.play().then(() => {
-    privateAudioBlocked = false;
-    const state = audioStates.get(peerId);
-    if (state?.state === 'connected' && state.error === t('audio.outputBlocked')) {
-      audioStates.set(peerId, { state: 'connected' });
-      if (activePrivatePeerId === peerId) renderPrivateModal();
-    }
-  }).catch(() => { privateAudioBlocked = true; });
+  privateAudioOutput.retry();
 }
 
 window.addEventListener('pointerdown', resumePrivateAudio, { passive: true });
@@ -761,12 +716,14 @@ async function wireSecureEvents(): Promise<void> {
   });
   window.addEventListener('konofix-audio-call-state', event => {
     const detail = (event as CustomEvent<{ peerId: string; state: AudioCallState; error?: string }>).detail;
-    audioStates.set(detail.peerId, { state: detail.state, error: detail.error });
+    const error = detail.error ?? (privateAudioOutput.isBlocked(detail.peerId)
+      && ['connecting', 'connected', 'muted'].includes(detail.state) ? t('audio.outputBlocked') : undefined);
+    audioStates.set(detail.peerId, { state: detail.state, error });
     if (detail.state === 'calling') callTones.start('outgoing');
     else if (detail.state === 'ringing') callTones.start('incoming');
     else callTones.stop();
     if (['ended', 'rejected', 'failed'].includes(detail.state)) {
-      callTones.stopRemoteAudio();
+      privateAudioOutput.stop(detail.peerId);
       mutedAudioPeers.delete(detail.peerId);
       document.querySelectorAll<HTMLElement>('.audio-call-wrap').forEach(modal => {
         if (modal.dataset.peerId === detail.peerId) modal.remove();
@@ -781,7 +738,7 @@ async function wireSecureEvents(): Promise<void> {
   await listen<{ phase?: string }>('network-status', event => {
     if (event.payload?.phase === 'offline') {
       callTones.stop();
-      callTones.stopRemoteAudio();
+      privateAudioOutput.stop();
       lastSyncedPrivateMessagesEnabled = null;
       return;
     }
@@ -798,7 +755,7 @@ async function wireSecureEvents(): Promise<void> {
   });
   await listen('network-error', () => {
     callTones.stop();
-    callTones.stopRemoteAudio();
+    privateAudioOutput.stop();
     conversations.reset();
     roomState.clear();
     authorizedRoomRevision.clear();

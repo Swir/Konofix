@@ -13,8 +13,6 @@ export class CallTonePlayer {
   private mode?: CallToneMode;
   private readonly timers = new Set<number>();
   private readonly oscillators = new Set<OscillatorNode>();
-  private remoteSource?: MediaStreamAudioSourceNode;
-  private remoteRevision = 0;
 
   constructor(createContext: AudioContextFactory = () => new AudioContext()) {
     this.createContext = createContext;
@@ -49,25 +47,6 @@ export class CallTonePlayer {
   }
 
   activeMode(): CallToneMode | undefined { return this.mode; }
-
-  async playRemoteAudio(stream: MediaStream): Promise<boolean> {
-    const revision = ++this.remoteRevision;
-    await this.unlock();
-    if (revision !== this.remoteRevision) return false;
-    const context = this.context;
-    if (!context || context.state !== 'running') throw new Error('Audio output is unavailable.');
-    this.remoteSource?.disconnect();
-    const source = context.createMediaStreamSource(stream);
-    source.connect(context.destination);
-    this.remoteSource = source;
-    return true;
-  }
-
-  stopRemoteAudio(): void {
-    this.remoteRevision += 1;
-    this.remoteSource?.disconnect();
-    this.remoteSource = undefined;
-  }
 
   private later(callback: () => void, delay: number): void {
     const timer = window.setTimeout(() => {

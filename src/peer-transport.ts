@@ -61,6 +61,7 @@ type Session = {
   pendingIce: RTCIceCandidateInit[];
   localStream?: MediaStream;
   audio: boolean;
+  initiator: boolean;
   closed: boolean;
   receiveChain: Promise<void>;
   idleTimer?: number;
@@ -68,6 +69,7 @@ type Session = {
   disconnectTimer?: number;
   offerRetryTimer?: number;
   answerInFlight?: Promise<void>;
+  remoteAnswerInFlight?: Promise<void>;
   established: boolean;
 };
 
@@ -385,6 +387,7 @@ export class PeerTransport {
   }
 
   async handleSignal(peerId: string, signal: RtcSignal): Promise<void> {
+    if (!this.callbacks) return;
     if (signal.action === 'call_request') {
       if (this.hasEndedCall(peerId, signal.connection_id)) {
         try { this.callbacks?.sendSignal(peerId, { connection_id: signal.connection_id, action: 'hangup' }); } catch {}
@@ -433,11 +436,16 @@ export class PeerTransport {
       this.rememberEndedCall(peerId, signal.connection_id);
       if ((!call || call.peerId !== peerId) && (!session || session.peerId !== peerId)) return;
       if (call) this.clearCallTimers(call);
-      if (session) this.closeSession(session);
+      if (session) {
+        if (!session.audio) this.failSessionFiles(session, 'Peer ended the direct file connection.');
+        this.closeSession(session);
+      }
       else releaseMicrophoneStream(call?.stream);
       this.pendingCalls.delete(signal.connection_id);
-      this.callbacks?.onRemoteAudio(peerId, null);
-      this.callbacks?.onCallState(peerId, 'ended');
+      if (call || session?.audio) {
+        this.callbacks?.onRemoteAudio(peerId, null);
+        this.callbacks?.onCallState(peerId, 'ended');
+      }
       return;
     }
     if (signal.action === 'call_accept') {
@@ -455,10 +463,15 @@ export class PeerTransport {
       let session: Session | undefined;
       try {
         stream = call.stream ?? await captureMicrophone({ scope: this.microphoneScope });
+        if (this.pendingCalls.get(signal.connection_id) !== call) {
+          releaseMicrophoneStream(stream);
+          return;
+        }
         session = this.createSession(signal.connection_id, peerId, true, true, stream);
         this.callbacks?.onCallState(peerId, 'connecting');
         await this.negotiate(session);
       } catch (error) {
+        if (session?.closed || this.pendingCalls.get(signal.connection_id) !== call) return;
         if (session) this.closeSession(session);
         else releaseMicrophoneStream(stream);
         this.callbacks?.sendSignal(peerId, { connection_id: signal.connection_id, action: 'hangup' });
@@ -469,6 +482,7 @@ export class PeerTransport {
       return;
     }
     let session = this.sessions.get(signal.connection_id);
+    if (this.hasEndedCall(peerId, signal.connection_id)) return;
     if (signal.action === 'ice' && signal.candidate && !session) {
       const queued = this.earlyIce.get(signal.connection_id);
       if (queued && queued.peerId !== peerId) return;
@@ -491,7 +505,7 @@ export class PeerTransport {
         return;
       }
       if (!session) session = this.createSession(signal.connection_id, peerId, false, false);
-      if (session.peerId !== peerId) return;
+      if (session.peerId !== peerId || session.closed || session.initiator) return;
       const acceptedCall = this.pendingCalls.get(signal.connection_id);
       if (acceptedCall?.direction === 'incoming') {
         if (acceptedCall.controlTimer !== undefined) window.clearTimeout(acceptedCall.controlTimer);
@@ -509,8 +523,9 @@ export class PeerTransport {
         return;
       }
       if (session.pc.remoteDescription?.type === 'offer'
-        && session.pc.remoteDescription.sdp === signal.sdp
         && session.pc.localDescription?.type === 'answer') {
+        // A connection ID identifies one negotiation. Retransmitted offers may
+        // contain additional gathered candidates; resend the existing answer.
         this.callbacks?.sendSignal(peerId, {
           connection_id: session.id,
           action: 'answer',
@@ -518,11 +533,16 @@ export class PeerTransport {
         });
         return;
       }
+      if (session.pc.signalingState !== 'stable') return;
       const answering = (async () => {
         await session.pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp! });
+        if (session.closed) return;
         await this.flushIce(session);
+        if (session.closed) return;
         const answer = await session.pc.createAnswer();
+        if (session.closed) return;
         await session.pc.setLocalDescription(answer);
+        if (session.closed) return;
         await waitForIceGathering(session.pc);
         if (session.closed) return;
         this.callbacks?.sendSignal(peerId, {
@@ -532,19 +552,41 @@ export class PeerTransport {
         });
       })();
       session.answerInFlight = answering;
-      try { await answering; } finally {
+      try { await answering; } catch (error) {
+        // Closing the PC cancels queued browser operations. Do not turn an
+        // intentional hangup into a failed state (or silence a newer call).
+        if (!session.closed) throw error;
+      } finally {
         if (session.answerInFlight === answering) session.answerInFlight = undefined;
       }
       return;
     }
-    if (!session || session.peerId !== peerId) return;
+    if (!session || session.peerId !== peerId || session.closed) return;
     if (signal.action === 'answer') {
-      if (!signal.sdp) return;
+      if (!signal.sdp || !session.initiator) return;
+      // signalingState/remoteDescription update asynchronously. Reserve the
+      // operation before yielding so simultaneous relay copies apply only once.
+      if (session.remoteAnswerInFlight) {
+        try { await session.remoteAnswerInFlight; } catch { /* The first delivery reports the failure. */ }
+        return;
+      }
       if (session.pc.remoteDescription?.type === 'answer') return;
-      await session.pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp });
-      if (session.offerRetryTimer !== undefined) window.clearTimeout(session.offerRetryTimer);
-      session.offerRetryTimer = undefined;
-      await this.flushIce(session);
+      if (session.pc.signalingState !== 'have-local-offer') return;
+      const applying = (async () => {
+        try {
+          await session.pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp! });
+          if (session.closed) return;
+          if (session.offerRetryTimer !== undefined) window.clearTimeout(session.offerRetryTimer);
+          session.offerRetryTimer = undefined;
+          await this.flushIce(session);
+        } catch (error) {
+          if (!session.closed) throw error;
+        }
+      })();
+      session.remoteAnswerInFlight = applying;
+      try { await applying; } finally {
+        if (session.remoteAnswerInFlight === applying) session.remoteAnswerInFlight = undefined;
+      }
     } else if (signal.action === 'ice' && signal.candidate) {
       const candidate: RTCIceCandidateInit = {
         candidate: signal.candidate,
@@ -555,6 +597,18 @@ export class PeerTransport {
         try { await session.pc.addIceCandidate(candidate); } catch {}
       }
       else session.pendingIce.push(candidate);
+    }
+  }
+
+  reportSignalError(peerId: string, signal: RtcSignal, error: unknown): void {
+    const session = this.sessions.get(signal.connection_id);
+    // File transfers and audio may coexist with the same peer. A failed or
+    // obsolete negotiation must only terminate its own exact connection.
+    if (!session || session.peerId !== peerId || session.closed) return;
+    if (session.audio) this.failAudioSession(session, String(error));
+    else {
+      this.failSessionFiles(session, String(error));
+      this.closeSession(session);
     }
   }
 
@@ -572,6 +626,7 @@ export class PeerTransport {
       pendingIce: earlyIce?.peerId === peerId ? earlyIce.candidates : [],
       localStream: stream,
       audio,
+      initiator,
       closed: false,
       established: false,
       receiveChain: Promise.resolve(),
@@ -675,7 +730,9 @@ export class PeerTransport {
 
   private async negotiate(session: Session): Promise<void> {
     const offer = await session.pc.createOffer();
+    if (session.closed) return;
     await session.pc.setLocalDescription(offer);
+    if (session.closed) return;
     await waitForIceGathering(session.pc);
     if (session.closed) return;
     const signal: RtcSignal = {

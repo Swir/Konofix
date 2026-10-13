@@ -535,6 +535,11 @@ const callTones = spawnSync(process.execPath, ['--experimental-strip-types', 'sc
   stdio: 'inherit',
 });
 assert.equal(callTones.status, 0, 'call tone integration test must pass');
+const privateAudioOutput = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/test-private-audio-output.mjs'], {
+  cwd: process.cwd(),
+  stdio: 'inherit',
+});
+assert.equal(privateAudioOutput.status, 0, 'private native audio output lifecycle test must pass');
 const audioDiagnostics = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/test-audio-diagnostics.mjs'], {
   cwd: process.cwd(),
   stdio: 'inherit',

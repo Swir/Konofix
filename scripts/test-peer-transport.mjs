@@ -62,6 +62,8 @@ class MockPeerConnection extends EventTarget {
   tracks = [];
   candidates = [];
   gatheringDeferred = false;
+  remoteDescriptionGate;
+  remoteDescriptionCalls = 0;
   remote;
   constructor(config) {
     super();
@@ -108,6 +110,14 @@ class MockPeerConnection extends EventTarget {
     this.dispatchEvent(new Event('icegatheringstatechange'));
   }
   async setRemoteDescription(description) {
+    this.remoteDescriptionCalls += 1;
+    // Browser SDP operations finish asynchronously: duplicate relay callbacks
+    // can run while remoteDescription and signalingState still hold old values.
+    await (this.remoteDescriptionGate ?? Promise.resolve());
+    if (this.signalingState === 'closed') throw new DOMException('closed PC', 'InvalidStateError');
+    const id = Number(/a=mock-pc:(\d+)/.exec(description.sdp)?.[1]);
+    const remote = MockPeerConnection.registry.get(id);
+    if (!remote) throw new Error('missing mock remote');
     if (description.type === 'offer') {
       if (this.signalingState !== 'stable') throw new Error('invalid remote offer state');
       this.signalingState = 'have-remote-offer';
@@ -116,9 +126,6 @@ class MockPeerConnection extends EventTarget {
       this.signalingState = 'stable';
     }
     this.remoteDescription = description;
-    const id = Number(/a=mock-pc:(\d+)/.exec(description.sdp)?.[1]);
-    const remote = MockPeerConnection.registry.get(id);
-    if (!remote) throw new Error('missing mock remote');
     this.remote = remote;
     remote.remote = this;
     if (description.type === 'offer' && remote.channel && !this.channel) {
@@ -147,6 +154,7 @@ class MockPeerConnection extends EventTarget {
     this.candidates.push(candidate);
   }
   close() {
+    this.signalingState = 'closed';
     this.connectionState = 'closed';
     this.iceConnectionState = 'closed';
     MockPeerConnection.registry.delete(this.id);
@@ -434,6 +442,132 @@ assert.equal(failedAliceTrack.stopped, true, 'failed connection must release the
 assert.equal(failedBobTrack.stopped, true, 'failed connection hangup must release the remote microphone');
 alice.stop();
 bob.stop();
+
+// Exercise overlapping SDP application independently of timer-based retries.
+async function pendingAnswerFixture() {
+  const transport = newPeerTransport();
+  const signals = [];
+  const states = [];
+  const streams = [];
+  const fileProgress = [];
+  transport.start({
+    sendSignal(_peerId, signal) { signals.push(signal); },
+    onIncomingCall() {},
+    onCallState(_peerId, state) { states.push(state); },
+    onRemoteAudio(_peerId, stream) { streams.push(stream); },
+    onFileOffer() {}, onFileProgress(progress) { fileProgress.push(progress); },
+  });
+  await transport.startCall(bobId);
+  const id = signals.find(signal => signal.action === 'call_request').connection_id;
+  await transport.handleSignal(bobId, { connection_id: id, action: 'call_accept' });
+  const session = transport.sessions.get(id);
+  assert.equal(session.pc.signalingState, 'have-local-offer');
+  const remote = new MockPeerConnection();
+  remote.addTrack(new MockTrack(), new MockStream());
+  const answer = { connection_id: id, action: 'answer', sdp: (await remote.createAnswer()).sdp };
+  return { transport, id, session, remote, answer, signals, states, streams, fileProgress };
+}
+
+const duplicateAnswer = await pendingAnswerFixture();
+let finishDuplicateAnswer;
+duplicateAnswer.session.pc.remoteDescriptionGate = new Promise(resolve => { finishDuplicateAnswer = resolve; });
+const firstAnswer = duplicateAnswer.transport.handleSignal(bobId, duplicateAnswer.answer);
+const secondAnswer = duplicateAnswer.transport.handleSignal(bobId, duplicateAnswer.answer);
+assert.equal(duplicateAnswer.session.pc.remoteDescriptionCalls, 1, 'concurrent copies must reserve one browser SDP operation before yielding');
+finishDuplicateAnswer();
+await Promise.all([firstAnswer, secondAnswer]);
+assert.equal(duplicateAnswer.session.pc.signalingState, 'stable');
+assert.equal(duplicateAnswer.streams.filter(Boolean).length, 1, 'duplicate answers must not duplicate or silence private audio');
+await duplicateAnswer.transport.handleSignal(bobId, duplicateAnswer.answer);
+assert.equal(duplicateAnswer.session.pc.remoteDescriptionCalls, 1, 'stable duplicate answers must remain idempotent');
+duplicateAnswer.transport.hangupAllCalls();
+duplicateAnswer.transport.stop();
+duplicateAnswer.remote.close();
+
+const cancelledAnswer = await pendingAnswerFixture();
+let finishCancelledAnswer;
+cancelledAnswer.session.pc.remoteDescriptionGate = new Promise(resolve => { finishCancelledAnswer = resolve; });
+const cancelledAnswers = [
+  cancelledAnswer.transport.handleSignal(bobId, cancelledAnswer.answer),
+  cancelledAnswer.transport.handleSignal(bobId, cancelledAnswer.answer),
+];
+cancelledAnswer.transport.hangupAllCalls();
+const statesAtHangup = cancelledAnswer.states.length;
+finishCancelledAnswer();
+await Promise.all(cancelledAnswers);
+await cancelledAnswer.transport.handleSignal(bobId, cancelledAnswer.answer);
+await cancelledAnswer.transport.handleSignal(bobId, {
+  connection_id: cancelledAnswer.id, action: 'ice', candidate: 'candidate:late',
+});
+assert.equal(cancelledAnswer.states.length, statesAtHangup, 'a closed SDP operation must not revive connected/failed UI');
+assert.equal(cancelledAnswer.streams.filter(Boolean).length, 0, 'late answer must not revive private playback');
+assert.equal(cancelledAnswer.transport.earlyIce.has(cancelledAnswer.id), false, 'late ICE for an ended call must not be buffered');
+cancelledAnswer.transport.stop();
+cancelledAnswer.remote.close();
+
+const invalidAnswer = await pendingAnswerFixture();
+await assert.rejects(invalidAnswer.transport.handleSignal(bobId, {
+  ...invalidAnswer.answer, sdp: 'invalid SDP',
+}), /missing mock remote/, 'actual errors on an active call must not be hidden');
+assert.equal(invalidAnswer.session.remoteAnswerInFlight, undefined, 'failed SDP application must release the in-flight guard');
+await invalidAnswer.transport.handleSignal(bobId, invalidAnswer.answer);
+assert.equal(invalidAnswer.session.pc.signalingState, 'stable', 'a valid subsequent answer must still be applicable');
+const invalidFile = { token: randomUUID(), file_name: 'concurrent.bin', size: 123, sha256 };
+await invalidAnswer.transport.sendPreparedFile(bobId, invalidFile);
+const invalidFileOffer = invalidAnswer.signals.find(signal => signal.action === 'offer' && signal.connection_id !== invalidAnswer.id);
+const invalidFileAnswer = { connection_id: invalidFileOffer.connection_id, action: 'answer', sdp: 'invalid file SDP' };
+const statesBeforeFileFailure = invalidAnswer.states.length;
+const streamsBeforeFileFailure = invalidAnswer.streams.length;
+const fileSignalError = await invalidAnswer.transport.handleSignal(bobId, invalidFileAnswer).catch(error => error);
+assert.ok(fileSignalError instanceof Error, 'the concurrent file regression must produce a genuine SDP error');
+invalidAnswer.transport.reportSignalError(bobId, invalidFileAnswer, fileSignalError);
+assert.equal(invalidAnswer.transport.sessions.has(invalidFileOffer.connection_id), false, 'a failed file negotiation must be closed');
+assert.ok(invalidAnswer.fileProgress.some(progress => progress.token === invalidFile.token && progress.status === 'failed'), 'the file must expose its own failed status');
+assert.equal(invalidAnswer.states.length, statesBeforeFileFailure, 'a file signaling error must not report the live private call as failed');
+assert.equal(invalidAnswer.streams.length, streamsBeforeFileFailure, 'a file signaling error must not silence private audio');
+assert.equal(invalidAnswer.transport.sessions.get(invalidAnswer.id), invalidAnswer.session, 'the independent audio connection must survive a file failure');
+const endedFile = { ...invalidFile, token: randomUUID(), file_name: 'ended.bin' };
+await invalidAnswer.transport.sendPreparedFile(bobId, endedFile);
+const endedFileOffer = invalidAnswer.signals.filter(signal => signal.action === 'offer').at(-1);
+await invalidAnswer.transport.handleSignal(bobId, { connection_id: endedFileOffer.connection_id, action: 'hangup' });
+assert.equal(invalidAnswer.states.length, statesBeforeFileFailure, 'file-only hangup must not end the private call with the same peer');
+assert.equal(invalidAnswer.streams.length, streamsBeforeFileFailure, 'file-only hangup must leave private output intact');
+assert.equal(invalidAnswer.transport.sessions.has(endedFileOffer.connection_id), false, 'file-only hangup must close that file connection');
+assert.ok(invalidAnswer.fileProgress.some(progress => progress.token === endedFile.token && progress.status === 'failed'), 'file-only hangup must report termination to that transfer');
+invalidAnswer.transport.reportSignalError(bobId, invalidAnswer.answer, new Error('genuine audio failure'));
+assert.equal(invalidAnswer.states.at(-1), 'failed', 'genuine audio failures must remain visible');
+assert.equal(invalidAnswer.streams.at(-1), null, 'genuine audio failures must clean up their own output');
+const statesAfterAudioFailure = invalidAnswer.states.length;
+invalidAnswer.transport.reportSignalError(bobId, invalidAnswer.answer, new Error('late failure'));
+assert.equal(invalidAnswer.states.length, statesAfterAudioFailure, 'stale errors must not emit duplicate terminal state');
+invalidAnswer.transport.hangupAllCalls();
+invalidAnswer.transport.stop();
+invalidAnswer.remote.close();
+
+const cancelledOffer = newPeerTransport();
+const cancelledOfferSignals = [];
+cancelledOffer.start({
+  sendSignal(_peerId, signal) { cancelledOfferSignals.push(signal); },
+  onIncomingCall() {}, onCallState() {}, onRemoteAudio() {}, onFileOffer() {}, onFileProgress() {},
+});
+const cancelledOfferId = randomUUID();
+await cancelledOffer.handleSignal(aliceId, { connection_id: cancelledOfferId, action: 'call_request' });
+await cancelledOffer.acceptCall(cancelledOfferId);
+const cancelledOfferSession = cancelledOffer.sessions.get(cancelledOfferId);
+let finishCancelledOffer;
+cancelledOfferSession.pc.remoteDescriptionGate = new Promise(resolve => { finishCancelledOffer = resolve; });
+const remoteOfferer = new MockPeerConnection();
+remoteOfferer.addTrack(new MockTrack(), new MockStream());
+const cancelledOfferSignal = { connection_id: cancelledOfferId, action: 'offer', sdp: (await remoteOfferer.createOffer()).sdp };
+const applyingCancelledOffer = cancelledOffer.handleSignal(aliceId, cancelledOfferSignal);
+await cancelledOffer.handleSignal(aliceId, { connection_id: cancelledOfferId, action: 'hangup' });
+finishCancelledOffer();
+await applyingCancelledOffer;
+await cancelledOffer.handleSignal(aliceId, cancelledOfferSignal);
+assert.equal(cancelledOfferSignals.some(signal => signal.action === 'answer'), false, 'hangup during offer application must prevent late answers');
+assert.equal(cancelledOffer.sessions.size, 0, 'late offers after hangup must not recreate the call');
+cancelledOffer.stop();
+remoteOfferer.close();
 
 const reorderedControlRecipient = newPeerTransport();
 const reorderedControlId = randomUUID();

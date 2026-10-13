@@ -19,12 +19,15 @@ class MockPeerConnection extends EventTarget {
   static registry = new Map();
   static configs = [];
   static deferNextGathering = false;
+  static nextRemoteDescriptionGate;
   id = MockPeerConnection.nextId++;
   tracks = [];
   candidates = [];
   gatheringDeferred = false;
   localDescription = null;
   remoteDescription = null;
+  remoteDescriptionCalls = [];
+  remoteDescriptionGate;
   connectionState = 'new';
   iceConnectionState = 'new';
   signalingState = 'stable';
@@ -38,11 +41,22 @@ class MockPeerConnection extends EventTarget {
     super();
     MockPeerConnection.configs.push(config);
     MockPeerConnection.registry.set(this.id, this);
+    this.remoteDescriptionGate = MockPeerConnection.nextRemoteDescriptionGate;
+    MockPeerConnection.nextRemoteDescriptionGate = undefined;
   }
   addTrack(track, stream) { this.tracks.push({ track, stream }); }
-  async createOffer() { return { type: 'offer', sdp: `v=0\r\na=mock-group:${this.id}\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111` }; }
-  async createAnswer() { return { type: 'answer', sdp: `v=0\r\na=mock-group:${this.id}\r\na=answer` }; }
+  async createOffer() {
+    await Promise.resolve();
+    if (this.signalingState === 'closed') throw new DOMException('Peer connection is closed', 'InvalidStateError');
+    return { type: 'offer', sdp: `v=0\r\na=mock-group:${this.id}\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111` };
+  }
+  async createAnswer() {
+    await Promise.resolve();
+    if (this.signalingState !== 'have-remote-offer') throw new DOMException('No remote offer', 'InvalidStateError');
+    return { type: 'answer', sdp: `v=0\r\na=mock-group:${this.id}\r\na=answer` };
+  }
   async setLocalDescription(description) {
+    await Promise.resolve();
     if (description.type === 'offer') {
       if (this.signalingState !== 'stable') throw new Error('invalid local offer state');
       this.signalingState = 'have-local-offer';
@@ -74,11 +88,15 @@ class MockPeerConnection extends EventTarget {
     this.dispatchEvent(new Event('icegatheringstatechange'));
   }
   async setRemoteDescription(description) {
+    this.remoteDescriptionCalls.push(description);
+    // The real browser does not synchronously commit remoteDescription when
+    // SRD is called. A second relay delivery can enter before this completes.
+    await this.remoteDescriptionGate;
     if (description.type === 'offer') {
-      if (this.signalingState !== 'stable') throw new Error('invalid remote offer state');
+      if (this.signalingState !== 'stable') throw new DOMException('invalid remote offer state', 'InvalidStateError');
       this.signalingState = 'have-remote-offer';
     } else if (description.type === 'answer') {
-      if (this.signalingState !== 'have-local-offer') throw new Error('duplicate or invalid remote answer');
+      if (this.signalingState !== 'have-local-offer') throw new DOMException('Called in wrong state: stable', 'InvalidStateError');
       this.signalingState = 'stable';
     }
     this.remoteDescription = description;
@@ -103,8 +121,18 @@ class MockPeerConnection extends EventTarget {
   async addIceCandidate(candidate) {
     if (candidate.candidate === 'candidate:reject-me') throw new Error('mock rejected stale ICE');
     this.candidates.push(candidate);
+    if (this.remoteDescription && candidate.candidate) {
+      this.remoteDescription = {
+        ...this.remoteDescription,
+        sdp: `${this.remoteDescription.sdp}\r\na=${candidate.candidate}`,
+      };
+    }
   }
-  close() { this.connectionState = 'closed'; MockPeerConnection.registry.delete(this.id); }
+  close() {
+    this.connectionState = 'closed';
+    this.signalingState = 'closed';
+    MockPeerConnection.registry.delete(this.id);
+  }
 }
 
 globalThis.RTCPeerConnection = MockPeerConnection;
@@ -117,6 +145,133 @@ Object.defineProperty(globalThis, 'navigator', {
 const { GroupVoice } = await import('../src/group-voice.ts');
 const { createMicrophoneCaptureScope } = await import('../src/microphone-capture.ts');
 const newGroupVoice = () => new GroupVoice(createMicrophoneCaptureScope());
+
+async function outgoingVoiceFixture(scope) {
+  const voice = newGroupVoice();
+  const peerId = `nostr:${'b'.repeat(64)}`;
+  const signals = [];
+  const streams = [];
+  voice.start(`nostr:${'a'.repeat(64)}`, 'Negotiation', '#35d07f', {
+    sendSignal(_peerId, signal) { signals.push(signal); },
+    publishWorld() {},
+    peers() { return [peerId]; },
+    onRemoteStream(_scope, _peerId, stream) { if (stream) streams.push(stream); },
+    onState() {},
+  });
+  if (scope === 'world') {
+    await voice.requestWorldTurn();
+    voice.worldContentionUntil = 0;
+    await voice.startWorldTurn();
+    await voice.ensureWorldSpeakerSession(peerId);
+  } else {
+    await voice.joinRoom(scope);
+    await voice.handleSignal(peerId, { connection_id: crypto.randomUUID(), action: 'join', scope });
+  }
+  const offer = signals.find(signal => signal.action === 'offer');
+  assert.ok(offer, 'the race fixture must start an actual outbound negotiation');
+  const session = voice.sessions.get(offer.connection_id);
+  const answerer = new MockPeerConnection();
+  if (scope !== 'world') answerer.addTrack(new MockTrack(), new MockStream());
+  await answerer.setRemoteDescription({ type: 'offer', sdp: offer.sdp });
+  await answerer.setLocalDescription(await answerer.createAnswer());
+  const answer = { connection_id: session.id, action: 'answer', scope, sdp: answerer.localDescription.sdp };
+  return { voice, peerId, session, answerer, answer, streams };
+}
+
+for (const scope of ['world', 'answer-race-room']) {
+  const { voice, peerId, session, answerer, answer } = await outgoingVoiceFixture(scope);
+  let releaseAnswer;
+  session.pc.remoteDescriptionGate = new Promise(resolve => { releaseAnswer = resolve; });
+  const deliveries = [voice.handleSignal(peerId, answer), voice.handleSignal(peerId, { ...answer })];
+  assert.equal(session.pc.remoteDescription, null, 'both relay deliveries must arrive before the browser commits the answer');
+  assert.equal(session.pc.remoteDescriptionCalls.length, 1, 'concurrent group answers must share one browser SDP operation');
+  releaseAnswer();
+  assert.ok((await Promise.allSettled(deliveries)).every(result => result.status === 'fulfilled'), 'concurrent answers must not expose the wrong-state-stable exception');
+  assert.equal(session.pc.signalingState, 'stable');
+  assert.equal(session.pc.connectionState, 'connected', 'the single applied answer must still connect audio');
+  await voice.handleSignal(peerId, answer);
+  await voice.handleSignal(peerId, { ...answer, action: 'offer', sdp: answerer.localDescription.sdp });
+  assert.equal(session.pc.remoteDescriptionCalls.length, 1, 'completed answer retries and wrong-role offers must not renegotiate a live connection');
+  assert.equal(voice.snapshot().error, undefined);
+  voice.stop();
+  await voice.handleSignal(peerId, answer);
+  await voice.handleSignal(peerId, { connection_id: session.id, action: 'ice', scope, candidate: 'candidate:late' });
+  assert.equal(voice.sessions.size, 0, 'late messages after stop must not recreate group sessions');
+  assert.equal(voice.earlyIce.size, 0, 'late ICE after stop must not retain candidates');
+  answerer.close();
+}
+
+const closingAnswerFixture = await outgoingVoiceFixture('closing-answer-room');
+{
+  const { voice, peerId, session, answerer, answer, streams } = closingAnswerFixture;
+  let releaseAnswer;
+  session.pc.remoteDescriptionGate = new Promise(resolve => { releaseAnswer = resolve; });
+  const applyingAnswer = voice.handleSignal(peerId, answer);
+  const duplicatedAnswer = voice.handleSignal(peerId, answer);
+  await voice.handleSignal(peerId, { connection_id: session.id, action: 'hangup', scope: answer.scope });
+  assert.equal(session.pc.signalingState, 'closed');
+  releaseAnswer();
+  assert.ok((await Promise.allSettled([applyingAnswer, duplicatedAnswer])).every(result => result.status === 'fulfilled'), 'hangup during pending SDP must cancel quietly, including duplicate waiters');
+  assert.equal(streams.length, 0, 'a closed pending answer must never publish remote audio');
+  assert.equal(voice.sessions.has(session.id), false);
+  assert.equal(voice.snapshot().error, undefined, 'a cancelled browser operation must not leave an error after ending the call');
+  voice.stop();
+  answerer.close();
+}
+
+const closingOfferVoice = newGroupVoice();
+const closingOfferPeer = `nostr:${'1'.repeat(64)}`;
+const closingOfferSignals = [];
+closingOfferVoice.start(`nostr:${'f'.repeat(64)}`, 'Offer_listener', '#35d07f', {
+  sendSignal(_peerId, signal) { closingOfferSignals.push(signal); },
+  publishWorld() {},
+  peers() { return []; },
+  onRemoteStream() {},
+  onState() {},
+});
+await closingOfferVoice.joinRoom('closing-offer-room');
+const closingOfferer = new MockPeerConnection();
+await closingOfferer.setLocalDescription(await closingOfferer.createOffer());
+const closingOffer = {
+  connection_id: crypto.randomUUID(), action: 'offer', scope: 'closing-offer-room', sdp: closingOfferer.localDescription.sdp,
+};
+let releaseOffer;
+MockPeerConnection.nextRemoteDescriptionGate = new Promise(resolve => { releaseOffer = resolve; });
+const applyingOffer = closingOfferVoice.handleSignal(closingOfferPeer, closingOffer);
+const repeatedOffer = closingOfferVoice.handleSignal(closingOfferPeer, { ...closingOffer });
+const closingOfferSession = closingOfferVoice.sessions.get(closingOffer.connection_id);
+assert.equal(closingOfferSession.pc.remoteDescriptionCalls.length, 1, 'incoming offer retries must also share one pending SDP operation');
+await closingOfferVoice.handleSignal(closingOfferPeer, { ...closingOffer, sdp: `${closingOffer.sdp}\r\na=different-negotiation` });
+assert.equal(closingOfferSession.pc.remoteDescriptionCalls.length, 1, 'a different offer cannot replace a pending negotiation under the same connection id');
+await closingOfferVoice.handleSignal(closingOfferPeer, { ...closingOffer, action: 'hangup', sdp: undefined });
+releaseOffer();
+assert.ok((await Promise.allSettled([applyingOffer, repeatedOffer])).every(result => result.status === 'fulfilled'), 'hangup during an incoming offer must cancel quietly');
+assert.equal(closingOfferSignals.some(signal => signal.action === 'answer'), false, 'an ended incoming negotiation must not send a ghost answer');
+await closingOfferVoice.handleSignal(closingOfferPeer, closingOffer);
+await closingOfferVoice.handleSignal(closingOfferPeer, { ...closingOffer, action: 'ice', candidate: 'candidate:late', sdp: undefined });
+assert.equal(closingOfferVoice.sessions.has(closingOffer.connection_id), false, 'relay retries must not resurrect a closed connection within an active room');
+assert.equal(closingOfferVoice.earlyIce.has(closingOffer.connection_id), false, 'closed connection retries must not retain early ICE');
+const reorderedOffer = { ...closingOffer, connection_id: crypto.randomUUID() };
+await closingOfferVoice.handleSignal(closingOfferPeer, { ...reorderedOffer, action: 'hangup', sdp: undefined });
+await closingOfferVoice.handleSignal(closingOfferPeer, reorderedOffer);
+assert.equal(closingOfferVoice.sessions.has(reorderedOffer.connection_id), false, 'a hangup delivered before its offer must retire that exact negotiation');
+const freshOffer = { ...closingOffer, connection_id: crypto.randomUUID() };
+await closingOfferVoice.handleSignal(closingOfferPeer, freshOffer);
+assert.ok(closingOfferVoice.sessions.has(freshOffer.connection_id), 'closed-connection protection must allow a genuinely new negotiation');
+assert.equal(closingOfferSignals.filter(signal => signal.action === 'answer').length, 1);
+const freshOfferSession = closingOfferVoice.sessions.get(freshOffer.connection_id);
+const completedAnswerSdp = freshOfferSession.pc.localDescription.sdp;
+await closingOfferVoice.handleSignal(closingOfferPeer, {
+  connection_id: freshOffer.connection_id, action: 'ice', scope: freshOffer.scope,
+  candidate: 'candidate:late-trickle', sdp_mid: '0', sdp_mline_index: 0,
+});
+assert.notEqual(freshOfferSession.pc.remoteDescription.sdp, freshOffer.sdp, 'trickled ICE must augment the browser description after answering');
+await closingOfferVoice.handleSignal(closingOfferPeer, freshOffer);
+assert.equal(freshOfferSession.pc.remoteDescriptionCalls.length, 1, 'an original offer retry after trickled ICE must replay the answer without applying SDP again');
+assert.equal(closingOfferSignals.filter(signal => signal.action === 'answer').length, 2, 'an offer retry must resend the completed answer');
+assert.equal(closingOfferSignals.filter(signal => signal.action === 'answer').at(-1).sdp, completedAnswerSdp);
+closingOfferVoice.stop();
+closingOfferer.close();
 
 const raceListener = newGroupVoice();
 const raceSpeakerId = `nostr:${'c'.repeat(64)}`;
@@ -814,4 +969,4 @@ assert.equal(pendingRoomSignals.some(signal => signal.action === 'join'), false,
 pendingRoomVoice.stop();
 navigator.mediaDevices.getUserMedia = originalGetUserMedia;
 
-console.log('Group voice test passed: capture cancellation, contention convergence, JOIN heartbeat, bounded recovery, exact hangup, room audio and stale-rejoin protection.');
+console.log('Group voice test passed: concurrent SDP replies, close during negotiation, stale-connection protection, capture cancellation, contention convergence, JOIN heartbeat, bounded recovery, room audio and stale-rejoin protection.');

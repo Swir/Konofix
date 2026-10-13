@@ -1455,7 +1455,7 @@ function startWorldRelay() {
         return;
       }
       void peerTransport.handleSignal(peerId, signal).catch(error => {
-        window.dispatchEvent(new CustomEvent('konofix-audio-call-state', { detail: { peerId, state: 'failed', error: String(error) } }));
+        peerTransport.reportSignalError(peerId, signal, error);
       });
     },
     onWorldVoice(voiceState: WorldVoiceState) {

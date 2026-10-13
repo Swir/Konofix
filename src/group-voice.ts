@@ -20,6 +20,8 @@ const ROOM_JOIN_BURST_INTERVALS_MS = [1_000, 2_000] as const;
 const ROOM_JOIN_HEARTBEAT_MS = 30_000;
 const SESSION_RECOVERY_BACKOFF_MS = [1_000, 4_000, 12_000] as const;
 const MAX_SESSION_RECOVERY_STARTS_PER_TICK = 2;
+const CLOSED_SESSION_TTL_MS = 75_000;
+const MAX_CLOSED_SESSIONS = 256;
 
 type Session = {
   id: string;
@@ -28,10 +30,13 @@ type Session = {
   pc: RTCPeerConnection;
   pendingIce: RTCIceCandidateInit[];
   closed: boolean;
+  outgoing: boolean;
   connectTimer?: number;
   disconnectTimer?: number;
   offerRetryTimer?: number;
   answerInFlight?: Promise<void>;
+  remoteAnswerInFlight?: Promise<void>;
+  receivedOfferSdp?: string;
   recoveryGeneration?: string;
 };
 
@@ -107,6 +112,7 @@ export class GroupVoice {
   private readonly remoteRoomMemberships = new Map<string, RoomMembership>();
   private readonly releasedRoomMemberships = new Map<string, number>();
   private readonly sessionRecoveries = new Map<string, SessionRecovery>();
+  private readonly closedSessions = new Map<string, number>();
   private callbacks?: Callbacks;
   private localPeerId = '';
   private localNick = '';
@@ -404,6 +410,7 @@ export class GroupVoice {
   }
 
   async handleSignal(peerId: string, signal: VoiceSignal): Promise<void> {
+    if (!this.callbacks) return;
     if (signal.action === 'world_release') {
       if (signal.request_id) {
         const requestKey = this.worldOfferKey(peerId, signal.request_id);
@@ -454,9 +461,15 @@ export class GroupVoice {
       if (session?.peerId === peerId && session.scope === signal.scope) {
         this.closeSession(session);
         this.scheduleSessionRecovery(session);
+      } else if (!session) {
+        // A relay may deliver hangup before its offer. Retire that exact
+        // connection so the delayed offer cannot restart the ended audio.
+        this.rememberClosedSession(peerId, signal.scope, signal.connection_id);
       }
       return;
     }
+    this.pruneClosedSessions();
+    if (this.closedSessions.has(this.closedSessionKey(peerId, signal.scope, signal.connection_id))) return;
     let session = this.sessions.get(signal.connection_id);
     if (signal.action === 'ice' && signal.candidate && !session) {
       const queued = this.earlyIce.get(signal.connection_id);
@@ -484,6 +497,13 @@ export class GroupVoice {
         this.localGenerationForScope(signal.scope),
       );
       if (session.peerId !== peerId || session.scope !== signal.scope) return;
+      // One connection id describes one negotiation. Retries may repeat its
+      // offer, but cannot turn our outgoing offer into an incoming session.
+      if (session.outgoing
+        || session.pc.localDescription?.type === 'offer'
+        || session.pc.remoteDescription?.type === 'answer'
+        || (session.receivedOfferSdp !== undefined && session.receivedOfferSdp !== signal.sdp)) return;
+      session.receivedOfferSdp = signal.sdp;
       if (session.answerInFlight) {
         try { await session.answerInFlight; } catch { return; }
         if (!session.closed && session.pc.localDescription?.type === 'answer') {
@@ -496,8 +516,9 @@ export class GroupVoice {
         }
         return;
       }
+      // receivedOfferSdp above compares the original wire offer. The browser
+      // may have appended trickled ICE to remoteDescription in the meantime.
       if (session.pc.remoteDescription?.type === 'offer'
-        && session.pc.remoteDescription.sdp === signal.sdp
         && session.pc.localDescription?.type === 'answer') {
         this.callbacks?.sendSignal(peerId, {
           connection_id: session.id,
@@ -507,19 +528,30 @@ export class GroupVoice {
         });
         return;
       }
+      if (session.closed || session.pc.signalingState !== 'stable') return;
       const answering = (async () => {
-        await session.pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp! });
-        await this.flushIce(session);
-        const answer = await session.pc.createAnswer();
-        await session.pc.setLocalDescription(answer);
-        await waitForIceGathering(session.pc);
-        if (session.closed) return;
-        this.callbacks?.sendSignal(peerId, {
-          connection_id: session.id,
-          action: 'answer',
-          scope: session.scope,
-          sdp: session.pc.localDescription?.sdp ?? answer.sdp ?? '',
-        });
+        try {
+          await session.pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp! });
+          if (session.closed) return;
+          await this.flushIce(session);
+          if (session.closed) return;
+          const answer = await session.pc.createAnswer();
+          if (session.closed) return;
+          await session.pc.setLocalDescription(answer);
+          if (session.closed) return;
+          await waitForIceGathering(session.pc);
+          if (session.closed) return;
+          this.callbacks?.sendSignal(peerId, {
+            connection_id: session.id,
+            action: 'answer',
+            scope: session.scope,
+            sdp: session.pc.localDescription?.sdp ?? answer.sdp ?? '',
+          });
+        } catch (error) {
+          // Closing while a browser SDP operation is pending is ordinary
+          // cancellation, not a new audio failure to show after the call.
+          if (!session.closed) throw error;
+        }
       })();
       session.answerInFlight = answering;
       try { await answering; } finally {
@@ -529,11 +561,30 @@ export class GroupVoice {
     }
     if (!session || session.peerId !== peerId || session.scope !== signal.scope) return;
     if (signal.action === 'answer' && signal.sdp) {
-      if (session.pc.remoteDescription?.type === 'answer') return;
-      await session.pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp });
-      if (session.offerRetryTimer !== undefined) window.clearTimeout(session.offerRetryTimer);
-      session.offerRetryTimer = undefined;
-      await this.flushIce(session);
+      // setRemoteDescription commits asynchronously. All relay duplicates
+      // must share this operation before any of them can observe 'stable'.
+      if (session.remoteAnswerInFlight) {
+        try { await session.remoteAnswerInFlight; } catch { /* The first delivery reports the failure. */ }
+        return;
+      }
+      if (session.closed || !session.outgoing || session.pc.signalingState !== 'have-local-offer'
+        || session.pc.localDescription?.type !== 'offer'
+        || session.pc.remoteDescription?.type === 'answer') return;
+      const applyingAnswer = (async () => {
+        try {
+          await session.pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp! });
+          if (session.closed) return;
+          if (session.offerRetryTimer !== undefined) window.clearTimeout(session.offerRetryTimer);
+          session.offerRetryTimer = undefined;
+          await this.flushIce(session);
+        } catch (error) {
+          if (!session.closed) throw error;
+        }
+      })();
+      session.remoteAnswerInFlight = applyingAnswer;
+      try { await applyingAnswer; } finally {
+        if (session.remoteAnswerInFlight === applyingAnswer) session.remoteAnswerInFlight = undefined;
+      }
     } else if (signal.action === 'ice' && signal.candidate) {
       const candidate = { candidate: signal.candidate, sdpMid: signal.sdp_mid, sdpMLineIndex: signal.sdp_mline_index };
       if (session.pc.remoteDescription) {
@@ -778,10 +829,13 @@ export class GroupVoice {
         scope,
         initiator,
         recoveryGeneration,
+        initiator,
       );
       if (!initiator) return;
       const offer = await session.pc.createOffer();
+      if (session.closed) return;
       await session.pc.setLocalDescription(offer);
+      if (session.closed) return;
       await waitForIceGathering(session.pc);
       if (session.closed) return;
       const signal: VoiceSignal = {
@@ -795,6 +849,7 @@ export class GroupVoice {
       };
       this.sendOfferWithRetry(session, signal, OFFER_RETRY_COUNT);
     } catch (error) {
+      if (session?.closed) return;
       if (session && !session.closed) this.failSession(session);
       throw error;
     }
@@ -818,6 +873,7 @@ export class GroupVoice {
     scope: string,
     addLocalAudio: boolean,
     recoveryGeneration?: string,
+    outgoing = false,
   ): Session {
     const existing = this.sessions.get(id);
     if (existing) return existing;
@@ -834,6 +890,7 @@ export class GroupVoice {
       id, peerId, scope, pc,
       pendingIce: early?.peerId === peerId ? early.candidates : [],
       closed: false,
+      outgoing,
       recoveryGeneration,
     };
     this.sessions.set(id, session);
@@ -1030,6 +1087,8 @@ export class GroupVoice {
   private closeSession(session: Session): void {
     if (session.closed) return;
     session.closed = true;
+    this.rememberClosedSession(session.peerId, session.scope, session.id);
+    this.earlyIce.delete(session.id);
     if (session.connectTimer !== undefined) window.clearTimeout(session.connectTimer);
     if (session.disconnectTimer !== undefined) window.clearTimeout(session.disconnectTimer);
     if (session.offerRetryTimer !== undefined) window.clearTimeout(session.offerRetryTimer);
@@ -1039,6 +1098,24 @@ export class GroupVoice {
     if (this.sessionByPeerScope.get(peerScopeKey) === session.id) {
       this.sessionByPeerScope.delete(peerScopeKey);
       this.callbacks?.onRemoteStream(session.scope, session.peerId, null);
+    }
+  }
+
+  private closedSessionKey(peerId: string, scope: string, id: string): string {
+    return `${scope}\u0000${peerId}\u0000${id}`;
+  }
+
+  private rememberClosedSession(peerId: string, scope: string, id: string): void {
+    this.pruneClosedSessions();
+    this.closedSessions.set(this.closedSessionKey(peerId, scope, id), Date.now());
+    while (this.closedSessions.size > MAX_CLOSED_SESSIONS) {
+      this.closedSessions.delete(this.closedSessions.keys().next().value!);
+    }
+  }
+
+  private pruneClosedSessions(now = Date.now()): void {
+    for (const [key, closedAt] of this.closedSessions) {
+      if (now - closedAt > CLOSED_SESSION_TTL_MS) this.closedSessions.delete(key);
     }
   }
 

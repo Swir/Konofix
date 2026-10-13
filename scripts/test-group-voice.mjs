@@ -195,6 +195,24 @@ let droppedFirstWorldAnswer = false;
 let deliveredWorldAnswer;
 let aliceMicrophonePreparations = 0;
 let bobMicrophonePreparations = 0;
+let aliceStateWaiter;
+
+function waitForAliceState(predicate, description) {
+  const current = alice.snapshot();
+  if (predicate(current)) return Promise.resolve(current);
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      aliceStateWaiter = undefined;
+      reject(new Error(`Timed out waiting for Alice to ${description}`));
+    }, 5_000);
+    aliceStateWaiter = snapshot => {
+      if (!predicate(snapshot)) return;
+      clearTimeout(timeout);
+      aliceStateWaiter = undefined;
+      resolve(snapshot);
+    };
+  });
+}
 
 alice.start(aliceId, 'Alice', '#35d07f', {
   sendSignal(_peerId, signal) {
@@ -230,7 +248,7 @@ alice.start(aliceId, 'Alice', '#35d07f', {
     if (scope === 'world' && stream) aliceWorldAudio += 1;
     if (scope === 'test-room' && stream) aliceRoomAudio += 1;
   },
-  onState() {},
+  onState(snapshot) { aliceStateWaiter?.(snapshot); },
 });
 bob.start(bobId, 'Bob', '#4f7cff', {
   sendSignal(_peerId, signal) {
@@ -322,12 +340,14 @@ assert.equal(aliceMicrophonePreparations, 2, 'Alice must release private audio b
 assert.equal(bobMicrophonePreparations, 2, 'Bob must release private audio before each WORLD or room microphone capture');
 assert.equal(alice.snapshot().secondsLeft, 0, 'private room group voice must not use the WORLD timer');
 
+const aliceWorldStarted = waitForAliceState(
+  snapshot => snapshot.localWorld?.status === 'speaking',
+  'start the queued WORLD turn',
+);
 await alice.requestWorldTurn();
-for (let attempt = 0; attempt < 100 && alice.snapshot().localWorld?.status !== 'speaking'; attempt += 1) {
-  await new Promise(resolve => setTimeout(resolve, 5));
-}
-assert.equal(alice.snapshot().roomActive, false, 'starting a WORLD turn must release an active room microphone');
-assert.equal(alice.snapshot().localWorld?.status, 'speaking');
+const aliceWorldSnapshot = await aliceWorldStarted;
+assert.equal(aliceWorldSnapshot.roomActive, false, 'starting a WORLD turn must release an active room microphone');
+assert.equal(aliceWorldSnapshot.localWorld?.status, 'speaking');
 
 await alice.joinRoom('test-room');
 assert.equal(alice.snapshot().localWorld, undefined, 'joining a room must release the WORLD turn and queue position');

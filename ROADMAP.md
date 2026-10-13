@@ -34,7 +34,19 @@ The active milestone now has 56 of 67 tasks complete. The Global Beta expansion 
 
 - Distributed nickname trust hardening now treats unsigned Kademlia nickname leases as bounded, non-authoritative hints; only source-authenticated GossipSub claims can enforce a nickname conflict. This security fix adds no Real Internet Test credit.
 
+## 0.6.0 — Stable chat feature release
+
+The ten shipped chat feature groups are documented in the [README](README.md#stable-chat-feature-scope): implementation scope is **100% (10/10)**, independently of the Real Internet Test / Global Beta milestone above. This is not a claim of zero bugs, universal NAT reachability, completed infrastructure qualification or physical testing of every feature/limit.
+
+- Publish the owner-approved application feature line with stable 0.6.0 version metadata and a newly verified CI-built Windows installer.
+- Preserve the accepted private-audio repair, WORLD voice, file/audio failure isolation and cancellation/retry fixes; no new runtime feature is introduced by the version promotion.
+- Supply complete installation, usage, network/privacy, file-limit, voice and troubleshooting documentation.
+- Keep the implemented signed stable updater fail-closed. Until signing credentials are configured, release installation is manual and no unsigned automatic update manifest is published.
+- Record the exact [user-reported private-audio acceptance](docs/evidence/CHAT_AUDIO_ACCEPTANCE_20261013.md), without treating it as completion of the remaining Global Beta gates.
+
 ## 0.6.0-5 — WAN media reliability and signed stable updates (alpha 5) 🚧
+
+Historical alpha entry. The stable release uses STUN-only WebRTC after unavailable public TURN endpoints were removed; see the current release notes and network limitations.
 
 - Added encrypted TURN fallback for file and audio WebRTC paths behind LTE, symmetric NAT and restrictive firewalls.
 - WORLD now sends an immediate authenticated release signal so the next queued speaker can start without waiting for relay state expiry.

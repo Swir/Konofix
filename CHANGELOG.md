@@ -1,6 +1,20 @@
 # Changelog
 
+## 0.6.0 — Stable chat, large files and voice
+
+- Promote the owner-accepted chat feature line to stable version metadata, keeping the accepted application behavior; the stable installer is a new versioned build, not a renamed alpha binary.
+- Ship native and WebRTC streamed files up to the 32 GiB protocol limit, public WORLD/room file cards, explicit downloads and verified PNG/JPEG/GIF/WebP previews up to 8 MiB through one file picker.
+- Ship private one-to-one voice, the WORLD 60-second speaking queue with early release, and simultaneous voice in public temporary rooms. Add incoming/outgoing call tones, WORLD-only mute, microphone and speaker tests.
+- Serialize Windows microphone capture and bounded device retries; make SDP retries idempotent, cancel pending negotiation after hangup, and stop obsolete connections from reviving audio or errors.
+- Use native media playback for private audio. Isolate file negotiation failures and file-only hangups from simultaneous private calls; protect playback from late promises after teardown.
+- Retain NIP-44 encrypted relay private messages, signed public presence/text, seven application languages, protected native rooms, recipient consent and integrity-checked file saving.
+- Document STUN-only WebRTC honestly: retired public TURN endpoints are not configured, and restrictive NAT/firewalls may still prevent voice or large-file connections even when public chat works.
+- Correct stable updater packaging for Tauri v2 and immutable uploads. Signed automatic updates are unavailable until the release signing secrets are configured; this stable release supports manual installation and never offers unsigned automatic updates.
+- Add a complete user guide and an explicit separation between the shipped chat feature scope and Global Beta infrastructure qualification (still 56/67 = 83.6%). Owner acceptance of private audio and the missing post-hangup error is recorded in `docs/evidence/CHAT_AUDIO_ACCEPTANCE_20261013.md`; no load, route, soak or universal-NAT evidence is inferred.
+
 ## 0.6.0-5 (alpha 5) — WAN media reliability and signed stable updates
+
+Historical development entry: the later stable line removes unavailable public TURN endpoints and replaces Web Audio private playback with a native media sink. See 0.6.0 above for shipped behavior.
 
 - Added shared STUN/TURN ICE configuration for private audio, group audio and direct large-file transfers. Direct paths remain preferred; TURN forwards encrypted WebRTC traffic when direct NAT traversal fails.
 - Added an authenticated direct WORLD release signal and a regression test proving that the next queued speaker can take over immediately after an early finish.

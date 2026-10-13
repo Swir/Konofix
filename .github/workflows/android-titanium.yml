@@ -1,0 +1,79 @@
+name: Konofix Android - Titanium SDK
+on:
+  push:
+    branches: ['android/titanium-sdk-test']
+    paths: ['mobile/titanium/**', '.github/workflows/android-titanium.yml', 'src/world-relay.ts', 'package.json', 'package-lock.json']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: konofix-android-titanium-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  android:
+    name: SDK APK and Android 15 startup
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Checkout Swir's Titanium builder at the reviewed commit
+        uses: actions/checkout@v4
+        with:
+          repository: Swir/Titanium-APK-Bulider
+          ref: dd71a04df8730283a2823b7d1c639b9f9aafb368
+          path: .tools/titanium
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Test shared Windows WORLD transport and bundle mobile UI
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          npm ci
+          npm run test:world-relay 2>&1 | tee out/world-relay-tests.txt
+          node --check mobile/titanium/client.js
+          python -m py_compile mobile/titanium/android_build.py mobile/titanium/smoke_android.py
+          node mobile/titanium/build-web.mjs
+      - name: Prepare official Android API 36 SDK components
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_HOME"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' 'platform-tools'
+      - name: Compile and verify APK with Titanium
+        run: |
+          set -euo pipefail
+          python mobile/titanium/android_build.py --titanium-dir .tools/titanium 2>&1 | tee out/titanium-build.txt
+      - name: Enable emulator acceleration on this ephemeral runner
+        run: sudo setfacl -m u:"$USER":rw /dev/kvm
+      - name: Install APK and confirm real Android WebView startup
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: python mobile/titanium/smoke_android.py
+      - name: Store APK and separate build/runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: konofix-android-titanium-${{ github.sha }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: error

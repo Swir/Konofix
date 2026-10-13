@@ -1,3 +1,5 @@
+import { t } from './i18n.ts';
+
 const TEST_MICROPHONE_CONSTRAINTS: MediaStreamConstraints = {
   audio: {
     echoCancellation: true,
@@ -54,7 +56,19 @@ export async function testMicrophone(
   durationMs = 4_000,
 ): Promise<number> {
   if (signal?.aborted) throw abortError();
-  const stream = await navigator.mediaDevices.getUserMedia(TEST_MICROPHONE_CONSTRAINTS);
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(TEST_MICROPHONE_CONSTRAINTS);
+  } catch (error) {
+    const name = (error as { name?: unknown })?.name;
+    if (name === 'OverconstrainedError') {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } else if (name === 'NotAllowedError' || name === 'SecurityError') {
+      throw new Error(t('audio.microphonePermission'));
+    } else {
+      throw error;
+    }
+  }
   let context: AudioContext | undefined;
   let frame = 0;
   let peak = 0;

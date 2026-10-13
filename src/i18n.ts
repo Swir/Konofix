@@ -149,6 +149,7 @@ const EN = {
   'audio.microphoneSilent': 'No clear microphone signal detected. Check Windows privacy and input device settings.',
   'audio.testFailed': 'Audio test failed: {error}',
   'audio.outputBlocked': 'Audio output was blocked. Click anywhere in the app to enable sound.',
+  'audio.microphonePermission': 'Microphone access is blocked. Allow Konofix Chat to use the microphone in Windows settings.',
   'update.title': 'Stable updates',
   'update.help': 'Konofix checks only signed stable releases from the official GitHub repository. Installation always requires your confirmation.',
   'update.checkNow': 'Check for updates',
@@ -352,6 +353,7 @@ const PL: Dictionary = {
   'audio.testingMicrophone': 'Mów teraz — nasłuchuję przez 4 sekundy…', 'audio.microphoneOk': 'Mikrofon działa — wykryto głos.',
   'audio.microphoneSilent': 'Nie wykryto wyraźnego sygnału. Sprawdź prywatność i urządzenie wejściowe w Windows.',
   'audio.testFailed': 'Test dźwięku nie powiódł się: {error}', 'audio.outputBlocked': 'Odtwarzanie dźwięku zostało zablokowane. Kliknij w aplikacji, aby włączyć dźwięk.',
+  'audio.microphonePermission': 'Dostęp do mikrofonu jest zablokowany. Zezwól Konofix Chat na używanie mikrofonu w ustawieniach Windows.',
   'update.title': 'Aktualizacje stable', 'update.help': 'Konofix sprawdza wyłącznie podpisane wydania stable w oficjalnym repozytorium GitHub. Instalacja zawsze wymaga Twojej zgody.',
   'update.checkNow': 'Sprawdź aktualizacje', 'update.ready': 'Automatyczne sprawdzanie wersji stable jest włączone.',
   'update.checking': 'Sprawdzam podpisaną aktualizację stable…', 'update.available': 'Dostępny jest Konofix {version} stable. Pobrać, zweryfikować i zainstalować teraz?',
@@ -519,6 +521,7 @@ const NO: Dictionary = {
   'audio.testingSpeakers': 'Spiller testlyd…', 'audio.speakersOk': 'Testlyden er ferdig.', 'audio.testingMicrophone': 'Snakk nå — lytter i 4 sekunder…',
   'audio.microphoneOk': 'Mikrofonen virker — tale ble registrert.', 'audio.microphoneSilent': 'Ingen tydelig mikrofonlyd ble registrert.',
   'audio.testFailed': 'Lydtesten mislyktes: {error}', 'audio.outputBlocked': 'Lydavspilling ble blokkert. Klikk i appen for å slå på lyd.',
+  'audio.microphonePermission': 'Mikrofontilgang er blokkert. Tillat at Konofix Chat bruker mikrofonen i Windows-innstillingene.',
 };
 
 const DE: Dictionary = {
@@ -563,6 +566,7 @@ const DE: Dictionary = {
   'audio.testingSpeakers': 'Testton wird abgespielt…', 'audio.speakersOk': 'Testton beendet.', 'audio.testingMicrophone': 'Jetzt sprechen — 4 Sekunden Test…',
   'audio.microphoneOk': 'Mikrofon funktioniert — Sprache erkannt.', 'audio.microphoneSilent': 'Kein deutliches Mikrofonsignal erkannt.',
   'audio.testFailed': 'Audiotest fehlgeschlagen: {error}', 'audio.outputBlocked': 'Audiowiedergabe wurde blockiert. Klicke in die App, um den Ton zu aktivieren.',
+  'audio.microphonePermission': 'Der Mikrofonzugriff ist blockiert. Erlaube Konofix Chat den Mikrofonzugriff in den Windows-Einstellungen.',
 };
 
 const FR: Dictionary = {
@@ -607,6 +611,7 @@ const FR: Dictionary = {
   'audio.testingSpeakers': 'Lecture du son de test…', 'audio.speakersOk': 'Son de test terminé.', 'audio.testingMicrophone': 'Parlez maintenant — écoute pendant 4 secondes…',
   'audio.microphoneOk': 'Le microphone fonctionne — voix détectée.', 'audio.microphoneSilent': 'Aucun signal clair du microphone détecté.',
   'audio.testFailed': 'Échec du test audio : {error}', 'audio.outputBlocked': 'La lecture audio a été bloquée. Cliquez dans l’application pour activer le son.',
+  'audio.microphonePermission': 'L’accès au microphone est bloqué. Autorisez Konofix Chat à utiliser le microphone dans les paramètres Windows.',
 };
 
 const ES: Dictionary = {
@@ -651,6 +656,7 @@ const ES: Dictionary = {
   'audio.testingSpeakers': 'Reproduciendo sonido de prueba…', 'audio.speakersOk': 'Sonido de prueba finalizado.', 'audio.testingMicrophone': 'Habla ahora — escuchando 4 segundos…',
   'audio.microphoneOk': 'El micrófono funciona — voz detectada.', 'audio.microphoneSilent': 'No se detectó una señal clara del micrófono.',
   'audio.testFailed': 'La prueba de audio falló: {error}', 'audio.outputBlocked': 'La reproducción de audio fue bloqueada. Haz clic en la aplicación para activar el sonido.',
+  'audio.microphonePermission': 'El acceso al micrófono está bloqueado. Permite que Konofix Chat use el micrófono en la configuración de Windows.',
 };
 
 const UK: Dictionary = {
@@ -695,6 +701,7 @@ const UK: Dictionary = {
   'audio.testingSpeakers': 'Відтворення тестового звуку…', 'audio.speakersOk': 'Тестовий звук завершено.', 'audio.testingMicrophone': 'Говоріть зараз — слухаю 4 секунди…',
   'audio.microphoneOk': 'Мікрофон працює — голос виявлено.', 'audio.microphoneSilent': 'Чіткого сигналу мікрофона не виявлено.',
   'audio.testFailed': 'Помилка перевірки звуку: {error}', 'audio.outputBlocked': 'Відтворення звуку заблоковано. Натисніть у застосунку, щоб увімкнути звук.',
+  'audio.microphonePermission': 'Доступ до мікрофона заблоковано. Дозвольте Konofix Chat використовувати мікрофон у налаштуваннях Windows.',
 };
 
 const DICTIONARIES: Record<Locale, Dictionary> = { en: EN, pl: PL, no: NO, de: DE, fr: FR, es: ES, uk: UK };
@@ -708,9 +715,14 @@ export function resolveLocale(value: string | null | undefined): Locale | undefi
 }
 
 function systemLocale(): Locale {
-  const saved = resolveLocale(localStorage.getItem(STORAGE_KEY));
+  const saved = typeof localStorage === 'undefined'
+    ? undefined
+    : resolveLocale(localStorage.getItem(STORAGE_KEY));
   if (saved) return saved;
-  for (const candidate of navigator.languages?.length ? navigator.languages : [navigator.language]) {
+  const browserLocales = typeof navigator === 'undefined'
+    ? []
+    : navigator.languages?.length ? navigator.languages : [navigator.language];
+  for (const candidate of browserLocales) {
     const code = resolveLocale(candidate);
     if (code) return code;
   }
@@ -718,7 +730,9 @@ function systemLocale(): Locale {
 }
 
 export const currentLocale = systemLocale();
-document.documentElement.lang = currentLocale;
+if (typeof document !== 'undefined') {
+  document.documentElement.lang = currentLocale;
+}
 
 export function t(key: MessageKey, params: Params = {}): string {
   const template = DICTIONARIES[currentLocale][key] ?? EN[key];

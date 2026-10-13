@@ -697,9 +697,10 @@ async function sharePublic(roomId: string | null = null) {
     if (!offer) return;
     offer.nick_color = normalizeNickColor(offer.nick_color);
     state.publicOffers.set(offer.offer_id, offer);
-    if ((offer.room_id === undefined || state.rooms.get(offer.room_id)?.password_protected !== true)
-      && worldRelayState.connected > 0) {
-      try { worldRelay.publishPublicFile(offer); } catch {}
+    let relayPublishError: unknown;
+    if (publicDiscoveryOptIn
+      && (offer.room_id === undefined || state.rooms.get(offer.room_id)?.password_protected !== true)) {
+      try { worldRelay.publishPublicFile(offer); } catch (error) { relayPublishError = error; }
     }
     const messageRoom = offer.room_id ?? 'world';
     pushMessage({
@@ -713,6 +714,9 @@ async function sharePublic(roomId: string | null = null) {
       timestamp: Number(offer.timestamp),
       public_offer: offer,
     });
+    if (relayPublishError) {
+      addSystem(messageRoom, t(roomId ? 'roomShare.error' : 'publicShare.error', { error: String(relayPublishError) }));
+    }
   } catch (error) {
     alert(t(roomId ? 'roomShare.error' : 'publicShare.error', { error: String(error) }));
   }
@@ -1288,22 +1292,25 @@ function pushMessage(m: ChatMessage) {
 
 function receivePublicOffer(offer: PublicShareOffer): void {
   const existing = state.publicOffers.get(offer.offer_id);
+  let stored = offer;
   if (existing) {
     existing.expires_at = Math.max(existing.expires_at, offer.expires_at);
-    return;
+    existing.expired = false;
+    stored = existing;
+  } else {
+    offer.nick_color = normalizeNickColor(offer.nick_color);
+    state.publicOffers.set(offer.offer_id, offer);
   }
-  offer.nick_color = normalizeNickColor(offer.nick_color);
-  state.publicOffers.set(offer.offer_id, offer);
   pushMessage({
-    id: `public:${offer.offer_id}`,
+    id: `public:${stored.offer_id}`,
     kind: 'public_offer',
-    peer_id: offer.peer_id,
-    nick: offer.nick,
-    nick_color: offer.nick_color,
-    room: offer.room_id ?? 'world',
+    peer_id: stored.peer_id,
+    nick: stored.nick,
+    nick_color: stored.nick_color,
+    room: stored.room_id ?? 'world',
     text: '',
-    timestamp: Number(offer.timestamp),
-    public_offer: offer,
+    timestamp: Number(stored.timestamp),
+    public_offer: stored,
   });
 }
 
@@ -1315,6 +1322,10 @@ function startWorldRelay() {
   peerTransport.start({
     sendSignal(peerId: string, signal: RtcSignal) {
       try { worldRelay.publishRtcSignal(peerId, signal); } catch {}
+    },
+    beforeMicrophoneCapture() {
+      groupVoice.leaveWorld();
+      groupVoice.leaveRoom();
     },
     onIncomingCall(peerId: string, connectionId: string) {
       window.dispatchEvent(new CustomEvent('konofix-incoming-audio-call', { detail: { peerId, connectionId } }));
@@ -1351,6 +1362,12 @@ function startWorldRelay() {
   worldRelay.start(state.peerId, state.nick, state.nickColor, {
     onPresence(peer: RelayPeer) {
       worldRelayPeers.set(peer.peer_id, peer);
+      // Relay media/signalling uses the virtual Nostr peer id even when the
+      // same person is already visible through the native transport. Keep the
+      // duplicate out of the people list, but never skip the relay-online
+      // notification or active WORLD/room audio can miss this listener.
+      window.dispatchEvent(new CustomEvent('konofix-relay-peer-online', { detail: { peer_id: peer.peer_id } }));
+      groupVoice.peerOnline(peer.peer_id);
       if (state.peers.has(peer.claimed_peer_id)) {
         state.peers.delete(peer.peer_id);
         return;
@@ -1360,8 +1377,6 @@ function startWorldRelay() {
         nick: peer.nick,
         nick_color: peer.nick_color,
       });
-      window.dispatchEvent(new CustomEvent('konofix-relay-peer-online', { detail: { peer_id: peer.peer_id } }));
-      groupVoice.peerOnline(peer.peer_id);
       if (state.connected) renderChat();
     },
     onOffline(peerId: string) {
@@ -1447,13 +1462,14 @@ function startWorldRelay() {
       groupVoice.updateWorldState(voiceState);
     },
     onVoiceSignal(peerId: string, signal: VoiceSignal) {
-      void groupVoice.handleSignal(peerId, signal).catch(() => undefined);
+      void groupVoice.handleSignal(peerId, signal).catch(error => groupVoice.reportSignalError(error));
     },
   });
   groupVoice.start(worldRelay.virtualPeerId(), state.nick, state.nickColor, {
     sendSignal(peerId, signal) { worldRelay.publishVoiceSignal(peerId, signal); },
     publishWorld(voiceState) { worldRelay.publishWorldVoice(voiceState); },
     peers() { return [...worldRelayPeers.keys()]; },
+    beforeMicrophoneCapture() { peerTransport.hangupAllCalls(); },
     onRemoteStream(scope, peerId, stream) { playGroupAudio(scope, peerId, stream); },
     onState(snapshot) {
       groupVoiceSnapshot = snapshot;

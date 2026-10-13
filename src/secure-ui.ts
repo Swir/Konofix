@@ -33,6 +33,7 @@ let bypassRoomClick = '';
 let roomOperationPending = false;
 let augmentQueued = false;
 let remoteAudioRevision = 0;
+let privateAudioBlocked = false;
 
 function esc(value: string): string {
   return value.replace(/[&<>'"]/g, character => ({
@@ -399,7 +400,7 @@ function renderPrivateModal(): void {
   const audioStatus = audio?.state === 'calling' ? t('audio.calling')
     : audio?.state === 'ringing' ? t('audio.ringing')
       : audio?.state === 'connecting' ? t('audio.connecting')
-        : audio?.state === 'connected' ? t('audio.connected')
+        : audio?.state === 'connected' ? (audio.error ?? t('audio.connected'))
           : audio?.state === 'muted' ? t('audio.muted')
             : audio?.state === 'failed' ? t('audio.failed', { error: audio.error ?? 'WebRTC' })
               : (offline ? t('private.offline') : t('private.subtitle'));
@@ -543,15 +544,12 @@ function attachRemoteAudio(peerId: string, stream: MediaStream | null): void {
   const revision = ++remoteAudioRevision;
   let audio = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
   if (!stream) {
+    privateAudioBlocked = false;
     callTones.stopRemoteAudio();
     if (audio) { audio.pause(); audio.srcObject = null; audio.remove(); }
     return;
   }
-  void callTones.playRemoteAudio(stream).then(playing => {
-    if (!playing || revision !== remoteAudioRevision) return;
-    const fallback = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
-    if (fallback) { fallback.pause(); fallback.srcObject = null; fallback.remove(); }
-  }).catch(() => {
+  const playFallback = () => {
     if (revision !== remoteAudioRevision) return;
     audio = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
     if (!audio) {
@@ -563,9 +561,51 @@ function attachRemoteAudio(peerId: string, stream: MediaStream | null): void {
       document.body.appendChild(audio);
     }
     audio.srcObject = stream;
-    void audio.play().catch(() => undefined);
-  });
+    void audio.play().then(() => {
+      privateAudioBlocked = false;
+      const state = audioStates.get(peerId);
+      if (state?.state === 'connected' && state.error === t('audio.outputBlocked')) {
+        audioStates.set(peerId, { state: 'connected' });
+        if (activePrivatePeerId === peerId) renderPrivateModal();
+      }
+    }).catch(() => {
+      privateAudioBlocked = true;
+      audioStates.set(peerId, { state: 'connected', error: t('audio.outputBlocked') });
+      if (activePrivatePeerId === peerId) renderPrivateModal();
+    });
+  };
+  void callTones.playRemoteAudio(stream).then(playing => {
+    if (revision !== remoteAudioRevision) return;
+    if (!playing) {
+      playFallback();
+      return;
+    }
+    privateAudioBlocked = false;
+    const fallback = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
+    if (fallback) { fallback.pause(); fallback.srcObject = null; fallback.remove(); }
+  }).catch(playFallback);
 }
+
+function resumePrivateAudio(): void {
+  if (!privateAudioBlocked) return;
+  const audio = document.querySelector<HTMLAudioElement>('#konofixRemoteAudio');
+  if (!audio) {
+    privateAudioBlocked = false;
+    return;
+  }
+  const peerId = audio.dataset.peerId ?? '';
+  void audio.play().then(() => {
+    privateAudioBlocked = false;
+    const state = audioStates.get(peerId);
+    if (state?.state === 'connected' && state.error === t('audio.outputBlocked')) {
+      audioStates.set(peerId, { state: 'connected' });
+      if (activePrivatePeerId === peerId) renderPrivateModal();
+    }
+  }).catch(() => { privateAudioBlocked = true; });
+}
+
+window.addEventListener('pointerdown', resumePrivateAudio, { passive: true });
+window.addEventListener('keydown', resumePrivateAudio);
 
 async function sendPrivateFile(): Promise<void> {
   if (!activePrivatePeerId || offlinePeers.has(activePrivatePeerId)) return;

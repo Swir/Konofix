@@ -12,7 +12,7 @@ requireText(main, "roomId: state.room === 'world' ? null : state.room", 'targete
 requireText(main, 'id="shareRoomFile"', 'non-WORLD room header must expose a room-scoped file share action');
 requireText(main, 'sharePublic(state.room)', 'room header file sharing must publish to the active room instead of opening the global recipient picker');
 requireText(main, "const messageRoom = offer.room_id ?? 'world';", 'room-scoped offers must render into their advertised room');
-requireText(core, 'mime: Option<String>,\n    #[serde(default)]\n    room_id: Option<String>', 'room-scoped offer metadata must remain optional for WORLD-only offers');
+requireText(core, 'mime: Option<String>,\n    #[serde(default, skip_serializing_if = "Option::is_none")]\n    room_id: Option<String>', 'room-scoped offer metadata must remain optional for WORLD-only offers');
 requireText(core, 'room_id: offer.view.room_id.clone()', 'on-demand P2P download must preserve the room authorization context');
 requireText(core, 'Dropped room-scoped file offer from unauthorized or unknown context', 'protected room offer metadata must fail closed when local authoritative state rejects it');
 requireText(main, 'offer.room_id', 'incoming file UI must expose room context');

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 
 class MemoryStorage {
   values = new Map();
@@ -17,6 +18,8 @@ class MockWebSocket {
   static sockets = [];
   static dropNextTarget = '';
   static droppedEventId = '';
+  static delayedPublicKey = '';
+  static delayedPublicEvents = new Map();
   readyState = MockWebSocket.CONNECTING;
   listeners = new Map();
   subscribed = false;
@@ -45,8 +48,14 @@ class MockWebSocket {
     if (frame[0] !== 'EVENT') return;
     const event = frame[1];
     const target = event.tags.find(tag => tag[0] === 'p')?.[1] ?? '';
+    if (!target && event.pubkey === MockWebSocket.delayedPublicKey) {
+      MockWebSocket.delayedPublicEvents.set(event.id, event);
+      return;
+    }
     if (event.id === MockWebSocket.droppedEventId
-      || (!MockWebSocket.droppedEventId && target === MockWebSocket.dropNextTarget)) {
+      || (!MockWebSocket.droppedEventId
+        && MockWebSocket.dropNextTarget !== ''
+        && target === MockWebSocket.dropNextTarget)) {
       MockWebSocket.droppedEventId = event.id;
       MockWebSocket.dropNextTarget = '';
       return;
@@ -59,6 +68,17 @@ class MockWebSocket {
       socket.emit('message', { data: JSON.stringify(['EVENT', 'mock-sub', event]) });
     }
     this.emit('message', { data: JSON.stringify(['OK', event.id, true, '']) });
+  }
+
+  static releaseDelayed() {
+    this.delayedPublicKey = '';
+    for (const event of this.delayedPublicEvents.values()) {
+      for (const socket of this.sockets) {
+        if (socket.readyState !== MockWebSocket.OPEN || !socket.subscribed) continue;
+        socket.emit('message', { data: JSON.stringify(['EVENT', 'mock-sub', event]) });
+      }
+    }
+    this.delayedPublicEvents.clear();
   }
 
   close() {
@@ -86,6 +106,60 @@ globalThis.WebSocket = MockWebSocket;
 const { WorldRelayBridge } = await import('../src/world-relay.ts');
 
 globalThis.localStorage = new MemoryStorage();
+const queuedReceiver = new WorldRelayBridge();
+globalThis.localStorage = new MemoryStorage();
+const queuedSender = new WorldRelayBridge();
+const queuedPublicFiles = new Set();
+queuedReceiver.start('12D3KooWQueuedReceiver00000000000000000000000000', 'Queued_receiver', '#4f7cff', {
+  onPresence() {}, onOffline() {}, onChat() {}, onState() {},
+  onPublicFile(offer) { if (offer.file_name === 'queued-before-open.zip') queuedPublicFiles.add(offer.offer_id); },
+});
+queuedSender.start('12D3KooWQueuedSender000000000000000000000000000', 'Queued_sender', '#35d07f', {
+  onPresence() {}, onOffline() {}, onChat() {}, onState() {},
+});
+const queuedNow = Date.now();
+queuedSender.publishPublicFile({
+  offer_id: crypto.randomUUID(),
+  peer_id: 'ignored-local-peer',
+  nick: 'Queued_sender',
+  nick_color: '#35d07f',
+  file_name: 'queued-before-open.zip',
+  size: 4 * 1024 * 1024,
+  sha256: 'c'.repeat(64),
+  kind: 'file',
+  timestamp: queuedNow,
+  expires_at: queuedNow + 10 * 60_000,
+});
+assert.equal(await waitFor(() => queuedPublicFiles.size === 1), true, 'a WORLD file queued before relay OPEN must flush after connection');
+queuedSender.stop();
+queuedReceiver.stop();
+
+globalThis.localStorage = new MemoryStorage();
+const reorderedSender = new WorldRelayBridge();
+globalThis.localStorage = new MemoryStorage();
+const reorderedReceiver = new WorldRelayBridge();
+let reorderedSenderSeesReceiver = false;
+let reorderedPrivateMessages = 0;
+MockWebSocket.delayedPublicKey = reorderedSender.virtualPeerId().slice('nostr:'.length);
+reorderedSender.start('12D3KooWReorderedSender000000000000000000000000', 'Reordered_sender', '#35d07f', {
+  onPresence(peer) { if (peer.peer_id === reorderedReceiver.virtualPeerId()) reorderedSenderSeesReceiver = true; },
+  onOffline() {}, onChat() {}, onState() {},
+});
+await new Promise(resolve => setTimeout(resolve, 30));
+reorderedReceiver.start('12D3KooWReorderedReceiver0000000000000000000000', 'Reordered_receiver', '#4f7cff', {
+  onPresence() {}, onOffline() {}, onChat() {}, onState() {},
+  onPrivate(message) { if (message.text === 'encrypted before presence') reorderedPrivateMessages += 1; },
+});
+assert.equal(await waitFor(() => reorderedSenderSeesReceiver), true, 'sender must discover the receiver before the reordered encrypted event');
+reorderedSender.publishPrivate(reorderedReceiver.virtualPeerId(), 'encrypted before presence');
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(reorderedPrivateMessages, 0, 'encrypted traffic must wait for its authenticated sender presence');
+MockWebSocket.releaseDelayed();
+assert.equal(await waitFor(() => reorderedPrivateMessages === 1), true, 'encrypted traffic received before presence must replay once after authentication');
+reorderedSender.stop();
+reorderedReceiver.stop();
+
+globalThis.localStorage = new MemoryStorage();
 const alice = new WorldRelayBridge();
 globalThis.localStorage = new MemoryStorage();
 const bob = new WorldRelayBridge();
@@ -106,9 +180,12 @@ let bobRooms = 0;
 let bobRoomMessages = 0;
 let bobRoomClosed = 0;
 let bobPublicFiles = 0;
+let bobLegacyNullPublicFiles = 0;
 let bobWorldVoice = 0;
+let bobSkewedWorldVoice;
 let bobVoiceSignals = 0;
 let expectedRelayFile;
+const unicodePublicFileName = `${'🧪'.repeat(100)}.zip`;
 
 alice.start(alicePeer, 'Alice_test', '#35d07f', {
   onPresence(peer) { if (peer.claimed_peer_id === bobPeer) alicePresence += 1; },
@@ -138,13 +215,19 @@ bob.start(bobPeer, 'Bob_test', '#4f7cff', {
   },
   onPublicFile(offer) {
     if (offer.peer_id === alice.virtualPeerId()
-      && offer.file_name === 'world-large.zip'
-      && offer.sha256 === 'a'.repeat(64)) bobPublicFiles += 1;
+      && offer.file_name === unicodePublicFileName
+      && offer.sha256 === 'a'.repeat(64)
+      && offer.mime === undefined
+      && offer.room_id === undefined) bobPublicFiles += 1;
+    if (offer.file_name === 'legacy-null-fields.zip'
+      && offer.mime === undefined
+      && offer.room_id === undefined) bobLegacyNullPublicFiles += 1;
   },
   onWorldVoice(state) {
     if (state.peer_id === alice.virtualPeerId()
       && state.status === 'queued'
       && state.nick === 'Alice_test') bobWorldVoice += 1;
+    if (state.status === 'speaking' && state.nick === 'Skewed_peer') bobSkewedWorldVoice = state;
   },
   onVoiceSignal(peerId, signal) {
     if (peerId === alice.virtualPeerId()
@@ -235,15 +318,21 @@ await new Promise(resolve => setTimeout(resolve, 20));
 assert.equal(bobRtcSignals, 1, 'encrypted WebRTC signaling must reach only the addressed live identity once');
 
 const publicFileNow = Date.now();
+assert.ok(unicodePublicFileName.length > 180 && [...unicodePublicFileName].length <= 180,
+  'WORLD filename regression must distinguish UTF-16 units from Unicode characters');
 alice.publishPublicFile({
   offer_id: crypto.randomUUID(),
   peer_id: alicePeer,
   nick: 'Alice_test',
   nick_color: '#35d07f',
-  file_name: 'world-large.zip',
+  file_name: unicodePublicFileName,
   size: 25 * 1024 * 1024,
   sha256: 'a'.repeat(64),
   kind: 'file',
+  // This is the shape older Tauri builds produced for absent Rust Option
+  // fields. The relay bridge must canonicalize it instead of dropping it.
+  mime: null,
+  room_id: null,
   timestamp: publicFileNow,
   expires_at: publicFileNow + 10 * 60_000,
 });
@@ -256,12 +345,83 @@ alice.publishVoiceSignal(bob.virtualPeerId(), {
   connection_id: crypto.randomUUID(),
   action: 'join',
   scope: 'norway',
+  request_id: crypto.randomUUID(),
+  membership_epoch: crypto.randomUUID(),
+  membership_generation: 1,
   reply: false,
 });
 await new Promise(resolve => setTimeout(resolve, 30));
 assert.equal(bobPublicFiles, 1, 'signed WORLD file metadata must cross WAN relays exactly once');
 assert.equal(bobWorldVoice, 1, 'signed WORLD speaking queue state must cross relays exactly once');
 assert.equal(bobVoiceSignals, 1, 'room voice signaling must stay encrypted and recipient-addressed');
+
+const legacyNow = Date.now();
+const legacySecret = generateSecretKey();
+const legacyEvent = finalizeEvent({
+  kind: 28733,
+  created_at: Math.floor(legacyNow / 1_000),
+  tags: [['t', 'konofix-world-v1'], ['expiration', String(Math.floor((legacyNow + 10 * 60_000) / 1_000))]],
+  content: JSON.stringify({
+    v: 1,
+    ns: 'konofix/world-relay/1',
+    type: 'public_file',
+    session: 'legacy-session-1',
+    peer_id: `nostr:${getPublicKey(legacySecret)}`,
+    nick: 'Legacy_peer',
+    nick_color: '#bb66ff',
+    sent_at: legacyNow,
+    offer: {
+      offer_id: crypto.randomUUID(),
+      file_name: 'legacy-null-fields.zip',
+      size: 3 * 1024 * 1024,
+      sha256: 'b'.repeat(64),
+      kind: 'file',
+      mime: null,
+      room_id: null,
+      timestamp: legacyNow,
+      expires_at: legacyNow + 10 * 60_000,
+    },
+  }),
+}, legacySecret);
+MockWebSocket.sockets[0].send(JSON.stringify(['EVENT', legacyEvent]));
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(
+  bobLegacyNullPublicFiles,
+  1,
+  'legacy WORLD file metadata with null optional fields must be accepted, normalized and deduplicated',
+);
+
+const skewedSentAt = Date.now() + 45_000;
+const skewedRequestId = crypto.randomUUID();
+const skewedVoiceEvent = finalizeEvent({
+  kind: 28733,
+  created_at: Math.floor(skewedSentAt / 1_000),
+  tags: [['t', 'konofix-world-v1'], ['expiration', String(Math.floor((skewedSentAt + 75_000) / 1_000))]],
+  content: JSON.stringify({
+    v: 1,
+    ns: 'konofix/world-relay/1',
+    type: 'voice_state',
+    session: 'skewed-session-1',
+    peer_id: `nostr:${getPublicKey(legacySecret)}`,
+    nick: 'Skewed_peer',
+    nick_color: '#bb66ff',
+    sent_at: skewedSentAt,
+    voice: {
+      status: 'speaking',
+      request_id: skewedRequestId,
+      joined_at: skewedSentAt - 1_000,
+      speaking_until: skewedSentAt + 60_000,
+    },
+  }),
+}, legacySecret);
+MockWebSocket.sockets[0].send(JSON.stringify(['EVENT', skewedVoiceEvent]));
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(bobSkewedWorldVoice?.request_id, skewedRequestId, 'WORLD voice must tolerate sender clock skew');
+assert.ok(
+  bobSkewedWorldVoice.speaking_until > Date.now()
+    && bobSkewedWorldVoice.speaking_until <= Date.now() + 65_000,
+  'remote WORLD countdown must be normalized to the receiver clock',
+);
 
 const relayFile = Buffer.alloc(40 * 1024);
 for (let index = 0; index < relayFile.length; index += 1) relayFile[index] = index % 251;

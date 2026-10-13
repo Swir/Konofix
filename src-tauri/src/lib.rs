@@ -394,9 +394,9 @@ struct PublicShareOffer {
     size: u64,
     sha256: String,
     kind: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     mime: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     room_id: Option<String>,
     timestamp: u64,
     expires_at: u64,
@@ -5967,6 +5967,14 @@ mod public_share_tests {
             .checked_sub(Duration::from_secs(PUBLIC_CLAIM_TTL_SECS))
             .unwrap();
         assert!(public_claim_is_expired(old_claim, now));
+    }
+
+    #[test]
+    fn absent_public_offer_fields_are_omitted_for_javascript_consumers() {
+        let value = serde_json::to_value(offer(PeerId::random(), "file", None, 42)).unwrap();
+        let object = value.as_object().unwrap();
+        assert!(!object.contains_key("mime"));
+        assert!(!object.contains_key("room_id"));
     }
 }
 

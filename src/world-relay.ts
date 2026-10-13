@@ -13,6 +13,7 @@ const MAX_ENCRYPTED_CONTENT_BYTES = 48 * 1024;
 const MAX_RELAY_FILE_BYTES = 2 * 1024 * 1024;
 const RELAY_FILE_CHUNK_BYTES = 16 * 1024;
 const MAX_SEEN_EVENTS = 2_048;
+const MAX_PENDING_ENCRYPTED_EVENTS = 128;
 const RELAYS = [
   'wss://relay.damus.io',
   'wss://nos.lol',
@@ -129,6 +130,8 @@ export type VoiceSignal = {
   action: 'join' | 'leave' | 'offer' | 'answer' | 'ice' | 'hangup' | 'world_release';
   scope: string;
   request_id?: string;
+  membership_epoch?: string;
+  membership_generation?: number;
   reply?: boolean;
   sdp?: string;
   candidate?: string;
@@ -322,6 +325,11 @@ type RelaySocket = {
 };
 
 type PendingEvent = { wire: string; until: number; sent: Set<string> };
+type PendingEncryptedEvent = {
+  senderPublicKey: string;
+  payload: EncryptedPayload;
+  receivedAt: number;
+};
 
 type OutgoingRelayFile = RelayFileOffer & { target: string; bytes: Uint8Array; retry_rounds: number };
 type IncomingRelayFile = RelayFileOffer & { chunksByIndex: Map<number, string>; received: number };
@@ -413,7 +421,7 @@ function base64ToBytes(value: string): Uint8Array | undefined {
 }
 
 function validFileName(value: unknown): value is string {
-  return boundedString(value, 1, 180)
+  return typeof value === 'string' && value.length > 0 && [...value].length <= 180
     && !/[\u0000-\u001f<>:"/\\|?*]/.test(value)
     && value !== '.'
     && value !== '..';
@@ -449,11 +457,11 @@ function parsePayload(content: string, now: number): Payload | undefined {
   if (raw.type === 'public_file') {
     if (!isObject(raw.offer)) return undefined;
     const offer = raw.offer;
-    const roomValid = offer.room_id === undefined || validRoomId(offer.room_id);
+    const roomValid = offer.room_id === undefined || offer.room_id === null || validRoomId(offer.room_id);
     const image = offer.kind === 'image';
     const mimeValid = image
       ? ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(String(offer.mime))
-      : offer.kind === 'file' && offer.mime === undefined;
+      : offer.kind === 'file' && (offer.mime === undefined || offer.mime === null);
     if (!validUuid(offer.offer_id)
       || !validFileName(offer.file_name)
       || !Number.isSafeInteger(offer.size) || Number(offer.size) < 0 || Number(offer.size) > 32 * 1024 * 1024 * 1024
@@ -474,12 +482,12 @@ function parsePayload(content: string, now: number): Payload | undefined {
     if (!['queued', 'speaking', 'idle'].includes(String(voice.status))
       || !validUuid(voice.request_id)
       || !Number.isSafeInteger(voice.joined_at)
-      || Number(voice.joined_at) > now + 5_000
-      || Number(voice.joined_at) < now - 30 * 60_000) return undefined;
+      || Number(voice.joined_at) > Number(raw.sent_at) + 5_000
+      || Number(voice.joined_at) < Number(raw.sent_at) - 30 * 60_000) return undefined;
     if (voice.status === 'speaking') {
       if (!Number.isSafeInteger(voice.speaking_until)
-        || Number(voice.speaking_until) <= now
-        || Number(voice.speaking_until) > now + 65_000) return undefined;
+        || Number(voice.speaking_until) <= Number(raw.sent_at)
+        || Number(voice.speaking_until) > Number(raw.sent_at) + 65_000) return undefined;
     } else if (voice.speaking_until !== undefined) return undefined;
     return raw as unknown as WorldVoicePayload;
   }
@@ -548,8 +556,18 @@ function parseEncryptedPayload(content: string, now: number): EncryptedPayload |
       || !['join', 'leave', 'offer', 'answer', 'ice', 'hangup', 'world_release'].includes(String(raw.signal.action))
       || !(raw.signal.scope === 'world' || validRoomId(raw.signal.scope))) return undefined;
     const signal = raw.signal;
+    const hasMembershipEpoch = signal.membership_epoch !== undefined;
+    const hasMembershipGeneration = signal.membership_generation !== undefined;
+    if (hasMembershipEpoch !== hasMembershipGeneration
+      || (hasMembershipEpoch
+        && (!validUuid(signal.membership_epoch)
+          || !Number.isSafeInteger(signal.membership_generation)
+          || Number(signal.membership_generation) < 1))) return undefined;
     if ((signal.action === 'offer' || signal.action === 'answer')
       && !boundedString(signal.sdp, 1, 32_000)) return undefined;
+    if (signal.action === 'offer'
+      && signal.scope === 'world'
+      && !validUuid(signal.request_id)) return undefined;
     if (signal.action === 'ice'
       && (!boundedString(signal.candidate, 1, 4_000)
         || (signal.sdp_mid !== undefined && signal.sdp_mid !== null && !boundedString(signal.sdp_mid, 0, 256))
@@ -621,6 +639,7 @@ export class WorldRelayBridge {
   private readonly remoteRooms = new Map<string, RemoteRoom>();
   private readonly localPublicFiles = new Map<string, RelayPublicFileOffer>();
   private readonly pending: PendingEvent[] = [];
+  private readonly pendingEncrypted = new Map<string, PendingEncryptedEvent>();
   private readonly outgoingFiles = new Map<string, OutgoingRelayFile>();
   private readonly offeredFiles = new Map<string, RelayFileOffer>();
   private readonly incomingFiles = new Map<string, IncomingRelayFile>();
@@ -674,6 +693,7 @@ export class WorldRelayBridge {
     this.remoteRooms.clear();
     this.localPublicFiles.clear();
     this.pending.length = 0;
+    this.pendingEncrypted.clear();
     this.seen.clear();
     this.outgoingFiles.clear();
     this.offeredFiles.clear();
@@ -723,6 +743,11 @@ export class WorldRelayBridge {
       nick: this.nick,
       nick_color: this.nickColor,
       sha256: offer.sha256.toLowerCase(),
+      // Tauri/Serde historically encoded absent Option fields as null. Keep
+      // the signed relay payload canonical so another client does not reject
+      // a valid WORLD file before it reaches the timeline.
+      mime: offer.mime ?? undefined,
+      room_id: offer.room_id ?? undefined,
     };
     this.localPublicFiles.set(normalized.offer_id, normalized);
     this.publishPublic('public_file', undefined, undefined, undefined, normalized);
@@ -1125,6 +1150,12 @@ export class WorldRelayBridge {
       } catch { return; }
       const encryptedPayload = parseEncryptedPayload(decrypted, Date.now());
       if (!encryptedPayload || Math.abs(event.created_at * 1_000 - encryptedPayload.sent_at) > 5_000) return;
+      const senderPeerId = `nostr:${event.pubkey}`;
+      const remote = this.presence.get(senderPeerId);
+      if (!remote || remote.session !== encryptedPayload.session) {
+        this.deferEncrypted(event.id, event.pubkey, encryptedPayload);
+        return;
+      }
       this.receiveEncrypted(event.pubkey, encryptedPayload);
       return;
     }
@@ -1184,6 +1215,7 @@ export class WorldRelayBridge {
         this.publishPresence();
       }, 50);
     }
+    this.replayPendingEncrypted(event.pubkey, payload.session);
     if (payload.type === 'room') {
       if (this.localRooms.has(payload.room.id)) return;
       const current = this.remoteRooms.get(payload.room.id);
@@ -1225,15 +1257,24 @@ export class WorldRelayBridge {
         nick: payload.nick,
         nick_color: payload.nick_color,
         sha256: payload.offer.sha256.toLowerCase(),
+        mime: payload.offer.mime ?? undefined,
+        room_id: payload.offer.room_id ?? undefined,
       });
       return;
     }
     if (payload.type === 'voice_state') {
+      const receivedAt = Date.now();
+      const queueAge = Math.max(0, Math.min(30 * 60_000, payload.sent_at - payload.voice.joined_at));
+      const speakingFor = payload.voice.status === 'speaking'
+        ? Math.max(1, Math.min(65_000, Number(payload.voice.speaking_until) - payload.sent_at))
+        : undefined;
       this.callbacks?.onWorldVoice?.({
         ...payload.voice,
         peer_id: virtualPeerId,
         nick: payload.nick,
         nick_color: payload.nick_color,
+        joined_at: receivedAt - queueAge,
+        speaking_until: speakingFor === undefined ? undefined : receivedAt + speakingFor,
       });
       return;
     }
@@ -1398,6 +1439,32 @@ export class WorldRelayBridge {
     this.callbacks?.onFileReady?.({ ...incoming, data_base64: bytesToBase64(combined) });
   }
 
+  private deferEncrypted(eventId: string, senderPublicKey: string, payload: EncryptedPayload): void {
+    this.prunePendingEncrypted();
+    if (!this.pendingEncrypted.has(eventId)
+      && this.pendingEncrypted.size >= MAX_PENDING_ENCRYPTED_EVENTS) {
+      const oldest = [...this.pendingEncrypted.entries()]
+        .sort((a, b) => a[1].receivedAt - b[1].receivedAt)[0]?.[0];
+      if (oldest) this.pendingEncrypted.delete(oldest);
+    }
+    this.pendingEncrypted.set(eventId, { senderPublicKey, payload, receivedAt: Date.now() });
+  }
+
+  private replayPendingEncrypted(senderPublicKey: string, session: string): void {
+    this.prunePendingEncrypted();
+    for (const [eventId, pending] of this.pendingEncrypted) {
+      if (pending.senderPublicKey !== senderPublicKey || pending.payload.session !== session) continue;
+      this.pendingEncrypted.delete(eventId);
+      this.receiveEncrypted(senderPublicKey, pending.payload);
+    }
+  }
+
+  private prunePendingEncrypted(now = Date.now()): void {
+    for (const [eventId, pending] of this.pendingEncrypted) {
+      if (now - pending.receivedAt > MESSAGE_TTL_MS) this.pendingEncrypted.delete(eventId);
+    }
+  }
+
   private sweep(): void {
     const now = Date.now();
     const cutoff = now - PRESENCE_TTL_MS;
@@ -1410,6 +1477,7 @@ export class WorldRelayBridge {
       if (room.seenAt >= cutoff || !this.remoteRooms.delete(roomId)) continue;
       this.callbacks?.onRoomClosed?.(roomId);
     }
+    this.prunePendingEncrypted(now);
     while (this.pending.length && this.pending[0].until <= now) this.pending.shift();
   }
 

@@ -1,12 +1,25 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { RtcSignal } from './world-relay';
 import { RTC_CONFIG } from './rtc-config.ts';
+import { t } from './i18n.ts';
 
 const FILE_CHUNK_BYTES = 32 * 1024;
 const DATA_HIGH_WATER = 4 * 1024 * 1024;
 const MAX_ACTIVE_SESSIONS = 12;
 const MAX_FILES_PER_DIRECTION = 4;
 const FILE_SESSION_IDLE_MS = 120_000;
+const ICE_GATHER_TIMEOUT_MS = 5_000;
+const AUDIO_CONNECT_TIMEOUT_MS = 25_000;
+const AUDIO_DISCONNECT_GRACE_MS = 8_000;
+const OFFER_RETRY_DELAY_MS = 750;
+const OFFER_RETRY_COUNT = 2;
+const CALL_CONTROL_RETRY_MS = 750;
+const CALL_CONTROL_RETRY_COUNT = 2;
+const CALL_ACCEPT_RETRY_COUNT = 6;
+const CALL_ACCEPT_RETRY_MAX_MS = 5_000;
+const CALL_REQUEST_TIMEOUT_MS = 30_000;
+const CALL_TOMBSTONE_TTL_MS = 125_000;
+const MAX_CALL_TOMBSTONES = 256;
 const MICROPHONE_CONSTRAINTS: MediaStreamConstraints = {
   audio: {
     echoCancellation: true,
@@ -32,6 +45,7 @@ export type AudioCallState = 'calling' | 'ringing' | 'connecting' | 'connected' 
 
 type Callbacks = {
   sendSignal(peerId: string, signal: RtcSignal): void;
+  beforeMicrophoneCapture?(): void;
   onIncomingCall(peerId: string, connectionId: string): void;
   onCallState(peerId: string, state: AudioCallState, error?: string): void;
   onRemoteAudio(peerId: string, stream: MediaStream | null): void;
@@ -59,7 +73,40 @@ type Session = {
   closed: boolean;
   receiveChain: Promise<void>;
   idleTimer?: number;
+  connectTimer?: number;
+  disconnectTimer?: number;
+  offerRetryTimer?: number;
+  answerInFlight?: Promise<void>;
+  established: boolean;
 };
+
+type PendingCall = {
+  peerId: string;
+  direction: 'incoming' | 'outgoing';
+  stream?: MediaStream;
+  controlTimer?: number;
+  expiryTimer?: number;
+};
+
+async function waitForIceGathering(pc: RTCPeerConnection): Promise<void> {
+  if (pc.iceGatheringState === 'complete' || typeof pc.addEventListener !== 'function') return;
+  await new Promise<void>(resolve => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(timer);
+      pc.removeEventListener('icegatheringstatechange', onState);
+      resolve();
+    };
+    const onState = () => {
+      if (pc.iceGatheringState === 'complete') finish();
+    };
+    const timer = window.setTimeout(finish, ICE_GATHER_TIMEOUT_MS);
+    pc.addEventListener('icegatheringstatechange', onState);
+    onState();
+  });
+}
 
 function validUuid(value: unknown): value is string {
   return typeof value === 'string'
@@ -71,7 +118,7 @@ function validSha256(value: unknown): value is string {
 }
 
 function validFileName(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= 180
+  return typeof value === 'string' && value.length > 0 && [...value].length <= 180
     && !/[\u0000-\u001f<>:"/\\|?*]/.test(value) && value !== '.' && value !== '..';
 }
 
@@ -100,28 +147,31 @@ export class PeerTransport {
   private readonly sessions = new Map<string, Session>();
   private readonly outgoing = new Map<string, { file: RtcFileDescriptor; sessionId: string; peerId: string }>();
   private readonly incoming = new Map<string, { offer: DirectFileOffer; sessionId: string; previewOnly: boolean }>();
-  private readonly pendingCalls = new Map<string, {
-    peerId: string;
-    direction: 'incoming' | 'outgoing';
-    stream?: MediaStream;
-  }>();
+  private readonly pendingCalls = new Map<string, PendingCall>();
+  private readonly endedCalls = new Map<string, number>();
   private readonly earlyIce = new Map<string, { peerId: string; candidates: RTCIceCandidateInit[] }>();
   private callbacks?: Callbacks;
+  private mediaEpoch = 0;
 
   start(callbacks: Callbacks): void { this.callbacks = callbacks; }
 
   stop(): void {
+    this.mediaEpoch += 1;
     const audioPeers = new Set<string>();
     for (const session of this.sessions.values()) {
       if (session.audio) audioPeers.add(session.peerId);
       this.closeSession(session);
     }
     for (const peerId of audioPeers) this.callbacks?.onRemoteAudio(peerId, null);
-    for (const call of this.pendingCalls.values()) call.stream?.getTracks().forEach(track => track.stop());
+    for (const call of this.pendingCalls.values()) {
+      this.clearCallTimers(call);
+      call.stream?.getTracks().forEach(track => track.stop());
+    }
     this.sessions.clear();
     this.outgoing.clear();
     this.incoming.clear();
     this.pendingCalls.clear();
+    this.endedCalls.clear();
     this.earlyIce.clear();
     this.callbacks = undefined;
   }
@@ -206,28 +256,58 @@ export class PeerTransport {
 
   async startCall(peerId: string): Promise<void> {
     if (this.pendingCalls.size > 0) throw new Error('Only one audio call can be active at a time.');
+    const mediaEpoch = ++this.mediaEpoch;
+    this.callbacks?.beforeMicrophoneCapture?.();
     const stream = await this.captureMicrophone();
-    if (this.pendingCalls.size > 0) {
+    if (mediaEpoch !== this.mediaEpoch || this.pendingCalls.size > 0) {
       stream.getTracks().forEach(track => track.stop());
-      throw new Error('Only one audio call can be active at a time.');
+      throw new Error(mediaEpoch !== this.mediaEpoch
+        ? 'Audio call was cancelled before the microphone became ready.'
+        : 'Only one audio call can be active at a time.');
     }
     const connectionId = crypto.randomUUID();
-    this.pendingCalls.set(connectionId, { peerId, direction: 'outgoing', stream });
-    this.callbacks?.sendSignal(peerId, { connection_id: connectionId, action: 'call_request' });
+    const call: PendingCall = { peerId, direction: 'outgoing', stream };
+    this.pendingCalls.set(connectionId, call);
+    try {
+      this.sendCallRequestWithRetry(connectionId, CALL_CONTROL_RETRY_COUNT);
+    } catch (error) {
+      this.pendingCalls.delete(connectionId);
+      stream.getTracks().forEach(track => track.stop());
+      throw error;
+    }
+    call.expiryTimer = window.setTimeout(() => {
+      if (this.sessions.has(connectionId) || this.pendingCalls.get(connectionId) !== call) return;
+      this.clearCallTimers(call);
+      call.stream?.getTracks().forEach(track => track.stop());
+      this.pendingCalls.delete(connectionId);
+      this.rememberEndedCall(call.peerId, connectionId);
+      this.callbacks?.onCallState(peerId, 'failed', 'Zaproszenie audio nie zostało dostarczone na czas.');
+    }, CALL_REQUEST_TIMEOUT_MS);
     this.callbacks?.onCallState(peerId, 'calling');
   }
 
   async acceptCall(connectionId: string): Promise<void> {
     const call = this.pendingCalls.get(connectionId);
     if (!call || call.direction !== 'incoming') throw new Error('Zaproszenie audio wygasło.');
+    const mediaEpoch = ++this.mediaEpoch;
+    this.callbacks?.beforeMicrophoneCapture?.();
     const stream = await this.captureMicrophone();
+    let session: Session | undefined;
     try {
+      if (mediaEpoch !== this.mediaEpoch
+        || this.pendingCalls.get(connectionId) !== call
+        || this.sessions.has(connectionId)) {
+        stream.getTracks().forEach(track => track.stop());
+        throw new Error('Zaproszenie audio wygasło.');
+      }
       call.stream = stream;
-      const session = this.createSession(connectionId, call.peerId, false, true, stream);
-      this.callbacks?.sendSignal(call.peerId, { connection_id: connectionId, action: 'call_accept' });
+      this.clearCallTimers(call);
+      session = this.createSession(connectionId, call.peerId, false, true, stream);
+      this.sendCallAcceptWithRetry(connectionId, 0);
       this.callbacks?.onCallState(call.peerId, 'connecting');
       session.audio = true;
     } catch (error) {
+      if (session) this.closeSession(session);
       stream.getTracks().forEach(track => track.stop());
       throw error;
     }
@@ -236,23 +316,49 @@ export class PeerTransport {
   rejectCall(connectionId: string): void {
     const call = this.pendingCalls.get(connectionId);
     if (!call) return;
-    this.callbacks?.sendSignal(call.peerId, { connection_id: connectionId, action: 'call_reject' });
+    this.clearCallTimers(call);
+    this.rememberEndedCall(call.peerId, connectionId);
+    try { this.callbacks?.sendSignal(call.peerId, { connection_id: connectionId, action: 'call_reject' }); } catch {}
     if (!this.sessions.has(connectionId)) call.stream?.getTracks().forEach(track => track.stop());
     this.pendingCalls.delete(connectionId);
     this.callbacks?.onCallState(call.peerId, 'rejected');
   }
 
   hangup(peerId: string): void {
+    let ended = false;
     for (const [id, call] of this.pendingCalls) {
       if (call.peerId !== peerId) continue;
-      this.callbacks?.sendSignal(peerId, { connection_id: id, action: 'hangup' });
+      ended = true;
+      this.clearCallTimers(call);
+      this.rememberEndedCall(peerId, id);
+      try { this.callbacks?.sendSignal(peerId, { connection_id: id, action: 'hangup' }); } catch {}
       const session = this.sessions.get(id);
       if (session) this.closeSession(session);
       else call.stream?.getTracks().forEach(track => track.stop());
       this.pendingCalls.delete(id);
     }
+    for (const session of [...this.sessions.values()]) {
+      if (session.peerId !== peerId || !session.audio) continue;
+      ended = true;
+      this.rememberEndedCall(peerId, session.id);
+      try { this.callbacks?.sendSignal(peerId, { connection_id: session.id, action: 'hangup' }); } catch {}
+      this.closeSession(session);
+    }
+    if (!ended) return;
     this.callbacks?.onRemoteAudio(peerId, null);
     this.callbacks?.onCallState(peerId, 'ended');
+  }
+
+  hangupAllCalls(): void {
+    // Invalidate a getUserMedia request that has not produced a PendingCall or
+    // Session yet, so switching to group voice cannot race it for the device.
+    this.mediaEpoch += 1;
+    const peers = new Set<string>();
+    for (const call of this.pendingCalls.values()) peers.add(call.peerId);
+    for (const session of this.sessions.values()) {
+      if (session.audio) peers.add(session.peerId);
+    }
+    for (const peerId of peers) this.hangup(peerId);
   }
 
   setMuted(peerId: string, muted: boolean): void {
@@ -275,19 +381,43 @@ export class PeerTransport {
 
   async handleSignal(peerId: string, signal: RtcSignal): Promise<void> {
     if (signal.action === 'call_request') {
-      if (this.pendingCalls.has(signal.connection_id)) return;
+      if (this.hasEndedCall(peerId, signal.connection_id)) {
+        try { this.callbacks?.sendSignal(peerId, { connection_id: signal.connection_id, action: 'hangup' }); } catch {}
+        return;
+      }
+      const existing = this.pendingCalls.get(signal.connection_id);
+      if (existing) {
+        if (existing.peerId === peerId
+          && existing.direction === 'incoming'
+          && this.sessions.has(signal.connection_id)) {
+          this.callbacks?.sendSignal(peerId, { connection_id: signal.connection_id, action: 'call_accept' });
+        }
+        return;
+      }
       if (this.pendingCalls.size > 0) {
+        this.rememberEndedCall(peerId, signal.connection_id);
         this.callbacks?.sendSignal(peerId, { connection_id: signal.connection_id, action: 'call_reject' });
         return;
       }
-      this.pendingCalls.set(signal.connection_id, { peerId, direction: 'incoming' });
+      const call: PendingCall = { peerId, direction: 'incoming' };
+      this.pendingCalls.set(signal.connection_id, call);
+      call.expiryTimer = window.setTimeout(() => {
+        if (this.sessions.has(signal.connection_id) || this.pendingCalls.get(signal.connection_id) !== call) return;
+        this.pendingCalls.delete(signal.connection_id);
+        this.rememberEndedCall(peerId, signal.connection_id);
+        this.callbacks?.onCallState(peerId, 'ended');
+      }, CALL_REQUEST_TIMEOUT_MS);
       this.callbacks?.onIncomingCall(peerId, signal.connection_id);
       this.callbacks?.onCallState(peerId, 'ringing');
       return;
     }
     if (signal.action === 'call_reject') {
       const call = this.pendingCalls.get(signal.connection_id);
-      if (!this.sessions.has(signal.connection_id)) call?.stream?.getTracks().forEach(track => track.stop());
+      if (!call || call.peerId !== peerId || call.direction !== 'outgoing'
+        || this.sessions.has(signal.connection_id)) return;
+      this.clearCallTimers(call);
+      this.rememberEndedCall(peerId, signal.connection_id);
+      call.stream?.getTracks().forEach(track => track.stop());
       this.pendingCalls.delete(signal.connection_id);
       this.callbacks?.onCallState(peerId, 'rejected');
       return;
@@ -295,6 +425,9 @@ export class PeerTransport {
     if (signal.action === 'hangup') {
       const call = this.pendingCalls.get(signal.connection_id);
       const session = this.sessions.get(signal.connection_id);
+      this.rememberEndedCall(peerId, signal.connection_id);
+      if ((!call || call.peerId !== peerId) && (!session || session.peerId !== peerId)) return;
+      if (call) this.clearCallTimers(call);
       if (session) this.closeSession(session);
       else call?.stream?.getTracks().forEach(track => track.stop());
       this.pendingCalls.delete(signal.connection_id);
@@ -305,6 +438,14 @@ export class PeerTransport {
     if (signal.action === 'call_accept') {
       const call = this.pendingCalls.get(signal.connection_id);
       if (!call || call.peerId !== peerId || call.direction !== 'outgoing') return;
+      const existingSession = this.sessions.get(signal.connection_id);
+      if (existingSession) {
+        // call_request is retried until an accept arrives. A delayed duplicate accept
+        // must not start a second negotiation on the same RTCPeerConnection.
+        if (existingSession.peerId === peerId && existingSession.audio) return;
+        return;
+      }
+      this.clearCallTimers(call);
       let stream: MediaStream | undefined;
       let session: Session | undefined;
       try {
@@ -346,17 +487,58 @@ export class PeerTransport {
       }
       if (!session) session = this.createSession(signal.connection_id, peerId, false, false);
       if (session.peerId !== peerId) return;
-      await session.pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp });
-      await this.flushIce(session);
-      const answer = await session.pc.createAnswer();
-      await session.pc.setLocalDescription(answer);
-      this.callbacks?.sendSignal(peerId, { connection_id: session.id, action: 'answer', sdp: answer.sdp ?? '' });
+      const acceptedCall = this.pendingCalls.get(signal.connection_id);
+      if (acceptedCall?.direction === 'incoming') {
+        if (acceptedCall.controlTimer !== undefined) window.clearTimeout(acceptedCall.controlTimer);
+        acceptedCall.controlTimer = undefined;
+      }
+      if (session.answerInFlight) {
+        try { await session.answerInFlight; } catch { return; }
+        if (!session.closed && session.pc.localDescription?.type === 'answer') {
+          this.callbacks?.sendSignal(peerId, {
+            connection_id: session.id,
+            action: 'answer',
+            sdp: session.pc.localDescription.sdp ?? '',
+          });
+        }
+        return;
+      }
+      if (session.pc.remoteDescription?.type === 'offer'
+        && session.pc.remoteDescription.sdp === signal.sdp
+        && session.pc.localDescription?.type === 'answer') {
+        this.callbacks?.sendSignal(peerId, {
+          connection_id: session.id,
+          action: 'answer',
+          sdp: session.pc.localDescription.sdp ?? '',
+        });
+        return;
+      }
+      const answering = (async () => {
+        await session.pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp! });
+        await this.flushIce(session);
+        const answer = await session.pc.createAnswer();
+        await session.pc.setLocalDescription(answer);
+        await waitForIceGathering(session.pc);
+        if (session.closed) return;
+        this.callbacks?.sendSignal(peerId, {
+          connection_id: session.id,
+          action: 'answer',
+          sdp: session.pc.localDescription?.sdp ?? answer.sdp ?? '',
+        });
+      })();
+      session.answerInFlight = answering;
+      try { await answering; } finally {
+        if (session.answerInFlight === answering) session.answerInFlight = undefined;
+      }
       return;
     }
     if (!session || session.peerId !== peerId) return;
     if (signal.action === 'answer') {
       if (!signal.sdp) return;
+      if (session.pc.remoteDescription?.type === 'answer') return;
       await session.pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp });
+      if (session.offerRetryTimer !== undefined) window.clearTimeout(session.offerRetryTimer);
+      session.offerRetryTimer = undefined;
       await this.flushIce(session);
     } else if (signal.action === 'ice' && signal.candidate) {
       const candidate: RTCIceCandidateInit = {
@@ -364,7 +546,9 @@ export class PeerTransport {
         sdpMid: signal.sdp_mid,
         sdpMLineIndex: signal.sdp_mline_index,
       };
-      if (session.pc.remoteDescription) await session.pc.addIceCandidate(candidate);
+      if (session.pc.remoteDescription) {
+        try { await session.pc.addIceCandidate(candidate); } catch {}
+      }
       else session.pendingIce.push(candidate);
     }
   }
@@ -384,6 +568,7 @@ export class PeerTransport {
       localStream: stream,
       audio,
       closed: false,
+      established: false,
       receiveChain: Promise.resolve(),
     };
     this.sessions.set(id, session);
@@ -400,20 +585,58 @@ export class PeerTransport {
       });
     };
     pc.ontrack = event => {
+      if (session.closed) return;
       const remote = event.streams[0] ?? new MediaStream([event.track]);
       this.callbacks?.onRemoteAudio(peerId, remote);
     };
-    pc.onconnectionstatechange = () => {
+    const handleConnectionState = () => {
       if (session.closed) return;
-      if (pc.connectionState === 'connected' && session.audio) this.callbacks?.onCallState(peerId, 'connected');
-      if (pc.connectionState === 'failed') {
-        if (session.audio) this.callbacks?.onCallState(peerId, 'failed', 'Nie udało się zestawić bezpośredniego połączenia audio.');
-        if (session.audio) this.callbacks?.onRemoteAudio(peerId, null);
-        this.closeSession(session);
+      const failed = pc.connectionState === 'failed' || pc.iceConnectionState === 'failed';
+      if (failed) {
+        if (session.audio) this.failAudioSession(session, 'Nie udało się utrzymać bezpośredniego połączenia audio.');
+        else this.closeSession(session);
+        return;
+      }
+      const disconnected = pc.connectionState === 'disconnected' || pc.iceConnectionState === 'disconnected';
+      if (disconnected) {
+        if (session.audio && session.established && session.disconnectTimer === undefined) {
+          session.disconnectTimer = window.setTimeout(() => {
+            session.disconnectTimer = undefined;
+            if (session.closed || this.sessions.get(session.id) !== session) return;
+            if (session.pc.connectionState !== 'disconnected'
+              && session.pc.iceConnectionState !== 'disconnected') return;
+            this.failAudioSession(session, 'Połączenie audio zostało przerwane przez zbyt długi czas.');
+          }, AUDIO_DISCONNECT_GRACE_MS);
+        }
+        return;
+      }
+      const connected = pc.connectionState === 'connected'
+        || pc.iceConnectionState === 'connected'
+        || pc.iceConnectionState === 'completed';
+      if (connected) {
+        if (session.connectTimer !== undefined) window.clearTimeout(session.connectTimer);
+        if (session.disconnectTimer !== undefined) window.clearTimeout(session.disconnectTimer);
+        if (session.offerRetryTimer !== undefined) window.clearTimeout(session.offerRetryTimer);
+        session.connectTimer = undefined;
+        session.disconnectTimer = undefined;
+        session.offerRetryTimer = undefined;
+        session.established = true;
+        if (session.audio) this.callbacks?.onCallState(peerId, 'connected');
       }
     };
+    pc.onconnectionstatechange = handleConnectionState;
+    pc.oniceconnectionstatechange = handleConnectionState;
     pc.ondatachannel = event => this.attachChannel(session, event.channel);
     if (initiator && !audio) this.attachChannel(session, pc.createDataChannel('konofix-files', { ordered: true }));
+    if (audio) {
+      session.connectTimer = window.setTimeout(() => {
+        if (session.closed || session.pc.connectionState === 'connected') return;
+        this.callbacks?.onCallState(peerId, 'failed', 'Przekroczono czas zestawiania połączenia audio WAN.');
+        this.callbacks?.onRemoteAudio(peerId, null);
+        try { this.callbacks?.sendSignal(peerId, { connection_id: session.id, action: 'hangup' }); } catch {}
+        this.closeSession(session);
+      }, AUDIO_CONNECT_TIMEOUT_MS);
+    }
     this.touchSession(session);
     return session;
   }
@@ -448,11 +671,104 @@ export class PeerTransport {
   private async negotiate(session: Session): Promise<void> {
     const offer = await session.pc.createOffer();
     await session.pc.setLocalDescription(offer);
-    this.callbacks?.sendSignal(session.peerId, { connection_id: session.id, action: 'offer', sdp: offer.sdp ?? '' });
+    await waitForIceGathering(session.pc);
+    if (session.closed) return;
+    const signal: RtcSignal = {
+      connection_id: session.id,
+      action: 'offer',
+      sdp: session.pc.localDescription?.sdp ?? offer.sdp ?? '',
+    };
+    this.sendOfferWithRetry(session, signal, OFFER_RETRY_COUNT);
+  }
+
+  private sendOfferWithRetry(session: Session, signal: RtcSignal, retriesLeft: number): void {
+    if (session.closed || session.pc.remoteDescription?.type === 'answer') return;
+    this.callbacks?.sendSignal(session.peerId, signal);
+    if (retriesLeft <= 0) return;
+    if (session.offerRetryTimer !== undefined) window.clearTimeout(session.offerRetryTimer);
+    session.offerRetryTimer = window.setTimeout(() => {
+      session.offerRetryTimer = undefined;
+      if (session.closed || session.pc.remoteDescription?.type === 'answer') return;
+      try { this.sendOfferWithRetry(session, signal, retriesLeft - 1); } catch {}
+    }, OFFER_RETRY_DELAY_MS);
+  }
+
+  private sendCallRequestWithRetry(connectionId: string, retriesLeft: number): void {
+    const call = this.pendingCalls.get(connectionId);
+    if (!call || call.direction !== 'outgoing' || this.sessions.has(connectionId)) return;
+    this.callbacks?.sendSignal(call.peerId, { connection_id: connectionId, action: 'call_request' });
+    if (retriesLeft <= 0) return;
+    if (call.controlTimer !== undefined) window.clearTimeout(call.controlTimer);
+    call.controlTimer = window.setTimeout(() => {
+      call.controlTimer = undefined;
+      if (this.pendingCalls.get(connectionId) !== call || this.sessions.has(connectionId)) return;
+      try { this.sendCallRequestWithRetry(connectionId, retriesLeft - 1); } catch {}
+    }, CALL_CONTROL_RETRY_MS);
+  }
+
+  private sendCallAcceptWithRetry(connectionId: string, attempt: number): void {
+    const call = this.pendingCalls.get(connectionId);
+    const session = this.sessions.get(connectionId);
+    if (!call || call.direction !== 'incoming' || !session || session.closed
+      || session.pc.remoteDescription?.type === 'offer') return;
+    this.callbacks?.sendSignal(call.peerId, { connection_id: connectionId, action: 'call_accept' });
+    if (attempt >= CALL_ACCEPT_RETRY_COUNT) return;
+    if (call.controlTimer !== undefined) window.clearTimeout(call.controlTimer);
+    const delay = Math.min(CALL_CONTROL_RETRY_MS * 2 ** attempt, CALL_ACCEPT_RETRY_MAX_MS);
+    call.controlTimer = window.setTimeout(() => {
+      call.controlTimer = undefined;
+      try { this.sendCallAcceptWithRetry(connectionId, attempt + 1); } catch {}
+    }, delay);
+  }
+
+  private clearCallTimers(call: PendingCall): void {
+    if (call.controlTimer !== undefined) window.clearTimeout(call.controlTimer);
+    if (call.expiryTimer !== undefined) window.clearTimeout(call.expiryTimer);
+    call.controlTimer = undefined;
+    call.expiryTimer = undefined;
+  }
+
+  private callTombstoneKey(peerId: string, connectionId: string): string {
+    return `${peerId}\u0000${connectionId}`;
+  }
+
+  private hasEndedCall(peerId: string, connectionId: string, now = Date.now()): boolean {
+    this.pruneEndedCalls(now);
+    return (this.endedCalls.get(this.callTombstoneKey(peerId, connectionId)) ?? 0) > now;
+  }
+
+  private rememberEndedCall(peerId: string, connectionId: string, now = Date.now()): void {
+    this.pruneEndedCalls(now);
+    const key = this.callTombstoneKey(peerId, connectionId);
+    this.endedCalls.delete(key);
+    this.endedCalls.set(key, now + CALL_TOMBSTONE_TTL_MS);
+    while (this.endedCalls.size > MAX_CALL_TOMBSTONES) {
+      const oldest = this.endedCalls.keys().next().value;
+      if (oldest === undefined) break;
+      this.endedCalls.delete(oldest);
+    }
+  }
+
+  private pruneEndedCalls(now = Date.now()): void {
+    for (const [key, expiresAt] of this.endedCalls) {
+      if (expiresAt <= now) this.endedCalls.delete(key);
+    }
   }
 
   private async captureMicrophone(): Promise<MediaStream> {
-    const stream = await navigator.mediaDevices.getUserMedia(MICROPHONE_CONSTRAINTS);
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(MICROPHONE_CONSTRAINTS);
+    } catch (error) {
+      const name = (error as { name?: unknown })?.name;
+      if (name === 'OverconstrainedError') {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } else if (name === 'NotAllowedError' || name === 'SecurityError') {
+        throw new Error(t('audio.microphonePermission'));
+      } else {
+        throw error;
+      }
+    }
     const tracks = stream.getAudioTracks();
     if (tracks.length === 0 || tracks.every(track => track.readyState === 'ended')) {
       stream.getTracks().forEach(track => track.stop());
@@ -464,7 +780,10 @@ export class PeerTransport {
 
   private async flushIce(session: Session): Promise<void> {
     const pending = session.pendingIce.splice(0);
-    for (const candidate of pending) await session.pc.addIceCandidate(candidate);
+    for (const candidate of pending) {
+      if (session.closed) return;
+      try { await session.pc.addIceCandidate(candidate); } catch {}
+    }
   }
 
   private sendWire(channel: RTCDataChannel, message: WireMessage | Record<string, unknown>): void {
@@ -594,14 +913,30 @@ export class PeerTransport {
     }
   }
 
+  private failAudioSession(session: Session, reason: string): void {
+    if (session.closed || !session.audio || this.sessions.get(session.id) !== session) return;
+    try {
+      this.callbacks?.sendSignal(session.peerId, { connection_id: session.id, action: 'hangup' });
+    } catch {}
+    this.callbacks?.onCallState(session.peerId, 'failed', reason);
+    this.callbacks?.onRemoteAudio(session.peerId, null);
+    this.closeSession(session);
+  }
+
   private closeSession(session: Session): void {
     if (session.closed) return;
     session.closed = true;
     if (session.idleTimer !== undefined) window.clearTimeout(session.idleTimer);
+    if (session.connectTimer !== undefined) window.clearTimeout(session.connectTimer);
+    if (session.disconnectTimer !== undefined) window.clearTimeout(session.disconnectTimer);
+    if (session.offerRetryTimer !== undefined) window.clearTimeout(session.offerRetryTimer);
     session.channel?.close();
     session.pc.close();
     session.localStream?.getTracks().forEach(track => track.stop());
     this.sessions.delete(session.id);
+    if (session.audio) this.rememberEndedCall(session.peerId, session.id);
+    const call = this.pendingCalls.get(session.id);
+    if (call) this.clearCallTimers(call);
     this.pendingCalls.delete(session.id);
     this.earlyIce.delete(session.id);
   }

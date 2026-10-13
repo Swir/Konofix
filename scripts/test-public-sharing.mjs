@@ -66,11 +66,15 @@ for (const [needle, label] of [
 ]) requireText(relay, needle, label);
 
 for (const [needle, label] of [
-  ['turn:openrelay.metered.ca:80?transport=udp', 'TURN UDP/80 fallback'],
-  ['turn:openrelay.metered.ca:443?transport=tcp', 'TURN TCP/443 fallback'],
-  ['turns:openrelay.metered.ca:443?transport=tcp', 'TURN TLS/443 fallback'],
+  ['stun:stun.cloudflare.com:3478', 'primary STUN discovery'],
+  ['stun:stun.l.google.com:19302', 'independent STUN discovery'],
+  ['iceCandidatePoolSize: 1', 'bounded ICE candidate pool'],
   ["iceTransportPolicy: 'all'", 'direct path remains preferred'],
 ]) requireText(rtc, needle, label);
+
+if (rtc.includes('openrelay.metered.ca') || rtc.includes("username: 'openrelayproject'")) {
+  throw new Error('Retired anonymous Open Relay credentials must not be presented as a working WAN fallback.');
+}
 
 if (frontend.includes('id="shareWorldImage"') || frontend.includes("sharePublic('image'")) {
   throw new Error('The separate Share image action must be removed; the file picker auto-detects supported images.');
@@ -86,5 +90,26 @@ if (listener.includes("claim_public_file") || listener.includes('claimPublicOffe
 const previewStart = frontend.indexOf('function showImagePreview(');
 const claimStart = frontend.indexOf('async function claimPublicOffer(');
 if (previewStart < 0 || claimStart < 0) throw new Error('Public sharing functions are missing.');
+
+const shareStart = frontend.indexOf('async function sharePublic(');
+const shareEnd = frontend.indexOf('async function claimPublicOffer(', shareStart);
+const shareBody = frontend.slice(shareStart, shareEnd);
+if (shareBody.includes('worldRelayState.connected > 0')) {
+  throw new Error('WORLD file announcements must enter the relay queue during a temporary disconnect.');
+}
+requireText(shareBody, 'relayPublishError', 'visible public announcement failure instead of a swallowed relay error');
+requireText(frontend, 'stored = existing', 'public offer card restoration after bounded history trimming');
+requireText(frontend, 'beforeMicrophoneCapture() {\n      groupVoice.leaveWorld();\n      groupVoice.leaveRoom();', 'private audio releases group microphone ownership');
+requireText(frontend, 'beforeMicrophoneCapture() { peerTransport.hangupAllCalls(); }', 'group audio releases private microphone ownership');
+
+const relayPresenceStart = frontend.indexOf('onPresence(peer: RelayPeer)');
+const relayPresenceEnd = frontend.indexOf('onOffline(peerId: string)', relayPresenceStart);
+const relayPresence = frontend.slice(relayPresenceStart, relayPresenceEnd);
+const relayAudioOnline = relayPresence.indexOf('groupVoice.peerOnline(peer.peer_id)');
+const nativeDuplicateGuard = relayPresence.indexOf('if (state.peers.has(peer.claimed_peer_id))');
+if (relayPresenceStart < 0 || relayPresenceEnd < 0 || relayAudioOnline < 0
+  || nativeDuplicateGuard < 0 || relayAudioOnline > nativeDuplicateGuard) {
+  throw new Error('Relay media presence must reach group voice before hiding a duplicate native peer from the people list.');
+}
 
 console.log('Public sharing contract passed: metadata-only announcements, explicit claims, temporary verified previews and persistent explicit downloads.');

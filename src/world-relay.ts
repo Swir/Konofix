@@ -13,6 +13,7 @@ const MAX_ENCRYPTED_CONTENT_BYTES = 48 * 1024;
 const MAX_RELAY_FILE_BYTES = 2 * 1024 * 1024;
 const RELAY_FILE_CHUNK_BYTES = 16 * 1024;
 const MAX_SEEN_EVENTS = 2_048;
+const MAX_PENDING_ENCRYPTED_EVENTS = 128;
 const RELAYS = [
   'wss://relay.damus.io',
   'wss://nos.lol',
@@ -39,6 +40,15 @@ export type RelayPeer = {
 };
 
 export type RelayState = { connected: number; total: number };
+
+export type RelayRoomInfo = {
+  id: string;
+  title: string;
+  owner: string;
+  users: number;
+  password_protected: false;
+  auth_revision: 0;
+};
 
 export type RelayPrivateMessage = {
   id: string;
@@ -77,15 +87,73 @@ export type RelayFileProgress = RelayFileOffer & {
 
 export type RelayFileReady = RelayFileOffer & { data_base64: string };
 
+export type RelayPublicFileOffer = {
+  offer_id: string;
+  peer_id: string;
+  nick: string;
+  nick_color?: string;
+  file_name: string;
+  size: number;
+  sha256: string;
+  kind: 'file' | 'image';
+  mime?: string;
+  room_id?: string;
+  timestamp: number;
+  expires_at: number;
+};
+
+export type RtcSignal = {
+  connection_id: string;
+  action: 'offer' | 'answer' | 'ice' | 'call_request' | 'call_accept' | 'call_reject' | 'hangup' | 'public_file_request' | 'public_file_reject';
+  sdp?: string;
+  candidate?: string;
+  sdp_mid?: string | null;
+  sdp_mline_index?: number | null;
+  offer_id?: string;
+  transfer_token?: string;
+  preview_only?: boolean;
+  reason?: string;
+};
+
+export type WorldVoiceState = {
+  peer_id: string;
+  nick: string;
+  nick_color?: string;
+  status: 'queued' | 'speaking' | 'idle';
+  request_id: string;
+  joined_at: number;
+  speaking_until?: number;
+};
+
+export type VoiceSignal = {
+  connection_id: string;
+  action: 'join' | 'leave' | 'offer' | 'answer' | 'ice' | 'hangup' | 'world_release';
+  scope: string;
+  request_id?: string;
+  membership_epoch?: string;
+  membership_generation?: number;
+  reply?: boolean;
+  sdp?: string;
+  candidate?: string;
+  sdp_mid?: string | null;
+  sdp_mline_index?: number | null;
+};
+
 type Callbacks = {
   onPresence(peer: RelayPeer): void;
   onOffline(peerId: string): void;
   onChat(message: RelayChatMessage): void;
+  onRoom?(room: RelayRoomInfo): void;
+  onRoomClosed?(roomId: string): void;
   onState(state: RelayState): void;
   onPrivate?(message: RelayPrivateMessage): void;
   onFileOffer?(offer: RelayFileOffer): void;
   onFileProgress?(progress: RelayFileProgress): void;
   onFileReady?(file: RelayFileReady): void;
+  onPublicFile?(offer: RelayPublicFileOffer): void;
+  onRtcSignal?(peerId: string, signal: RtcSignal): void;
+  onWorldVoice?(state: WorldVoiceState): void;
+  onVoiceSignal?(peerId: string, signal: VoiceSignal): void;
 };
 
 type PresencePayload = {
@@ -102,7 +170,7 @@ type PresencePayload = {
 type ChatPayload = {
   v: 1;
   ns: typeof NAMESPACE;
-  type: 'chat';
+  type: 'chat' | 'room_chat';
   session: string;
   peer_id: string;
   nick: string;
@@ -111,7 +179,55 @@ type ChatPayload = {
   message: RelayChatMessage;
 };
 
-type Payload = PresencePayload | ChatPayload;
+type RoomPayload = {
+  v: 1;
+  ns: typeof NAMESPACE;
+  type: 'room';
+  session: string;
+  peer_id: string;
+  nick: string;
+  nick_color: string;
+  sent_at: number;
+  room: { id: string; title: string };
+};
+
+type RoomClosePayload = {
+  v: 1;
+  ns: typeof NAMESPACE;
+  type: 'room_close';
+  session: string;
+  peer_id: string;
+  nick: string;
+  nick_color: string;
+  sent_at: number;
+  room_id: string;
+};
+
+type PublicFilePayload = {
+  v: 1;
+  ns: typeof NAMESPACE;
+  type: 'public_file';
+  session: string;
+  peer_id: string;
+  nick: string;
+  nick_color: string;
+  sent_at: number;
+  offer: Omit<RelayPublicFileOffer, 'peer_id' | 'nick' | 'nick_color'>;
+};
+
+type WorldVoicePayload = {
+  v: 1;
+  ns: typeof NAMESPACE;
+  type: 'voice_state';
+  session: string;
+  peer_id: string;
+  nick: string;
+  nick_color: string;
+  sent_at: number;
+  voice: Omit<WorldVoiceState, 'peer_id' | 'nick' | 'nick_color'>;
+};
+
+type Payload = PresencePayload | ChatPayload | RoomPayload | RoomClosePayload | PublicFilePayload | WorldVoicePayload;
 
 type EncryptedPrivatePayload = {
   v: 1;
@@ -167,13 +283,38 @@ type EncryptedFileChunkPayload = {
   data: string;
 };
 
-type EncryptedPayload = EncryptedPrivatePayload | EncryptedFileOfferPayload | EncryptedFileControlPayload | EncryptedFileMissingPayload | EncryptedFileChunkPayload;
+type EncryptedRtcSignalPayload = {
+  v: 1;
+  ns: typeof NAMESPACE;
+  type: 'rtc_signal';
+  session: string;
+  sent_at: number;
+  signal: RtcSignal;
+};
+
+type EncryptedVoiceSignalPayload = {
+  v: 1;
+  ns: typeof NAMESPACE;
+  type: 'voice_signal';
+  session: string;
+  sent_at: number;
+  signal: VoiceSignal;
+};
+
+type EncryptedPayload = EncryptedPrivatePayload | EncryptedFileOfferPayload | EncryptedFileControlPayload | EncryptedFileMissingPayload | EncryptedFileChunkPayload | EncryptedRtcSignalPayload | EncryptedVoiceSignalPayload;
 
 type RemotePresence = {
   peer: RelayPeer;
   seenAt: number;
   announcedAt: number;
   session: string;
+};
+
+type RemoteRoom = {
+  room: RelayRoomInfo;
+  ownerPeerId: string;
+  session: string;
+  seenAt: number;
 };
 
 type RelaySocket = {
@@ -184,6 +325,11 @@ type RelaySocket = {
 };
 
 type PendingEvent = { wire: string; until: number; sent: Set<string> };
+type PendingEncryptedEvent = {
+  senderPublicKey: string;
+  payload: EncryptedPayload;
+  receivedAt: number;
+};
 
 type OutgoingRelayFile = RelayFileOffer & { target: string; bytes: Uint8Array; retry_rounds: number };
 type IncomingRelayFile = RelayFileOffer & { chunksByIndex: Map<number, string>; received: number };
@@ -231,6 +377,22 @@ function validUuid(value: unknown): value is string {
     && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
+function validRoomId(value: unknown): value is string {
+  return typeof value === 'string'
+    && value !== 'world'
+    && value.length >= 1
+    && value.length <= 64
+    && /^[a-zA-Z0-9_-]+$/.test(value);
+}
+
+function validRoomTitle(value: unknown): value is string {
+  if (typeof value !== 'string' || !value.startsWith('# ')) return false;
+  const title = value.slice(2);
+  return title.length >= 3
+    && title.length <= 32
+    && !/[\u0000-\u001f\u007f]/.test(title);
+}
+
 function validSha256(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value);
 }
@@ -259,7 +421,7 @@ function base64ToBytes(value: string): Uint8Array | undefined {
 }
 
 function validFileName(value: unknown): value is string {
-  return boundedString(value, 1, 180)
+  return typeof value === 'string' && value.length > 0 && [...value].length <= 180
     && !/[\u0000-\u001f<>:"/\\|?*]/.test(value)
     && value !== '.'
     && value !== '..';
@@ -272,7 +434,7 @@ function parsePayload(content: string, now: number): Payload | undefined {
   if (!isObject(raw)
     || raw.v !== 1
     || raw.ns !== NAMESPACE
-    || !['presence', 'goodbye', 'chat'].includes(String(raw.type))
+    || !['presence', 'goodbye', 'chat', 'room', 'room_close', 'room_chat', 'public_file', 'voice_state'].includes(String(raw.type))
     || !boundedString(raw.session, 8, 64)
     || !boundedString(raw.peer_id, 16, 128)
     || !boundedString(raw.nick, 3, 24)
@@ -282,12 +444,59 @@ function parsePayload(content: string, now: number): Payload | undefined {
     || Math.abs(now - raw.sent_at) > MESSAGE_TTL_MS) {
     return undefined;
   }
-  if (raw.type !== 'chat') return raw as unknown as PresencePayload;
+  if (raw.type === 'room') {
+    if (!isObject(raw.room)
+      || !validRoomId(raw.room.id)
+      || !validRoomTitle(raw.room.title)) return undefined;
+    return raw as unknown as RoomPayload;
+  }
+  if (raw.type === 'room_close') {
+    if (!validRoomId(raw.room_id)) return undefined;
+    return raw as unknown as RoomClosePayload;
+  }
+  if (raw.type === 'public_file') {
+    if (!isObject(raw.offer)) return undefined;
+    const offer = raw.offer;
+    const roomValid = offer.room_id === undefined || offer.room_id === null || validRoomId(offer.room_id);
+    const image = offer.kind === 'image';
+    const mimeValid = image
+      ? ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(String(offer.mime))
+      : offer.kind === 'file' && (offer.mime === undefined || offer.mime === null);
+    if (!validUuid(offer.offer_id)
+      || !validFileName(offer.file_name)
+      || !Number.isSafeInteger(offer.size) || Number(offer.size) < 0 || Number(offer.size) > 32 * 1024 * 1024 * 1024
+      || !validSha256(offer.sha256)
+      || !mimeValid
+      || (image && (Number(offer.size) < 1 || Number(offer.size) > 8 * 1024 * 1024))
+      || !roomValid
+      || !Number.isSafeInteger(offer.timestamp)
+      || !Number.isSafeInteger(offer.expires_at)
+      || Number(offer.timestamp) < 1
+      || Number(offer.expires_at) <= now
+      || Number(offer.expires_at) - Number(offer.timestamp) > 10 * 60_000) return undefined;
+    return raw as unknown as PublicFilePayload;
+  }
+  if (raw.type === 'voice_state') {
+    if (!isObject(raw.voice)) return undefined;
+    const voice = raw.voice;
+    if (!['queued', 'speaking', 'idle'].includes(String(voice.status))
+      || !validUuid(voice.request_id)
+      || !Number.isSafeInteger(voice.joined_at)
+      || Number(voice.joined_at) > Number(raw.sent_at) + 5_000
+      || Number(voice.joined_at) < Number(raw.sent_at) - 30 * 60_000) return undefined;
+    if (voice.status === 'speaking') {
+      if (!Number.isSafeInteger(voice.speaking_until)
+        || Number(voice.speaking_until) <= Number(raw.sent_at)
+        || Number(voice.speaking_until) > Number(raw.sent_at) + 65_000) return undefined;
+    } else if (voice.speaking_until !== undefined) return undefined;
+    return raw as unknown as WorldVoicePayload;
+  }
+  if (raw.type !== 'chat' && raw.type !== 'room_chat') return raw as unknown as PresencePayload;
   if (!isObject(raw.message)) return undefined;
   const message = raw.message;
   if (!boundedString(message.id, 8, 64)
     || message.kind !== 'chat'
-    || message.room !== 'world'
+    || (raw.type === 'chat' ? message.room !== 'world' : !validRoomId(message.room))
     || message.peer_id !== raw.peer_id
     || !boundedString(message.nick, 3, 24)
     || message.nick !== raw.nick
@@ -309,7 +518,7 @@ function parseEncryptedPayload(content: string, now: number): EncryptedPayload |
   if (!isObject(raw)
     || raw.v !== 1
     || raw.ns !== NAMESPACE
-    || !['private', 'file_offer', 'file_accept', 'file_reject', 'file_chunk', 'file_saved', 'file_chunks_complete', 'file_missing'].includes(String(raw.type))
+    || !['private', 'file_offer', 'file_accept', 'file_reject', 'file_chunk', 'file_saved', 'file_chunks_complete', 'file_missing', 'rtc_signal', 'voice_signal'].includes(String(raw.type))
     || !boundedString(raw.session, 8, 64)
     || typeof raw.sent_at !== 'number'
     || !Number.isSafeInteger(raw.sent_at)
@@ -318,6 +527,56 @@ function parseEncryptedPayload(content: string, now: number): EncryptedPayload |
   if (raw.type === 'private') {
     if (!validUuid(raw.id) || !boundedString(raw.text, 1, 4_000)) return undefined;
     return raw as unknown as EncryptedPrivatePayload;
+  }
+  if (raw.type === 'rtc_signal') {
+    if (!isObject(raw.signal)
+      || !validUuid(raw.signal.connection_id)
+      || !['offer', 'answer', 'ice', 'call_request', 'call_accept', 'call_reject', 'hangup', 'public_file_request', 'public_file_reject'].includes(String(raw.signal.action))) return undefined;
+    const signal = raw.signal;
+    if ((signal.action === 'offer' || signal.action === 'answer')
+      && !boundedString(signal.sdp, 1, 32_000)) return undefined;
+    if (signal.action === 'ice'
+      && (!boundedString(signal.candidate, 1, 4_000)
+        || (signal.sdp_mid !== undefined && signal.sdp_mid !== null && !boundedString(signal.sdp_mid, 0, 256))
+        || (signal.sdp_mline_index !== undefined && signal.sdp_mline_index !== null
+          && (!Number.isSafeInteger(signal.sdp_mline_index) || Number(signal.sdp_mline_index) < 0)))) return undefined;
+    if (signal.action === 'public_file_request'
+      && (!validUuid(signal.offer_id)
+        || !validUuid(signal.transfer_token)
+        || typeof signal.preview_only !== 'boolean')) return undefined;
+    if (signal.action === 'public_file_reject'
+      && (!validUuid(signal.offer_id)
+        || !validUuid(signal.transfer_token)
+        || !boundedString(signal.reason, 1, 300))) return undefined;
+    return raw as unknown as EncryptedRtcSignalPayload;
+  }
+  if (raw.type === 'voice_signal') {
+    if (!isObject(raw.signal)
+      || !validUuid(raw.signal.connection_id)
+      || !['join', 'leave', 'offer', 'answer', 'ice', 'hangup', 'world_release'].includes(String(raw.signal.action))
+      || !(raw.signal.scope === 'world' || validRoomId(raw.signal.scope))) return undefined;
+    const signal = raw.signal;
+    const hasMembershipEpoch = signal.membership_epoch !== undefined;
+    const hasMembershipGeneration = signal.membership_generation !== undefined;
+    if (hasMembershipEpoch !== hasMembershipGeneration
+      || (hasMembershipEpoch
+        && (!validUuid(signal.membership_epoch)
+          || !Number.isSafeInteger(signal.membership_generation)
+          || Number(signal.membership_generation) < 1))) return undefined;
+    if ((signal.action === 'offer' || signal.action === 'answer')
+      && !boundedString(signal.sdp, 1, 32_000)) return undefined;
+    if (signal.action === 'offer'
+      && signal.scope === 'world'
+      && !validUuid(signal.request_id)) return undefined;
+    if (signal.action === 'ice'
+      && (!boundedString(signal.candidate, 1, 4_000)
+        || (signal.sdp_mid !== undefined && signal.sdp_mid !== null && !boundedString(signal.sdp_mid, 0, 256))
+        || (signal.sdp_mline_index !== undefined && signal.sdp_mline_index !== null
+          && (!Number.isSafeInteger(signal.sdp_mline_index) || Number(signal.sdp_mline_index) < 0)))) return undefined;
+    if (signal.action === 'world_release'
+      && (signal.scope !== 'world' || !validUuid(signal.request_id))) return undefined;
+    if (signal.reply !== undefined && typeof signal.reply !== 'boolean') return undefined;
+    return raw as unknown as EncryptedVoiceSignalPayload;
   }
   if (!validUuid(raw.transfer_id)) return undefined;
   if (raw.type === 'file_offer') {
@@ -376,7 +635,11 @@ export class WorldRelayBridge {
   private readonly sockets = new Map<string, RelaySocket>();
   private readonly seen = new Set<string>();
   private readonly presence = new Map<string, RemotePresence>();
+  private readonly localRooms = new Map<string, { id: string; title: string }>();
+  private readonly remoteRooms = new Map<string, RemoteRoom>();
+  private readonly localPublicFiles = new Map<string, RelayPublicFileOffer>();
   private readonly pending: PendingEvent[] = [];
+  private readonly pendingEncrypted = new Map<string, PendingEncryptedEvent>();
   private readonly outgoingFiles = new Map<string, OutgoingRelayFile>();
   private readonly offeredFiles = new Map<string, RelayFileOffer>();
   private readonly incomingFiles = new Map<string, IncomingRelayFile>();
@@ -385,6 +648,7 @@ export class WorldRelayBridge {
   private peerId = '';
   private nick = '';
   private nickColor = '#35d07f';
+  private localWorldVoice?: WorldVoiceState;
   private heartbeat?: number;
   private sweeper?: number;
   private presenceResponse?: number;
@@ -409,7 +673,7 @@ export class WorldRelayBridge {
   }
 
   stop(sendGoodbye = true): void {
-    if (sendGoodbye && this.running) this.publish('goodbye');
+    if (sendGoodbye && this.running) this.publishPublic('goodbye');
     this.running = false;
     if (this.heartbeat !== undefined) window.clearInterval(this.heartbeat);
     if (this.sweeper !== undefined) window.clearInterval(this.sweeper);
@@ -422,20 +686,71 @@ export class WorldRelayBridge {
       state.socket?.close(1000, 'Konofix session ended');
     }
     this.sockets.clear();
+    for (const room of this.remoteRooms.values()) this.callbacks?.onRoomClosed?.(room.room.id);
     for (const peer of this.presence.values()) this.callbacks?.onOffline(peer.peer.peer_id);
     this.presence.clear();
+    this.localRooms.clear();
+    this.remoteRooms.clear();
+    this.localPublicFiles.clear();
     this.pending.length = 0;
+    this.pendingEncrypted.clear();
     this.seen.clear();
     this.outgoingFiles.clear();
     this.offeredFiles.clear();
     this.incomingFiles.clear();
+    this.localWorldVoice = undefined;
     this.emitState();
     this.callbacks = undefined;
   }
 
   publishChat(message: RelayChatMessage): void {
     if (!this.running || message.room !== 'world' || message.peer_id !== this.peerId) return;
-    this.publish('chat', message);
+    this.publishPublic('chat', message);
+  }
+
+  publishRoom(room: { id: string; title: string; password_protected?: boolean }): void {
+    if (!this.running) throw new Error('WORLD relay is offline.');
+    if (room.password_protected) throw new Error('Password-protected rooms are not announced publicly.');
+    if (!validRoomId(room.id) || !validRoomTitle(room.title)) throw new Error('Invalid public room.');
+    const descriptor = { id: room.id, title: room.title };
+    this.localRooms.set(room.id, descriptor);
+    this.publishPublic('room', undefined, descriptor);
+  }
+
+  closeRoom(roomId: string): void {
+    if (!this.running || !this.localRooms.delete(roomId)) return;
+    this.publishPublic('room_close', undefined, undefined, roomId);
+  }
+
+  publishRoomChat(message: RelayChatMessage): void {
+    if (!this.running
+      || message.room === 'world'
+      || message.peer_id !== this.peerId
+      || (!this.localRooms.has(message.room) && !this.remoteRooms.has(message.room))) return;
+    this.publishPublic('room_chat', message);
+  }
+
+  publishPublicFile(offer: RelayPublicFileOffer): void {
+    if (!this.running) throw new Error('WORLD relay is offline.');
+    if (!validUuid(offer.offer_id)
+      || !validFileName(offer.file_name)
+      || !Number.isSafeInteger(offer.size) || offer.size < 0 || offer.size > 32 * 1024 * 1024 * 1024
+      || !validSha256(offer.sha256)
+      || offer.expires_at <= Date.now()) throw new Error('Invalid public file offer.');
+    const normalized: RelayPublicFileOffer = {
+      ...offer,
+      peer_id: this.virtualPeerId(),
+      nick: this.nick,
+      nick_color: this.nickColor,
+      sha256: offer.sha256.toLowerCase(),
+      // Tauri/Serde historically encoded absent Option fields as null. Keep
+      // the signed relay payload canonical so another client does not reject
+      // a valid WORLD file before it reaches the timeline.
+      mime: offer.mime ?? undefined,
+      room_id: offer.room_id ?? undefined,
+    };
+    this.localPublicFiles.set(normalized.offer_id, normalized);
+    this.publishPublic('public_file', undefined, undefined, undefined, normalized);
   }
 
   publishPrivate(targetPeerId: string, text: string): RelayPrivateMessage {
@@ -463,6 +778,46 @@ export class WorldRelayBridge {
       text: message.text,
     });
     return message;
+  }
+
+  publishRtcSignal(targetPeerId: string, signal: RtcSignal): void {
+    if (!this.running) throw new Error('WORLD relay is offline.');
+    const targetKey = relayPublicKey(targetPeerId);
+    if (!targetKey || !this.presence.has(targetPeerId)) throw new Error('RTC recipient is no longer available.');
+    this.publishEncrypted(targetKey, {
+      v: 1,
+      ns: NAMESPACE,
+      type: 'rtc_signal',
+      session: this.session,
+      sent_at: Date.now(),
+      signal,
+    });
+  }
+
+  publishWorldVoice(state: Omit<WorldVoiceState, 'peer_id' | 'nick' | 'nick_color'>): void {
+    if (!this.running) throw new Error('WORLD relay is offline.');
+    const normalized: WorldVoiceState = {
+      ...state,
+      peer_id: this.virtualPeerId(),
+      nick: this.nick,
+      nick_color: this.nickColor,
+    };
+    this.localWorldVoice = state.status === 'idle' ? undefined : normalized;
+    this.publishPublic('voice_state', undefined, undefined, undefined, undefined, normalized);
+  }
+
+  publishVoiceSignal(targetPeerId: string, signal: VoiceSignal): void {
+    if (!this.running) throw new Error('WORLD relay is offline.');
+    const targetKey = relayPublicKey(targetPeerId);
+    if (!targetKey || !this.presence.has(targetPeerId)) throw new Error('Voice recipient is no longer available.');
+    this.publishEncrypted(targetKey, {
+      v: 1,
+      ns: NAMESPACE,
+      type: 'voice_signal',
+      session: this.session,
+      sent_at: Date.now(),
+      signal,
+    });
   }
 
   offerFile(targetPeerId: string, selection: RelayFileSelection): RelayFileOffer {
@@ -591,11 +946,35 @@ export class WorldRelayBridge {
     }, delay);
   }
 
-  private publishPresence(): void { this.publish('presence'); }
+  private publishPresence(): void {
+    this.publishPublic('presence');
+    for (const room of this.localRooms.values()) this.publishPublic('room', undefined, room);
+    const now = Date.now();
+    for (const [offerId, offer] of this.localPublicFiles) {
+      if (offer.expires_at <= now) this.localPublicFiles.delete(offerId);
+      else this.publishPublic('public_file', undefined, undefined, undefined, offer);
+    }
+    if (this.localWorldVoice) {
+      if (this.localWorldVoice.status === 'speaking'
+        && (this.localWorldVoice.speaking_until ?? 0) <= now) this.localWorldVoice = undefined;
+      else this.publishPublic('voice_state', undefined, undefined, undefined, undefined, this.localWorldVoice);
+    }
+  }
 
-  private publish(type: Payload['type'], message?: RelayChatMessage): void {
+  private publishPublic(
+    type: Payload['type'],
+    message?: RelayChatMessage,
+    room?: { id: string; title: string },
+    roomId?: string,
+    publicFile?: RelayPublicFileOffer,
+    worldVoice?: WorldVoiceState,
+  ): void {
     if (!this.running) return;
-    if (type === 'chat' && !message) return;
+    if ((type === 'chat' || type === 'room_chat') && !message) return;
+    if (type === 'room' && !room) return;
+    if (type === 'room_close' && !validRoomId(roomId)) return;
+    if (type === 'public_file' && !publicFile) return;
+    if (type === 'voice_state' && !worldVoice) return;
     const sentAt = Date.now();
     const base = {
       v: 1 as const,
@@ -607,10 +986,42 @@ export class WorldRelayBridge {
       nick_color: this.nickColor,
       sent_at: sentAt,
     };
-    const payload: Payload = type === 'chat'
-      ? { ...base, type: 'chat', message: message as RelayChatMessage }
-      : { ...base, type };
-    const expiryMs = type === 'chat' ? MESSAGE_TTL_MS : PRESENCE_TTL_MS;
+    const payload: Payload = type === 'chat' || type === 'room_chat'
+      ? { ...base, type, message: message as RelayChatMessage }
+      : type === 'room'
+        ? { ...base, type, room: room as { id: string; title: string } }
+        : type === 'room_close'
+          ? { ...base, type, room_id: roomId as string }
+          : type === 'public_file'
+            ? {
+              ...base,
+              type,
+              offer: {
+                offer_id: (publicFile as RelayPublicFileOffer).offer_id,
+                file_name: (publicFile as RelayPublicFileOffer).file_name,
+                size: (publicFile as RelayPublicFileOffer).size,
+                sha256: (publicFile as RelayPublicFileOffer).sha256,
+                kind: (publicFile as RelayPublicFileOffer).kind,
+                mime: (publicFile as RelayPublicFileOffer).mime,
+                room_id: (publicFile as RelayPublicFileOffer).room_id,
+                timestamp: (publicFile as RelayPublicFileOffer).timestamp,
+                expires_at: (publicFile as RelayPublicFileOffer).expires_at,
+              },
+            }
+          : type === 'voice_state'
+            ? {
+              ...base,
+              type,
+              voice: {
+                status: (worldVoice as WorldVoiceState).status,
+                request_id: (worldVoice as WorldVoiceState).request_id,
+                joined_at: (worldVoice as WorldVoiceState).joined_at,
+                speaking_until: (worldVoice as WorldVoiceState).speaking_until,
+              },
+            }
+        : { ...base, type };
+    const queued = type === 'chat' || type === 'room_chat' || type === 'room' || type === 'room_close' || type === 'public_file' || type === 'voice_state';
+    const expiryMs = type === 'chat' || type === 'room_chat' ? MESSAGE_TTL_MS : PRESENCE_TTL_MS;
     const nostrEvent = finalizeEvent({
       kind: EVENT_KIND,
       created_at: Math.floor(sentAt / 1000),
@@ -618,7 +1029,7 @@ export class WorldRelayBridge {
       content: JSON.stringify(payload),
     }, this.secret);
     const wire = JSON.stringify(['EVENT', nostrEvent]);
-    const pending = type === 'chat' ? { wire, until: sentAt + MESSAGE_TTL_MS, sent: new Set<string>() } : undefined;
+    const pending = queued ? { wire, until: sentAt + expiryMs, sent: new Set<string>() } : undefined;
     for (const state of this.sockets.values()) {
       if (state.socket?.readyState === WebSocket.OPEN) {
         state.socket.send(wire);
@@ -627,7 +1038,7 @@ export class WorldRelayBridge {
     }
     if (pending) {
       this.pending.push(pending);
-      if (this.pending.length > 32) this.pending.splice(0, this.pending.length - 32);
+      if (this.pending.length > 64) this.pending.splice(0, this.pending.length - 64);
     }
   }
 
@@ -739,21 +1150,27 @@ export class WorldRelayBridge {
       } catch { return; }
       const encryptedPayload = parseEncryptedPayload(decrypted, Date.now());
       if (!encryptedPayload || Math.abs(event.created_at * 1_000 - encryptedPayload.sent_at) > 5_000) return;
+      const senderPeerId = `nostr:${event.pubkey}`;
+      const remote = this.presence.get(senderPeerId);
+      if (!remote || remote.session !== encryptedPayload.session) {
+        this.deferEncrypted(event.id, event.pubkey, encryptedPayload);
+        return;
+      }
       this.receiveEncrypted(event.pubkey, encryptedPayload);
       return;
     }
     const payload = parsePayload(event.content, Date.now());
     if (!payload) return;
     if (Math.abs(event.created_at * 1_000 - payload.sent_at) > 5_000) return;
-    if (payload.type !== 'chat' && Math.abs(Date.now() - payload.sent_at) > PRESENCE_TTL_MS) return;
+    if (payload.type !== 'chat' && payload.type !== 'room_chat'
+      && Math.abs(Date.now() - payload.sent_at) > PRESENCE_TTL_MS) return;
     const virtualPeerId = `nostr:${event.pubkey}`;
     if (payload.type === 'goodbye') {
       const current = this.presence.get(virtualPeerId);
       if (current
         && current.session === payload.session
-        && payload.sent_at >= current.announcedAt
-        && this.presence.delete(virtualPeerId)) {
-        this.callbacks?.onOffline(virtualPeerId);
+        && payload.sent_at >= current.announcedAt) {
+        this.retirePeer(virtualPeerId);
       }
       return;
     }
@@ -772,8 +1189,7 @@ export class WorldRelayBridge {
       superseded.push(peerId);
     }
     for (const peerId of superseded) {
-      this.presence.delete(peerId);
-      this.callbacks?.onOffline(peerId);
+      this.retirePeer(peerId);
     }
     const previous = previousPresence?.peer;
     const previousSession = previousPresence?.session;
@@ -799,9 +1215,85 @@ export class WorldRelayBridge {
         this.publishPresence();
       }, 50);
     }
-    if (payload.type === 'chat') {
+    this.replayPendingEncrypted(event.pubkey, payload.session);
+    if (payload.type === 'room') {
+      if (this.localRooms.has(payload.room.id)) return;
+      const current = this.remoteRooms.get(payload.room.id);
+      if (current && current.ownerPeerId !== virtualPeerId) return;
+      const changed = !current
+        || current.room.title !== payload.room.title
+        || current.session !== payload.session;
+      const room: RelayRoomInfo = {
+        id: payload.room.id,
+        title: payload.room.title,
+        owner: virtualPeerId,
+        users: 1,
+        password_protected: false,
+        auth_revision: 0,
+      };
+      this.remoteRooms.set(room.id, {
+        room,
+        ownerPeerId: virtualPeerId,
+        session: payload.session,
+        seenAt: Date.now(),
+      });
+      if (changed) this.callbacks?.onRoom?.(room);
+      return;
+    }
+    if (payload.type === 'room_close') {
+      const current = this.remoteRooms.get(payload.room_id);
+      if (current
+        && current.ownerPeerId === virtualPeerId
+        && current.session === payload.session
+        && this.remoteRooms.delete(payload.room_id)) {
+        this.callbacks?.onRoomClosed?.(payload.room_id);
+      }
+      return;
+    }
+    if (payload.type === 'public_file') {
+      this.callbacks?.onPublicFile?.({
+        ...payload.offer,
+        peer_id: virtualPeerId,
+        nick: payload.nick,
+        nick_color: payload.nick_color,
+        sha256: payload.offer.sha256.toLowerCase(),
+        mime: payload.offer.mime ?? undefined,
+        room_id: payload.offer.room_id ?? undefined,
+      });
+      return;
+    }
+    if (payload.type === 'voice_state') {
+      const receivedAt = Date.now();
+      const queueAge = Math.max(0, Math.min(30 * 60_000, payload.sent_at - payload.voice.joined_at));
+      const speakingFor = payload.voice.status === 'speaking'
+        ? Math.max(1, Math.min(65_000, Number(payload.voice.speaking_until) - payload.sent_at))
+        : undefined;
+      this.callbacks?.onWorldVoice?.({
+        ...payload.voice,
+        peer_id: virtualPeerId,
+        nick: payload.nick,
+        nick_color: payload.nick_color,
+        joined_at: receivedAt - queueAge,
+        speaking_until: speakingFor === undefined ? undefined : receivedAt + speakingFor,
+      });
+      return;
+    }
+    if (payload.type === 'chat' || payload.type === 'room_chat') {
+      if (payload.type === 'room_chat'
+        && !this.localRooms.has(payload.message.room)
+        && !this.remoteRooms.has(payload.message.room)) return;
       this.callbacks?.onChat({ ...payload.message, peer_id: virtualPeerId });
     }
+  }
+
+  private retirePeer(peerId: string): void {
+    if (!this.presence.delete(peerId)) return;
+    for (const [roomId, room] of this.remoteRooms) {
+      if (room.ownerPeerId !== peerId) continue;
+      this.remoteRooms.delete(roomId);
+      this.callbacks?.onRoomClosed?.(roomId);
+    }
+    this.callbacks?.onOffline(peerId);
   }
 
   private receiveEncrypted(senderPublicKey: string, payload: EncryptedPayload): void {
@@ -819,6 +1311,14 @@ export class WorldRelayBridge {
         text: payload.text,
         timestamp: payload.sent_at,
       });
+      return;
+    }
+    if (payload.type === 'rtc_signal') {
+      this.callbacks?.onRtcSignal?.(senderPeerId, payload.signal);
+      return;
+    }
+    if (payload.type === 'voice_signal') {
+      this.callbacks?.onVoiceSignal?.(senderPeerId, payload.signal);
       return;
     }
     if (payload.type === 'file_offer') {
@@ -939,15 +1439,45 @@ export class WorldRelayBridge {
     this.callbacks?.onFileReady?.({ ...incoming, data_base64: bytesToBase64(combined) });
   }
 
+  private deferEncrypted(eventId: string, senderPublicKey: string, payload: EncryptedPayload): void {
+    this.prunePendingEncrypted();
+    if (!this.pendingEncrypted.has(eventId)
+      && this.pendingEncrypted.size >= MAX_PENDING_ENCRYPTED_EVENTS) {
+      const oldest = [...this.pendingEncrypted.entries()]
+        .sort((a, b) => a[1].receivedAt - b[1].receivedAt)[0]?.[0];
+      if (oldest) this.pendingEncrypted.delete(oldest);
+    }
+    this.pendingEncrypted.set(eventId, { senderPublicKey, payload, receivedAt: Date.now() });
+  }
+
+  private replayPendingEncrypted(senderPublicKey: string, session: string): void {
+    this.prunePendingEncrypted();
+    for (const [eventId, pending] of this.pendingEncrypted) {
+      if (pending.senderPublicKey !== senderPublicKey || pending.payload.session !== session) continue;
+      this.pendingEncrypted.delete(eventId);
+      this.receiveEncrypted(senderPublicKey, pending.payload);
+    }
+  }
+
+  private prunePendingEncrypted(now = Date.now()): void {
+    for (const [eventId, pending] of this.pendingEncrypted) {
+      if (now - pending.receivedAt > MESSAGE_TTL_MS) this.pendingEncrypted.delete(eventId);
+    }
+  }
+
   private sweep(): void {
     const now = Date.now();
     const cutoff = now - PRESENCE_TTL_MS;
     for (const [peerId, presence] of this.presence) {
       if (presence.seenAt < cutoff) {
-        this.presence.delete(peerId);
-        this.callbacks?.onOffline(peerId);
+        this.retirePeer(peerId);
       }
     }
+    for (const [roomId, room] of this.remoteRooms) {
+      if (room.seenAt >= cutoff || !this.remoteRooms.delete(roomId)) continue;
+      this.callbacks?.onRoomClosed?.(roomId);
+    }
+    this.prunePendingEncrypted(now);
     while (this.pending.length && this.pending[0].until <= now) this.pending.shift();
   }
 

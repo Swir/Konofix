@@ -120,7 +120,13 @@
   box-shadow: none;
 }
 
-.private-chat-head > button {
+.private-call-actions {
+  display: flex;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+
+.private-call-actions > button {
   width: 32px;
   height: 32px;
   border: 1px solid rgba(98, 229, 255, .18);
@@ -128,6 +134,16 @@
   background: transparent;
   color: #dff8ff;
   cursor: pointer;
+}
+
+.private-call-actions > button[data-audio-call] {
+  border-color: rgba(68, 230, 168, .45);
+  color: #78f2bd;
+}
+
+.private-call-actions > button[data-audio-hangup] {
+  border-color: rgba(255, 107, 129, .48);
+  color: #ff91a2;
 }
 
 .private-messages {
@@ -251,7 +267,7 @@
 
 .secure-room-manage:focus-visible,
 .mini-private:focus-visible,
-.private-chat-head > button:focus-visible,
+.private-call-actions > button:focus-visible,
 .private-compose input:focus-visible,
 .private-compose button:focus-visible,
 .secure-room-create-modal input:focus-visible,
@@ -320,7 +336,7 @@
 @media (pointer: coarse) {
   .secure-room-manage,
   .mini-private,
-  .private-chat-head > button {
+  .private-call-actions > button {
     min-width: 44px;
     min-height: 44px;
   }

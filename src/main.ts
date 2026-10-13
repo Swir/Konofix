@@ -12,8 +12,22 @@ import {
   type RelayFileSelection,
   type RelayPeer,
   type RelayPrivateMessage,
+  type RelayPublicFileOffer,
+  type RelayRoomInfo,
   type RelayState,
+  type RtcSignal,
+  type VoiceSignal,
+  type WorldVoiceState,
 } from './world-relay';
+import {
+  PeerTransport,
+  type DirectFileOffer,
+  type DirectFileProgress,
+  type RtcFileDescriptor,
+} from './peer-transport';
+import { GroupVoice, type GroupVoiceSnapshot } from './group-voice';
+import { testMicrophone, testSpeakers } from './audio-diagnostics';
+import { checkForStableUpdate } from './updater';
 
 type PublicShareOffer = {
   offer_id: string;
@@ -22,6 +36,7 @@ type PublicShareOffer = {
   nick_color?: string;
   file_name: string;
   size: number;
+  sha256: string;
   kind: 'file' | 'image';
   mime?: string;
   room_id?: string;
@@ -83,7 +98,7 @@ const state = {
   nick: '',
   nickColor: normalizeNickColor(localStorage.getItem('konofix.nickColor')),
   peerId: '',
-  version: '0.5.3',
+  version: '0.6.0',
   room: 'world',
   connected: false,
   peers: new Map<string, PeerInfo>(),
@@ -99,8 +114,24 @@ let sessionRevision = 0;
 let connectPending = false;
 let roomChangePending = false;
 export const worldRelay = new WorldRelayBridge();
+export const peerTransport = new PeerTransport();
+export const groupVoice = new GroupVoice();
 const worldRelayPeers = new Map<string, RelayPeer>();
+const relayOnlyRoomIds = new Set<string>();
+const directTransferIds = new Set<string>();
+const publicTransferTokens = new Map<string, { offerId: string; intent: 'download' | 'preview' }>();
+const publicClaimTimers = new Map<string, number>();
+const PUBLIC_CLAIM_TIMEOUT_MS = 45_000;
 let worldRelayState: RelayState = { connected: 0, total: 0 };
+let groupVoiceSnapshot: GroupVoiceSnapshot = {
+  world: [], canStartWorld: false, secondsLeft: 0, roomActive: false, roomPeers: 0,
+};
+const groupAudio = new Map<string, HTMLAudioElement>();
+const blockedGroupAudio = new Set<string>();
+const WORLD_AUDIO_MUTED_KEY = 'konofix.worldAudioMuted';
+let worldAudioMuted = localStorage.getItem(WORLD_AUDIO_MUTED_KEY) === 'true';
+let groupAudioWarningShown = false;
+let updateCheckPending = false;
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -121,6 +152,165 @@ function formatBytes(value: number): string {
 
 function dangerousFile(name: string): boolean {
   return /\.(exe|msi|bat|cmd|com|scr|ps1|vbs|js|jse|wsf|reg|lnk|hta|jar)$/i.test(name);
+}
+
+function voicePanelHtml(): string {
+  if (worldRelayState.total === 0) {
+    return `<section id="voicePanel" class="voice-panel"><div class="voice-main"><div><span class="eyebrow">${esc(t('voice.worldTitle'))}</span><div class="voice-idle">${esc(t('voice.unavailable'))}</div></div></div></section>`;
+  }
+  if (state.room === 'world') {
+    const snapshot = groupVoiceSnapshot;
+    const speaker = snapshot.speaker;
+    const waiting = snapshot.world.filter(item => item.peer_id !== speaker?.peer_id);
+    const mine = snapshot.localWorld;
+    const action = mine?.status === 'speaking'
+      ? t('voice.finish')
+      : mine?.status === 'queued'
+        ? (snapshot.canStartWorld ? t('voice.startTurn') : t('voice.leaveQueue'))
+        : t('voice.wantToSpeak');
+    const status = speaker
+      ? `<div class="voice-speaker"><span>🎙</span><strong style="color:${normalizeNickColor(speaker.nick_color)}">${esc(speaker.nick)}</strong><b>${snapshot.secondsLeft}s</b></div>`
+      : `<div class="voice-idle">${esc(t('voice.worldIdle'))}</div>`;
+    const queue = waiting.length
+      ? `<div class="voice-queue"><span>${esc(t('voice.queue'))}</span>${waiting.slice(0, 8).map((item, index) => `<b>${index + 1}. ${esc(item.nick)}</b>`).join('')}</div>`
+      : `<div class="voice-queue empty">${esc(t('voice.queueEmpty'))}</div>`;
+    return `<section id="voicePanel" class="voice-panel world-voice">
+      <div class="voice-main"><div><span class="eyebrow">${esc(t('voice.worldTitle'))}</span>${status}</div><button id="worldVoiceAction" class="${snapshot.canStartWorld ? 'primary compact' : 'ghost'}">${esc(action)}</button></div>
+      ${queue}${snapshot.error ? `<div class="voice-error">${esc(snapshot.error)}</div>` : ''}
+    </section>`;
+  }
+  if (state.rooms.get(state.room)?.password_protected) {
+    return `<section id="voicePanel" class="voice-panel room-voice">
+      <div class="voice-main"><div><span class="eyebrow">${esc(t('voice.roomTitle'))}</span><div class="voice-idle">${esc(t('voice.protectedUnavailable'))}</div></div></div>
+    </section>`;
+  }
+  const activeHere = groupVoiceSnapshot.roomActive && groupVoiceSnapshot.roomScope === state.room;
+  return `<section id="voicePanel" class="voice-panel room-voice">
+    <div class="voice-main"><div><span class="eyebrow">${esc(t('voice.roomTitle'))}</span><div class="voice-idle">${esc(activeHere ? t('voice.roomActive', { count: groupVoiceSnapshot.roomPeers + 1 }) : t('voice.roomHelp'))}</div></div>
+    <button id="roomVoiceAction" class="${activeHere ? 'ghost' : 'primary compact'}">${esc(activeHere ? t('voice.leaveRoom') : t('voice.joinRoom'))}</button></div>
+    ${groupVoiceSnapshot.error ? `<div class="voice-error">${esc(groupVoiceSnapshot.error)}</div>` : ''}
+  </section>`;
+}
+
+function wireVoicePanel(): void {
+  document.querySelector('#worldVoiceAction')?.addEventListener('click', async () => {
+    const local = groupVoice.snapshot().localWorld;
+    if (local?.status === 'speaking') groupVoice.leaveWorld();
+    else if (local?.status === 'queued' && groupVoice.snapshot().canStartWorld) await groupVoice.startWorldTurn();
+    else if (local?.status === 'queued') groupVoice.leaveWorld();
+    else await groupVoice.requestWorldTurn();
+  });
+  document.querySelector('#roomVoiceAction')?.addEventListener('click', async () => {
+    const snapshot = groupVoice.snapshot();
+    if (snapshot.roomActive && snapshot.roomScope === state.room) groupVoice.leaveRoom();
+    else await groupVoice.joinRoom(state.room);
+  });
+}
+
+function updateVoicePanel(): void {
+  if (!state.connected) return;
+  const current = document.querySelector<HTMLElement>('#voicePanel');
+  if (!current) return;
+  current.outerHTML = voicePanelHtml();
+  wireVoicePanel();
+}
+
+function playGroupAudio(scope: string, peerId: string, stream: MediaStream | null): void {
+  const key = `${scope}\u0000${peerId}`;
+  const existing = groupAudio.get(key);
+  if (!stream) {
+    if (existing) {
+      existing.pause();
+      existing.srcObject = null;
+      existing.remove();
+      groupAudio.delete(key);
+      blockedGroupAudio.delete(key);
+    }
+    return;
+  }
+  const audio = existing ?? document.createElement('audio');
+  audio.autoplay = true;
+  audio.volume = 1;
+  audio.muted = scope === 'world' && worldAudioMuted;
+  audio.setAttribute('playsinline', '');
+  audio.hidden = true;
+  audio.srcObject = stream;
+  if (!existing) {
+    document.body.appendChild(audio);
+    groupAudio.set(key, audio);
+  }
+  void audio.play().then(() => {
+    blockedGroupAudio.delete(key);
+  }).catch(() => {
+    blockedGroupAudio.add(key);
+    if (!audio.muted && !groupAudioWarningShown) {
+      groupAudioWarningShown = true;
+      addSystem(state.room, t('audio.outputBlocked'));
+      if (state.connected) renderChat();
+    }
+  });
+}
+
+function resumeGroupAudio(): void {
+  if (blockedGroupAudio.size === 0) return;
+  groupAudioWarningShown = false;
+  for (const key of [...blockedGroupAudio]) {
+    const audio = groupAudio.get(key);
+    if (!audio || audio.muted) {
+      blockedGroupAudio.delete(key);
+      continue;
+    }
+    void audio.play().then(() => blockedGroupAudio.delete(key)).catch(() => blockedGroupAudio.add(key));
+  }
+}
+
+window.addEventListener('pointerdown', resumeGroupAudio, { passive: true });
+window.addEventListener('keydown', resumeGroupAudio);
+
+function clearGroupAudio(): void {
+  for (const audio of groupAudio.values()) {
+    audio.pause();
+    audio.srcObject = null;
+    audio.remove();
+  }
+  groupAudio.clear();
+  blockedGroupAudio.clear();
+  groupAudioWarningShown = false;
+}
+
+async function runStableUpdateCheck(manual = false): Promise<void> {
+  if (updateCheckPending) return;
+  updateCheckPending = true;
+  const status = (message: string) => {
+    const element = document.querySelector<HTMLElement>('#updateStatus');
+    if (element) element.textContent = message;
+  };
+  try {
+    const result = await checkForStableUpdate({
+      ask: update => Promise.resolve(window.confirm(t('update.available', { version: update.version }))),
+      onStatus: (phase, percent) => {
+        if (phase === 'checking') status(t('update.checking'));
+        else if (phase === 'downloading') status(t('update.downloading', { percent: percent ?? '…' }));
+        else status(t('update.installing'));
+      },
+    });
+    if (result === 'current') {
+      status(t('update.current'));
+      if (manual) window.alert(t('update.current'));
+    } else if (result === 'declined') {
+      status(t('update.declined'));
+    } else if (result === 'unsupported') {
+      status(t('update.desktopOnly'));
+      if (manual) window.alert(t('update.desktopOnly'));
+    }
+  } catch (error) {
+    const message = t('update.failed', { error: String(error) });
+    status(message);
+    if (manual) window.alert(message);
+    else console.error(message);
+  } finally {
+    updateCheckPending = false;
+  }
 }
 
 function loadBootstraps(): string[] {
@@ -313,10 +503,11 @@ function renderChat() {
             <span class="live"><i></i>${activeRoomCount} ${esc(t('common.online').toLowerCase())}</span>
             ${state.room === 'world' ? `
               <button id="shareWorldFile" class="ghost">${esc(t('publicShare.file'))}</button>
-              <button id="shareWorldImage" class="ghost image-share">${esc(t('publicShare.image'))}</button>
             ` : `<button id="shareRoomFile" class="ghost">${esc(t('transfer.sendFile'))}</button>`}
           </div>
         </header>
+
+        ${voicePanelHtml()}
 
         <div id="messages" class="messages">
           ${messages.length ? messages.map(messageHtml).join('') : `<div class="empty"><div>🌐</div><strong>${esc(t('rooms.welcome', { room: currentRoom.title }))}</strong><span>${esc(t('rooms.firstMessage'))}</span></div>`}
@@ -347,15 +538,15 @@ function renderChat() {
     ${creditHtml()}`;
 
   wireCredit();
+  wireVoicePanel();
   document.querySelectorAll<HTMLElement>('[data-room]').forEach(el => el.addEventListener('click', () => switchRoom(el.dataset.room!)));
   document.querySelectorAll<HTMLElement>('[data-send-peer]').forEach(el => el.addEventListener('click', () => sendFileToPeer(el.dataset.sendPeer!)));
   document.querySelectorAll<HTMLElement>('[data-send-relay-peer]').forEach(el => el.addEventListener('click', () => sendFileToPeer(el.dataset.sendRelayPeer!)));
   document.querySelectorAll<HTMLElement>('[data-cancel-transfer]').forEach(el => el.addEventListener('click', () => cancelTransfer(el.dataset.cancelTransfer!)));
   document.querySelector('#newRoom')?.addEventListener('click', createRoom);
   document.querySelector('#send')?.addEventListener('click', sendMessage);
-  document.querySelector('#shareRoomFile')?.addEventListener('click', () => sharePublic('file', state.room));
-  document.querySelector('#shareWorldFile')?.addEventListener('click', () => sharePublic('file'));
-  document.querySelector('#shareWorldImage')?.addEventListener('click', () => sharePublic('image'));
+  document.querySelector('#shareRoomFile')?.addEventListener('click', () => sharePublic(state.room));
+  document.querySelector('#shareWorldFile')?.addEventListener('click', () => sharePublic());
   document.querySelectorAll<HTMLButtonElement>('[data-public-download]').forEach(button => button.addEventListener('click', () => {
     claimPublicOffer(button.dataset.publicDownload!, 'download');
   }));
@@ -497,15 +688,20 @@ function publicOfferHtml(offer: PublicShareOffer): string {
   </article>`;
 }
 
-async function sharePublic(kind: 'file' | 'image', roomId: string | null = null) {
+async function sharePublic(roomId: string | null = null) {
   if (!state.connected) return;
   if (roomId === null && state.room !== 'world') return;
   if (roomId !== null && (state.room === 'world' || state.room !== roomId)) return;
   try {
-    const offer = await invoke<PublicShareOffer | null>('publish_public_file', { kind, roomId });
+    const offer = await invoke<PublicShareOffer | null>('publish_public_file', { kind: 'file', roomId });
     if (!offer) return;
     offer.nick_color = normalizeNickColor(offer.nick_color);
     state.publicOffers.set(offer.offer_id, offer);
+    let relayPublishError: unknown;
+    if (publicDiscoveryOptIn
+      && (offer.room_id === undefined || state.rooms.get(offer.room_id)?.password_protected !== true)) {
+      try { worldRelay.publishPublicFile(offer); } catch (error) { relayPublishError = error; }
+    }
     const messageRoom = offer.room_id ?? 'world';
     pushMessage({
       id: `public:${offer.offer_id}`,
@@ -518,6 +714,9 @@ async function sharePublic(kind: 'file' | 'image', roomId: string | null = null)
       timestamp: Number(offer.timestamp),
       public_offer: offer,
     });
+    if (relayPublishError) {
+      addSystem(messageRoom, t(roomId ? 'roomShare.error' : 'publicShare.error', { error: String(relayPublishError) }));
+    }
   } catch (error) {
     alert(t(roomId ? 'roomShare.error' : 'publicShare.error', { error: String(error) }));
   }
@@ -525,7 +724,7 @@ async function sharePublic(kind: 'file' | 'image', roomId: string | null = null)
 
 async function claimPublicOffer(offerId: string, intent: 'download' | 'preview') {
   const offer = state.publicOffers.get(offerId);
-  if (!offer || offer.expired || offer.peer_id === state.peerId) return;
+  if (!offer || offer.expired || offer.expires_at <= Date.now() || offer.peer_id === state.peerId) return;
   if (state.publicIntents.has(offerId)) return;
   state.publicIntents.set(offerId, intent);
 
@@ -546,13 +745,53 @@ async function claimPublicOffer(offerId: string, intent: 'download' | 'preview')
   if (state.connected) renderChat();
 
   try {
-    await invoke('claim_public_file', { offerId, previewOnly: intent === 'preview' });
+    if (offer.peer_id.startsWith('nostr:')) {
+      const transferToken = crypto.randomUUID();
+      publicTransferTokens.set(transferToken, { offerId, intent });
+      worldRelay.publishRtcSignal(offer.peer_id, {
+        connection_id: crypto.randomUUID(),
+        action: 'public_file_request',
+        offer_id: offerId,
+        transfer_token: transferToken,
+        preview_only: intent === 'preview',
+      });
+      const timer = window.setTimeout(() => {
+        failPublicClaim(transferToken, t('publicShare.timeout'));
+      }, PUBLIC_CLAIM_TIMEOUT_MS);
+      publicClaimTimers.set(transferToken, timer);
+    } else {
+      await invoke('claim_public_file', { offerId, previewOnly: intent === 'preview' });
+    }
   } catch (error) {
+    for (const [token, pending] of publicTransferTokens) {
+      if (pending.offerId === offerId) publicTransferTokens.delete(token);
+    }
     state.publicIntents.delete(offerId);
     state.transfers.delete(placeholderId);
     if (state.connected) renderChat();
     alert(t('publicShare.error', { error: String(error) }));
   }
+}
+
+function clearPublicClaimTimer(transferToken: string): void {
+  const timer = publicClaimTimers.get(transferToken);
+  if (timer !== undefined) window.clearTimeout(timer);
+  publicClaimTimers.delete(transferToken);
+}
+
+function failPublicClaim(transferToken: string, reason: string): void {
+  clearPublicClaimTimer(transferToken);
+  const pending = publicTransferTokens.get(transferToken);
+  if (!pending) return;
+  publicTransferTokens.delete(transferToken);
+  state.publicIntents.delete(pending.offerId);
+  state.transfers.delete(`claim:${pending.offerId}`);
+  const offer = state.publicOffers.get(pending.offerId);
+  addSystem('world', t('transfer.problem', {
+    file: offer?.file_name ?? t('publicShare.file'),
+    error: reason,
+  }));
+  if (state.connected) renderChat();
 }
 
 function showImagePreview(offer: PublicShareOffer) {
@@ -606,6 +845,21 @@ async function sendMessage() {
   if (!text) return;
   input.value = '';
   try {
+    if (relayOnlyRoomIds.has(state.room)) {
+      const message: ChatMessage = {
+        id: crypto.randomUUID(),
+        kind: 'chat',
+        peer_id: state.peerId,
+        nick: state.nick,
+        nick_color: state.nickColor,
+        room: state.room,
+        text,
+        timestamp: Date.now(),
+      };
+      worldRelay.publishRoomChat(message);
+      pushMessage(message);
+      return;
+    }
     await invoke('send_message', { room: state.room, text });
   } catch (e) {
     addSystem(state.room, t('chat.sendError', { error: String(e) }));
@@ -628,6 +882,8 @@ async function createRoom() {
     if (revision !== sessionRevision || !state.connected) return;
     state.rooms.set(room.id, { ...room, ...state.rooms.get(room.id) });
     if (!state.messages.has(room.id)) state.messages.set(room.id, []);
+    groupVoice.leaveWorld();
+    groupVoice.leaveRoom();
     state.room = room.id;
     renderChat();
   } catch (e) {
@@ -642,8 +898,10 @@ async function switchRoom(room: string) {
   const revision = sessionRevision;
   roomChangePending = true;
   try {
-    await invoke('enter_room', { roomId: room });
+    if (!relayOnlyRoomIds.has(room)) await invoke('enter_room', { roomId: room });
     if (revision !== sessionRevision || !state.connected || !state.rooms.has(room)) return;
+    if (state.room === 'world' && room !== 'world') groupVoice.leaveWorld();
+    if (groupVoice.snapshot().roomActive && groupVoice.snapshot().roomScope !== room) groupVoice.leaveRoom();
     state.room = room;
     if (!state.messages.has(room)) state.messages.set(room, []);
     renderChat();
@@ -697,11 +955,10 @@ export async function sendFileToPeer(peerId: string) {
   }
   if (peerId.startsWith('nostr:')) {
     try {
-      const selection = await invoke<RelayFileSelection | null>('pick_relay_file');
-      if (!selection) return;
-      const offer = worldRelay.offerFile(peerId, selection);
-      state.transfers.set(offer.transfer_id, {
-        transfer_id: offer.transfer_id,
+      const offer = await peerTransport.sendFile(peerId);
+      if (!offer) return;
+      state.transfers.set(offer.token, {
+        transfer_id: offer.token,
         direction: 'outgoing',
         peer_id: peerId,
         nick: peer.nick,
@@ -735,6 +992,10 @@ export async function sendFileToPeer(peerId: string) {
 
 async function cancelTransfer(transferId: string) {
   const transfer = state.transfers.get(transferId);
+  if (directTransferIds.has(transferId)) {
+    await peerTransport.cancelFile(transferId);
+    return;
+  }
   if (transfer?.peer_id.startsWith('nostr:')) {
     worldRelay.cancelFile(transferId);
     return;
@@ -821,6 +1082,97 @@ function updateRelayTransfer(progress: RelayFileProgress): void {
   }
 }
 
+function directTransferView(progress: DirectFileProgress): FileTransfer {
+  const peer = state.peers.get(progress.peer_id);
+  const publicTransfer = publicTransferTokens.get(progress.token);
+  return {
+    transfer_id: progress.token,
+    direction: progress.direction,
+    peer_id: progress.peer_id,
+    nick: peer?.nick ?? progress.peer_id,
+    public_offer_id: publicTransfer?.offerId,
+    preview_only: publicTransfer?.intent === 'preview',
+    file_name: progress.file_name,
+    size: progress.size,
+    transferred: progress.transferred,
+    progress: progress.progress,
+    status: progress.status === 'transferring'
+      ? (progress.direction === 'outgoing' ? 'sending' : 'receiving')
+      : progress.status,
+    path: progress.path,
+    error: progress.error,
+  };
+}
+
+function updateDirectTransfer(progress: DirectFileProgress): void {
+  directTransferIds.add(progress.token);
+  const publicTransfer = publicTransferTokens.get(progress.token);
+  if (publicTransfer) clearPublicClaimTimer(progress.token);
+  if (publicTransfer) state.transfers.delete(`claim:${publicTransfer.offerId}`);
+  state.transfers.set(progress.token, directTransferView(progress));
+  if (progress.status === 'rejected' || progress.status === 'failed') {
+    if (publicTransfer) {
+      publicTransferTokens.delete(progress.token);
+      state.publicIntents.delete(publicTransfer.offerId);
+    }
+    addSystem('world', t('transfer.problem', { file: progress.file_name, error: progress.error || transferStatus(progress.status) }));
+  } else if (progress.status === 'completed') {
+    const savedPath = progress.path && publicTransfer?.intent !== 'preview'
+      ? t('transfer.saved', { path: progress.path })
+      : '';
+    addSystem('world', t('transfer.finished', { file: progress.file_name, saved: savedPath }));
+    if (publicTransfer) void finishRelayPublicDownload(progress, publicTransfer);
+  } else if (state.connected) renderChat();
+}
+
+async function finishRelayPublicDownload(
+  progress: DirectFileProgress,
+  pending: { offerId: string; intent: 'download' | 'preview' },
+): Promise<void> {
+  clearPublicClaimTimer(progress.token);
+  publicTransferTokens.delete(progress.token);
+  state.publicIntents.delete(pending.offerId);
+  const offer = state.publicOffers.get(pending.offerId);
+  if (offer?.kind === 'image' && progress.path) {
+    try {
+      offer.preview_data = await invoke<string>('load_image_preview', {
+        path: progress.path,
+        previewOnly: pending.intent === 'preview',
+      });
+      if (pending.intent === 'preview') showImagePreview(offer);
+    } catch (error) {
+      addSystem('world', t('publicShare.previewError', { error: String(error) }));
+    }
+  }
+  if (state.connected) renderChat();
+}
+
+function showDirectFileOfferModal(offer: DirectFileOffer): void {
+  document.querySelector(`#direct-file-offer-${CSS.escape(offer.token)}`)?.remove();
+  const modal = document.createElement('div');
+  modal.id = `direct-file-offer-${offer.token}`;
+  modal.className = 'modal-wrap file-offer-wrap';
+  const dangerous = dangerousFile(offer.file_name);
+  const nick = state.peers.get(offer.peer_id)?.nick ?? offer.peer_id;
+  modal.innerHTML = `<div class="modal glass file-offer-modal">
+    <div class="offer-icon">⚡</div>
+    <span class="eyebrow">DIRECT P2P · WEBRTC</span>
+    <h3>${esc(t('transfer.wantsToSend', { nick }))}</h3>
+    <div class="offer-file"><strong>${esc(offer.file_name)}</strong><span>${formatBytes(offer.size)}</span></div>
+    ${dangerous ? `<div class="danger-note">${esc(t('transfer.dangerous'))}</div>` : `<div class="safe-note">${esc(t('transfer.safe'))}</div>`}
+    <div class="safe-note">${esc(t('transfer.directHelp'))}</div>
+    <div class="offer-actions"><button data-direct-reject class="ghost">${esc(t('transfer.reject'))}</button><button data-direct-accept class="primary compact">${esc(t('transfer.accept'))}</button></div>
+  </div>`;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('[data-direct-reject]')?.addEventListener('click', () => { void peerTransport.rejectFile(offer.token); close(); });
+  modal.querySelector('[data-direct-accept]')?.addEventListener('click', () => {
+    const button = modal.querySelector<HTMLButtonElement>('[data-direct-accept]');
+    if (button) button.disabled = true;
+    void peerTransport.acceptFile(offer.token).then(close).catch(error => { alert(String(error)); close(); });
+  });
+}
+
 function showRelayFileOfferModal(offer: RelayFileOffer): void {
   document.querySelector(`#relay-file-offer-${CSS.escape(offer.transfer_id)}`)?.remove();
   const modal = document.createElement('div');
@@ -886,9 +1238,14 @@ async function saveRelayFile(file: RelayFileReady): Promise<void> {
 }
 
 function resetSessionView(errorMessage?: string) {
+  groupVoice.stop();
   worldRelay.stop();
+  peerTransport.stop();
+  clearGroupAudio();
   worldRelayPeers.clear();
+  relayOnlyRoomIds.clear();
   worldRelayState = { connected: 0, total: 0 };
+  groupVoiceSnapshot = { world: [], canStartWorld: false, secondsLeft: 0, roomActive: false, roomPeers: 0 };
   closeKnpChatUi();
   sessionRevision += 1;
   connectPending = false;
@@ -902,8 +1259,12 @@ function resetSessionView(errorMessage?: string) {
   state.rooms = new Map([['world', { id: 'world', title: '# WORLD' }]]);
   state.messages = new Map([['world', []]]);
   state.transfers.clear();
+  directTransferIds.clear();
   state.publicOffers.clear();
   state.publicIntents.clear();
+  publicTransferTokens.clear();
+  for (const timer of publicClaimTimers.values()) window.clearTimeout(timer);
+  publicClaimTimers.clear();
   state.status = { ...EMPTY_STATUS };
   discoveryStatus = { phase: 'off', relay_enabled: false, public_reachability: false };
   publicDiscoveryOptIn = true;
@@ -929,14 +1290,84 @@ function pushMessage(m: ChatMessage) {
   if (m.room === state.room && state.connected) renderChat();
 }
 
+function receivePublicOffer(offer: PublicShareOffer): void {
+  const existing = state.publicOffers.get(offer.offer_id);
+  let stored = offer;
+  if (existing) {
+    existing.expires_at = Math.max(existing.expires_at, offer.expires_at);
+    existing.expired = false;
+    stored = existing;
+  } else {
+    offer.nick_color = normalizeNickColor(offer.nick_color);
+    state.publicOffers.set(offer.offer_id, offer);
+  }
+  pushMessage({
+    id: `public:${stored.offer_id}`,
+    kind: 'public_offer',
+    peer_id: stored.peer_id,
+    nick: stored.nick,
+    nick_color: stored.nick_color,
+    room: stored.room_id ?? 'world',
+    text: '',
+    timestamp: Number(stored.timestamp),
+    public_offer: stored,
+  });
+}
+
 function addSystem(room: string, text: string) {
   pushMessage({ id: crypto.randomUUID(), kind: 'system', nick: 'SYSTEM', room, text, timestamp: Date.now() });
 }
 
 function startWorldRelay() {
+  peerTransport.start({
+    sendSignal(peerId: string, signal: RtcSignal) {
+      try { worldRelay.publishRtcSignal(peerId, signal); } catch {}
+    },
+    beforeMicrophoneCapture() {
+      groupVoice.leaveWorld();
+      groupVoice.leaveRoom();
+    },
+    onIncomingCall(peerId: string, connectionId: string) {
+      window.dispatchEvent(new CustomEvent('konofix-incoming-audio-call', { detail: { peerId, connectionId } }));
+    },
+    onCallState(peerId, callState, error) {
+      window.dispatchEvent(new CustomEvent('konofix-audio-call-state', { detail: { peerId, state: callState, error } }));
+    },
+    onRemoteAudio(peerId, stream) {
+      window.dispatchEvent(new CustomEvent('konofix-remote-audio', { detail: { peerId, stream } }));
+    },
+    onFileOffer(offer) {
+      const pending = publicTransferTokens.get(offer.token);
+      if (!pending) {
+        showDirectFileOfferModal(offer);
+        return;
+      }
+      clearPublicClaimTimer(offer.token);
+      const announced = state.publicOffers.get(pending.offerId);
+      if (!announced
+        || announced.peer_id !== offer.peer_id
+        || announced.file_name !== offer.file_name
+        || announced.size !== offer.size
+        || announced.sha256.toLowerCase() !== offer.sha256.toLowerCase()) {
+        void peerTransport.rejectFile(offer.token, 'Public file metadata did not match the signed announcement.');
+        failPublicClaim(offer.token, t('publicShare.metadataMismatch'));
+        return;
+      }
+      void peerTransport.acceptFile(offer.token, pending.intent === 'preview').catch(error => {
+        failPublicClaim(offer.token, String(error));
+      });
+    },
+    onFileProgress(progress) { updateDirectTransfer(progress); },
+  });
   worldRelay.start(state.peerId, state.nick, state.nickColor, {
     onPresence(peer: RelayPeer) {
       worldRelayPeers.set(peer.peer_id, peer);
+      // Relay media/signalling uses the virtual Nostr peer id even when the
+      // same person is already visible through the native transport. Keep the
+      // duplicate out of the people list, but never skip the relay-online
+      // notification or active WORLD/room audio can miss this listener.
+      window.dispatchEvent(new CustomEvent('konofix-relay-peer-online', { detail: { peer_id: peer.peer_id } }));
+      groupVoice.peerOnline(peer.peer_id);
       if (state.peers.has(peer.claimed_peer_id)) {
         state.peers.delete(peer.peer_id);
         return;
@@ -946,17 +1377,32 @@ function startWorldRelay() {
         nick: peer.nick,
         nick_color: peer.nick_color,
       });
-      window.dispatchEvent(new CustomEvent('konofix-relay-peer-online', { detail: { peer_id: peer.peer_id } }));
       if (state.connected) renderChat();
     },
     onOffline(peerId: string) {
       worldRelayPeers.delete(peerId);
       state.peers.delete(peerId);
       window.dispatchEvent(new CustomEvent('konofix-relay-peer-offline', { detail: { peer_id: peerId } }));
+      groupVoice.peerOffline(peerId);
       if (state.connected) renderChat();
     },
     onChat(message: ChatMessage) {
       pushMessage(message);
+    },
+    onRoom(room: RelayRoomInfo) {
+      if (state.rooms.has(room.id) && !relayOnlyRoomIds.has(room.id)) return;
+      relayOnlyRoomIds.add(room.id);
+      state.rooms.set(room.id, room);
+      if (!state.messages.has(room.id)) state.messages.set(room.id, []);
+      if (state.connected) renderChat();
+    },
+    onRoomClosed(roomId: string) {
+      if (!relayOnlyRoomIds.delete(roomId)) return;
+      state.rooms.delete(roomId);
+      if (state.room === roomId) {
+        state.room = 'world';
+        addSystem('world', t('rooms.closed'));
+      } else if (state.connected) renderChat();
     },
     onState(next: RelayState) {
       const changed = next.connected !== worldRelayState.connected || next.total !== worldRelayState.total;
@@ -974,6 +1420,60 @@ function startWorldRelay() {
     },
     onFileReady(file: RelayFileReady) {
       void saveRelayFile(file);
+    },
+    onPublicFile(offer: RelayPublicFileOffer) {
+      receivePublicOffer(offer);
+    },
+    onRtcSignal(peerId: string, signal: RtcSignal) {
+      if (signal.action === 'public_file_request') {
+        const announced = signal.offer_id ? state.publicOffers.get(signal.offer_id) : undefined;
+        if (!announced
+          || announced.peer_id !== state.peerId
+          || announced.expires_at <= Date.now()
+          || !signal.transfer_token) return;
+        void invoke<RtcFileDescriptor>('prepare_public_rtc_file', {
+          offerId: announced.offer_id,
+          transferToken: signal.transfer_token,
+        }).then(descriptor => peerTransport.sendPreparedFile(peerId, descriptor)).catch(error => {
+          try {
+            worldRelay.publishRtcSignal(peerId, {
+              connection_id: crypto.randomUUID(),
+              action: 'public_file_reject',
+              offer_id: announced.offer_id,
+              transfer_token: signal.transfer_token,
+              reason: String(error).slice(0, 300) || 'The sender could not prepare the file.',
+            });
+          } catch {}
+        });
+        return;
+      }
+      if (signal.action === 'public_file_reject' && signal.transfer_token) {
+        const pending = publicTransferTokens.get(signal.transfer_token);
+        if (pending && pending.offerId === signal.offer_id) {
+          failPublicClaim(signal.transfer_token, signal.reason || t('publicShare.senderUnavailable'));
+        }
+        return;
+      }
+      void peerTransport.handleSignal(peerId, signal).catch(error => {
+        peerTransport.reportSignalError(peerId, signal, error);
+      });
+    },
+    onWorldVoice(voiceState: WorldVoiceState) {
+      groupVoice.updateWorldState(voiceState);
+    },
+    onVoiceSignal(peerId: string, signal: VoiceSignal) {
+      void groupVoice.handleSignal(peerId, signal).catch(error => groupVoice.reportSignalError(error));
+    },
+  });
+  groupVoice.start(worldRelay.virtualPeerId(), state.nick, state.nickColor, {
+    sendSignal(peerId, signal) { worldRelay.publishVoiceSignal(peerId, signal); },
+    publishWorld(voiceState) { worldRelay.publishWorldVoice(voiceState); },
+    peers() { return [...worldRelayPeers.keys()]; },
+    beforeMicrophoneCapture() { peerTransport.hangupAllCalls(); },
+    onRemoteStream(scope, peerId, stream) { playGroupAudio(scope, peerId, stream); },
+    onState(snapshot) {
+      groupVoiceSnapshot = snapshot;
+      updateVoicePanel();
     },
   });
 }
@@ -1021,6 +1521,23 @@ function showNetworkModal() {
       <p class="modal-note" id="publicDiscoveryStatus"><strong>${esc(discoveryLabel())}</strong><br/>${esc(discoveryStatus.relay_enabled ? t('network.relayActive') : t('network.relayInactive'))}</p>
       <p class="modal-note">${esc(t('network.coldProofLimit'))}</p>
       <p class="modal-note">${esc(t('network.participantNode'))}</p>
+      <section class="audio-settings-card">
+        <strong>${esc(t('audio.settingsTitle'))}</strong>
+        <label><input id="muteWorldAudio" type="checkbox" ${worldAudioMuted ? 'checked' : ''}/> ${esc(t('audio.muteWorld'))}</label>
+        <small>${esc(t('audio.muteWorldHelp'))}</small>
+        <div class="audio-test-actions">
+          <button id="testSpeakers" class="ghost">${esc(t('audio.testSpeakers'))}</button>
+          <button id="testMicrophone" class="ghost">${esc(t('audio.testMicrophone'))}</button>
+        </div>
+        <div class="audio-test-meter" aria-hidden="true"><i id="microphoneLevel"></i></div>
+        <p id="audioTestStatus" class="modal-note">${esc(t('audio.testReady'))}</p>
+      </section>
+      <section class="audio-settings-card">
+        <strong>${esc(t('update.title'))}</strong>
+        <small>${esc(t('update.help'))}</small>
+        <div class="audio-test-actions"><button id="checkUpdates" class="ghost">${esc(t('update.checkNow'))}</button></div>
+        <p id="updateStatus" class="modal-note">${esc(t('update.ready'))}</p>
+      </section>
       <label>${esc(t('network.bootstrapAddress'))}</label>
       <div class="inline-form"><input id="bootstrapInput" placeholder="/ip4/.../tcp/.../p2p/12D3KooW..."/><button id="addBootstrap" class="primary compact">${esc(t('common.add'))}</button></div>
       <div class="bootstrap-list">${bootstraps.length ? bootstraps.map(b => `<div><code>${esc(b)}</code><button data-remove-bootstrap="${esc(b)}">×</button></div>`).join('') : `<p>${esc(t('network.noBootstraps'))}</p>`}</div>
@@ -1029,9 +1546,58 @@ function showNetworkModal() {
     </div>`;
   document.body.appendChild(modal);
 
-  const close = () => modal.remove();
+  const audioTestAbort = new AbortController();
+  const close = () => {
+    audioTestAbort.abort();
+    modal.remove();
+  };
   modal.addEventListener('click', e => { if (e.target === modal) close(); });
   modal.querySelector('#closeModal')?.addEventListener('click', close);
+  modal.querySelector<HTMLInputElement>('#muteWorldAudio')?.addEventListener('change', event => {
+    worldAudioMuted = (event.currentTarget as HTMLInputElement).checked;
+    localStorage.setItem(WORLD_AUDIO_MUTED_KEY, String(worldAudioMuted));
+    for (const [key, audio] of groupAudio) {
+      if (key.startsWith('world\u0000')) audio.muted = worldAudioMuted;
+      if (worldAudioMuted && key.startsWith('world\u0000')) blockedGroupAudio.delete(key);
+    }
+    if (!worldAudioMuted) {
+      for (const key of groupAudio.keys()) {
+        if (key.startsWith('world\u0000')) blockedGroupAudio.add(key);
+      }
+      resumeGroupAudio();
+    }
+  });
+  const audioStatus = modal.querySelector<HTMLElement>('#audioTestStatus')!;
+  const microphoneLevel = modal.querySelector<HTMLElement>('#microphoneLevel')!;
+  modal.querySelector<HTMLButtonElement>('#testSpeakers')?.addEventListener('click', async event => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true;
+    audioStatus.textContent = t('audio.testingSpeakers');
+    try {
+      await testSpeakers(audioTestAbort.signal);
+      audioStatus.textContent = t('audio.speakersOk');
+    } catch (error) {
+      if (!audioTestAbort.signal.aborted) audioStatus.textContent = t('audio.testFailed', { error: String(error) });
+    } finally {
+      button.disabled = false;
+    }
+  });
+  modal.querySelector<HTMLButtonElement>('#testMicrophone')?.addEventListener('click', async event => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true;
+    audioStatus.textContent = t('audio.testingMicrophone');
+    try {
+      const peak = await testMicrophone(level => {
+        microphoneLevel.style.width = `${Math.round(level * 100)}%`;
+      }, audioTestAbort.signal);
+      audioStatus.textContent = peak >= 0.025 ? t('audio.microphoneOk') : t('audio.microphoneSilent');
+    } catch (error) {
+      if (!audioTestAbort.signal.aborted) audioStatus.textContent = t('audio.testFailed', { error: String(error) });
+    } finally {
+      button.disabled = false;
+    }
+  });
+  modal.querySelector('#checkUpdates')?.addEventListener('click', () => void runStableUpdateCheck(true));
   modal.querySelectorAll<HTMLButtonElement>('[data-copy-address]').forEach(btn => btn.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(btn.dataset.copyAddress!);
@@ -1063,8 +1629,11 @@ function showNetworkModal() {
 async function wireEvents() {
   await listen<ChatMessage>('chat-message', event => {
     pushMessage(event.payload);
-    if (event.payload.peer_id === state.peerId && event.payload.room === 'world' && event.payload.kind === 'chat') {
-      worldRelay.publishChat(event.payload);
+    if (event.payload.peer_id === state.peerId && event.payload.kind === 'chat') {
+      if (event.payload.room === 'world') worldRelay.publishChat(event.payload);
+      else if (state.rooms.get(event.payload.room)?.password_protected !== true) {
+        worldRelay.publishRoomChat(event.payload);
+      }
     }
   });
   await listen<PeerInfo>('peer-online', event => {
@@ -1080,12 +1649,29 @@ async function wireEvents() {
     if (state.connected) renderChat();
   });
   await listen<RoomInfo>('room-created', event => {
+    relayOnlyRoomIds.delete(event.payload.id);
     state.rooms.set(event.payload.id, event.payload);
     if (!state.messages.has(event.payload.id)) state.messages.set(event.payload.id, []);
+    if (event.payload.owner === state.peerId && event.payload.password_protected !== true) {
+      try { worldRelay.publishRoom(event.payload); } catch {}
+    }
+    if (state.connected) renderChat();
+  });
+  await listen<RoomInfo>('room-security-updated', event => {
+    relayOnlyRoomIds.delete(event.payload.id);
+    state.rooms.set(event.payload.id, event.payload);
+    if (event.payload.owner === state.peerId) {
+      if (event.payload.password_protected) worldRelay.closeRoom(event.payload.id);
+      else {
+        try { worldRelay.publishRoom(event.payload); } catch {}
+      }
+    }
     if (state.connected) renderChat();
   });
   await listen<{ room_id: string }>('room-closed', event => {
     if (event.payload.room_id === 'world') return;
+    relayOnlyRoomIds.delete(event.payload.room_id);
+    worldRelay.closeRoom(event.payload.room_id);
     state.rooms.delete(event.payload.room_id);
     if (state.room === event.payload.room_id) {
       state.room = 'world';
@@ -1125,25 +1711,7 @@ async function wireEvents() {
     resetSessionView(message);
   });
   await listen<PublicShareOffer>('public-file-offer', event => {
-    const offer = event.payload;
-    if (state.publicOffers.has(offer.offer_id)) {
-      const existing = state.publicOffers.get(offer.offer_id)!;
-      existing.expires_at = offer.expires_at;
-      return;
-    }
-    offer.nick_color = normalizeNickColor(offer.nick_color);
-    state.publicOffers.set(offer.offer_id, offer);
-    pushMessage({
-      id: `public:${offer.offer_id}`,
-      kind: 'public_offer',
-      peer_id: offer.peer_id,
-      nick: offer.nick,
-      nick_color: offer.nick_color,
-      room: offer.room_id ?? 'world',
-      text: '',
-      timestamp: Number(offer.timestamp),
-      public_offer: offer,
-    });
+    receivePublicOffer(event.payload);
   });
   await listen<{ offer_id: string }>('public-offer-expired', event => {
     const offer = state.publicOffers.get(event.payload.offer_id);
@@ -1214,3 +1782,4 @@ async function wireEvents() {
 
 wireEvents();
 renderLogin();
+window.setTimeout(() => void runStableUpdateCheck(false), 2_500);

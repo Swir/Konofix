@@ -2,13 +2,13 @@
 
 <div align="center">
 
-<img width="100%" src="assets/readme/hero.svg" alt="Konofix Chat — ephemeral peer-to-peer messaging and direct file transfer for Windows" />
+<img width="100%" src="assets/readme/hero.svg" alt="Konofix Chat — peer-to-peer text, voice and file sharing for Windows" />
 
 <br>
 
-**Ephemeral peer-to-peer messaging and direct file transfer for Windows**
+**Peer-to-peer text, voice and file sharing for Windows**
 
-**No traditional accounts • Participant-created P2P network • Tauri desktop UI • Optional headless Node**
+**No traditional accounts • WORLD and private chat • Participant-created network • Optional headless Node**
 
 ![Rust](https://img.shields.io/badge/Rust-P2P_Core-02050A?style=for-the-badge&logo=rust&logoColor=62E5FF)
 ![Tauri](https://img.shields.io/badge/Tauri-2-02050A?style=for-the-badge&logo=tauri&logoColor=62E5FF)
@@ -18,9 +18,9 @@
 [![Windows CI](https://github.com/Swir/Konofix/actions/workflows/windows-ci.yml/badge.svg)](https://github.com/Swir/Konofix/actions/workflows/windows-ci.yml)
 [![Linux Node CI](https://github.com/Swir/Konofix/actions/workflows/linux-node-ci.yml/badge.svg)](https://github.com/Swir/Konofix/actions/workflows/linux-node-ci.yml)
 [![Stars](https://img.shields.io/github/stars/Swir/Konofix?style=flat-square&color=0088FF)](https://github.com/Swir/Konofix/stargazers)
-[![Latest prerelease](https://img.shields.io/github/v/release/Swir/Konofix?include_prereleases&label=prerelease&style=flat-square&color=0088FF)](https://github.com/Swir/Konofix/releases)
+[![Latest stable](https://img.shields.io/github/v/release/Swir/Konofix?label=stable&style=flat-square&color=0088FF)](https://github.com/Swir/Konofix/releases/latest)
 
-[**Highlights**](#highlights) · [**Quick Start**](#quick-start) · [**Architecture**](#architecture) · [**Roadmap**](#roadmap) · [**Releases**](#releases)
+[**Download**](https://github.com/Swir/Konofix/releases/latest) · [**User guide**](docs/USER_GUIDE.md) · [**Highlights**](#highlights) · [**Quick Start**](#quick-start) · [**Architecture**](#architecture) · [**Roadmap**](#roadmap)
 
 </div>
 
@@ -28,69 +28,62 @@
 
 ## Project status
 
+**Konofix Chat 0.6.0 — stable chat feature release.** See [GitHub Releases](https://github.com/Swir/Konofix/releases) for published installers, checksums and release-specific acceptance notes. Use the same version on both computers.
+
+### Stable chat feature scope
+
+**Stable chat feature implementation: 100% (10/10 defined feature groups).** The ten shipped groups are listed below. This is a bounded inventory of implemented application features, **not** a claim that every feature, file size, router, country or network topology has been physically tested, or that the entire roadmap is finished. The built-in updater client is implemented; the signed update publishing service is not configured, so this release uses manual installation.
+
+The user confirmed that the latest audio-fix candidate plays private voice on both PCs and no longer produces the reported error after hangup. That acceptance does not identify the network route or qualify unrelated load, failover or maximum-size scenarios. See the [acceptance record](docs/evidence/CHAT_AUDIO_ACCEPTANCE_20261013.md) and [0.6.0 release notes](docs/RELEASE_0.6.0.md) for the distinction between CI and user acceptance.
+
+### Separate network qualification
+
 <img width="100%" src="assets/readme/progress-card.svg" alt="Konofix Chat Real Internet Test progress — 56 of 67 verified tasks, 83.6%, in progress; release readiness is a separate gate" />
 
-**Beta preview / Global Beta qualification in progress**
-
-**Verified checklist fraction: 56 of 67 tasks — 83.6%.** The generated SVG uses the exact checklist fraction. The text summary below is CI-checked against that same verified fraction.
+**Verified checklist fraction: 56 of 67 tasks — 83.6%.** This is the separate network-qualification checklist, not the feature implementation inventory.
 
 **Real Internet Test milestone: 83.6% complete**
 
-The active `0.4.3 — Real Internet Test` / Global Beta readiness scope has **56 of 67 tasks complete**. The Global Beta expansion added eight many-computer release gates to the five original real-network gates. The reviewed public-Node admission-limit gate and the Rooms 2.0 production membership/count implementation gate are now verified after exact-head Windows/Linux qualification; the other six Global Beta gates and the five original real-world gates remain open. The Rooms 2.0 credit covers production runtime wiring and application-loop convergence only: CI, documentation or local/same-host tests cannot credit the remaining participant-topology, real 50/100/250 load, cross-country, field-soak, failover or qualified prerelease gates.
-
-Published packages and their actual availability are listed on [GitHub Releases](https://github.com/Swir/Konofix/releases). The physically accepted 0.5.2 installer is the current stable WORLD-text build. [0.5.3 candidate notes](docs/RELEASE_0.5.3.md) describe the encrypted WAN private-chat/file correction now awaiting an exact two-PC retest. Update both participants to the same package. A stable chat release does not declare the separate Global Beta infrastructure/load/failover gates complete. Historical `test1`/`test2` packages predate current runtime fixes and must not be mixed with newer binaries or evidence tools.
+The authoritative Real Internet Test / Global Beta readiness scope has **56 of 67 tasks complete**. The progress graphic and this fraction come from [`ROADMAP.md`](ROADMAP.md), not from the ten-feature inventory. The remaining public-network, capacity, soak and failover evidence gates stay open. Publishing a stable chat release does not complete them.
 
 ## What is Konofix?
 
-Konofix Chat is a desktop P2P messenger built around `rust-libp2p`. A user starts the app, chooses a nickname, joins the global `#WORLD` room, can create temporary rooms, and can transfer files directly to other peers after recipient approval.
+Konofix Chat is a Windows messenger built with Tauri and Rust. Start it, choose a nickname and enter **#WORLD**. You can chat publicly or privately, create temporary rooms, share files, make a private audio call, take a timed WORLD speaking turn or join voice in a public room.
 
-Konofix does not use a traditional account, email address, or phone number. **Every connected desktop is a P2P node**: participants form the network and can help others discover peers and relay connections. A separate server is optional. The headless Konofix Node is an optional always-on participant, not a central message-history or file-storage server.
-
-To form a network, start the app on each computer and connect with a nickname. Participants on one LAN discover each other automatically through mDNS. The product target is automatic entry into **#WORLD over the Internet** without pasted addresses or a mandatory operator-owned VPS. [Public discovery](docs/COLD_START_DESKTOP.md), enabled by default with a visible opt-out, uses the shared Amino DHT to find untrusted contact hints, then verifies short-lived signed advertisements before native direct-first libp2p routing. Publicly reachable applications may provide bounded participant relay service. Public IPFS bootstrappers are not Konofix relays, and the optional native bootstrap pool remains empty.
-
-When ordinary NAT/CGNAT prevents that native mesh from forming, the same visible public-discovery choice enables a [multi-relay WORLD fallback](docs/WORLD_RELAY_FALLBACK.md). Four replaceable public Nostr relays carry cryptographically signed, expiring WORLD presence/public text with duplicate suppression. Version 0.5.3 adds NIP-44 end-to-end encrypted private text and explicitly accepted files up to 2 MiB for relay-only participants; temporary-room control does not use this route, and native libp2p remains preferred. There is no Konofix-owned VPS, account service or intended server-side history. Relay operators can read public WORLD text and observe IPs, identifiers, ciphertext sizes and timing, but private text/file content is encrypted to the recipient. The user confirmed that the exact `8f6772b8…` 0.5.2 Windows candidate restored normal typed WORLD communication across the two physical independent networks; the new private/file fallback still requires the exact 0.5.3 two-PC retest. See the [limited acceptance record](docs/evidence/WORLD_WAN_20261010.md), [0.5.3 test scope](docs/RELEASE_0.5.3.md) and [participant-network beta plan](docs/GLOBAL_BETA.md).
-
-KonoNexus/KNP adds an **optional contact-text panel** alongside the primary libp2p network. WORLD, rooms, discovery and files keep their existing routes and security contracts. KNP requires separately verified NodeIDs and endpoints in this initial integration; it does not silently replace or impersonate a libp2p peer. See [the coexistence and installed-app test guide](docs/KNP_CHAT_BETA.md). Cloud tests do not complete the two-physical-installation or WAN gates.
+Every connected application is a participant in the native P2P network. You do not need to create an account, provide an email/phone number or rent a Konofix-owned VPS. **This does not mean the app uses no external servers:** Internet discovery/text fallback uses public third-party infrastructure, and WebRTC uses public STUN. Their availability and your NAT/firewall affect connectivity. See [how connections work](#architecture) and [the privacy boundaries](#security-and-trust-boundaries).
 
 ## Highlights
 
-| Feature | What it provides |
-|---|---|
-| ⚡ Ephemeral identity | Join with a nickname instead of creating a traditional account. |
-| 🌐 Global discovery | Kademlia DHT, Identify, mDNS, peer caching and bootstrap nodes help peers find each other. |
-| 💬 Distributed rooms | Global `#WORLD` plus temporary user-created rooms. |
-| 🔒 Authenticated transport | libp2p Noise transport identity plus source-bound GossipSub validation. |
-| 📦 P2P file transfer | Native streaming plus a 2 MiB NIP-44 encrypted relay fallback, recipient approval, cancellation and SHA-256 verification. |
-| 🛰️ NAT traversal stack | AutoNAT, Circuit Relay, DCUtR, UPnP, TCP and QUIC-v1 support. |
-| 🧭 Public Node tooling | Windows and Linux Node builds, readiness checks, health telemetry and soak validation. |
-| 🧪 Evidence-driven release gate | Exact-build manifests, Netprobe evidence, provenance verification and fail-closed promotion checks. |
-| 🌍 Localization | English, Polish, Norwegian, German, French, Spanish and Ukrainian UI with English fallback. |
+The following ten groups define the stable chat **implementation** scope:
+
+| Shipped group | What is included | Important boundary |
+|---|---|---|
+| 1. Nickname and chat interface | Account-free entry, nickname colors, emoji picker and safe text rendering. | A nickname is not verified real-world identity. |
+| 2. WORLD text and discovery | Public global room, online presence, LAN mDNS, native peer discovery and signed multi-relay Internet fallback. | Public infrastructure is needed for the fallback; no universal connectivity guarantee. |
+| 3. Temporary rooms | Create/join public rooms, owner-managed rooms, membership counts and native password-protected rooms. | Protected rooms are not announced over the public fallback. |
+| 4. Private text | Authenticated native direct messages, NIP-44 encrypted relay private messages, notifications and incoming-chat controls. | Recipients must be online; public WORLD is not private. |
+| 5. File sharing | WORLD/room offer cards, private recipient approval, native/WebRTC streaming up to 32 GiB, progress, cancellation and SHA-256 verification. | 32 GiB is a supported size limit, not a promise of successful delivery over every network. Legacy encrypted relay files remain limited to 2 MiB. |
+| 6. Image preview | One file-sharing action automatically recognizes PNG/JPEG/GIF/WebP and offers an explicit preview. | Preview limit is 8 MiB; larger images remain ordinary downloadable files. |
+| 7. Private audio | Accept/reject, outgoing/incoming ringing, microphone mute and hangup; encrypted WebRTC media. | Requires the public WORLD signaling identity and a working WebRTC route. |
+| 8. WORLD and room voice | WORLD queue with one 60-second speaker and early finish; simultaneous voice in public user-created rooms. | Protected-room voice is not available. Group media is peer-to-peer, not a hosted conference service. |
+| 9. Audio controls and languages | WORLD-only speaker mute, microphone/speaker tests; English, Polish, Norwegian, German, French, Spanish and Ukrainian UI. | App language is selected at startup from system/browser preferences, with English fallback. |
+| 10. Stable-update client | Startup/manual check, stable-version filtering, user confirmation and signed-update verification. | Signed publishing is not configured for this release; install manually from GitHub. |
+
+Optional operator tools and KonoNexus contacts are described separately below; they do not enlarge this ten-group completion claim.
 
 ## Quick Start
 
-### Current stable and 0.5.3 test candidate
+1. Download the **0.6.0 Windows installer** and its checksum from [GitHub Releases](https://github.com/Swir/Konofix/releases/latest). Do not download only the source-code ZIP. Install the same release on both PCs.
+2. Close an older Konofix instance, run the `setup.exe`, then open **Konofix Chat** from the Start menu. The MSI is an alternative installer when included. Node and Netprobe are command-line tools, not the chat window.
+3. Choose a nickname/color. Keep **public WORLD discovery** selected for Internet discovery and text fallback, then join WORLD. Devices on a suitable LAN also discover each other through mDNS.
+4. Type in WORLD, or select a participant's private-chat action. Use the attachment button for a direct file offer or the room's **Share file** button for an on-demand public offer.
+5. For audio, permit microphone access in Windows, then use the private call button, WORLD speaking queue or public-room voice button. **Network settings** contains microphone/speaker tests and **Mute WORLD voice**.
 
-1. Open [GitHub Releases](https://github.com/Swir/Konofix/releases). `v0.5.2` is the current stable Windows WORLD-chat release.
-2. For the private-chat/file correction, use only an exact 0.5.3 CI candidate identified by its full source commit, workflow run and installer checksum; do not mix it with 0.5.2 on the other PC.
-3. Verify the checksum, install it, then open **Konofix Chat** from the Start menu. Do not start Netprobe to open the chat.
-4. Choose a nickname and connect. LAN discovery is automatic. Leave the visible public discovery option selected on both PCs for automatic Internet WORLD. Stable 0.5.2 restored public WORLD text in the user's physical independent-network test. The 0.5.3 candidate adds encrypted private text and small-file fallback for the relay-only WAN users and must pass the procedure in `docs/RELEASE_0.5.3.md` before promotion.
-
-Follow [the two-PC Poland–Norway procedure](docs/TWO_PC_TEST.md) and record actual results before any WAN claim.
-
-The full exact-commit ZIP includes the MSI alternative, optional Node/Netprobe tools and test instructions. Keep one build's archive, `BUILD_INFO.json`, checksums and tools together. Node and Netprobe are command-line tools; the chat installer supplies the desktop window. The older `v0.4.2-test1` remains historical. Builds are not commercially code-signed.
-
-### Promotion-quality controlled testing
-
-Use a **fresh Windows test bundle from a fully green `main` Windows CI run for the exact commit being tested**. Keep that bundle's `BUILD_INFO.json`, Node, Netprobe, scripts and evidence together. The promotion validators intentionally reject mixed commits, binaries, sessions and Node-soak provenance.
+Read the [complete user guide](docs/USER_GUIDE.md) for rooms, queues, downloads, settings, privacy and troubleshooting. Builds are not Microsoft Authenticode-signed; a checksum verifies the downloaded bytes but is not a code-signing certificate. Do not disable Windows security or your firewall to make the app work.
 
 ### From source
 
-Requirements:
-
-- Windows 11
-- Node.js 22+
-- Rust toolchain with MSVC target
-- Tauri 2 build prerequisites for Windows
+Requirements: Windows 11, Node.js 22+, Rust with the MSVC target and the Tauri 2 Windows build prerequisites, including WebView2.
 
 ```powershell
 git clone https://github.com/Swir/Konofix.git
@@ -99,191 +92,96 @@ npm ci
 npm run tauri dev
 ```
 
-Run the repository validation path with:
-
-```powershell
-.\scripts\check.ps1
-```
-
-Build the production Windows application with:
-
-```powershell
-.\scripts\build-windows.ps1
-```
-
-The Tauri application bundle is written under `src-tauri\target\release\bundle`.
-
-## Konofix Node
-
-Build the Windows Node from the repository:
-
-```powershell
-build-node.bat
-```
-
-For a public/community Node, the verified Windows artifact includes a fail-closed launcher that validates the public endpoint and keeps persistent identity and health state separated:
-
-```powershell
-.\scripts\public-node.ps1 `
-  -PublicHost node.yourdomain.com `
-  -StateDirectory C:\Konofix `
-  -RequireDnsResolution `
-  -Start
-```
-
-For a supervised Node that survives logoff and reboot, use the bundled startup-task installer from an elevated PowerShell window:
-
-```powershell
-.\scripts\install-public-node-task.ps1 `
-  -PublicHost node.yourdomain.com `
-  -StateDirectory C:\ProgramData\KonofixNode `
-  -RequireDnsResolution `
-  -ConfigureFirewall `
-  -Install `
-  -StartNow
-```
-
-The raw Node remains available for operators who want explicit control:
-
-```powershell
-konofix-node.exe `
-  --port 45555 `
-  --public-host YOUR_PUBLIC_IP_OR_DNS `
-  --identity-file C:\Konofix\node-identity.key `
-  --health-file C:\Konofix\health.json
-```
-
-A public Node normally needs inbound **TCP 45555** and **UDP 45555**. See [`docs/NODE.md`](docs/NODE.md) and [`docs/NODE_SOAK.md`](docs/NODE_SOAK.md) for the operator and stable-promotion evidence flow.
-
-## Real Internet test workflow
-
-Before cross-country testing, validate the advertised TCP and QUIC bootstrap addresses against the same Node identity and fresh health snapshot:
-
-```powershell
-.\scripts\check-public-node-readiness.ps1 `
-  -TcpBootstrap "/dns/node.yourdomain.com/tcp/45555/p2p/12D3KooW..." `
-  -QuicBootstrap "/dns/node.yourdomain.com/udp/45555/quic-v1/p2p/12D3KooW..." `
-  -HealthPath "C:\Konofix\node-health.json" `
-  -ExpectedVersion "0.5.2" `
-  -ExpectedSourceCommit "FULL_40_CHARACTER_COMMIT_SHA"
-```
-
-Then create the complete five-scenario exact-build workspace from the extracted verified Windows archive:
-
-```powershell
-.\scripts\new-network-test-session.ps1 `
-  -ClientA "PC-A" -ClientACountry "Norway" -ClientANetwork "Operator-A LTE" `
-  -ClientB "PC-B" -ClientBCountry "Poland" -ClientBNetwork "Operator-B LTE" `
-  -TcpBootstrap "/dns/node.yourdomain.com/tcp/45555/p2p/PEER_ID" `
-  -QuicBootstrap "/dns/node.yourdomain.com/udp/45555/quic-v1/p2p/PEER_ID"
-```
-
-The stable-promotion evidence path requires TCP, QUIC, Relay, DCUtR and CGNAT scenario manifests from one coherent session, exact artifact/source provenance, authenticated direct TCP+QUIC Netprobe records from both independent client contexts, concrete per-check evidence, file-transfer SHA-256 observations, and a continuous Node soak history sealed to the same exact Node binary and `BUILD_INFO.json` hashes. Session validation also rejects cross-directory manifest substitution.
-
-Run the final evidence preflight with the `BUILD_INFO.json` from that same verified archive:
-
-```powershell
-.\scripts\check-promotion-evidence.ps1 `
-  -BuildInfoPath .\BUILD_INFO.json `
-  -SessionInfoPath .\test-results\konofix-real-network-...\SESSION_INFO.json `
-  -NetworkEvidence .\test-results\konofix-real-network-...\network-test-*.json `
-  -ClientNetprobeEvidence .\test-results\konofix-real-network-...\client-*-netprobe.json `
-  -NodeSoakEvidence .\node-soak\*.json
-```
-
-See [`docs/TESTING.md`](docs/TESTING.md), [`docs/CLIENT_NETPROBE_EVIDENCE.md`](docs/CLIENT_NETPROBE_EVIDENCE.md), and [`docs/NODE_SOAK.md`](docs/NODE_SOAK.md) for the controlled test and promotion-evidence flow.
+Validate with `npm run audit`, `npm run build` and the Rust checks in `scripts/check.ps1`. Build the Windows application using `scripts/build-windows.ps1`; the default bundle path is `src-tauri\target\release\bundle`.
 
 ## Architecture
 
-```text
-Tauri 2 desktop UI / TypeScript 7 / Vite 8
-                     │
-                     ▼
-              Rust application core
-                     │
-                     ▼
-                 rust-libp2p
-  ┌──────────┬──────────┬───────────┬──────────────┐
-  │ TCP/QUIC │ GossipSub│ Kademlia  │ Request/Resp │
-  │ Noise    │ presence │ DHT       │ file transfer│
-  │ Yamux    │ chat     │ discovery │ CBOR         │
-  └──────────┴──────────┴───────────┴──────────────┘
-                     │
-          AutoNAT / Relay / DCUtR / UPnP
-```
+Konofix has complementary network paths, not one central chat server:
 
-The client also maintains a bounded local peer-address cache to improve reconnect attempts. Production Windows artifacts carry exact build provenance, dependency lockfiles, Node/Netprobe hashes and test tooling that are verified before upload.
+| Path | How it works | Data carried |
+|---|---|---|
+| Native P2P | `rust-libp2p`: TCP/QUIC, Noise/Yamux, GossipSub, Kademlia, mDNS, Identify/Ping; AutoNAT, UPnP, DCUtR and participant circuit relays where available. | Native presence, public rooms/text, authenticated private control and streamed files. |
+| Public discovery | Amino DHT contact hints followed by validation of short-lived signed advertisements; bounded peer caching/reconnects. | Untrusted discovery hints, not a central identity authority or file store. |
+| WORLD fallback | Several third-party WSS Nostr relays; signed, expiring events, duplicate suppression and bounded reconnect queues. | Public WORLD/room content, presence, file-offer metadata and queue state; encrypted private text, small-file fallback and WebRTC setup. |
+| WebRTC | Encrypted peer-to-peer audio and data channels; STUN at Cloudflare/Google helps discover candidate addresses. | Audio and large-file bytes, not uploaded to WORLD text relays. |
+
+The configured WORLD relays are `relay.damus.io`, `nos.lol`, `relay.primal.net` and `nostr.mom`. They are independent third-party services with no Konofix availability guarantee. The native bootstrap pool is optional and empty; public IPFS bootstrap peers are not Konofix relays.
+
+**No TURN fallback is currently configured.** The retired anonymous TURN service was removed. STUN is not a media relay, so restrictive symmetric NAT, CGNAT or firewall rules can prevent WebRTC audio/large files even while public and private text work. Native participant relays and WebRTC TURN are different mechanisms. Do not infer a successful media route from a visible online user.
+
+Further details: [cold-start discovery](docs/COLD_START_DESKTOP.md), [WORLD relay protocol](docs/WORLD_RELAY_FALLBACK.md), [participant-network plan](docs/GLOBAL_BETA.md). Historical documents may describe older release limitations; this README and the [current user guide](docs/USER_GUIDE.md) describe 0.6.0.
 
 ## Security and trust boundaries
 
-Konofix is designed to fail closed around release evidence and several P2P control paths, but the current stage still has important limits:
-
-- `#WORLD` is a public distributed room. libp2p transport is encrypted, but this is **not** a private end-to-end encrypted direct-message feature.
-- Private P2P/E2E conversations are planned for a later roadmap stage.
-- Incoming file offers require approval; transfer control is bound to the requesting peer and received content is SHA-256 verified.
-- Signed GossipSub payload identity must match the authenticated libp2p source before presence/chat/room/nickname state is accepted.
-- Public-Node identity files and other secrets must never be published in test evidence or issue reports.
-- A release is not promoted only because CI is green; real independent-network evidence remains mandatory.
-
-Security reports should follow [`.github/SECURITY.md`](.github/SECURITY.md).
+- WORLD and unprotected public rooms are public. Nostr operators can read/copy their text, room names, public-file metadata and WORLD speaking state. Signed events authenticate the sender's key, not the truth of their nickname or claims.
+- Native traffic uses authenticated encrypted libp2p transport. Relay-only private text and legacy small files use recipient-addressed NIP-44 encryption. WebRTC setup is encrypted to the recipient; WebRTC encrypts media/data between endpoints.
+- External services and network peers can observe IP addresses, identifiers, timing and traffic sizes. Marking an event ephemeral or expired does not force an operator to delete it. There is no anonymity or guaranteed deletion promise.
+- Protected-room access remains on the authenticated native path. It is not silently moved to public relays; protected-room group voice is unavailable.
+- Receiving a private file requires approval; public cards require an explicit download/preview. File size/hash checks, bounded transfer state and safe non-overwriting saves protect transfer integrity, not against malicious file contents. Do not execute unknown downloads.
+- This is live messaging, not guaranteed offline delivery or a centrally backed-up message history. Keep both participants online for calls and transfers.
+- Never publish identity files, signing keys, private contacts or unredacted diagnostic secrets. Report vulnerabilities through [`.github/SECURITY.md`](.github/SECURITY.md).
 
 ## Local data
 
-| Data | Default location |
+| Data | Default location or lifetime |
 |---|---|
-| Peer cache | `%LOCALAPPDATA%\Konofix Chat\peer-cache.json` |
-| Default Node identity | `%LOCALAPPDATA%\Konofix Chat\node-identity.key` |
 | Received files | `Downloads\Konofix Chat` |
+| Native peer-address cache | `%LOCALAPPDATA%\Konofix Chat\peer-cache.json` |
+| Optional Node identity | `%LOCALAPPDATA%\Konofix Chat\node-identity.key`, unless `--identity-file` overrides it |
+| UI preferences and relay identity | Application WebView local storage; includes a persistent relay signing identity, nickname color and mute/private-chat preferences |
+| Image preview staging | Temporary `Konofix Chat\previews` directory; preview-only file is removed after a successful read |
+| Optional KNP profile | `%LOCALAPPDATA%\Konofix Chat\KonoNexus\chat-profiles\<profile>`; persistent identity/routing state, with contacts/chat history in memory |
 
-An explicitly configured `--identity-file` overrides the default Node identity path.
+A nickname-only login does not mean no data is stored locally. Received files remain on disk until you remove them.
+
+## Optional KonoNexus contacts
+
+The KonoNexus/KNP panel is an additional direct contact-text channel. It does not replace WORLD, merge NodeIDs with libp2p PeerIDs or automatically resend across protocols. Participants must separately verify each other's NodeID and supply reachable UDP endpoints; automatic KNP WAN rendezvous/relay discovery is not implemented in this panel. See [the KNP guide](docs/KNP_CHAT_BETA.md). Ordinary WORLD use does not require it.
+
+## Konofix Node
+
+The optional headless Node is an always-on network participant for operators, not an account service, central chat history or cloud file store. Windows and isolated Linux builds, persistent identity, health telemetry, public-host checks and Netprobe are included in the repository.
+
+Build the Windows Node with `build-node.bat`. The verified bundle provides `scripts/public-node.ps1` and `scripts/install-public-node-task.ps1` for controlled deployment. A public Node normally needs inbound **TCP 45555 and UDP 45555**. Configure only the intended application/port rules; do not disable the firewall. See [Node setup](docs/NODE.md), [Linux deployment](docs/NODE_LINUX.md) and [soak collection](docs/NODE_SOAK.md).
 
 ## CI and release integrity
 
-Windows CI validates the frontend, localization/project policy, Rust formatting, Clippy, all-target tests, locked dependency resolution, production Tauri/Node/Netprobe builds, runtime Node/transport smoke, staged bundle contents, ZIP/SHA-256 integrity and adversarial provenance checks.
+Windows CI validates frontend behavior/localization/project policy, Rust formatting/Clippy/tests, locked dependency resolution, production application/Node/Netprobe builds, runtime smoke and the staged archive's contents and hashes. Linux Node CI checks the isolated headless build and authenticated TCP/QUIC runtime behavior. RustSec checks the locked dependency graph.
 
-Linux Node CI validates the isolated headless Node/Netprobe target, release build, provenance, systemd deployment constraints, persistent identity and authenticated TCP + QUIC-v1 runtime smoke without requiring desktop Tauri/WebKit dependencies.
+`BUILD_INFO.json`, installer/archive checksums and the generated tester handoff bind a full bundle to a particular build. Keep them together; do not mix different commits that share a version label. A green CI run is not evidence of two physical PCs, independent countries, CGNAT traversal or a successful 32 GiB transfer.
 
-Frontend resolution is pinned by `package-lock.json`; Rust resolution is pinned by `src-tauri/Cargo.lock`. GitHub Actions are pinned to immutable commit SHAs and checkout credentials are not persisted.
+For formal qualification, use the [two-PC procedure](docs/TWO_PC_TEST.md), [testing guide](docs/TESTING.md), [client evidence guide](docs/CLIENT_NETPROBE_EVIDENCE.md) and `scripts/check-promotion-evidence.ps1`. The wider gate requires coherent TCP/QUIC/Relay/DCUtR/CGNAT observations, independent client evidence and exact-build Node-soak records. Do not fabricate or reuse unrelated evidence.
 
 ## Roadmap
 
-The authoritative plan is [`ROADMAP.md`](ROADMAP.md).
+[`ROADMAP.md`](ROADMAP.md) remains the authoritative qualification plan. The stable chat implementation inventory above is a separate product scope, not a replacement denominator.
 
-Current gate: **0.4.3 — Real Internet Test / Global Beta readiness**. The original five real-world milestone items remain deliberately evidence-only:
-
-- stable public/community Konofix Node,
-- two PCs on independent networks in different countries,
-- CGNAT ↔ public Node ↔ CGNAT test,
-- TCP, QUIC, Relay and DCUtR verification,
-- fixes discovered during real-world network tests.
-
-The broader Global Beta scope adds fleet, multi-seed fallback, capacity, Rooms 2.0, multi-user soak, failover and prerelease gates. The reviewed public-Node admission-limit gate and the Rooms 2.0 production membership/count implementation gate are verified. Real public infrastructure, 50/100/250 capacity evidence, multi-network field soak, participant failover and qualified prerelease evidence remain open.
+The reviewed public-Node admission limits and Rooms 2.0 production membership/count wiring are verified. Public participant continuity, independent-network transport scenarios, 50/100/250-client capacity, multi-network/country soak, participant failover and the qualified Global Beta evidence package remain open where marked in the roadmap. Stable chat status does not promise those uncompleted scale/infrastructure outcomes.
 
 ## Releases
 
-See [published releases](https://github.com/Swir/Konofix/releases) for available downloads. `v0.5.2` is the current stable WORLD-text release; [0.5.3 notes](docs/RELEASE_0.5.3.md) define the exact physical retest required for encrypted WAN private text and small files. Fully qualified Global Beta promotion continues to require the separate real-network, load and failover gates; publishing a chat release does not complete those remaining gates or raise the verified fraction on its own.
+Download published packages at [GitHub Releases](https://github.com/Swir/Konofix/releases/latest). **0.6.0** brings the implemented chat, large-file and voice features together with the private-audio and shutdown fixes accepted by the user. Consult the [release notes](docs/RELEASE_0.6.0.md) for its exact source, checksums and scope; install the same version on all participants.
 
-Windows CI can publish `v0.5.2-beta.1` only from a trusted `main` push. The source-owned policy binds publication to the physically accepted exact candidate, its successful Windows workflow and installer SHA-256; candidate Windows/Linux/RustSec checks and the sealed archive are verified again. Assets are uploaded to a draft and their server-reported SHA-256 digests are checked before publication. Existing published releases are never overwritten. The ordinary application version is `0.5.2`; `beta.1` identifies the preview release channel.
+**Install updates manually for now.** The application contains a stable-only update client and asks permission before installing an authenticated update, but the signed updater publication prerequisites are not configured. Do not expect automatic upgrade until a valid signed updater package and `latest.json` are published. Updater signing is separate from Windows Authenticode signing.
 
-Release history: [GitHub Releases](https://github.com/Swir/Konofix/releases)  
-Change history: [`CHANGELOG.md`](CHANGELOG.md)
+`v0.5.3` is the earlier stable text/small-file release. The historical `v0.4.2-test1` prerelease and other old test packages are not current downloads and must not be mixed with current evidence tools. See [`CHANGELOG.md`](CHANGELOG.md) for changes and [the user guide](docs/USER_GUIDE.md) for troubleshooting.
 
 ## Project structure
 
 ```text
-src/                  TypeScript desktop UI and localization
-src-tauri/            Rust/Tauri application and binaries
-src-tauri/src/bin/    Konofix Node and Netprobe binaries
-scripts/              CI, release, public-Node, progress and evidence tooling
+src/                  TypeScript desktop UI, WebRTC, relay fallback and localization
+src-tauri/            Rust/Tauri application, native P2P and file handling
+src-tauri/src/bin/    Optional Konofix Node and Netprobe binaries
+scripts/              CI, release, progress and evidence tooling
 node-linux/           Isolated headless Linux Node target
-docs/                 Operator, testing and security documentation
-.github/workflows/    Windows and Linux CI
-assets/readme/         SWIR README PRO hero and generated progress SVGs
+docs/                 User, operator, testing and security guides
+.github/workflows/    Windows, Linux, security and release workflows
+assets/readme/         SWIR hero and generated qualification-progress SVGs
 ```
 
 ## 🔎 Search Keywords
 
-`peer to peer messenger` • `p2p chat windows` • `rust libp2p chat` • `tauri messenger` • `decentralized chat app` • `p2p file transfer windows` • `libp2p circuit relay` • `dcutr hole punching` • `quic p2p messenger` • `kademlia dht chat` • `public bootstrap node` • `rust tauri windows app` • `cross network p2p test` • `cg-nat p2p testing`
+`peer to peer messenger` • `p2p chat windows` • `rust libp2p chat` • `tauri messenger` • `decentralized chat app` • `p2p file transfer windows` • `webrtc voice chat` • `private encrypted chat` • `world chat room` • `kademlia dht chat` • `nostr discovery fallback` • `rust tauri windows app` • `cross network p2p test` • `cg-nat p2p testing`
 
 <img width="100%" src="https://raw.githubusercontent.com/Swir/Swir/main/assets/power-divider-v4.svg" alt="SWIR electric divider" />
 

@@ -34,6 +34,82 @@ The active milestone now has 56 of 67 tasks complete. The Global Beta expansion 
 
 - Distributed nickname trust hardening now treats unsigned Kademlia nickname leases as bounded, non-authoritative hints; only source-authenticated GossipSub claims can enforce a nickname conflict. This security fix adds no Real Internet Test credit.
 
+## 0.6.0 — Stable chat feature release
+
+The ten shipped chat feature groups are documented in the [README](README.md#stable-chat-feature-scope): implementation scope is **100% (10/10)**, independently of the Real Internet Test / Global Beta milestone above. This is not a claim of zero bugs, universal NAT reachability, completed infrastructure qualification or physical testing of every feature/limit.
+
+- Publish the owner-approved application feature line with stable 0.6.0 version metadata and a newly verified CI-built Windows installer.
+- Preserve the accepted private-audio repair, WORLD voice, file/audio failure isolation and cancellation/retry fixes; no new runtime feature is introduced by the version promotion.
+- Supply complete installation, usage, network/privacy, file-limit, voice and troubleshooting documentation.
+- Keep the implemented signed stable updater fail-closed. Until signing credentials are configured, release installation is manual and no unsigned automatic update manifest is published.
+- Record the exact [user-reported private-audio acceptance](docs/evidence/CHAT_AUDIO_ACCEPTANCE_20261013.md), without treating it as completion of the remaining Global Beta gates.
+
+## 0.6.0-5 — WAN media reliability and signed stable updates (alpha 5) 🚧
+
+Historical alpha entry. The stable release uses STUN-only WebRTC after unavailable public TURN endpoints were removed; see the current release notes and network limitations.
+
+- Added encrypted TURN fallback for file and audio WebRTC paths behind LTE, symmetric NAT and restrictive firewalls.
+- WORLD now sends an immediate authenticated release signal so the next queued speaker can start without waiting for relay state expiry.
+- Added WORLD-only mute plus speaker and microphone tests with explicit blocked-output feedback.
+- Public file claims now time out visibly or receive an encrypted sender rejection instead of hanging forever.
+- Added stable-only, signed GitHub updater support with mandatory user confirmation and exact-tag publishing controls.
+- Physical two-PC WAN acceptance of this exact installer remains required before stable promotion.
+
+## 0.6.0-4 — WAN public files and group voice (alpha 4)
+
+- [x] replace separate file/image actions with one magic-byte-aware file picker and safe image preview,
+- [x] propagate signed, metadata-only WORLD/public-room file offers to relay-only WAN participants,
+- [x] request each public file explicitly and stream its bytes directly over WebRTC with SHA-256 continuity,
+- [x] add a signed WORLD speaking queue, visible current speaker/queue and enforced 60-second microphone turn,
+- [x] add simultaneous group WebRTC audio to public temporary rooms without the WORLD timer,
+- [x] keep password-protected room voice off public fallback and private one-to-one calls unchanged,
+- [x] select seven supported UI languages from the Windows/system locale, including Norwegian `nb`/`nn` aliases,
+- [x] cover relay metadata, queue/countdown, bidirectional room audio, automatic language selection and frontend compilation deterministically,
+- [ ] pass exact-head Windows/Linux/RustSec CI and produce the exact Windows installer,
+- [ ] pass a two-PC independent-network test for WORLD file download/preview, the 60-second queue and public-room group audio.
+
+This alpha keeps public file bytes and every audio stream peer-to-peer. Public relays see signed WORLD/public-room metadata and WORLD queue state, plus encrypted recipient-addressed WebRTC setup; they do not carry the file or media bytes. STUN-only WebRTC still cannot promise universal symmetric-NAT reachability without TURN, so stable promotion remains blocked on the exact physical test.
+
+## 0.6.0-3 — Bidirectional audio output and playful call tones (alpha 3)
+
+- [x] route remote audio through an output context unlocked by the user's call/accept interaction,
+- [x] retain an HTML audio fallback without silently depending on autoplay for the primary path,
+- [x] require active microphone capture with echo cancellation, noise suppression and automatic gain control,
+- [x] validate both caller-to-recipient and recipient-to-caller stream delivery in deterministic WebRTC coverage,
+- [x] replace the plain beeps with distinct generated incoming and outgoing melodies,
+- [x] stop microphone, remote output and tones on hangup, rejection, failure and network shutdown,
+- [ ] pass exact-head Windows/Linux/RustSec CI,
+- [ ] confirm bidirectional voice plus both call melodies on two physical Windows installations.
+
+This follow-up addresses the reported one-way installed-app audio observation. Automated media-track delivery and output routing are covered, but stable promotion remains blocked on the exact `0.6.0-3` installer passing the physical two-PC check.
+
+## 0.6.0-2 — WAN rooms and call-progress tones (alpha 2)
+
+- [x] publish signed, expiring announcements for public, unprotected rooms through the multi-relay WORLD fallback,
+- [x] carry public-room text for relay-only participants with duplicate suppression and owner-bound room lifecycle cleanup,
+- [x] reannounce locally owned public rooms when a late WAN peer appears,
+- [x] keep password-protected room metadata and messages off the public room fallback,
+- [x] generate incoming ringtone and outgoing ringback locally and stop them on every terminal/connected call state,
+- [x] cover two-client room discovery/chat/close and call-tone lifecycle with deterministic tests,
+- [ ] pass exact-head Windows/Linux/RustSec CI,
+- [ ] pass a two-PC independent-network test proving room discovery and bidirectional room text,
+- [ ] confirm incoming ringtone and outgoing ringback on both physical Windows installations.
+
+This alpha adds no Konofix-owned server and stores no room history. Public room names and text are public to the replaceable relay operators, just like WORLD; password-protected rooms remain native-only. Stable promotion requires the exact installer and physical observations above.
+
+## 0.6.0-1 — Direct large files and private audio (alpha 1)
+
+- [x] carry bounded WebRTC offers, answers and ICE candidates through recipient-addressed NIP-44 encrypted WORLD signaling,
+- [x] stream explicitly accepted files directly over ordered WebRTC data channels with backpressure, disk-backed chunks, no-clobber reservation and final SHA-256 verification,
+- [x] add consent-based private one-to-one WebRTC audio with mute and hangup controls,
+- [x] keep stable `v0.5.3` and its 2 MiB encrypted relay fallback intact while the alpha is qualified,
+- [ ] pass exact-head Windows/Linux/RustSec CI,
+- [ ] pass a two-PC independent-network large-file test with matching SHA-256,
+- [ ] pass a two-PC independent-network bidirectional audio test,
+- [ ] document NAT types and any case that requires an optional TURN design; do not claim universal reachability without evidence.
+
+This development stage uses public STUN for NAT discovery and the existing public WORLD relay set only for encrypted signaling. File and audio bytes are not placed on those relays. It does not add Real Internet Test checklist credit until the physical evidence items pass.
+
 ## 0.1.0 — Foundation ✅
 - Tauri + Rust + libp2p
 - modern desktop GUI

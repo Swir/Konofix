@@ -1,0 +1,147 @@
+name: Publish signed stable updater
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  publish-stable-updater:
+    if: github.repository == 'Swir/Konofix' && github.event.release.draft == false && github.event.release.prerelease == false
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout immutable release-event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Verify stable tag, version and main ancestry
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RELEASE_SOURCE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'Release-event source must be a canonical full Git commit SHA.' }
+          $checkedOut = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $checkedOut -cne $env:RELEASE_SOURCE_SHA) { throw 'Checked-out source differs from the immutable release-event commit.' }
+          $version = [string](Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Package version '$version' is not stable SemVer." }
+          if ($env:RELEASE_TAG -ne $version -and $env:RELEASE_TAG -ne "v$version") { throw "Release tag does not match package version $version." }
+          # Refresh only the validated release ref and peel annotated tags to their source commit.
+          git fetch --no-tags origin "refs/tags/$($env:RELEASE_TAG)"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the exact published release tag.' }
+          $tagCommit = (& git rev-parse 'FETCH_HEAD^{commit}').Trim()
+          if ($LASTEXITCODE -ne 0 -or $tagCommit -cne $env:RELEASE_SOURCE_SHA) { throw 'Release tag no longer identifies the immutable release-event commit.' }
+          git fetch --no-tags origin main
+          if ($LASTEXITCODE -ne 0) { throw 'Could not refresh main for release ancestry verification.' }
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'The release commit is not contained in main.' }
+
+      - name: Check signing configuration without publishing unsigned updates
+        id: signing
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/stable-updater-release.mjs check-signing
+
+      - name: Setup Rust MSVC
+        if: steps.signing.outputs.configured == 'true'
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          targets: x86_64-pc-windows-msvc
+          toolchain: stable
+
+      - name: Install frontend dependencies
+        if: steps.signing.outputs.configured == 'true'
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify source and locked Rust graph
+        if: steps.signing.outputs.configured == 'true'
+        run: |
+          npm run audit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo metadata --locked --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo check --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Build signed stable updater artifacts
+        if: steps.signing.outputs.configured == 'true'
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) { throw 'TAURI_SIGNING_PRIVATE_KEY is not configured.' }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) { throw 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD is not configured.' }
+          npm run tauri build -- --config src-tauri/tauri.stable.conf.json
+
+      - name: Create signed static update manifest
+        if: steps.signing.outputs.configured == 'true'
+        id: manifest
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NOTES: ${{ github.event.release.body }}
+          RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = [string](Get-Content package.json -Raw | ConvertFrom-Json).version
+          $installer = @(Get-ChildItem 'src-tauri\target\release\bundle\nsis' -Filter '*-setup.exe' -File)
+          if ($installer.Count -ne 1) { throw "Expected exactly one NSIS installer, found $($installer.Count)." }
+          # createUpdaterArtifacts:true uses the Tauri v2 executable and its detached signature.
+          $signaturePath = "$($installer[0].FullName).sig"
+          if (-not (Test-Path -LiteralPath $signaturePath -PathType Leaf)) { throw 'Signed NSIS updater signature is missing.' }
+          $signature = (Get-Content -LiteralPath $signaturePath -Raw).Trim()
+          if ([string]::IsNullOrWhiteSpace($signature)) { throw 'Signed NSIS updater signature is empty.' }
+          # A rebuild must not replace the separately verified manual stable installer.
+          $updaterName = "Konofix-Chat-$version-Windows-x64-updater.exe"
+          $encodedName = [Uri]::EscapeDataString($updaterName)
+          $url = "https://github.com/${{ github.repository }}/releases/download/$($env:RELEASE_TAG)/$encodedName"
+          $manifest = [ordered]@{
+            version = $version
+            notes = [string]$env:RELEASE_NOTES
+            pub_date = [string]$env:RELEASE_PUBLISHED_AT
+            platforms = [ordered]@{
+              'windows-x86_64' = [ordered]@{
+                signature = $signature
+                url = $url
+              }
+            }
+          }
+          New-Item -ItemType Directory -Force -Path stable-assets | Out-Null
+          $manifest | ConvertTo-Json -Depth 6 | Set-Content stable-assets\latest.json -Encoding utf8
+          Copy-Item -LiteralPath $signaturePath -Destination (Join-Path stable-assets "$updaterName.sig")
+          Copy-Item -LiteralPath $installer[0].FullName -Destination (Join-Path stable-assets $updaterName)
+
+      - name: Publish signed updater without replacing existing release assets
+        if: steps.signing.outputs.configured == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: node scripts/stable-updater-release.mjs publish
+
+      - name: Preserve signed stable artifacts
+        if: steps.signing.outputs.configured == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Konofix-signed-stable-${{ github.event.release.tag_name }}-${{ github.sha }}
+          path: stable-assets/
+          if-no-files-found: error
+          retention-days: 30

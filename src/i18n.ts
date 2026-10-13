@@ -122,6 +122,64 @@ const EN = {
   'private.settingsTitle': 'Private conversations', 'private.allowNew': 'Allow new private conversations',
   'private.allowNewHelp': 'When disabled, new incoming private messages are rejected. Existing local conversation history for this session is not deleted.',
   'private.blocked': 'This user is not accepting new private conversations.',
+  'audio.start': 'Start audio call',
+  'audio.hangup': 'End call',
+  'audio.mute': 'Mute microphone',
+  'audio.unmute': 'Unmute microphone',
+  'audio.calling': 'Calling…',
+  'audio.ringing': 'Incoming audio call',
+  'audio.connecting': 'Connecting audio…',
+  'audio.connected': 'Audio call connected',
+  'audio.muted': 'Microphone muted',
+  'audio.failed': 'Audio call failed: {error}',
+  'audio.incomingTitle': '{nick} is calling',
+  'audio.incomingHelp': 'Encrypted direct WebRTC audio. Public WORLD relays carry only encrypted connection setup.',
+  'audio.accept': 'Answer',
+  'audio.reject': 'Reject',
+  'audio.settingsTitle': 'Audio settings',
+  'audio.muteWorld': 'Mute WORLD voice',
+  'audio.muteWorldHelp': 'Stops WORLD speakers on this device. Private calls and room voice stay audible.',
+  'audio.testSpeakers': 'Test speakers',
+  'audio.testMicrophone': 'Test microphone',
+  'audio.testReady': 'Use the tests to verify the selected Windows audio devices.',
+  'audio.testingSpeakers': 'Playing a test sound…',
+  'audio.speakersOk': 'Test sound finished. If you heard nothing, check the Windows output device and volume.',
+  'audio.testingMicrophone': 'Speak now — listening for 4 seconds…',
+  'audio.microphoneOk': 'Microphone works — voice activity detected.',
+  'audio.microphoneSilent': 'No clear microphone signal detected. Check Windows privacy and input device settings.',
+  'audio.testFailed': 'Audio test failed: {error}',
+  'audio.outputBlocked': 'Audio output was blocked. Click anywhere in the app to enable sound.',
+  'audio.microphonePermission': 'Microphone access is blocked. Allow Konofix Chat to use the microphone in Windows settings.',
+  'audio.microphoneMissing': 'No microphone is available. Connect or enable an input device in Windows settings.',
+  'audio.microphoneBusy': 'The microphone is busy or Windows has not released it yet. Close other audio apps and try again.',
+  'update.title': 'Stable updates',
+  'update.help': 'Konofix checks only signed stable releases from the official GitHub repository. Installation always requires your confirmation.',
+  'update.checkNow': 'Check for updates',
+  'update.ready': 'Automatic stable update checks are enabled.',
+  'update.checking': 'Checking for a signed stable update…',
+  'update.available': 'Konofix {version} stable is available. Download, verify and install it now?',
+  'update.downloading': 'Downloading signed update: {percent}%',
+  'update.installing': 'Signature verified. Installing and restarting Konofix…',
+  'update.current': 'You already have the newest stable version.',
+  'update.declined': 'Update postponed. Konofix will ask again later.',
+  'update.desktopOnly': 'Update checks are available in the installed Windows application.',
+  'update.failed': 'Update check failed: {error}',
+  'voice.worldTitle': 'WORLD VOICE · 60 SECOND TURNS',
+  'voice.worldIdle': 'Nobody is speaking now',
+  'voice.wantToSpeak': '🎙 I want to speak',
+  'voice.startTurn': 'Start my 60 seconds',
+  'voice.leaveQueue': 'Leave queue',
+  'voice.finish': 'Finish speaking',
+  'voice.queue': 'Queue',
+  'voice.queueEmpty': 'The speaking queue is empty',
+  'voice.roomTitle': 'GROUP VOICE · NO TIME LIMIT',
+  'voice.roomHelp': 'Join to speak and listen together in this room.',
+  'voice.roomActive': 'Group voice active · {count} connected',
+  'voice.joinRoom': 'Join voice',
+  'voice.leaveRoom': 'Leave voice',
+  'voice.protectedUnavailable': 'Group voice for password-protected rooms stays off the public fallback in this alpha.',
+  'voice.unavailable': 'Voice needs public WORLD discovery enabled for encrypted peer setup.',
+  'transfer.directHelp': 'The file is sent directly and saved in chunks; public relays do not carry or store its bytes.',
   'roomShare.shared': 'Shared in this room',
   'roomShare.error': 'Room sharing: {error}',
   'publicShare.file': '📎 Share file',
@@ -134,6 +192,9 @@ const EN = {
   'publicShare.dangerous': 'Executable/script file — download only if you trust the sender.',
   'publicShare.error': 'Public sharing: {error}',
   'publicShare.previewError': 'Image preview: {error}',
+  'publicShare.metadataMismatch': 'File metadata did not match the signed announcement.',
+  'publicShare.timeout': 'The sender could not establish a direct encrypted connection in time. Check that both apps are online and try again.',
+  'publicShare.senderUnavailable': 'The sender could not prepare this file for a direct encrypted transfer.',
   'user.selfReserved': 'You · nickname reserved',
   'network.refresh': 'Refresh discovery',
   'network.settings': 'P2P network',
@@ -276,6 +337,34 @@ const PL: Dictionary = {
   'private.settingsTitle': 'Rozmowy prywatne', 'private.allowNew': 'Zezwalaj na nowe rozmowy prywatne',
   'private.allowNewHelp': 'Po wyłączeniu nowe przychodzące wiadomości prywatne są odrzucane. Lokalna historia bieżącej sesji nie jest usuwana.',
   'private.blocked': 'Ten użytkownik nie przyjmuje nowych rozmów prywatnych.', 'roomShare.shared': 'Udostępniono w tym pokoju', 'roomShare.error': 'Udostępnianie w pokoju: {error}',
+  'audio.start': 'Rozpocznij rozmowę audio', 'audio.hangup': 'Zakończ rozmowę', 'audio.mute': 'Wycisz mikrofon', 'audio.unmute': 'Włącz mikrofon',
+  'voice.worldTitle': 'GŁOS WORLD · KOLEJKA PO 60 SEKUND', 'voice.worldIdle': 'Teraz nikt nie mówi',
+  'voice.wantToSpeak': '🎙 Chcę mówić', 'voice.startTurn': 'Zacznij moje 60 sekund', 'voice.leaveQueue': 'Opuść kolejkę',
+  'voice.finish': 'Zakończ mówienie', 'voice.queue': 'Kolejka', 'voice.queueEmpty': 'Kolejka do mówienia jest pusta',
+  'voice.roomTitle': 'ROZMOWA GRUPOWA · BEZ LIMITU', 'voice.roomHelp': 'Dołącz, aby wspólnie mówić i słuchać w tym pokoju.',
+  'voice.roomActive': 'Rozmowa grupowa aktywna · połączonych: {count}', 'voice.joinRoom': 'Dołącz do rozmowy', 'voice.leaveRoom': 'Opuść rozmowę',
+  'voice.protectedUnavailable': 'W tej alfie rozmowy grupowe w pokojach z hasłem nie korzystają z publicznej trasy awaryjnej.',
+  'voice.unavailable': 'Głos wymaga włączonego publicznego odkrywania WORLD do szyfrowanego zestawienia połączeń.',
+  'audio.calling': 'Dzwonienie…', 'audio.ringing': 'Przychodząca rozmowa audio', 'audio.connecting': 'Łączenie audio…', 'audio.connected': 'Rozmowa audio połączona', 'audio.muted': 'Mikrofon wyciszony',
+  'audio.failed': 'Błąd rozmowy audio: {error}', 'audio.incomingTitle': '{nick} dzwoni', 'audio.incomingHelp': 'Szyfrowane, bezpośrednie audio WebRTC. Publiczna sieć WORLD przenosi tylko zaszyfrowane dane zestawiania połączenia.', 'audio.accept': 'Odbierz', 'audio.reject': 'Odrzuć',
+  'audio.settingsTitle': 'Ustawienia dźwięku', 'audio.muteWorld': 'Wycisz rozmowę WORLD',
+  'audio.muteWorldHelp': 'Wycisza mówiących w WORLD na tym urządzeniu. Prywatne rozmowy i rozmowy w pokojach nadal są słyszalne.',
+  'audio.testSpeakers': 'Test głośników', 'audio.testMicrophone': 'Test mikrofonu',
+  'audio.testReady': 'Użyj testów, aby sprawdzić urządzenia audio wybrane w Windows.',
+  'audio.testingSpeakers': 'Odtwarzam dźwięk testowy…', 'audio.speakersOk': 'Test zakończony. Jeśli nic nie było słychać, sprawdź urządzenie wyjściowe i głośność w Windows.',
+  'audio.testingMicrophone': 'Mów teraz — nasłuchuję przez 4 sekundy…', 'audio.microphoneOk': 'Mikrofon działa — wykryto głos.',
+  'audio.microphoneSilent': 'Nie wykryto wyraźnego sygnału. Sprawdź prywatność i urządzenie wejściowe w Windows.',
+  'audio.testFailed': 'Test dźwięku nie powiódł się: {error}', 'audio.outputBlocked': 'Odtwarzanie dźwięku zostało zablokowane. Kliknij w aplikacji, aby włączyć dźwięk.',
+  'audio.microphonePermission': 'Dostęp do mikrofonu jest zablokowany. Zezwól Konofix Chat na używanie mikrofonu w ustawieniach Windows.',
+  'audio.microphoneMissing': 'Nie znaleziono dostępnego mikrofonu. Podłącz lub włącz urządzenie wejściowe w ustawieniach Windows.',
+  'audio.microphoneBusy': 'Mikrofon jest zajęty albo Windows jeszcze go nie zwolnił. Zamknij inne aplikacje korzystające z dźwięku i spróbuj ponownie.',
+  'update.title': 'Aktualizacje stable', 'update.help': 'Konofix sprawdza wyłącznie podpisane wydania stable w oficjalnym repozytorium GitHub. Instalacja zawsze wymaga Twojej zgody.',
+  'update.checkNow': 'Sprawdź aktualizacje', 'update.ready': 'Automatyczne sprawdzanie wersji stable jest włączone.',
+  'update.checking': 'Sprawdzam podpisaną aktualizację stable…', 'update.available': 'Dostępny jest Konofix {version} stable. Pobrać, zweryfikować i zainstalować teraz?',
+  'update.downloading': 'Pobieranie podpisanej aktualizacji: {percent}%', 'update.installing': 'Podpis poprawny. Instaluję i uruchamiam ponownie Konofix…',
+  'update.current': 'Masz już najnowszą wersję stable.', 'update.declined': 'Aktualizację odłożono. Konofix zapyta ponownie później.',
+  'update.desktopOnly': 'Sprawdzanie aktualizacji działa w zainstalowanej aplikacji Windows.', 'update.failed': 'Sprawdzanie aktualizacji nie powiodło się: {error}',
+  'transfer.directHelp': 'Plik jest przesyłany bezpośrednio i zapisywany fragmentami; publiczne przekaźniki nie przenoszą ani nie przechowują jego danych.',
   'network.participantNode': 'Ta aplikacja jest węzłem sieci, gdy jesteś połączony. Osobny serwer nie jest potrzebny. Przy pierwszym dołączeniu przez Internet wklej osiągalny adres od uczestnika, który jest online. Wykrywanie w LAN jest automatyczne; dostęp przez Internet zależy od NAT i zapory albo pośrednictwa innego osiągalnego uczestnika.',
   'network.copyAddress': 'Kopiuj adres',
   'network.addressCopied': 'Skopiowano',
@@ -316,6 +405,9 @@ const PL: Dictionary = {
   'publicShare.shared': 'Udostępniono na #WORLD', 'publicShare.expired': 'Oferta wygasła',
   'publicShare.dangerous': 'Plik wykonywalny/skrypt — pobieraj tylko od zaufanego nadawcy.',
   'publicShare.error': 'Udostępnianie publiczne: {error}', 'publicShare.previewError': 'Podgląd obrazu: {error}',
+  'publicShare.metadataMismatch': 'Metadane pliku nie zgadzają się z podpisaną ofertą.',
+  'publicShare.timeout': 'Nie udało się na czas zestawić bezpośredniego szyfrowanego połączenia z nadawcą. Sprawdź, czy obie aplikacje są online, i spróbuj ponownie.',
+  'publicShare.senderUnavailable': 'Nadawca nie mógł przygotować tego pliku do bezpośredniego szyfrowanego transferu.',
   'user.selfReserved': 'Ty · nick zarezerwowany',
   'network.refresh': 'Odśwież discovery',
   'network.settings': 'Sieć P2P',
@@ -422,6 +514,20 @@ const NO: Dictionary = {
   'transfer.completed': 'Ferdig', 'transfer.rejected': 'Avvist', 'transfer.failed': 'Feil', 'transfer.cancelled': 'Avbrutt',
   'transfer.reject': 'Avvis', 'transfer.accept': 'Godta',
   'transfer.offerCancelled': '🚫 Avsenderen avbrøt det innkommende filtilbudet.',
+  'voice.worldTitle': 'WORLD-TALE · 60 SEKUNDER PER TUR', 'voice.worldIdle': 'Ingen snakker nå',
+  'voice.wantToSpeak': '🎙 Jeg vil snakke', 'voice.startTurn': 'Start mine 60 sekunder', 'voice.leaveQueue': 'Forlat køen',
+  'voice.finish': 'Avslutt talen', 'voice.queue': 'Kø', 'voice.queueEmpty': 'Talekøen er tom',
+  'voice.roomTitle': 'GRUPPETALE · INGEN TIDSGRENSE', 'voice.roomHelp': 'Bli med for å snakke og lytte i dette rommet.',
+  'voice.roomActive': 'Gruppetale aktiv · {count} tilkoblet', 'voice.joinRoom': 'Bli med i tale', 'voice.leaveRoom': 'Forlat tale',
+  'audio.settingsTitle': 'Lydinnstillinger', 'audio.muteWorld': 'Demp WORLD-tale',
+  'audio.muteWorldHelp': 'Demper WORLD-talere på denne enheten. Private samtaler og romtale forblir hørbare.',
+  'audio.testSpeakers': 'Test høyttalere', 'audio.testMicrophone': 'Test mikrofon', 'audio.testReady': 'Test lydenhetene som er valgt i Windows.',
+  'audio.testingSpeakers': 'Spiller testlyd…', 'audio.speakersOk': 'Testlyden er ferdig.', 'audio.testingMicrophone': 'Snakk nå — lytter i 4 sekunder…',
+  'audio.microphoneOk': 'Mikrofonen virker — tale ble registrert.', 'audio.microphoneSilent': 'Ingen tydelig mikrofonlyd ble registrert.',
+  'audio.testFailed': 'Lydtesten mislyktes: {error}', 'audio.outputBlocked': 'Lydavspilling ble blokkert. Klikk i appen for å slå på lyd.',
+  'audio.microphonePermission': 'Mikrofontilgang er blokkert. Tillat at Konofix Chat bruker mikrofonen i Windows-innstillingene.',
+  'audio.microphoneMissing': 'Ingen mikrofon er tilgjengelig. Koble til eller aktiver en inngangsenhet i Windows-innstillingene.',
+  'audio.microphoneBusy': 'Mikrofonen er opptatt, eller Windows har ikke frigitt den ennå. Lukk andre lydapper og prøv igjen.',
 };
 
 const DE: Dictionary = {
@@ -455,6 +561,20 @@ const DE: Dictionary = {
   'transfer.sendFilePlain': 'Datei senden', 'transfer.reject': 'Ablehnen', 'transfer.accept': 'Akzeptieren',
   'transfer.requesting': 'Download wird angefordert', 'transfer.failed': 'Fehler', 'transfer.completed': 'Fertig', 'common.cancel': 'Abbrechen',
   'transfer.offerCancelled': '🚫 Der Absender hat das eingehende Dateiangebot abgebrochen.',
+  'voice.worldTitle': 'WORLD-SPRACHE · 60 SEKUNDEN PRO RUNDE', 'voice.worldIdle': 'Gerade spricht niemand',
+  'voice.wantToSpeak': '🎙 Ich möchte sprechen', 'voice.startTurn': 'Meine 60 Sekunden starten', 'voice.leaveQueue': 'Warteschlange verlassen',
+  'voice.finish': 'Sprechen beenden', 'voice.queue': 'Warteschlange', 'voice.queueEmpty': 'Die Warteschlange ist leer',
+  'voice.roomTitle': 'GRUPPENGESPRÄCH · OHNE ZEITLIMIT', 'voice.roomHelp': 'Beitreten, um in diesem Raum gemeinsam zu sprechen und zuzuhören.',
+  'voice.roomActive': 'Gruppengespräch aktiv · {count} verbunden', 'voice.joinRoom': 'Gespräch beitreten', 'voice.leaveRoom': 'Gespräch verlassen',
+  'audio.settingsTitle': 'Audioeinstellungen', 'audio.muteWorld': 'WORLD-Sprache stummschalten',
+  'audio.muteWorldHelp': 'Schaltet WORLD-Sprecher auf diesem Gerät stumm. Private Anrufe und Raumaudio bleiben hörbar.',
+  'audio.testSpeakers': 'Lautsprecher testen', 'audio.testMicrophone': 'Mikrofon testen', 'audio.testReady': 'Teste die in Windows ausgewählten Audiogeräte.',
+  'audio.testingSpeakers': 'Testton wird abgespielt…', 'audio.speakersOk': 'Testton beendet.', 'audio.testingMicrophone': 'Jetzt sprechen — 4 Sekunden Test…',
+  'audio.microphoneOk': 'Mikrofon funktioniert — Sprache erkannt.', 'audio.microphoneSilent': 'Kein deutliches Mikrofonsignal erkannt.',
+  'audio.testFailed': 'Audiotest fehlgeschlagen: {error}', 'audio.outputBlocked': 'Audiowiedergabe wurde blockiert. Klicke in die App, um den Ton zu aktivieren.',
+  'audio.microphonePermission': 'Der Mikrofonzugriff ist blockiert. Erlaube Konofix Chat den Mikrofonzugriff in den Windows-Einstellungen.',
+  'audio.microphoneMissing': 'Kein Mikrofon verfügbar. Schließe ein Eingabegerät an oder aktiviere es in den Windows-Einstellungen.',
+  'audio.microphoneBusy': 'Das Mikrofon ist belegt oder Windows hat es noch nicht freigegeben. Schließe andere Audio-Apps und versuche es erneut.',
 };
 
 const FR: Dictionary = {
@@ -488,6 +608,20 @@ const FR: Dictionary = {
   'transfer.sendFilePlain': 'Envoyer un fichier', 'transfer.reject': 'Refuser', 'transfer.accept': 'Accepter',
   'transfer.requesting': 'Demande de téléchargement', 'transfer.failed': 'Erreur', 'transfer.completed': 'Terminé', 'common.cancel': 'Annuler',
   'transfer.offerCancelled': '🚫 L’expéditeur a annulé l’offre de fichier entrante.',
+  'voice.worldTitle': 'VOIX WORLD · TOURS DE 60 SECONDES', 'voice.worldIdle': 'Personne ne parle actuellement',
+  'voice.wantToSpeak': '🎙 Je veux parler', 'voice.startTurn': 'Démarrer mes 60 secondes', 'voice.leaveQueue': 'Quitter la file',
+  'voice.finish': 'Arrêter de parler', 'voice.queue': 'File', 'voice.queueEmpty': 'La file de parole est vide',
+  'voice.roomTitle': 'VOIX DE GROUPE · SANS LIMITE', 'voice.roomHelp': 'Rejoignez pour parler et écouter ensemble dans cette salle.',
+  'voice.roomActive': 'Voix de groupe active · {count} connectés', 'voice.joinRoom': 'Rejoindre la voix', 'voice.leaveRoom': 'Quitter la voix',
+  'audio.settingsTitle': 'Paramètres audio', 'audio.muteWorld': 'Couper la voix WORLD',
+  'audio.muteWorldHelp': 'Coupe les intervenants WORLD sur cet appareil. Les appels privés et les salons restent audibles.',
+  'audio.testSpeakers': 'Tester les haut-parleurs', 'audio.testMicrophone': 'Tester le microphone', 'audio.testReady': 'Testez les périphériques audio sélectionnés dans Windows.',
+  'audio.testingSpeakers': 'Lecture du son de test…', 'audio.speakersOk': 'Son de test terminé.', 'audio.testingMicrophone': 'Parlez maintenant — écoute pendant 4 secondes…',
+  'audio.microphoneOk': 'Le microphone fonctionne — voix détectée.', 'audio.microphoneSilent': 'Aucun signal clair du microphone détecté.',
+  'audio.testFailed': 'Échec du test audio : {error}', 'audio.outputBlocked': 'La lecture audio a été bloquée. Cliquez dans l’application pour activer le son.',
+  'audio.microphonePermission': 'L’accès au microphone est bloqué. Autorisez Konofix Chat à utiliser le microphone dans les paramètres Windows.',
+  'audio.microphoneMissing': 'Aucun microphone n’est disponible. Connectez ou activez un périphérique d’entrée dans les paramètres Windows.',
+  'audio.microphoneBusy': 'Le microphone est occupé ou Windows ne l’a pas encore libéré. Fermez les autres applications audio et réessayez.',
 };
 
 const ES: Dictionary = {
@@ -521,6 +655,20 @@ const ES: Dictionary = {
   'transfer.sendFilePlain': 'Enviar archivo', 'transfer.reject': 'Rechazar', 'transfer.accept': 'Aceptar',
   'transfer.requesting': 'Solicitando descarga', 'transfer.failed': 'Error', 'transfer.completed': 'Completado', 'common.cancel': 'Cancelar',
   'transfer.offerCancelled': '🚫 El remitente canceló la oferta de archivo entrante.',
+  'voice.worldTitle': 'VOZ WORLD · TURNOS DE 60 SEGUNDOS', 'voice.worldIdle': 'Nadie está hablando ahora',
+  'voice.wantToSpeak': '🎙 Quiero hablar', 'voice.startTurn': 'Iniciar mis 60 segundos', 'voice.leaveQueue': 'Salir de la cola',
+  'voice.finish': 'Dejar de hablar', 'voice.queue': 'Cola', 'voice.queueEmpty': 'La cola para hablar está vacía',
+  'voice.roomTitle': 'VOZ GRUPAL · SIN LÍMITE', 'voice.roomHelp': 'Únete para hablar y escuchar juntos en esta sala.',
+  'voice.roomActive': 'Voz grupal activa · {count} conectados', 'voice.joinRoom': 'Unirse a la voz', 'voice.leaveRoom': 'Salir de la voz',
+  'audio.settingsTitle': 'Ajustes de audio', 'audio.muteWorld': 'Silenciar voz de WORLD',
+  'audio.muteWorldHelp': 'Silencia a los hablantes de WORLD en este dispositivo. Las llamadas privadas y salas siguen audibles.',
+  'audio.testSpeakers': 'Probar altavoces', 'audio.testMicrophone': 'Probar micrófono', 'audio.testReady': 'Prueba los dispositivos de audio seleccionados en Windows.',
+  'audio.testingSpeakers': 'Reproduciendo sonido de prueba…', 'audio.speakersOk': 'Sonido de prueba finalizado.', 'audio.testingMicrophone': 'Habla ahora — escuchando 4 segundos…',
+  'audio.microphoneOk': 'El micrófono funciona — voz detectada.', 'audio.microphoneSilent': 'No se detectó una señal clara del micrófono.',
+  'audio.testFailed': 'La prueba de audio falló: {error}', 'audio.outputBlocked': 'La reproducción de audio fue bloqueada. Haz clic en la aplicación para activar el sonido.',
+  'audio.microphonePermission': 'El acceso al micrófono está bloqueado. Permite que Konofix Chat use el micrófono en la configuración de Windows.',
+  'audio.microphoneMissing': 'No hay ningún micrófono disponible. Conecta o activa un dispositivo de entrada en la configuración de Windows.',
+  'audio.microphoneBusy': 'El micrófono está ocupado o Windows aún no lo ha liberado. Cierra otras aplicaciones de audio e inténtalo de nuevo.',
 };
 
 const UK: Dictionary = {
@@ -554,22 +702,51 @@ const UK: Dictionary = {
   'transfer.sendFilePlain': 'Надіслати файл', 'transfer.reject': 'Відхилити', 'transfer.accept': 'Прийняти',
   'transfer.requesting': 'Запит на завантаження', 'transfer.failed': 'Помилка', 'transfer.completed': 'Готово', 'common.cancel': 'Скасувати',
   'transfer.offerCancelled': '🚫 Відправник скасував пропозицію вхідного файлу.',
+  'voice.worldTitle': 'ГОЛОС WORLD · 60 СЕКУНД НА ЧЕРГУ', 'voice.worldIdle': 'Зараз ніхто не говорить',
+  'voice.wantToSpeak': '🎙 Я хочу говорити', 'voice.startTurn': 'Почати мої 60 секунд', 'voice.leaveQueue': 'Вийти з черги',
+  'voice.finish': 'Завершити виступ', 'voice.queue': 'Черга', 'voice.queueEmpty': 'Черга на виступ порожня',
+  'voice.roomTitle': 'ГРУПОВИЙ ГОЛОС · БЕЗ ЛІМІТУ', 'voice.roomHelp': 'Приєднайтеся, щоб говорити й слухати разом у цій кімнаті.',
+  'voice.roomActive': 'Груповий голос активний · підключено: {count}', 'voice.joinRoom': 'Приєднатися до голосу', 'voice.leaveRoom': 'Вийти з голосу',
+  'audio.settingsTitle': 'Налаштування звуку', 'audio.muteWorld': 'Вимкнути голос WORLD',
+  'audio.muteWorldHelp': 'Вимикає голоси WORLD на цьому пристрої. Приватні дзвінки та кімнати залишаються чутними.',
+  'audio.testSpeakers': 'Перевірити динаміки', 'audio.testMicrophone': 'Перевірити мікрофон', 'audio.testReady': 'Перевірте аудіопристрої, вибрані у Windows.',
+  'audio.testingSpeakers': 'Відтворення тестового звуку…', 'audio.speakersOk': 'Тестовий звук завершено.', 'audio.testingMicrophone': 'Говоріть зараз — слухаю 4 секунди…',
+  'audio.microphoneOk': 'Мікрофон працює — голос виявлено.', 'audio.microphoneSilent': 'Чіткого сигналу мікрофона не виявлено.',
+  'audio.testFailed': 'Помилка перевірки звуку: {error}', 'audio.outputBlocked': 'Відтворення звуку заблоковано. Натисніть у застосунку, щоб увімкнути звук.',
+  'audio.microphonePermission': 'Доступ до мікрофона заблоковано. Дозвольте Konofix Chat використовувати мікрофон у налаштуваннях Windows.',
+  'audio.microphoneMissing': 'Немає доступного мікрофона. Підключіть або ввімкніть пристрій введення в налаштуваннях Windows.',
+  'audio.microphoneBusy': 'Мікрофон зайнятий або Windows ще не звільнила його. Закрийте інші аудіозастосунки та повторіть спробу.',
 };
 
 const DICTIONARIES: Record<Locale, Dictionary> = { en: EN, pl: PL, no: NO, de: DE, fr: FR, es: ES, uk: UK };
 
+export function resolveLocale(value: string | null | undefined): Locale | undefined {
+  const code = value?.trim().toLowerCase().replace('_', '-').split('-')[0];
+  if (!code) return undefined;
+  if (code === 'nb' || code === 'nn') return 'no';
+  if (code === 'ua') return 'uk';
+  return SUPPORTED.includes(code as Locale) ? code as Locale : undefined;
+}
+
 function systemLocale(): Locale {
-  const saved = localStorage.getItem(STORAGE_KEY)?.toLowerCase().split('-')[0] as Locale | undefined;
-  if (saved && SUPPORTED.includes(saved)) return saved;
-  for (const candidate of navigator.languages?.length ? navigator.languages : [navigator.language]) {
-    const code = candidate.toLowerCase().split('-')[0] as Locale;
-    if (SUPPORTED.includes(code)) return code;
+  const saved = typeof localStorage === 'undefined'
+    ? undefined
+    : resolveLocale(localStorage.getItem(STORAGE_KEY));
+  if (saved) return saved;
+  const browserLocales = typeof navigator === 'undefined'
+    ? []
+    : navigator.languages?.length ? navigator.languages : [navigator.language];
+  for (const candidate of browserLocales) {
+    const code = resolveLocale(candidate);
+    if (code) return code;
   }
   return 'en';
 }
 
 export const currentLocale = systemLocale();
-document.documentElement.lang = currentLocale;
+if (typeof document !== 'undefined') {
+  document.documentElement.lang = currentLocale;
+}
 
 export function t(key: MessageKey, params: Params = {}): string {
   const template = DICTIONARIES[currentLocale][key] ?? EN[key];

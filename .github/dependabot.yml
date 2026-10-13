@@ -107,6 +107,11 @@ updates:
           - "tauri"
         update-types:
           - "major"
+      tauri-plugin-updater-major:
+        patterns:
+          - "tauri-plugin-updater"
+        update-types:
+          - "major"
       rfd-major:
         patterns:
           - "rfd"

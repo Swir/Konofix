@@ -24,6 +24,11 @@ requireText("data-private-file", 'private 1:1 chat must expose a direct attachme
 requireText("invoke('offer_file'", 'private attachments must reuse the bounded direct P2P file-transfer command');
 requireText('await sendFileToPeer(activePrivatePeerId);', 'WAN-only private attachments must use the encrypted relay file fallback');
 requireText("peerId: activePrivatePeerId", 'private attachments must target the active authenticated conversation peer without a recipient picker');
+requireText('privateAudioOutput.attach(peerId, stream)', 'remote call audio must use the native media sink');
+requireText('privateAudioOutput.stop(detail.peerId)', 'call termination must stop only the matching private audio output');
+requireText('privateAudioOutput.stop()', 'network termination must detach private audio output');
+requireText('privateAudioOutput.retry()', 'a user gesture must retry browser-blocked private audio playback');
+if (ui.includes('callTones.playRemoteAudio')) throw new Error('private remote audio must not depend on the ringtone Web Audio graph');
 requireText("roomId: null", 'private attachments must remain direct peer transfers, not room GossipSub transfers');
 requireText("data-private-emoji-code", 'private chat must reuse the Konofix emoji picker without unsafe message rendering');
 requireText("showPrivateNotification(message, result.peerId, nick, color);", 'incoming private conversations must show a visible attention modal');

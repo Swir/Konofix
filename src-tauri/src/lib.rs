@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
-    fs::File,
-    io::{AsyncReadExt, AsyncWriteExt},
+    fs::{File, OpenOptions},
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     sync::{mpsc, oneshot},
 };
 use unicode_normalization::UnicodeNormalization;
@@ -197,12 +197,33 @@ fn take_knp_chat_for_owner(
 #[derive(Default)]
 struct AppState {
     tx: Mutex<Option<mpsc::Sender<NetworkCommand>>>,
+    rtc_outgoing_files: Mutex<HashMap<String, RtcOutgoingFile>>,
+    rtc_incoming_files: Mutex<HashMap<String, RtcIncomingFile>>,
     #[cfg(windows)]
     session_gate: tokio::sync::Mutex<()>,
     #[cfg(windows)]
     knp_chat: Mutex<Option<KnpChatSession>>,
     #[cfg(windows)]
     kononexus: Mutex<Option<KonoNexusSession>>,
+}
+
+#[derive(Debug, Clone)]
+struct RtcOutgoingFile {
+    path: PathBuf,
+    file_name: String,
+    size: u64,
+    sha256: String,
+    expires_at: Option<Instant>,
+}
+
+#[derive(Debug, Clone)]
+struct RtcIncomingFile {
+    temp_path: PathBuf,
+    final_path: PathBuf,
+    size: u64,
+    sha256: String,
+    next_offset: u64,
+    preview_only: bool,
 }
 
 fn install_network_sender(
@@ -371,10 +392,11 @@ struct PublicShareOffer {
     nick_color: Option<String>,
     file_name: String,
     size: u64,
+    sha256: String,
     kind: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     mime: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     room_id: Option<String>,
     timestamp: u64,
     expires_at: u64,
@@ -768,6 +790,21 @@ struct RelayFileSelection {
     data_base64: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct RtcFileDescriptor {
+    token: String,
+    file_name: String,
+    size: u64,
+    sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RtcFileChunk {
+    offset: u64,
+    data_base64: String,
+    eof: bool,
+}
+
 #[derive(Debug)]
 struct OutgoingTransfer {
     peer: PeerId,
@@ -1016,6 +1053,7 @@ enum NetworkCommand {
         path: PathBuf,
         file_name: String,
         size: u64,
+        sha256: String,
         kind: String,
         mime: Option<String>,
         room_id: Option<String>,
@@ -1196,7 +1234,7 @@ fn image_mime_from_header(data: &[u8]) -> Option<&'static str> {
     }
 }
 
-async fn detect_image_mime(path: &Path) -> Result<String, String> {
+async fn probe_image_mime(path: &Path) -> Result<Option<String>, String> {
     let mut file = File::open(path)
         .await
         .map_err(|error| format!("Nie można otworzyć obrazu: {error}"))?;
@@ -1205,8 +1243,12 @@ async fn detect_image_mime(path: &Path) -> Result<String, String> {
         .read(&mut header)
         .await
         .map_err(|error| format!("Nie można sprawdzić obrazu: {error}"))?;
-    image_mime_from_header(&header[..read])
-        .map(str::to_string)
+    Ok(image_mime_from_header(&header[..read]).map(str::to_string))
+}
+
+async fn detect_image_mime(path: &Path) -> Result<String, String> {
+    probe_image_mime(path)
+        .await?
         .ok_or_else(|| "Obsługiwane obrazy: PNG, JPEG, GIF i WebP.".to_string())
 }
 
@@ -1259,6 +1301,7 @@ fn public_share_offer_is_well_formed(offer: &PublicShareOffer) -> bool {
         && file_offer_name_error(&offer.file_name).is_none()
         && offer.file_name == safe_filename(&offer.file_name)
         && offer.size <= MAX_FILE_SIZE
+        && valid_sha256(&offer.sha256)
         && offer.timestamp > 0
         && lifetime > 0
         && lifetime <= PUBLIC_OFFER_TTL_SECS * 1000
@@ -2079,6 +2122,329 @@ async fn save_relay_file(
     Ok(final_path.to_string_lossy().into_owned())
 }
 
+async fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file = File::open(path)
+        .await
+        .map_err(|error| format!("Nie można otworzyć pliku do weryfikacji: {error}"))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 256 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .await
+            .map_err(|error| format!("Nie można odczytać pliku do weryfikacji: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[tauri::command]
+async fn pick_rtc_file(state: State<'_, AppState>) -> Result<Option<RtcFileDescriptor>, String> {
+    let path = tokio::task::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Wyślij duży plik bezpośrednio P2P")
+            .pick_file()
+    })
+    .await
+    .map_err(|error| format!("Błąd okna wyboru pliku: {error}"))?;
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let metadata = tokio::fs::metadata(&path)
+        .await
+        .map_err(|error| format!("Nie można odczytać pliku: {error}"))?;
+    if !metadata.is_file() {
+        return Err("Można wysyłać tylko zwykłe pliki.".into());
+    }
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err("Plik jest większy niż limit 32 GiB tej wersji.".into());
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(safe_filename)
+        .ok_or("Nieprawidłowa nazwa pliku.")?;
+    let sha256 = sha256_file(&path).await?;
+    let token = Uuid::new_v4().to_string();
+    let selected = RtcOutgoingFile {
+        path,
+        file_name: file_name.clone(),
+        size: metadata.len(),
+        sha256: sha256.clone(),
+        expires_at: None,
+    };
+    state
+        .rtc_outgoing_files
+        .lock()
+        .map_err(|_| "Błąd blokady plików P2P.")?
+        .insert(token.clone(), selected);
+    Ok(Some(RtcFileDescriptor {
+        token,
+        file_name,
+        size: metadata.len(),
+        sha256,
+    }))
+}
+
+#[tauri::command]
+async fn prepare_public_rtc_file(
+    offer_id: String,
+    transfer_token: String,
+    state: State<'_, AppState>,
+) -> Result<RtcFileDescriptor, String> {
+    Uuid::parse_str(&offer_id).map_err(|_| "Nieprawidłowy identyfikator publicznej oferty.")?;
+    Uuid::parse_str(&transfer_token).map_err(|_| "Nieprawidłowy identyfikator transferu P2P.")?;
+    let mut files = state
+        .rtc_outgoing_files
+        .lock()
+        .map_err(|_| "Błąd blokady plików P2P.")?;
+    let now = Instant::now();
+    files.retain(|_, file| file.expires_at.is_none_or(|expires_at| expires_at > now));
+    let source = files
+        .get(&offer_id)
+        .cloned()
+        .ok_or("Publiczna oferta pliku wygasła albo nie istnieje.")?;
+    if files.contains_key(&transfer_token) {
+        return Err("Identyfikator transferu P2P jest już używany.".into());
+    }
+    let descriptor = RtcFileDescriptor {
+        token: transfer_token.clone(),
+        file_name: source.file_name.clone(),
+        size: source.size,
+        sha256: source.sha256.clone(),
+    };
+    files.insert(
+        transfer_token,
+        RtcOutgoingFile {
+            expires_at: None,
+            ..source
+        },
+    );
+    Ok(descriptor)
+}
+
+#[tauri::command]
+async fn read_rtc_file_chunk(
+    token: String,
+    offset: u64,
+    max_bytes: usize,
+    state: State<'_, AppState>,
+) -> Result<RtcFileChunk, String> {
+    if max_bytes == 0 || max_bytes > 64 * 1024 {
+        return Err("Nieprawidłowy rozmiar fragmentu P2P.".into());
+    }
+    let selected = state
+        .rtc_outgoing_files
+        .lock()
+        .map_err(|_| "Błąd blokady plików P2P.")?
+        .get(&token)
+        .cloned()
+        .ok_or("Wybrany plik P2P wygasł.")?;
+    if offset > selected.size {
+        return Err("Nieprawidłowe przesunięcie pliku P2P.".into());
+    }
+    let mut file = File::open(&selected.path)
+        .await
+        .map_err(|error| format!("Nie można ponownie otworzyć wysyłanego pliku: {error}"))?;
+    file.seek(std::io::SeekFrom::Start(offset))
+        .await
+        .map_err(|error| format!("Nie można ustawić pozycji pliku: {error}"))?;
+    let remaining = (selected.size - offset).min(max_bytes as u64) as usize;
+    let mut data = vec![0u8; remaining];
+    if remaining > 0 {
+        file.read_exact(&mut data)
+            .await
+            .map_err(|error| format!("Nie można odczytać fragmentu pliku: {error}"))?;
+    }
+    Ok(RtcFileChunk {
+        offset,
+        data_base64: BASE64.encode(&data),
+        eof: offset + data.len() as u64 == selected.size,
+    })
+}
+
+#[tauri::command]
+async fn begin_rtc_file_receive(
+    token: String,
+    file_name: String,
+    size: u64,
+    sha256: String,
+    preview_only: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    Uuid::parse_str(&token).map_err(|_| "Nieprawidłowy identyfikator transferu P2P.")?;
+    if size > MAX_FILE_SIZE || !valid_sha256(&sha256) {
+        return Err("Nieprawidłowa oferta dużego pliku P2P.".into());
+    }
+    if state
+        .rtc_incoming_files
+        .lock()
+        .map_err(|_| "Błąd blokady plików P2P.")?
+        .contains_key(&token)
+    {
+        return Err("Ten transfer P2P już istnieje.".into());
+    }
+    let directory = if preview_only {
+        preview_directory()?
+    } else {
+        download_directory()?
+    };
+    tokio::fs::create_dir_all(&directory)
+        .await
+        .map_err(|error| format!("Nie można utworzyć folderu pobierania: {error}"))?;
+    let reservation = reserve_incoming_file(&directory, &safe_filename(&file_name)).await?;
+    let incoming = RtcIncomingFile {
+        temp_path: reservation.temp_path,
+        final_path: reservation.final_path,
+        size,
+        sha256: sha256.to_ascii_lowercase(),
+        next_offset: 0,
+        preview_only,
+    };
+    drop(reservation.file);
+    state
+        .rtc_incoming_files
+        .lock()
+        .map_err(|_| "Błąd blokady plików P2P.")?
+        .insert(token, incoming);
+    Ok(())
+}
+
+#[tauri::command]
+async fn write_rtc_file_chunk(
+    token: String,
+    offset: u64,
+    data_base64: String,
+    state: State<'_, AppState>,
+) -> Result<u64, String> {
+    let data = BASE64
+        .decode(&data_base64)
+        .map_err(|_| "Nieprawidłowy fragment pliku P2P.".to_string())?;
+    if data.is_empty() || data.len() > 64 * 1024 {
+        return Err("Nieprawidłowy rozmiar fragmentu pliku P2P.".into());
+    }
+    let (temp_path, next_offset, size) = {
+        let mut incoming = state
+            .rtc_incoming_files
+            .lock()
+            .map_err(|_| "Błąd blokady plików P2P.")?;
+        let transfer = incoming.get_mut(&token).ok_or("Transfer P2P wygasł.")?;
+        if offset != transfer.next_offset || offset + data.len() as u64 > transfer.size {
+            return Err("Fragment pliku P2P jest poza kolejnością.".into());
+        }
+        transfer.next_offset += data.len() as u64;
+        (
+            transfer.temp_path.clone(),
+            transfer.next_offset,
+            transfer.size,
+        )
+    };
+    let write_result: Result<(), String> = async {
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&temp_path)
+            .await
+            .map_err(|error| format!("Nie można otworzyć odbieranego pliku P2P: {error}"))?;
+        file.write_all(&data)
+            .await
+            .map_err(|error| format!("Nie można zapisać fragmentu pliku P2P: {error}"))?;
+        file.flush()
+            .await
+            .map_err(|error| format!("Nie można opróżnić bufora pliku P2P: {error}"))?;
+        Ok(())
+    }
+    .await;
+    if let Err(error) = write_result {
+        if let Ok(mut incoming) = state.rtc_incoming_files.lock() {
+            if let Some(transfer) = incoming.get_mut(&token) {
+                transfer.next_offset = offset;
+            }
+        }
+        return Err(error);
+    }
+    if next_offset > size {
+        return Err("Odebrano zbyt dużo danych P2P.".into());
+    }
+    Ok(next_offset)
+}
+
+#[tauri::command]
+async fn finish_rtc_file_receive(
+    token: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let incoming = state
+        .rtc_incoming_files
+        .lock()
+        .map_err(|_| "Błąd blokady plików P2P.")?
+        .remove(&token)
+        .ok_or("Transfer P2P wygasł.")?;
+    if incoming.next_offset != incoming.size {
+        let _ = tokio::fs::remove_file(&incoming.temp_path).await;
+        return Err("Odebrany plik P2P jest niekompletny.".into());
+    }
+    let sync_result: Result<(), String> = async {
+        let file = OpenOptions::new()
+            .write(true)
+            .open(&incoming.temp_path)
+            .await
+            .map_err(|error| format!("Nie można otworzyć ukończonego pliku P2P: {error}"))?;
+        file.sync_all()
+            .await
+            .map_err(|error| format!("Nie można utrwalić ukończonego pliku P2P: {error}"))
+    }
+    .await;
+    if let Err(error) = sync_result {
+        let _ = tokio::fs::remove_file(&incoming.temp_path).await;
+        return Err(error);
+    }
+    let actual = match sha256_file(&incoming.temp_path).await {
+        Ok(actual) => actual,
+        Err(error) => {
+            let _ = tokio::fs::remove_file(&incoming.temp_path).await;
+            return Err(error);
+        }
+    };
+    if actual != incoming.sha256 {
+        let _ = tokio::fs::remove_file(&incoming.temp_path).await;
+        return Err("Suma SHA-256 odebranego pliku P2P jest niezgodna.".into());
+    }
+    if incoming.preview_only {
+        let preview_root = preview_directory()?;
+        if !incoming.final_path.starts_with(&preview_root) {
+            let _ = tokio::fs::remove_file(&incoming.temp_path).await;
+            return Err("Nieprawidłowa ścieżka podglądu P2P.".into());
+        }
+    }
+    commit_reserved_file(&incoming.temp_path, &incoming.final_path).await?;
+    Ok(incoming.final_path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn close_rtc_file(token: String, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .rtc_outgoing_files
+        .lock()
+        .map_err(|_| "Błąd blokady plików P2P.")?
+        .remove(&token);
+    let incoming = state
+        .rtc_incoming_files
+        .lock()
+        .map_err(|_| "Błąd blokady plików P2P.")?
+        .remove(&token);
+    if let Some(incoming) = incoming {
+        let _ = tokio::fs::remove_file(incoming.temp_path).await;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn publish_public_file(
     kind: String,
@@ -2096,11 +2462,9 @@ async fn publish_public_file(
         .clone()
         .ok_or("Najpierw połącz się z siecią.")?;
 
-    let dialog_title = match (room_id.as_deref(), kind.as_str()) {
-        (Some(_), "image") => "Udostępnij obraz w pokoju".to_string(),
-        (Some(_), _) => "Udostępnij plik w pokoju".to_string(),
-        (None, "image") => "Udostępnij obraz na #WORLD".to_string(),
-        (None, _) => "Udostępnij plik na #WORLD".to_string(),
+    let dialog_title = match room_id.as_deref() {
+        Some(_) => "Udostępnij plik w pokoju".to_string(),
+        None => "Udostępnij plik na #WORLD".to_string(),
     };
     let path = tokio::task::spawn_blocking(move || {
         rfd::FileDialog::new().set_title(dialog_title).pick_file()
@@ -2120,25 +2484,25 @@ async fn publish_public_file(
     if metadata.len() > MAX_FILE_SIZE {
         return Err("Plik jest większy niż limit 32 GiB tej wersji.".into());
     }
-    let mime = if kind == "image" {
-        if metadata.len() > MAX_PUBLIC_IMAGE_SIZE {
-            return Err("Obraz do podglądu #WORLD może mieć maksymalnie 8 MiB.".into());
-        }
-        Some(detect_image_mime(&path).await?)
-    } else {
-        None
-    };
+    // A single file action automatically recognizes bounded PNG/JPEG/GIF/WebP
+    // previews by magic bytes. Bigger images remain ordinary downloadable files.
+    let detected_image = probe_image_mime(&path).await?;
+    let mime = detected_image.filter(|_| metadata.len() <= MAX_PUBLIC_IMAGE_SIZE);
+    let kind = if mime.is_some() { "image" } else { "file" }.to_string();
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
         .map(safe_filename)
         .ok_or("Nieprawidłowa nazwa pliku.")?;
 
+    let sha256 = sha256_file(&path).await?;
+    let rtc_path = path.clone();
     let (reply_tx, reply_rx) = oneshot::channel();
     tx.send(NetworkCommand::PublishPublicOffer {
         path,
         file_name,
         size: metadata.len(),
+        sha256: sha256.clone(),
         kind,
         mime,
         room_id,
@@ -2149,6 +2513,20 @@ async fn publish_public_file(
     let offer = reply_rx
         .await
         .map_err(|_| "Brak odpowiedzi modułu publicznych plików.".to_string())??;
+    state
+        .rtc_outgoing_files
+        .lock()
+        .map_err(|_| "Błąd blokady plików P2P.".to_string())?
+        .insert(
+            offer.offer_id.clone(),
+            RtcOutgoingFile {
+                path: rtc_path,
+                file_name: offer.file_name.clone(),
+                size: offer.size,
+                sha256,
+                expires_at: Some(Instant::now() + Duration::from_secs(PUBLIC_OFFER_TTL_SECS)),
+            },
+        );
     Ok(Some(offer))
 }
 
@@ -3538,6 +3916,7 @@ async fn network_task(
                         path,
                         file_name,
                         size,
+                        sha256,
                         kind,
                         mime,
                         room_id,
@@ -3575,6 +3954,7 @@ async fn network_task(
                                 nick_color: Some(nick_color.clone()),
                                 file_name: safe_filename(&file_name),
                                 size,
+                                sha256,
                                 kind,
                                 mime,
                                 room_id: room_id.clone(),
@@ -5522,6 +5902,7 @@ mod public_share_tests {
                 "notes.txt".into()
             },
             size,
+            sha256: "a".repeat(64),
             kind: kind.into(),
             mime: mime.map(str::to_string),
             room_id: None,
@@ -5586,6 +5967,14 @@ mod public_share_tests {
             .checked_sub(Duration::from_secs(PUBLIC_CLAIM_TTL_SECS))
             .unwrap();
         assert!(public_claim_is_expired(old_claim, now));
+    }
+
+    #[test]
+    fn absent_public_offer_fields_are_omitted_for_javascript_consumers() {
+        let value = serde_json::to_value(offer(PeerId::random(), "file", None, 42)).unwrap();
+        let object = value.as_object().unwrap();
+        assert!(!object.contains_key("mime"));
+        assert!(!object.contains_key("room_id"));
     }
 }
 
@@ -5870,6 +6259,7 @@ mod authenticated_event_tests {
                 nick_color: Some(DEFAULT_NICK_COLOR.into()),
                 file_name: "notes.txt".into(),
                 size: 42,
+                sha256: "a".repeat(64),
                 kind: "file".into(),
                 mime: None,
                 room_id: None,
@@ -5917,7 +6307,10 @@ mod authenticated_event_tests {
 }
 
 pub fn run() {
-    let builder = tauri::Builder::default().manage(AppState::default());
+    let builder = tauri::Builder::default();
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = builder.manage(AppState::default());
     #[cfg(windows)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         start_network,
@@ -5942,6 +6335,13 @@ pub fn run() {
         offer_file,
         pick_relay_file,
         save_relay_file,
+        pick_rtc_file,
+        prepare_public_rtc_file,
+        read_rtc_file_chunk,
+        begin_rtc_file_receive,
+        write_rtc_file_chunk,
+        finish_rtc_file_receive,
+        close_rtc_file,
         publish_public_file,
         claim_public_file,
         load_image_preview,
@@ -5967,6 +6367,13 @@ pub fn run() {
         offer_file,
         pick_relay_file,
         save_relay_file,
+        pick_rtc_file,
+        prepare_public_rtc_file,
+        read_rtc_file_chunk,
+        begin_rtc_file_receive,
+        write_rtc_file_chunk,
+        finish_rtc_file_receive,
+        close_rtc_file,
         publish_public_file,
         claim_public_file,
         load_image_preview,

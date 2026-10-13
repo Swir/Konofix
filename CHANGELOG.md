@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.6.0 — Stable chat, large files and voice
+
+- Promote the owner-accepted chat feature line to stable version metadata, keeping the accepted application behavior; the stable installer is a new versioned build, not a renamed alpha binary.
+- Ship native and WebRTC streamed files up to the 32 GiB protocol limit, public WORLD/room file cards, explicit downloads and verified PNG/JPEG/GIF/WebP previews up to 8 MiB through one file picker.
+- Ship private one-to-one voice, the WORLD 60-second speaking queue with early release, and simultaneous voice in public temporary rooms. Add incoming/outgoing call tones, WORLD-only mute, microphone and speaker tests.
+- Serialize Windows microphone capture and bounded device retries; make SDP retries idempotent, cancel pending negotiation after hangup, and stop obsolete connections from reviving audio or errors.
+- Use native media playback for private audio. Isolate file negotiation failures and file-only hangups from simultaneous private calls; protect playback from late promises after teardown.
+- Retain NIP-44 encrypted relay private messages, signed public presence/text, seven application languages, protected native rooms, recipient consent and integrity-checked file saving.
+- Document STUN-only WebRTC honestly: retired public TURN endpoints are not configured, and restrictive NAT/firewalls may still prevent voice or large-file connections even when public chat works.
+- Correct stable updater packaging for Tauri v2 and immutable uploads. Signed automatic updates are unavailable until the release signing secrets are configured; this stable release supports manual installation and never offers unsigned automatic updates.
+- Add a complete user guide and an explicit separation between the shipped chat feature scope and Global Beta infrastructure qualification (still 56/67 = 83.6%). Owner acceptance of private audio and the missing post-hangup error is recorded in `docs/evidence/CHAT_AUDIO_ACCEPTANCE_20261013.md`; no load, route, soak or universal-NAT evidence is inferred.
+
+## 0.6.0-5 (alpha 5) — WAN media reliability and signed stable updates
+
+Historical development entry: the later stable line removes unavailable public TURN endpoints and replaces Web Audio private playback with a native media sink. See 0.6.0 above for shipped behavior.
+
+- Added shared STUN/TURN ICE configuration for private audio, group audio and direct large-file transfers. Direct paths remain preferred; TURN forwards encrypted WebRTC traffic when direct NAT traversal fails.
+- Added an authenticated direct WORLD release signal and a regression test proving that the next queued speaker can take over immediately after an early finish.
+- Added persistent WORLD-voice mute, a speaker test, a live microphone meter/test and a visible retry path when Windows blocks audio playback.
+- Added explicit public-file claim rejection and a 45-second receiver timeout so WAN failures no longer remain stuck in “requesting”.
+- Added a signed stable updater: stable-only version filtering, explicit user confirmation, public-key verification and an exact-tag GitHub release workflow that produces `latest.json` and signed NSIS updater artifacts.
+- This remains an alpha candidate. Stable promotion still requires a physical two-PC WAN PASS of the exact Windows installer.
+
+## 0.6.0-4 (alpha 4) — WAN public files and group voice
+
+- replace the separate public file/image actions with one file picker that recognizes bounded PNG, JPEG, GIF and WebP previews from magic bytes instead of trusting file extensions,
+- announce signed, expiring WORLD/public-room file metadata through the WAN relay fallback while keeping file bytes off relays; an explicit Download or Preview starts a unique direct WebRTC stream and verifies the signed size, name and SHA-256 before completion,
+- preserve disk-backed streaming up to the existing 32 GiB product limit, use temporary verified storage for previews and allow one public offer to serve independent receiver requests,
+- add a signed WORLD speaking queue with one active speaker, a visible 60-second countdown and automatic microphone/session release at the turn boundary,
+- add simultaneous WebRTC group voice to public temporary rooms; password-protected rooms remain off the public fallback in this alpha,
+- keep private one-to-one audio unchanged, add deterministic WORLD queue/group-audio tests, and automatically select Polish, English, Norwegian, German, French, Spanish or Ukrainian from the system locale (including Windows `nb`/`nn` aliases),
+- keep stable `v0.5.3` unchanged; exact-head CI and a physical two-PC WAN test of this installer remain mandatory before promotion.
+
+## 0.6.0-3 (alpha 3) — bidirectional audio output and playful call tones
+
+- route remote call audio through the user-unlocked Web Audio output, retaining the HTML audio element only as a fallback, so the caller no longer depends on a second autoplay gesture after the recipient accepts,
+- require an active microphone track on both endpoints, enable echo cancellation, noise suppression, automatic gain control and mono capture, and cleanly release local/remote audio after negotiation failure or network termination,
+- strengthen the WebRTC regression to require that both caller and recipient receive the other endpoint's stream rather than validating only recipient-side audio,
+- replace the plain telephone beeps with a short six-note triangular-wave incoming melody and a separate two-chord outgoing ringback,
+- keep the `0.6.0-2` WAN public-room behavior and stable `v0.5.3` unchanged; exact physical two-PC confirmation remains required before promotion.
+
+## 0.6.0-2 (alpha 2) — WAN rooms and call-progress tones
+
+- announce public, unprotected temporary rooms through the signed, expiring multi-relay WORLD fallback so users on independent networks can discover the same room without a Konofix-owned server,
+- relay public-room text through the same deduplicated signed path when no native libp2p room route exists, reannounce rooms to late peers and remove relay-only rooms when the owner closes or leaves,
+- keep password-protected rooms on the authenticated native path; their names, passwords and messages are not moved into the public room fallback,
+- add generated local incoming ringtone and outgoing ringback cadences, with audio-context warmup after user interaction and immediate cleanup on connect, reject, hangup, failure or disconnect,
+- add deterministic two-client room lifecycle/chat tests and call-tone lifecycle tests; physical two-PC WAN confirmation is still required before stable promotion.
+
+## 0.6.0-1 (alpha 1) — direct large files and private audio
+
+- add encrypted, recipient-addressed WebRTC signaling over the existing WORLD bridge; public Nostr relays carry only bounded NIP-44 ciphertext used to establish a peer connection,
+- stream explicitly accepted files up to the existing 32 GiB product limit over an ordered WebRTC data channel with backpressure, disk-backed chunk reads/writes, no-clobber destination reservation and final SHA-256 verification instead of sending large file bytes through public relays,
+- add private one-to-one WebRTC audio with incoming-call consent, microphone permission on explicit user action, mute and hangup controls, echo cancellation and noise suppression,
+- use replaceable public STUN endpoints for NAT discovery without adding a Konofix-owned server; TURN is deliberately absent in this alpha, so restrictive/symmetric NAT pairs are not claimed to work universally,
+- keep stable `v0.5.3` behavior intact on `main`; automated tests validate encrypted signaling and build wiring, while large-file/audio promotion still requires an exact two-PC independent-network test.
+
 ## 0.5.3 — encrypted WAN private chat and file fallback
 
 - extend the existing signed multi-relay WORLD bridge with NIP-44 end-to-end encrypted private 1:1 messages addressed to the recipient's persistent relay identity; public relay operators receive ciphertext rather than private message text,

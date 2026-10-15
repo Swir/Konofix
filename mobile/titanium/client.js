@@ -6,11 +6,31 @@ const action = (text, fn, cls = '') => { const b = node('button', text, cls); b.
 const peers = new Map(), rooms = new Map(), ownedRooms = new Map(), messages = new Map(), names = new Map(), unread = new Map();
 let bridge, self = '', joined = false, running = false, connected = 0, nick = '', color = '#65cfff', thread = 'world', view = 'chat', toastTimer;
 let blocked = new Set();
+// Session-only drafts: never copy a private reply into a public composer.
+const drafts = new Map();
+function saveCurrentDraft() {
+  const text = $('message').value;
+  if (!text) { drafts.delete(thread); return true; }
+  if (text.length > 4000) { toast('Skróć szkic do 4000 znaków przed zmianą rozmowy.'); return false; }
+  if (!drafts.has(thread) && drafts.size >= 24) {
+    toast('Masz 24 niewysłane szkice. Wyślij lub wyczyść szkic przed zmianą rozmowy.');
+    return false;
+  }
+  drafts.set(thread, text);
+  return true;
+}
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4500); }
 function error(e) { toast(e instanceof Error ? e.message : String(e)); }
 function title(id) { return id === 'world' ? 'WORLD' : id.startsWith('nostr:') ? (names.get(id) || peers.get(id)?.nick || 'Rozmowa prywatna') : (rooms.get(id)?.title || ownedRooms.get(id)?.title || 'Pokój niedostępny'); }
-function navigate(next) { view = next; for (const id of ['chat', 'people', 'rooms', 'profile']) { $('view-' + id).hidden = id !== next; document.querySelector('[data-view="' + id + '"]').classList.toggle('selected', id === next); } render(); }
-function openThread(id) { thread = id; unread.set(id, 0); navigate('chat'); }
+function navigate(next) { view = next; if (next === 'chat') unread.set(thread, 0); for (const id of ['chat', 'people', 'rooms', 'profile']) { $('view-' + id).hidden = id !== next; document.querySelector('[data-view="' + id + '"]').classList.toggle('selected', id === next); } render(); }
+function openThread(id) {
+  if (id !== thread) {
+    if (!saveCurrentDraft()) return;
+    thread = id;
+    $('message').value = drafts.get(id) || '';
+  }
+  navigate('chat');
+}
 function addMessage(m) {
   if (blocked.has(m.peer_id)) return;
   if (!messages.has(m.room) && messages.size >= 24) { toast('Limit rozmów w pamięci. Rozłącz aplikację, aby zacząć nową sesję.'); return; }
@@ -29,7 +49,7 @@ function render() {
     $('thread-title').textContent = title(thread);
     $('thread-detail').textContent = thread.startsWith('nostr:') ? 'Prywatny tekst NIP-44 · obie osoby online' : 'Publiczna rozmowa · treść nie jest prywatna';
     const chips = $('threads'); chips.replaceChildren();
-    for (const id of new Set(['world', ...messages.keys(), thread])) { const n = unread.get(id) || 0; chips.append(action(title(id) + (n ? ' · ' + n : ''), () => openThread(id), 'chip' + (id === thread ? ' active' : ''))); }
+    for (const id of new Set(['world', ...messages.keys(), ...drafts.keys(), thread])) { const n = unread.get(id) || 0; chips.append(action(title(id) + (n ? ' · ' + n : ''), () => openThread(id), 'chip' + (id === thread ? ' active' : ''))); }
     const timeline = $('timeline'), nearEnd = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 90;
     timeline.replaceChildren(); const list = messages.get(thread) || [];
     if (!list.length) { const empty = node('div', '', 'empty'); empty.append(node('div', '✦', 'spark'), node('h2', 'Rozmowa zaczyna się tutaj'), node('p', 'Połącz Konofix na telefonie i Windows z WORLD. Użyj różnych nicków, aby łatwo rozpoznać oba urządzenia.')); timeline.append(empty); }
@@ -74,7 +94,13 @@ const callbacks = {
 function start() { if (running || !joined) return; bridge.start(self, nick, color, callbacks); running = true; for (const room of ownedRooms.values()) bridge.publishRoom(room); render(); }
 function pause() { if (!running) return; running = false; bridge.stop(); connected = 0; render(); }
 function resume() { if (joined && !document.hidden) { try { start(); } catch (e) { error(e); } } }
-function logout() { joined = false; pause(); messages.clear(); peers.clear(); rooms.clear(); ownedRooms.clear(); names.clear(); unread.clear(); thread = 'world'; $('app').hidden = true; $('welcome').hidden = false; }
+function logout() {
+  joined = false; pause(); messages.clear(); peers.clear(); rooms.clear();
+  ownedRooms.clear(); names.clear(); unread.clear(); drafts.clear(); thread = 'world';
+  $('message').value = ''; $('room-name').value = ''; $('room-sheet').hidden = true;
+  clearTimeout(toastTimer); $('toast').hidden = true; $('toast').textContent = '';
+  $('app').hidden = true; $('welcome').hidden = false;
+}
 $('join-form').onsubmit = e => {
   e.preventDefault(); $('join-error').textContent = '';
   try {
@@ -93,6 +119,7 @@ $('composer').onsubmit = e => {
     if (!text || text.length > 4000) throw new Error('Wpisz od 1 do 4000 znaków.');
     if (thread.startsWith('nostr:')) { if (blocked.has(thread)) throw new Error('Ta osoba jest ignorowana.'); addMessage({ ...bridge.publishPrivate(thread, text), room: thread, mine: true }); }
     else { if (thread !== 'world' && !rooms.has(thread) && !ownedRooms.has(thread)) throw new Error('Pokój jest już niedostępny.'); const m = { id: crypto.randomUUID(), kind: 'chat', peer_id: self, nick, nick_color: color, room: thread, text, timestamp: Date.now() }; if (thread === 'world') bridge.publishChat(m); else bridge.publishRoomChat(m); addMessage({ ...m, mine: true }); }
+    drafts.delete(thread);
     $('message').value = '';
   } catch (err) { error(err); }
 };

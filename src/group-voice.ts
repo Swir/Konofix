@@ -1,5 +1,5 @@
 import type { VoiceSignal, WorldVoiceState } from './world-relay';
-import { RTC_CONFIG } from './rtc-config.ts';
+import { rtcConfiguration } from './rtc-config.ts';
 import { captureMicrophone, releaseMicrophoneStream, type MicrophoneCaptureScope } from './microphone-capture.ts';
 
 const WORLD_TURN_MS = 60_000;
@@ -394,6 +394,11 @@ export class GroupVoice {
   peerOffline(peerId: string): void {
     this.worldStates.delete(peerId);
     this.worldSeen.delete(peerId);
+    this.silencePeer(peerId);
+  }
+
+  /** Local muting must preserve the shared speaker queue and its turn order. */
+  silencePeer(peerId: string): void {
     this.deletePendingWorldOffersForPeer(peerId);
     this.deleteReleasedWorldRequestsForPeer(peerId);
     this.deleteRoomMembershipsForPeer(peerId);
@@ -883,7 +888,7 @@ export class GroupVoice {
     if (previous && previous.id !== id) this.closeSession(previous);
     else if (previousId && !previous) this.sessionByPeerScope.delete(peerScopeKey);
     if (this.sessions.size >= MAX_GROUP_SESSIONS) throw new Error('Too many active group voice connections.');
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+    const pc = new RTCPeerConnection(rtcConfiguration());
     const early = this.earlyIce.get(id);
     if (early?.peerId === peerId) this.earlyIce.delete(id);
     const session: Session = {

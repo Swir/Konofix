@@ -1,5 +1,10 @@
 # Konofix Chat — Roadmap
 
+## 0.6.1-rc.1 — Usability candidate
+
+UI refresh, contacts/privacy, encrypted local history, session-only custom TURN, resumable WebRTC files and signed-updater readiness. See docs/USABILITY_CANDIDATE.md for verification and remaining external prerequisites. This candidate does not change the 56/67 Global Beta qualification count.
+
+
 ## Project progress
 
 <img width="100%" src="assets/readme/progress-mini.svg" alt="Konofix Chat Real Internet Test compact progress — 56 of 67 verified tasks, 83.6%, in progress" />

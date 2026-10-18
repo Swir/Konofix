@@ -1,3 +1,4 @@
+import { x } from './experience-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { KONOFIX_EMOJI, normalizeNickColor, renderChatText } from './chat-expression';
@@ -8,11 +9,14 @@ import {
   type SecureRoomInfo,
   roomSecurity,
 } from './private-chat-state';
-import { peerTransport, sendFileToPeer, worldRelay } from './main';
+import { peerTransport, sendFileToPeer, worldRelay, isPeerOnline } from './main';
 import type { AudioCallState } from './peer-transport';
 import { CallTonePlayer } from './call-tones';
 import { PrivateAudioOutput } from './private-audio-output';
 import './secure-ui.css';
+import { people, identityCode } from './people';
+import { historyVault } from './history-vault';
+
 
 const conversations = new PrivateConversationStore();
 const roomState = new Map<string, SecureRoomInfo>();
@@ -22,6 +26,8 @@ const offlinePeers = new Set<string>();
 const ignoredPrivatePeers = new Set<string>();
 const audioStates = new Map<string, { state: AudioCallState; error?: string }>();
 const mutedAudioPeers = new Set<string>();
+const callStarted = new Map<string, number>();
+const privateDrafts = new Map<string, string>();
 const callTones = new CallTonePlayer();
 const privateAudioOutput = new PrivateAudioOutput({
   onPlaybackState(peerId, blocked) {
@@ -197,7 +203,7 @@ function augmentMainUi(): void {
 }
 
 function augmentPrivateSettings(): void {
-  const modal = document.querySelector<HTMLDivElement>('#networkModal .modal');
+  const modal = document.querySelector<HTMLDivElement>('#networkModal [data-settings-privacy]');
   if (!modal || modal.querySelector('[data-private-settings]')) return;
   const section = document.createElement('section');
   section.className = 'private-settings-card';
@@ -358,7 +364,7 @@ function privateMessageHtml(message: PrivateChatMessage, peerId: string): string
 }
 
 function showPrivateNotification(message: PrivateChatMessage, peerId: string, nick: string, color: string): void {
-  if (!privateMessagesEnabled() || ignoredPrivatePeers.has(peerId)) return;
+  if (!privateMessagesEnabled() || ignoredPrivatePeers.has(peerId) || people.muted(peerId) || !people.allowInvitation(peerId)) return;
   const id = `private-notice-${peerId}`;
   if (document.getElementById(id)) return;
   const wrap = document.createElement('div');
@@ -403,8 +409,16 @@ function renderPrivateModal(): void {
     document.body.appendChild(wrap);
   }
 
+  const oldInput = wrap.querySelector<HTMLInputElement>('[data-private-input]');
+  if (oldInput && wrap.dataset.peerId) privateDrafts.set(wrap.dataset.peerId, oldInput.value);
+  const draft = privateDrafts.get(activePrivatePeerId) ?? '';
+  wrap.dataset.peerId = activePrivatePeerId;
+  const selection = oldInput?.selectionStart ?? 0;
+  const focused = document.activeElement === oldInput;
+  const oldSearch = wrap.querySelector<HTMLInputElement>('[data-private-search]')?.value ?? '';
   const messages = conversations.conversation(activePrivatePeerId);
-  const offline = offlinePeers.has(activePrivatePeerId);
+  const contact = people.get(activePrivatePeerId);
+  const offline = offlinePeers.has(activePrivatePeerId) || !isPeerOnline(activePrivatePeerId);
   const color = normalizeNickColor(activePrivateColor);
   const audio = audioStates.get(activePrivatePeerId);
   const audioActive = audio && ['calling', 'ringing', 'connecting', 'connected', 'muted'].includes(audio.state);
@@ -418,7 +432,7 @@ function renderPrivateModal(): void {
   const audioCapable = activePrivatePeerId.startsWith('nostr:') && 'RTCPeerConnection' in window && navigator.mediaDevices?.getUserMedia;
   wrap.innerHTML = `<section class="private-chat-modal glass" role="dialog" aria-modal="true" aria-labelledby="privateChatTitle">
     <header class="private-chat-head">
-      <div><span class="eyebrow">PRIVATE P2P</span><h3 id="privateChatTitle" style="color:${color}">${esc(activePrivateNick)}</h3><span class="private-peer-status ${offline ? 'offline' : ''}"><i></i>${esc(audioStatus)}</span></div>
+      <div><span class="eyebrow">PRIVATE P2P</span><h3 id="privateChatTitle" style="color:${color}">${esc(activePrivateNick)}</h3><span class="private-peer-status ${offline ? 'offline' : ''}"><i></i>${esc(audioStatus)}</span>${audioActive ? `<span class="call-duration" data-call-duration="${esc(activePrivatePeerId)}"></span>` : ''}</div>
       <div class="private-call-actions">
         ${audioCapable && !audioActive ? `<button type="button" data-audio-call title="${esc(t('audio.start'))}" aria-label="${esc(t('audio.start'))}" ${offline ? 'disabled' : ''}>☎</button>` : ''}
         ${audioActive && (audio?.state === 'connected' || audio?.state === 'muted') ? `<button type="button" data-audio-mute title="${esc(mutedAudioPeers.has(activePrivatePeerId) ? t('audio.unmute') : t('audio.mute'))}" aria-label="${esc(mutedAudioPeers.has(activePrivatePeerId) ? t('audio.unmute') : t('audio.mute'))}">${mutedAudioPeers.has(activePrivatePeerId) ? '🔇' : '🎙'}</button>` : ''}
@@ -426,6 +440,13 @@ function renderPrivateModal(): void {
         <button type="button" data-private-close aria-label="${esc(t('common.cancel'))}">×</button>
       </div>
     </header>
+    <div class="private-tools">
+      <button class="ghost" data-contact-favorite>${contact?.favorite ? x('favorite') : x('addContact')}</button>
+      <button class="ghost" data-contact-verify>${contact?.verified ? x('verified') : x('verifyIdentity')}</button>
+      <button class="ghost" data-contact-mute>${contact?.muted ? x('unmute') : x('mute')}</button>
+      <button class="ghost danger" data-contact-block>${x('block')}</button>
+      <input data-private-search type="search" placeholder="${x('searchConversation')}" aria-label="${x('searchConversation16')}">
+    </div>
     <div class="private-messages" data-private-messages>
       ${messages.length ? messages.map(message => privateMessageHtml(message, activePrivatePeerId)).join('') : `<div class="private-empty">${esc(t('private.subtitle'))}</div>`}
     </div>
@@ -444,6 +465,7 @@ function renderPrivateModal(): void {
 
   const close = () => {
     const peerId = activePrivatePeerId;
+    privateDrafts.set(peerId, wrap?.querySelector<HTMLInputElement>('[data-private-input]')?.value ?? '');
     conversations.close();
     activePrivatePeerId = '';
     wrap?.remove();
@@ -454,6 +476,18 @@ function renderPrivateModal(): void {
     });
   };
   wrap.querySelector('[data-private-close]')?.addEventListener('click', close);
+  const selectedPeer = activePrivatePeerId, selectedNick = activePrivateNick, selectedColor = activePrivateColor;
+  const changeContact = (changes: Parameters<typeof people.update>[1]) => { people.update(selectedPeer, { nick: selectedNick, color: selectedColor, ...changes }); renderPrivateModal(); };
+  wrap.querySelector('[data-contact-favorite]')?.addEventListener('click', () => changeContact({ favorite: !contact?.favorite }));
+  wrap.querySelector('[data-contact-mute]')?.addEventListener('click', () => changeContact({ muted: !contact?.muted }));
+  wrap.querySelector('[data-contact-block]')?.addEventListener('click', () => { people.update(selectedPeer, { nick: selectedNick, color: selectedColor, blocked: true }); peerTransport.peerOffline(selectedPeer); close(); });
+  wrap.querySelector('[data-contact-verify]')?.addEventListener('click', async () => {
+    const code = await identityCode(selectedPeer);
+    if (window.confirm(x('compareThroughATrustedChannelDoesYour') + '\n\n' + selectedPeer + '\n\n' + code)) changeContact({ verified: true });
+  });
+  const search = wrap.querySelector<HTMLInputElement>('[data-private-search]')!; search.value = oldSearch;
+  const filterMessages = () => { wrap!.querySelectorAll<HTMLElement>('.private-message').forEach(item => { item.hidden = !item.textContent?.toLocaleLowerCase().includes(search.value.toLocaleLowerCase()); }); };
+  search.addEventListener('input', filterMessages); filterMessages();
   wrap.querySelector('[data-audio-call]')?.addEventListener('click', () => {
     void peerTransport.startCall(activePrivatePeerId).catch(error => {
       callTones.stop();
@@ -505,10 +539,11 @@ function renderPrivateModal(): void {
   }));
   const messageList = wrap.querySelector<HTMLDivElement>('[data-private-messages]');
   if (messageList) messageList.scrollTop = messageList.scrollHeight;
-  input?.focus();
+  if (input) { input.value = draft; if (focused || !oldInput) { input.focus(); input.setSelectionRange(selection, selection); } }
 }
 
 function openPrivateChat(peerId: string, nick: string, color: string): void {
+  if (people.blocked(peerId)) return;
   ignoredPrivatePeers.delete(peerId);
   document.getElementById(`private-notice-${peerId}`)?.remove();
   activePrivatePeerId = peerId;
@@ -591,7 +626,9 @@ async function sendPrivateMessage(): Promise<void> {
       : await invoke<PrivateChatMessage>('send_private_message', { peerId: activePrivatePeerId, text });
     localPeerId = localPeerId || message.peer_id;
     conversations.push(message, message.peer_id);
+    void historyVault?.append(message.peer_id, message).catch(() => window.dispatchEvent(new Event('konofix-history-error')));
     input.value = '';
+    privateDrafts.delete(activePrivatePeerId);
     renderPrivateModal();
   } catch (error) {
     const detail = String(error);
@@ -664,6 +701,8 @@ async function wireSecureEvents(): Promise<void> {
   });
   await listen<PrivateChatMessage>('private-message', event => {
     const message = event.payload;
+    if (!people.allows(message.peer_id)) return;
+    void historyVault?.append(message.target_peer_id, message).catch(() => window.dispatchEvent(new Event('konofix-history-error')));
     localPeerId = localPeerId || message.target_peer_id;
     const result = conversations.push(message, message.target_peer_id);
     if (!result?.inserted) return;
@@ -683,6 +722,8 @@ async function wireSecureEvents(): Promise<void> {
   window.addEventListener('konofix-relay-private-message', event => {
     if (!privateMessagesEnabled()) return;
     const message = (event as CustomEvent<PrivateChatMessage>).detail;
+    if (!people.allows(message.peer_id)) return;
+    void historyVault?.append(message.target_peer_id, message).catch(() => window.dispatchEvent(new Event('konofix-history-error')));
     const result = conversations.push(message, message.target_peer_id);
     if (!result?.inserted) return;
     const peerButton = document.querySelector<HTMLButtonElement>(`[data-private-peer="${CSS.escape(result.peerId)}"]`);
@@ -719,6 +760,8 @@ async function wireSecureEvents(): Promise<void> {
     const error = detail.error ?? (privateAudioOutput.isBlocked(detail.peerId)
       && ['connecting', 'connected', 'muted'].includes(detail.state) ? t('audio.outputBlocked') : undefined);
     audioStates.set(detail.peerId, { state: detail.state, error });
+    if (['connected', 'muted'].includes(detail.state) && !callStarted.has(detail.peerId)) callStarted.set(detail.peerId, Date.now());
+    if (['ended', 'rejected', 'failed'].includes(detail.state)) callStarted.delete(detail.peerId);
     if (detail.state === 'calling') callTones.start('outgoing');
     else if (detail.state === 'ringing') callTones.start('incoming');
     else callTones.stop();
@@ -773,7 +816,21 @@ const unlockCallTones = () => { void callTones.unlock().catch(() => undefined); 
 window.addEventListener('pointerdown', unlockCallTones, { capture: true });
 window.addEventListener('keydown', unlockCallTones, { capture: true });
 
+window.addEventListener('konofix-history-unlocked', () => {
+  for (const record of historyVault?.all() ?? []) if (!people.blocked(record.message.peer_id)) conversations.push(record.message, record.self);
+  renderPrivateModal(); queueAugment();
+});
+window.addEventListener('konofix-history-locked', () => { conversations.reset(); renderPrivateModal(); queueAugment(); });
+window.addEventListener('konofix-history-error', () => { const status = document.querySelector('#historyStatus'); if (status) status.textContent = x('historyCouldNotBeSavedCheckAvailable'); });
 installCaptureRouter();
 new MutationObserver(queueAugment).observe(document.body, { childList: true, subtree: true });
 wireSecureEvents().catch(error => console.error('Secure UI event wiring failed', error));
 queueAugment();
+
+setInterval(() => {
+  document.querySelectorAll<HTMLElement>('[data-call-duration]').forEach(label => {
+    const start = callStarted.get(label.dataset.callDuration!);
+    const seconds = start ? Math.floor((Date.now() - start) / 1000) : 0;
+    label.textContent = start ? String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0') : '';
+  });
+}, 1000);

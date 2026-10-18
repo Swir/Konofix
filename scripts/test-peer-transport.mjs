@@ -184,6 +184,7 @@ globalThis.__TAURI_INTERNALS__ = {
       const data = outgoingBytes.subarray(args.offset, Math.min(outgoingBytes.length, args.offset + args.maxBytes));
       return { offset: args.offset, data_base64: data.toString('base64'), eof: args.offset + data.length === outgoingBytes.length };
     }
+    if (command === 'resume_rtc_file_receive') return incoming.get(args.token)?.length ?? 0;
     if (command === 'begin_rtc_file_receive') { incoming.set(args.token, Buffer.alloc(0)); return null; }
     if (command === 'write_rtc_file_chunk') {
       const before = incoming.get(args.token);
@@ -701,3 +702,57 @@ assert.ok(configuredPeerConnections.length > 0, 'the test must create configured
 assert.ok(configuredPeerConnections.every(config => config.iceServers.some(server => String(server.urls).includes('stun:stun.cloudflare.com'))), 'files and private calls must discover direct WAN candidates');
 assert.ok(configuredPeerConnections.every(config => !config.iceServers.some(server => String(server.urls).includes('openrelay.metered.ca'))), 'retired TURN endpoints must not delay or misrepresent WAN negotiation');
 console.log('Peer transport test passed: gathered WAN signaling, >2 MiB streamed file integrity and bidirectional consent-based audio.');
+
+// Resume a real streamed payload using the existing two-ended transport mocks.
+async function waitUntil(predicate) {
+  const deadline = Date.now() + 10_000;
+  while (!predicate()) { if (Date.now() > deadline) throw new Error('Resume scenario timed out'); await new Promise(resolve => setTimeout(resolve, 10)); }
+}
+async function resumeScenario(initiator) {
+const resumeAlice = newPeerTransport(), resumeBob = newPeerTransport();
+const resumeToken = randomUUID();
+let pauseRequested = false, receiverOffset = 0, finishedResume = false;
+const resumeErrors = [];
+resumeAlice.start({
+  sendSignal(_peer, signal) { queueMicrotask(() => void resumeBob.handleSignal(aliceId, signal).catch(e => resumeErrors.push(e))); },
+  onIncomingCall(){}, onCallState(){}, onRemoteAudio(){}, onFileOffer(){}, onFileProgress(){},
+});
+resumeBob.start({
+  sendSignal(_peer, signal) { queueMicrotask(() => void resumeAlice.handleSignal(bobId, signal).catch(e => resumeErrors.push(e))); },
+  onIncomingCall(){}, onCallState(){}, onRemoteAudio(){},
+  onFileOffer(offer) { void resumeBob.acceptFile(offer.token).catch(e => resumeErrors.push(e)); },
+  onFileProgress(progress) {
+    if (progress.status === 'transferring' && progress.transferred >= 64*1024 && !pauseRequested) {
+      pauseRequested = true; receiverOffset = progress.transferred;
+      void (initiator === 'sender' ? resumeAlice : resumeBob).pauseFile(progress.token).catch(e => resumeErrors.push(e));
+    }
+    if (progress.status === 'completed') finishedResume = true;
+  },
+});
+await resumeAlice.sendPreparedFile(bobId,{token:resumeToken,file_name:unicodeFileName,size:outgoingBytes.length,sha256});
+await waitUntil(() => pauseRequested && resumeAlice.sessions.size === 0 && resumeBob.sessions.size === 0);
+assert(receiverOffset > 0 && receiverOffset < outgoingBytes.length);
+assert(resumeAlice.outgoing.has(resumeToken), 'pause preserves sender descriptor');
+assert(resumeBob.incoming.has(resumeToken), 'pause preserves accepted receiver state');
+const acceptedOffset = incoming.get(resumeToken).length;
+assert(acceptedOffset >= receiverOffset);
+const originalSession = resumeBob.incoming.get(resumeToken).sessionId;
+await resumeBob.receiveWire({ id:'rogue',peerId:'attacker',closed:false }, {type:'file_offer',token:resumeToken,file_name:unicodeFileName,size:outgoingBytes.length,sha256,resumable:true});
+assert.equal(resumeBob.incoming.get(resumeToken).sessionId,originalSession,'another identity cannot claim the partial file');
+await resumeBob.receiveWire({ id:'altered',peerId:aliceId,closed:false }, {type:'file_offer',token:resumeToken,file_name:unicodeFileName,size:outgoingBytes.length,sha256:'0'.repeat(64),resumable:true});
+assert.equal(resumeBob.incoming.get(resumeToken).sessionId,originalSession,'changed content cannot reuse previous consent or offsets');
+await (initiator === 'sender' ? resumeAlice : resumeBob).resumeFile(resumeToken);
+await waitUntil(() => finishedResume);
+assert.deepEqual(resumeErrors,[]);
+assert.deepEqual(incoming.get(resumeToken),outgoingBytes,'resumed content must match original bytes and hash without duplication');
+resumeAlice.stop(); resumeBob.stop();
+}
+await resumeScenario('receiver');
+await resumeScenario('sender');
+const policyTransport = newPeerTransport(), policyStates=[];
+policyTransport.start({sendSignal(){},onIncomingCall(_peer,id){policyTransport.rejectCall(id);},onCallState(_peer,state){policyStates.push(state);},onRemoteAudio(){},onFileOffer(){},onFileProgress(){}});
+await policyTransport.handleSignal(aliceId,{connection_id:randomUUID(),action:'call_request'});
+assert(!policyStates.includes('ringing'),'privacy-rejected invitations must never start ringing');
+assert.equal(policyTransport.pendingCalls.size,0);
+policyTransport.stop();
+console.log('Resume tests passed: both sender/receiver pause and reconnect, complete hash-verified content, reject identity/metadata substitution, and suppress policy-rejected ringing.');

@@ -40,11 +40,12 @@ const tauri = JSON.parse(read('src-tauri/tauri.conf.json'));
 const cargo = read('src-tauri/Cargo.toml');
 const cargoName = cargo.match(/^name\s*=\s*"([^"]+)"/m)?.[1];
 const cargoVersion = cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+const linuxVersion = read('node-linux/Cargo.toml').match(/^version\s*=\s*"([^"]+)"/m)?.[1];
 
 if (!cargoName) fail('Could not read Cargo package name.');
 if (!cargoVersion) fail('Could not read Cargo package version.');
-if (pkg.version !== tauri.version || pkg.version !== cargoVersion) {
-  fail(`Version mismatch: package.json=${pkg.version}, tauri.conf.json=${tauri.version}, Cargo.toml=${cargoVersion}`);
+if (pkg.version !== tauri.version || pkg.version !== cargoVersion || pkg.version !== linuxVersion) {
+  fail(`Version mismatch: package.json=${pkg.version}, tauri.conf.json=${tauri.version}, Cargo.toml=${cargoVersion}, node-linux/Cargo.toml=${linuxVersion}`);
 } else {
   console.log(`Version consistency: ${pkg.version}`);
 }

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.1-rc.1 — Usability candidate
+
+- Refresh chat typography, graphite surfaces, spacing, file cards, private calls, and collapsible people panel; preserve drafts and reading position.
+- Add favorites, identity comparison, persistent identity blocks, local muting, contact-only policy and bounded incoming invitations.
+- Add optional passphrase-encrypted local private history (AES-GCM / PBKDF2), explicit unlock/lock/delete and conversation search.
+- Add session-only, expiring custom TURN configuration with a relay allocation preflight for private, file and group media.
+- Add negotiated pause/resume for WebRTC files within the same app session, receiver-confirmed disk offsets, transfer rate and ETA. Paused data expires after 30 minutes; restarting either app requires a new transfer.
+- Candidate only: independent-network qualification and Authenticode certificate remain required; stable 0.6.0 remains published. New settings have Polish/English copy with English fallback for other locales.
+
+
 ## 0.6.0 — Stable chat, large files and voice
 
 - Promote the owner-accepted chat feature line to stable version metadata, keeping the accepted application behavior; the stable installer is a new versioned build, not a renamed alpha binary.

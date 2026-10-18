@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { RtcSignal } from './world-relay';
-import { RTC_CONFIG } from './rtc-config.ts';
+import { rtcConfiguration } from './rtc-config.ts';
 import { captureMicrophone, releaseMicrophoneStream, type MicrophoneCaptureScope } from './microphone-capture.ts';
 
 const FILE_CHUNK_BYTES = 32 * 1024;
@@ -28,7 +28,7 @@ export type DirectFileProgress = DirectFileOffer & {
   direction: 'incoming' | 'outgoing';
   transferred: number;
   progress: number;
-  status: 'waiting' | 'transferring' | 'verifying' | 'completed' | 'rejected' | 'failed' | 'cancelled';
+  status: 'waiting' | 'transferring' | 'verifying' | 'completed' | 'rejected' | 'failed' | 'cancelled' | 'paused' | 'interrupted';
   path?: string;
   error?: string;
 };
@@ -45,8 +45,9 @@ type Callbacks = {
 };
 
 type WireMessage =
-  | { type: 'file_offer'; token: string; file_name: string; size: number; sha256: string }
-  | { type: 'file_accept'; token: string }
+  | { type: 'file_offer'; token: string; file_name: string; size: number; sha256: string; resumable?: boolean }
+  | { type: 'file_accept'; token: string; offset?: number; resumable?: boolean }
+  | { type: 'file_pause' | 'file_resume'; token: string }
   | { type: 'file_reject'; token: string; reason?: string }
   | { type: 'file_chunk'; token: string; offset: number; data_base64: string }
   | { type: 'file_complete'; token: string }
@@ -132,14 +133,17 @@ function parseWireMessage(value: unknown): WireMessage | undefined {
     if (typeof record.path !== 'string' || record.path.length > 4_096) return undefined;
   } else if (record.type === 'file_reject' || record.type === 'file_error') {
     if (record.reason !== undefined && (typeof record.reason !== 'string' || record.reason.length > 500)) return undefined;
-  } else if (!['file_accept', 'file_complete'].includes(record.type)) return undefined;
+  } else if (record.type === 'file_accept') {
+    if (record.offset !== undefined && (!Number.isSafeInteger(record.offset) || Number(record.offset) < 0)) return undefined;
+  } else if (!['file_complete', 'file_pause', 'file_resume'].includes(record.type)) return undefined;
   return record as unknown as WireMessage;
 }
 
 export class PeerTransport {
   private readonly sessions = new Map<string, Session>();
-  private readonly outgoing = new Map<string, { file: RtcFileDescriptor; sessionId: string; peerId: string }>();
-  private readonly incoming = new Map<string, { offer: DirectFileOffer; sessionId: string; previewOnly: boolean }>();
+  private readonly outgoing = new Map<string, { file: RtcFileDescriptor; sessionId: string; peerId: string; transferred?: number; resumable?: boolean; sending?: boolean }>();
+  private readonly incoming = new Map<string, { offer: DirectFileOffer; sessionId: string; previewOnly: boolean; transferred?: number; resumable?: boolean; accepted?: boolean; draining?: Promise<void> }>();
+  private readonly retentionTimers = new Map<string, number>();
   private readonly pendingCalls = new Map<string, PendingCall>();
   private readonly endedCalls = new Map<string, number>();
   private readonly earlyIce = new Map<string, { peerId: string; candidates: RTCIceCandidateInit[] }>();
@@ -166,6 +170,9 @@ export class PeerTransport {
       releaseMicrophoneStream(call.stream);
     }
     this.sessions.clear();
+    for (const token of new Set([...this.outgoing.keys(), ...this.incoming.keys()])) void invoke('close_rtc_file', { token }).catch(() => undefined);
+    for (const timer of this.retentionTimers.values()) window.clearTimeout(timer);
+    this.retentionTimers.clear();
     this.outgoing.clear();
     this.incoming.clear();
     this.pendingCalls.clear();
@@ -218,7 +225,8 @@ export class PeerTransport {
       await invoke('close_rtc_file', { token }).catch(() => undefined);
       throw new Error('Bezpośredni kanał pliku został zamknięty.');
     }
-    this.sendWire(session.channel, { type: 'file_accept', token });
+    incoming.accepted = true;
+    this.sendWire(session.channel, { type: 'file_accept', token, offset: 0, resumable: true });
     this.callbacks?.onFileProgress({ ...incoming.offer, direction: 'incoming', transferred: 0, progress: 0, status: 'transferring' });
   }
 
@@ -233,6 +241,7 @@ export class PeerTransport {
   }
 
   async cancelFile(token: string): Promise<void> {
+    this.clearRetention(token);
     const outgoing = this.outgoing.get(token);
     if (outgoing) {
       const session = this.sessions.get(outgoing.sessionId);
@@ -250,6 +259,50 @@ export class PeerTransport {
       if (session) this.closeSession(session);
     }
     await invoke('close_rtc_file', { token }).catch(() => undefined);
+  }
+
+  async pauseFile(token: string): Promise<void> {
+    const transfer = this.outgoing.get(token) ?? this.incoming.get(token);
+    const session = transfer && this.sessions.get(transfer.sessionId);
+    if (!session || !transfer?.resumable) return;
+    if (session.channel?.readyState === 'open') this.sendWire(session.channel, { type: 'file_pause', token });
+    this.failSessionFiles(session, 'Transfer paused.', true);
+    this.closeSession(session);
+  }
+
+  canResumeFile(token: string): boolean {
+    return Boolean((this.outgoing.get(token) ?? this.incoming.get(token))?.resumable);
+  }
+
+  async blockPeer(peerId: string): Promise<void> {
+    this.hangup(peerId);
+    for (const [token, outgoing] of this.outgoing) if (outgoing.peerId === peerId) await this.cancelFile(token);
+    for (const [token, incoming] of this.incoming) if (incoming.offer.peer_id === peerId) await this.cancelFile(token);
+  }
+
+  async resumeFile(token: string): Promise<void> {
+    const outgoing = this.outgoing.get(token), incoming = this.incoming.get(token);
+    const transfer = outgoing ?? incoming;
+    if (!transfer?.resumable) throw new Error('This peer does not support resuming transfers.');
+    const previous = this.sessions.get(transfer.sessionId);
+    if (previous && !previous.closed) return;
+    const session = this.createSession(crypto.randomUUID(), outgoing?.peerId ?? incoming!.offer.peer_id, true, false);
+    this.clearRetention(token);
+    transfer.sessionId = session.id;
+    if (outgoing) outgoing.sending = false;
+    try { await this.negotiate(session); }
+    catch (error) { this.failSessionFiles(session, String(error)); this.closeSession(session); throw error; }
+  }
+
+  private clearRetention(token: string): void {
+    const timer = this.retentionTimers.get(token);
+    if (timer !== undefined) window.clearTimeout(timer);
+    this.retentionTimers.delete(token);
+  }
+
+  private retain(token: string): void {
+    this.clearRetention(token);
+    this.retentionTimers.set(token, window.setTimeout(() => { void this.cancelFile(token); }, 30 * 60_000));
   }
 
   async startCall(peerId: string): Promise<void> {
@@ -416,6 +469,8 @@ export class PeerTransport {
         this.callbacks?.onCallState(peerId, 'ended');
       }, CALL_REQUEST_TIMEOUT_MS);
       this.callbacks?.onIncomingCall(peerId, signal.connection_id);
+      // A local privacy policy may synchronously reject this invitation.
+      if (this.pendingCalls.get(signal.connection_id) !== call) return;
       this.callbacks?.onCallState(peerId, 'ringing');
       return;
     }
@@ -616,7 +671,7 @@ export class PeerTransport {
     const existing = this.sessions.get(id);
     if (existing) return existing;
     if (this.sessions.size >= MAX_ACTIVE_SESSIONS) throw new Error('Too many active direct peer sessions.');
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+    const pc = new RTCPeerConnection(rtcConfiguration());
     const earlyIce = this.earlyIce.get(id);
     if (earlyIce?.peerId === peerId) this.earlyIce.delete(id);
     const session: Session = {
@@ -654,7 +709,7 @@ export class PeerTransport {
       const failed = pc.connectionState === 'failed' || pc.iceConnectionState === 'failed';
       if (failed) {
         if (session.audio) this.failAudioSession(session, 'Nie udało się utrzymać bezpośredniego połączenia audio.');
-        else this.closeSession(session);
+        else { this.failSessionFiles(session, 'File connection interrupted.'); this.closeSession(session); }
         return;
       }
       const disconnected = pc.connectionState === 'disconnected' || pc.iceConnectionState === 'disconnected';
@@ -708,7 +763,10 @@ export class PeerTransport {
     channel.onopen = () => {
       for (const outgoing of this.outgoing.values()) {
         if (outgoing.sessionId !== session.id) continue;
-        this.sendWire(channel, { type: 'file_offer', ...outgoing.file });
+        this.sendWire(channel, { type: 'file_offer', ...outgoing.file, resumable: true });
+      }
+      for (const incoming of this.incoming.values()) {
+        if (incoming.sessionId === session.id && incoming.accepted) this.sendWire(channel, { type: 'file_resume', token: incoming.offer.token });
       }
     };
     channel.onmessage = event => {
@@ -717,9 +775,13 @@ export class PeerTransport {
       if (!message) return;
       session.receiveChain = session.receiveChain.then(() => this.receiveWire(session, message)).catch(error => {
         this.failSessionFiles(session, String(error));
+        this.closeSession(session);
       });
     };
-    channel.onerror = () => this.failSessionFiles(session, 'Bezpośredni kanał pliku uległ awarii.');
+    channel.onerror = () => {
+      this.failSessionFiles(session, 'Direct file channel failed.');
+      this.closeSession(session);
+    };
     channel.onclose = () => {
       if (!session.audio && !session.closed) {
         this.failSessionFiles(session, 'Bezpośredni kanał pliku został zamknięty.');
@@ -846,48 +908,88 @@ export class PeerTransport {
     });
   }
 
-  private async sendChunks(session: Session, outgoing: { file: RtcFileDescriptor; sessionId: string; peerId: string }): Promise<void> {
+  private async sendChunks(session: Session, outgoing: { file: RtcFileDescriptor; sessionId: string; peerId: string; transferred?: number; sending?: boolean }, startOffset = 0): Promise<void> {
     const channel = session.channel;
     if (!channel) throw new Error('Brak bezpośredniego kanału danych.');
-    let offset = 0;
+    if (outgoing.sending) return;
+    outgoing.sending = true;
+    let offset = startOffset;
     try {
       while (offset < outgoing.file.size) {
+        if (session.closed || outgoing.sessionId !== session.id || !this.outgoing.has(outgoing.file.token)) return;
         this.touchSession(session);
         await this.waitForBuffer(channel);
         const chunk = await invoke<RtcFileChunk>('read_rtc_file_chunk', { token: outgoing.file.token, offset, maxBytes: FILE_CHUNK_BYTES });
+        if (session.closed || outgoing.sessionId !== session.id || !this.outgoing.has(outgoing.file.token)) return;
         if (chunk.offset !== offset || !chunk.data_base64) throw new Error('Nieprawidłowy fragment pliku ze źródła.');
         this.sendWire(channel, { type: 'file_chunk', token: outgoing.file.token, offset, data_base64: chunk.data_base64 });
         const bytes = Math.min(FILE_CHUNK_BYTES, outgoing.file.size - offset);
         offset += bytes;
+        outgoing.transferred = offset;
         this.callbacks?.onFileProgress({ ...outgoing.file, peer_id: outgoing.peerId, direction: 'outgoing', transferred: offset, progress: outgoing.file.size === 0 ? 100 : offset / outgoing.file.size * 100, status: 'transferring' });
       }
       await this.waitForBuffer(channel);
+      if (session.closed || outgoing.sessionId !== session.id || !this.outgoing.has(outgoing.file.token)) return;
       this.sendWire(channel, { type: 'file_complete', token: outgoing.file.token });
       this.callbacks?.onFileProgress({ ...outgoing.file, peer_id: outgoing.peerId, direction: 'outgoing', transferred: offset, progress: 100, status: 'verifying' });
     } catch (error) {
-      this.callbacks?.onFileProgress({ ...outgoing.file, peer_id: outgoing.peerId, direction: 'outgoing', transferred: offset, progress: outgoing.file.size === 0 ? 100 : offset / outgoing.file.size * 100, status: 'failed', error: String(error) });
-      await invoke('close_rtc_file', { token: outgoing.file.token }).catch(() => undefined);
-      this.outgoing.delete(outgoing.file.token);
-    }
+      if (!session.closed && outgoing.sessionId === session.id) { this.failSessionFiles(session, String(error)); this.closeSession(session); }
+    } finally { if (outgoing.sessionId === session.id) outgoing.sending = false; }
   }
 
   private async receiveWire(session: Session, message: WireMessage): Promise<void> {
+    if (session.closed) return;
+    if (message.type === 'file_resume') {
+      const outgoing = this.outgoing.get(message.token);
+      if (!outgoing || outgoing.peerId !== session.peerId || !outgoing.resumable) return;
+      const previous = this.sessions.get(outgoing.sessionId);
+      if (previous && previous.id !== session.id) { this.failSessionFiles(previous, 'Resuming on a new route.', true); this.closeSession(previous); }
+      outgoing.sessionId = session.id; outgoing.sending = false; this.clearRetention(message.token);
+      this.sendWire(session.channel!, { type: 'file_offer', ...outgoing.file, resumable: true });
+      return;
+    }
+    if (message.type === 'file_pause') {
+      const transfer = this.outgoing.get(message.token) ?? this.incoming.get(message.token);
+      if (transfer?.sessionId !== session.id || !transfer.resumable) return;
+      this.failSessionFiles(session, 'Transfer paused by peer.', true); this.closeSession(session); return;
+    }
     if (message.type === 'file_offer') {
+      const previous = this.incoming.get(message.token);
+      if (previous) {
+        if (previous.offer.peer_id !== session.peerId || previous.offer.size !== message.size
+          || previous.offer.sha256.toLowerCase() !== message.sha256.toLowerCase() || previous.offer.file_name !== message.file_name) return;
+        if (!previous.accepted || !previous.resumable || message.resumable !== true) return;
+        const oldSession = this.sessions.get(previous.sessionId);
+        if (oldSession && oldSession.id !== session.id) { this.failSessionFiles(oldSession, 'Resuming on a new route.', true); this.closeSession(oldSession); }
+        await previous.draining;
+        if (session.closed) return;
+        const offset = await invoke<number>('resume_rtc_file_receive', { token: message.token, size: message.size, sha256: message.sha256 });
+        previous.sessionId = session.id; previous.transferred = offset; this.clearRetention(message.token);
+        this.sendWire(session.channel!, { type: 'file_accept', token: message.token, offset, resumable: true });
+        return;
+      }
       if (this.incoming.size >= MAX_FILES_PER_DIRECTION && !this.incoming.has(message.token)) {
         this.sendWire(session.channel!, { type: 'file_reject', token: message.token, reason: 'All incoming file slots are busy.' });
         return;
       }
       const offer: DirectFileOffer = { token: message.token, peer_id: session.peerId, file_name: message.file_name, size: message.size, sha256: message.sha256 };
-      this.incoming.set(message.token, { offer, sessionId: session.id, previewOnly: false });
+      this.incoming.set(message.token, { offer, sessionId: session.id, previewOnly: false, resumable: message.resumable === true });
       this.callbacks?.onFileOffer(offer);
       return;
     }
     if (message.type === 'file_accept') {
       const outgoing = this.outgoing.get(message.token);
-      if (outgoing?.sessionId === session.id) await this.sendChunks(session, outgoing);
+      if (outgoing?.sessionId === session.id) {
+        const offset = message.offset ?? 0;
+        if (offset > outgoing.file.size) return;
+        outgoing.resumable = message.resumable === true;
+        void this.sendChunks(session, outgoing, offset);
+      }
       return;
     }
     if (message.type === 'file_reject') {
+      const incoming = this.incoming.get(message.token);
+      if (incoming?.sessionId === session.id) { await this.cancelFile(message.token); return; }
       const outgoing = this.outgoing.get(message.token);
       if (!outgoing || outgoing.sessionId !== session.id) return;
       this.callbacks?.onFileProgress({ ...outgoing.file, peer_id: outgoing.peerId, direction: 'outgoing', transferred: 0, progress: 0, status: 'rejected', error: message.reason });
@@ -900,6 +1002,8 @@ export class PeerTransport {
       const incoming = this.incoming.get(message.token);
       if (!incoming || incoming.sessionId !== session.id) return;
       const next = await invoke<number>('write_rtc_file_chunk', { token: message.token, offset: message.offset, dataBase64: message.data_base64 });
+      incoming.transferred = next;
+      if (session.closed) return;
       this.callbacks?.onFileProgress({ ...incoming.offer, direction: 'incoming', transferred: next, progress: incoming.offer.size === 0 ? 100 : next / incoming.offer.size * 100, status: 'transferring' });
       return;
     }
@@ -937,15 +1041,24 @@ export class PeerTransport {
     }
   }
 
-  private failSessionFiles(session: Session, reason: string): void {
+  private failSessionFiles(session: Session, reason: string, paused = false): void {
     for (const [token, outgoing] of this.outgoing) {
       if (outgoing.sessionId !== session.id) continue;
+      if (outgoing.resumable) {
+        this.callbacks?.onFileProgress({ ...outgoing.file, peer_id: outgoing.peerId, direction: 'outgoing', transferred: outgoing.transferred ?? 0, progress: outgoing.file.size ? (outgoing.transferred ?? 0) / outgoing.file.size * 100 : 0, status: paused ? 'paused' : 'interrupted', error: reason });
+        this.retain(token); continue;
+      }
       this.callbacks?.onFileProgress({ ...outgoing.file, peer_id: outgoing.peerId, direction: 'outgoing', transferred: 0, progress: 0, status: 'failed', error: reason });
       this.outgoing.delete(token);
       void invoke('close_rtc_file', { token }).catch(() => undefined);
     }
     for (const [token, incoming] of this.incoming) {
       if (incoming.sessionId !== session.id) continue;
+      if (incoming.resumable && incoming.accepted) {
+        incoming.draining = session.receiveChain.catch(() => {});
+        this.callbacks?.onFileProgress({ ...incoming.offer, direction: 'incoming', transferred: incoming.transferred ?? 0, progress: incoming.offer.size ? (incoming.transferred ?? 0) / incoming.offer.size * 100 : 0, status: paused ? 'paused' : 'interrupted', error: reason });
+        this.retain(token); continue;
+      }
       this.callbacks?.onFileProgress({ ...incoming.offer, direction: 'incoming', transferred: 0, progress: 0, status: 'failed', error: reason });
       this.incoming.delete(token);
       void invoke('close_rtc_file', { token }).catch(() => undefined);

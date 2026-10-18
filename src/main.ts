@@ -1,3 +1,4 @@
+import { x } from './experience-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { t } from './i18n';
@@ -28,6 +29,10 @@ import {
 import { GroupVoice, type GroupVoiceSnapshot } from './group-voice';
 import { testMicrophone, testSpeakers } from './audio-diagnostics';
 import { checkForStableUpdate } from './updater';
+import { people } from './people';
+import { TransferMeter } from './transfer-meter';
+const transferMeter = new TransferMeter();
+import { decorateSettings, applyAppearance } from './experience';
 
 type PublicShareOffer = {
   offer_id: string;
@@ -98,7 +103,7 @@ const state = {
   nick: '',
   nickColor: normalizeNickColor(localStorage.getItem('konofix.nickColor')),
   peerId: '',
-  version: '0.6.0',
+  version: '0.6.1-rc.1',
   room: 'world',
   connected: false,
   peers: new Map<string, PeerInfo>(),
@@ -114,6 +119,7 @@ let sessionRevision = 0;
 let connectPending = false;
 let roomChangePending = false;
 export const worldRelay = new WorldRelayBridge();
+export function isPeerOnline(peerId: string): boolean { return state.peers.has(peerId) || worldRelayPeers.has(peerId); }
 export const peerTransport = new PeerTransport();
 export const groupVoice = new GroupVoice();
 const worldRelayPeers = new Map<string, RelayPeer>();
@@ -365,7 +371,7 @@ function renderLogin() {
       </section>
 
       <section class="login-card glass">
-        <div class="online-pill"><i></i> P2P ENGINE 0.4</div>
+        <div class="online-pill"><i></i> KONOFIX ${esc(state.version)}</div>
         <h2>${esc(t('login.joinWorld'))}</h2>
         <p class="muted">${esc(t('login.nickHelp'))}</p>
         <label for="nick">${esc(t('login.nickLabel'))}</label>
@@ -457,13 +463,24 @@ async function connect() {
   }
 }
 
+const roomDrafts = new Map<string, string>();
+let renderedRoom = '';
 function renderChat() {
+  const oldInput = document.querySelector<HTMLInputElement>('#msg');
+  if (oldInput && renderedRoom) roomDrafts.set(renderedRoom, oldInput.value);
+  const oldMessages = document.querySelector<HTMLElement>('#messages');
+  const sameRoom = renderedRoom === state.room;
+  const scroll = oldMessages?.scrollTop ?? 0;
+  const nearBottom = !oldMessages || oldMessages.scrollHeight - scroll - oldMessages.clientHeight < 80;
+  const inputFocused = document.activeElement === oldInput;
+  const selection = oldInput?.selectionStart ?? 0;
+  renderedRoom = state.room;
   const currentRoom = state.rooms.get(state.room) ?? { id: state.room, title: `# ${state.room.toUpperCase()}`, users: 0 };
   const messages = state.messages.get(state.room) ?? [];
   const onlineCount = Math.max(1, state.peers.size + 1);
   const activeRoomCount = state.room === 'world' ? onlineCount : Math.max(0, Number(currentRoom.users) || 0);
   const networkClass = state.status.phase === 'online' || worldRelayState.connected > 0 ? 'good' : state.status.phase === 'searching' ? 'searching' : 'off';
-  const transfers = [...state.transfers.values()].slice(-5).reverse();
+  const transfers = [...state.transfers.values()].sort((a, b) => Number(activeTransfer(b.status)) - Number(activeTransfer(a.status))).slice(0, 12);
 
   app.innerHTML = `
     <main class="chat-shell">
@@ -478,6 +495,8 @@ function renderChat() {
         <div id="rooms">${[...state.rooms.values()].filter(r => r.id !== 'world').map(roomButton).join('')}</div>
         <button id="newRoom" class="ghost wide">${esc(t('rooms.create'))}</button>
 
+        <div class="section-title">${x('favoriteContacts')}</div>
+        <div class="contact-list">${people.list().filter(contact => contact.favorite && !contact.blocked).map(contact => `<button class="contact-button" data-private-peer="${esc(contact.id)}" data-private-nick="${esc(contact.nick)}" data-private-color="${normalizeNickColor(contact.color)}"><b>${contact.verified ? '✓' : '☆'}</b><span>${esc(contact.nick)}</span></button>`).join('') || `<div class="contact-empty">${x('addAFavoriteFromAPrivateConversation')}</div>`} </div>
         <button id="optionalKnp" class="ghost wide">${esc(t('knp.openOptional'))}</button>
         <div class="network-card" id="networkCard">
           <div class="network-top"><span class="net-dot ${networkClass}"></span><strong>${esc(networkLabel())}</strong><button id="refreshNetwork" title="${esc(t('network.refresh'))}">↻</button></div>
@@ -499,7 +518,7 @@ function renderChat() {
             <h2>${esc(currentRoom.title)}</h2>
             <span>${esc(state.room === 'world' ? t('rooms.globalChannel') : t('rooms.hostOnly'))}</span>
           </div>
-          <div class="header-actions">
+          <div class="header-actions"><button id="togglePeople" class="ghost" aria-expanded="${document.documentElement.dataset.peopleHidden !== 'true'}" title="${x('peopleAndFiles')}">${x('people')}</button>
             <span class="live"><i></i>${activeRoomCount} ${esc(t('common.online').toLowerCase())}</span>
             ${state.room === 'world' ? `
               <button id="shareWorldFile" class="ghost">${esc(t('publicShare.file'))}</button>
@@ -539,10 +558,19 @@ function renderChat() {
 
   wireCredit();
   wireVoicePanel();
+  document.querySelector('#togglePeople')?.addEventListener('click', () => {
+    const hidden = document.documentElement.dataset.peopleHidden !== 'true';
+    localStorage.setItem('konofix.peopleHidden', hidden ? '1' : '0'); applyAppearance();
+    document.querySelector('#togglePeople')?.setAttribute('aria-expanded', String(!hidden));
+  });
   document.querySelectorAll<HTMLElement>('[data-room]').forEach(el => el.addEventListener('click', () => switchRoom(el.dataset.room!)));
   document.querySelectorAll<HTMLElement>('[data-send-peer]').forEach(el => el.addEventListener('click', () => sendFileToPeer(el.dataset.sendPeer!)));
   document.querySelectorAll<HTMLElement>('[data-send-relay-peer]').forEach(el => el.addEventListener('click', () => sendFileToPeer(el.dataset.sendRelayPeer!)));
   document.querySelectorAll<HTMLElement>('[data-cancel-transfer]').forEach(el => el.addEventListener('click', () => cancelTransfer(el.dataset.cancelTransfer!)));
+  document.querySelectorAll<HTMLElement>('[data-transfer-action]').forEach(button => button.addEventListener('click', () => {
+    const token = button.dataset.transferId!;
+    void (button.dataset.transferAction === 'pause' ? peerTransport.pauseFile(token) : peerTransport.resumeFile(token)).catch(error => alert(String(error)));
+  }));
   document.querySelector('#newRoom')?.addEventListener('click', createRoom);
   document.querySelector('#send')?.addEventListener('click', sendMessage);
   document.querySelector('#shareRoomFile')?.addEventListener('click', () => sharePublic(state.room));
@@ -589,8 +617,9 @@ function renderChat() {
     const panel = document.querySelector<HTMLDivElement>('#emojiPanel');
     if (panel) panel.hidden = true;
   }));
-  if (!document.querySelector('#knpChatOverlay:not([hidden])')) msg.focus();
-  scrollBottom();
+  msg.value = roomDrafts.get(state.room) ?? '';
+  if (inputFocused || (!oldInput && !document.querySelector('[role="dialog"],#knpChatOverlay:not([hidden])'))) { msg.focus(); msg.setSelectionRange(selection, selection); }
+  if (!sameRoom || nearBottom) scrollBottom(); else { const list = document.querySelector<HTMLElement>('#messages'); if (list) list.scrollTop = scroll; }
 }
 
 function networkLabel(): string {
@@ -637,6 +666,7 @@ function peerHtml(peer: PeerInfo): string {
 function shortPeer(v: string): string { return v ? `${v.slice(0, 6)}…${v.slice(-4)}` : 'local'; }
 
 function messageHtml(m: ChatMessage): string {
+  if (m.peer_id && people.muted(m.peer_id)) return '';
   if (m.kind === 'system') return `<div class="system-msg">${esc(m.text)}</div>`;
   if (m.kind === 'public_offer' && m.public_offer) return publicOfferHtml(m.public_offer);
   const mine = m.peer_id === state.peerId || m.nick === state.nick;
@@ -814,10 +844,12 @@ function showImagePreview(offer: PublicShareOffer) {
 }
 
 function activeTransfer(status: string): boolean {
-  return ['requesting', 'waiting', 'sending', 'receiving', 'verifying'].includes(status);
+  return ['requesting', 'waiting', 'sending', 'receiving', 'verifying', 'paused', 'interrupted'].includes(status);
 }
 
 function transferStatus(status: string): string {
+  if (status === 'paused') return x('paused');
+  if (status === 'interrupted') return x('interruptedResumable');
   const keys = {
     requesting: 'transfer.requesting', waiting: 'transfer.waiting', sending: 'transfer.sending', receiving: 'transfer.receiving', verifying: 'transfer.verifying',
     completed: 'transfer.completed', rejected: 'transfer.rejected', failed: 'transfer.failed', cancelled: 'transfer.cancelled'
@@ -831,10 +863,15 @@ function transferHtml(tfr: FileTransfer): string {
   const icon = tfr.direction === 'outgoing' ? '↗' : '↙';
   const cancel = activeTransfer(tfr.status) ? `<button data-cancel-transfer="${esc(tfr.transfer_id)}" title="${esc(t('common.cancel'))}">×</button>` : '';
   const detail = tfr.error ? `<small class="transfer-error">${esc(tfr.error)}</small>` : tfr.path ? `<small title="${esc(tfr.path)}">${esc(tfr.path)}</small>` : `<small>${formatBytes(tfr.transferred)} / ${formatBytes(tfr.size)}</small>`;
+  const direct = directTransferIds.has(tfr.transfer_id) && peerTransport.canResumeFile(tfr.transfer_id);
+  const estimate = transferMeter.estimate(tfr.transfer_id, tfr.size);
+  const speed = ['sending', 'receiving'].includes(tfr.status) && estimate.speed > 0 ? '<small>' + formatBytes(estimate.speed) + '/s · ~' + (estimate.seconds ?? 0) + ' s</small>' : '';
+  const controls = direct && ['paused', 'interrupted', 'sending', 'receiving'].includes(tfr.status)
+    ? '<div class="transfer-actions"><button class="ghost" data-transfer-action="' + (['paused', 'interrupted'].includes(tfr.status) ? 'resume' : 'pause') + '" data-transfer-id="' + esc(tfr.transfer_id) + '">' + (['paused', 'interrupted'].includes(tfr.status) ? x('resume') : x('pause')) + '</button></div>' : '';
   return `<div class="transfer-card ${esc(tfr.status)}">
     <div class="transfer-title"><span>${icon}</span><strong title="${esc(tfr.file_name)}">${esc(tfr.file_name)}</strong>${cancel}</div>
     <div class="transfer-meta"><span>${esc(tfr.nick)}</span><b>${esc(transferStatus(tfr.status))}</b></div>
-    <div class="progress"><i style="width:${pct.toFixed(1)}%"></i></div>${detail}
+    <div class="progress" role="progressbar" aria-label="${esc(tfr.file_name)}" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct.toFixed(1)}%"></i></div>${detail}${speed}${controls}
   </div>`;
 }
 
@@ -1008,6 +1045,7 @@ async function cancelTransfer(transferId: string) {
 }
 
 function showFileOfferModal(offer: FileOffer) {
+  if (!people.allowInvitation(offer.peer_id)) { void invoke('reject_file', { transferId: offer.transfer_id }).catch(() => {}); return; }
   const old = document.querySelector(`#file-offer-${CSS.escape(offer.transfer_id)}`);
   old?.remove();
   const modal = document.createElement('div');
@@ -1105,6 +1143,7 @@ function directTransferView(progress: DirectFileProgress): FileTransfer {
 }
 
 function updateDirectTransfer(progress: DirectFileProgress): void {
+  transferMeter.observe(progress.token, progress.transferred);
   directTransferIds.add(progress.token);
   const publicTransfer = publicTransferTokens.get(progress.token);
   if (publicTransfer) clearPublicClaimTimer(progress.token);
@@ -1328,6 +1367,7 @@ function startWorldRelay() {
       groupVoice.leaveRoom();
     },
     onIncomingCall(peerId: string, connectionId: string) {
+      if (!people.allowInvitation(peerId)) { peerTransport.rejectCall(connectionId); return; }
       window.dispatchEvent(new CustomEvent('konofix-incoming-audio-call', { detail: { peerId, connectionId } }));
     },
     onCallState(peerId, callState, error) {
@@ -1339,6 +1379,7 @@ function startWorldRelay() {
     onFileOffer(offer) {
       const pending = publicTransferTokens.get(offer.token);
       if (!pending) {
+        if (!people.allowInvitation(offer.peer_id)) { void peerTransport.rejectFile(offer.token); return; }
         showDirectFileOfferModal(offer);
         return;
       }
@@ -1367,7 +1408,7 @@ function startWorldRelay() {
       // duplicate out of the people list, but never skip the relay-online
       // notification or active WORLD/room audio can miss this listener.
       window.dispatchEvent(new CustomEvent('konofix-relay-peer-online', { detail: { peer_id: peer.peer_id } }));
-      groupVoice.peerOnline(peer.peer_id);
+      if (!people.muted(peer.peer_id)) groupVoice.peerOnline(peer.peer_id);
       if (state.peers.has(peer.claimed_peer_id)) {
         state.peers.delete(peer.peer_id);
         return;
@@ -1413,6 +1454,7 @@ function startWorldRelay() {
       window.dispatchEvent(new CustomEvent<RelayPrivateMessage>('konofix-relay-private-message', { detail: message }));
     },
     onFileOffer(offer: RelayFileOffer) {
+      if (!people.allowInvitation(offer.peer_id)) { worldRelay.rejectFile(offer.transfer_id); return; }
       showRelayFileOfferModal(offer);
     },
     onFileProgress(progress: RelayFileProgress) {
@@ -1425,6 +1467,7 @@ function startWorldRelay() {
       receivePublicOffer(offer);
     },
     onRtcSignal(peerId: string, signal: RtcSignal) {
+      if (people.blocked(peerId)) return;
       if (signal.action === 'public_file_request') {
         const announced = signal.offer_id ? state.publicOffers.get(signal.offer_id) : undefined;
         if (!announced
@@ -1462,15 +1505,16 @@ function startWorldRelay() {
       groupVoice.updateWorldState(voiceState);
     },
     onVoiceSignal(peerId: string, signal: VoiceSignal) {
+      if (people.muted(peerId) && signal.action !== 'world_release') return;
       void groupVoice.handleSignal(peerId, signal).catch(error => groupVoice.reportSignalError(error));
     },
   });
   groupVoice.start(worldRelay.virtualPeerId(), state.nick, state.nickColor, {
-    sendSignal(peerId, signal) { worldRelay.publishVoiceSignal(peerId, signal); },
+    sendSignal(peerId, signal) { if (!people.muted(peerId)) worldRelay.publishVoiceSignal(peerId, signal); },
     publishWorld(voiceState) { worldRelay.publishWorldVoice(voiceState); },
-    peers() { return [...worldRelayPeers.keys()]; },
+    peers() { return [...worldRelayPeers.keys()].filter(peerId => !people.muted(peerId)); },
     beforeMicrophoneCapture() { peerTransport.hangupAllCalls(); },
-    onRemoteStream(scope, peerId, stream) { playGroupAudio(scope, peerId, stream); },
+    onRemoteStream(scope, peerId, stream) { playGroupAudio(scope, peerId, people.muted(peerId) ? null : stream); },
     onState(snapshot) {
       groupVoiceSnapshot = snapshot;
       updateVoicePanel();
@@ -1545,8 +1589,10 @@ function showNetworkModal() {
       <p class="modal-note">${esc(t('network.bootstrapNote'))}</p>
     </div>`;
   document.body.appendChild(modal);
+  decorateSettings(modal, { chat: state.status.connected_peers > 0 || worldRelayState.connected > 0, native: state.status.connected_peers, relays: worldRelayState.connected, identity: worldRelay.virtualPeerId() || state.peerId });
 
   const audioTestAbort = new AbortController();
+  modal.addEventListener('keydown', event => { if (event.key === 'Escape') audioTestAbort.abort(); });
   const close = () => {
     audioTestAbort.abort();
     modal.remove();
@@ -1783,3 +1829,16 @@ async function wireEvents() {
 wireEvents();
 renderLogin();
 window.setTimeout(() => void runStableUpdateCheck(false), 2_500);
+
+window.addEventListener('konofix-people-changed', () => {
+  for (const contact of people.list()) {
+    if (contact.blocked) void peerTransport.blockPeer(contact.id);
+    if (contact.blocked || contact.muted) {
+      groupVoice.silencePeer(contact.id);
+      for (const [key, audio] of groupAudio) if (key.endsWith('\u0000' + contact.id)) {
+        audio.pause(); audio.srcObject = null; audio.remove(); groupAudio.delete(key); blockedGroupAudio.delete(key);
+      }
+    }
+  }
+  if (state.connected) renderChat();
+});

@@ -2318,6 +2318,36 @@ async fn begin_rtc_file_receive(
 }
 
 #[tauri::command]
+async fn resume_rtc_file_receive(
+    token: String,
+    size: u64,
+    sha256: String,
+    state: State<'_, AppState>,
+) -> Result<u64, String> {
+    Uuid::parse_str(&token).map_err(|_| "Invalid transfer identifier.")?;
+    let (path, offset) = {
+        let files = state
+            .rtc_incoming_files
+            .lock()
+            .map_err(|_| "File state unavailable.")?;
+        let file = files
+            .get(&token)
+            .ok_or("Transfer expired. Offer the file again.")?;
+        if file.size != size || file.sha256 != sha256.to_ascii_lowercase() {
+            return Err("Resume metadata does not match the accepted file.".into());
+        }
+        (file.temp_path.clone(), file.next_offset)
+    };
+    let metadata = tokio::fs::metadata(path)
+        .await
+        .map_err(|_| "Partial file is missing.")?;
+    if !metadata.is_file() || metadata.len() != offset || offset > size {
+        return Err("Partial file size changed. Start a new transfer.".into());
+    }
+    Ok(offset)
+}
+
+#[tauri::command]
 async fn write_rtc_file_chunk(
     token: String,
     offset: u64,
@@ -6339,6 +6369,7 @@ pub fn run() {
         prepare_public_rtc_file,
         read_rtc_file_chunk,
         begin_rtc_file_receive,
+        resume_rtc_file_receive,
         write_rtc_file_chunk,
         finish_rtc_file_receive,
         close_rtc_file,
@@ -6371,6 +6402,7 @@ pub fn run() {
         prepare_public_rtc_file,
         read_rtc_file_chunk,
         begin_rtc_file_receive,
+        resume_rtc_file_receive,
         write_rtc_file_chunk,
         finish_rtc_file_receive,
         close_rtc_file,

@@ -939,6 +939,8 @@ assert.ok(
   demotionWorldStates.some(state => state.status === 'idle' && state.request_id === contendedRequestId),
   'WORLD demotion must also publish an idle tombstone for the losing request',
 );
+demotionVoice.silencePeer(demotionPeerId);
+assert.equal(demotionVoice.snapshot().speaker?.peer_id, demotionPeerId, 'local muting must preserve the shared speaking order');
 demotionVoice.stop();
 
 const pendingRoomVoice = newGroupVoice();

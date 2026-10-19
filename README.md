@@ -24,6 +24,12 @@
 
 </div>
 
+## 📸 Screenshot
+
+![Konofix application screenshot](docs/screenshots/application.jpg)
+
+Browser-rendered frontend welcome screen from the local development server, before connecting to the network.
+
 <img width="100%" src="https://raw.githubusercontent.com/Swir/Swir/main/assets/power-divider-v4.svg" alt="SWIR electric divider" />
 
 ## Project status
